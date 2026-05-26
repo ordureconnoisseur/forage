@@ -1,17 +1,32 @@
-// matcher-bench measures end-to-end matcher.Match accuracy against the
-// user's existing Stash library. For each labeled scene we use its
-// basename (+ optionally ancestor folders) as the "release name",
-// invoke the matcher, and report whether the correct StashDB scene_id
-// is in the top-1, top-3, or top-10 candidates.
+// matcher-bench measures end-to-end matcher.Match accuracy.
+//
+// Two modes:
+//
+//   - **Stash library mode** (default): pulls labeled scenes from the
+//     user's Stash and treats their basenames (and basename+folders)
+//     as the "release name". Measures matcher performance on the
+//     messy filename input it has to handle in a deduplication
+//     context.
+//
+//   - **Corpus mode** (--corpus path): loads a YAML corpus of real
+//     (release, expected_scene_id) pairs (built by tools/build-corpus)
+//     and runs Match on each release. Measures matcher performance on
+//     the well-formatted Prowlarr-style release names it actually
+//     handles in production grab flow.
 //
 // Run from the forager repo root (daemon must have populated forager.db):
 //
 //	FORAGER_STASH_URL=... FORAGER_STASH_API_KEY=... \
 //	FORAGER_STASHDB_API_KEY=... \
 //	  go run ./tools/matcher-bench --limit=500 --concurrency=4
+//
+// Or in the deployed forager container against the real corpus:
+//
+//	docker exec forager /matcher-bench --corpus=/data/corpus.yaml --concurrency=8
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/csv"
 	"flag"
@@ -38,6 +53,7 @@ func main() {
 		concurrency = flag.Int("concurrency", 4, "parallel matcher.Match calls")
 		outputDir   = flag.String("output-dir", ".", "where to write *.failures.csv")
 		maxFailures = flag.Int("max-failures", 0, "cap rows per CSV (0 = no cap)")
+		corpusPath  = flag.String("corpus", "", "YAML corpus path; when set, runs against the corpus instead of the Stash library")
 	)
 	flag.Parse()
 
@@ -70,38 +86,73 @@ func main() {
 	}
 	log.Info("matcher ready", "setup", time.Since(t0))
 
-	log.Info("fetching labeled scenes", "limit", *limit)
-	t0 = time.Now()
-	scenes, err := stashClient.FindLabeledScenes(ctx, *limit)
-	if err != nil {
-		log.Error("find scenes", "err", err)
-		os.Exit(1)
-	}
-	log.Info("fetched scenes", "count", len(scenes), "elapsed", time.Since(t0))
-
-	// Filter to scenes with StashDBID ground truth.
-	gt := make([]stash.LabeledScene, 0, len(scenes))
-	for _, s := range scenes {
-		if s.StashDBID != "" {
-			gt = append(gt, s)
-		}
-	}
-	log.Info("with-stashdb-id", "count", len(gt))
-
 	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
 		log.Error("mkdir output", "err", err)
 		os.Exit(1)
 	}
 
-	modes := []struct {
-		Name  string
-		Input func(stash.LabeledScene) string
-	}{
-		{"basename", func(s stash.LabeledScene) string { return s.Basename }},
-		{"basename_folder", func(s stash.LabeledScene) string {
-			parts := append([]string{s.Basename}, s.Folders...)
-			return strings.Join(parts, " ")
-		}},
+	var (
+		gt    []stash.LabeledScene
+		modes []struct {
+			Name  string
+			Input func(stash.LabeledScene) string
+		}
+	)
+
+	if *corpusPath != "" {
+		log.Info("loading corpus", "path", *corpusPath)
+		entries, err := loadCorpus(*corpusPath)
+		if err != nil {
+			log.Error("load corpus", "err", err)
+			os.Exit(1)
+		}
+		log.Info("corpus loaded", "entries", len(entries))
+		for _, e := range entries {
+			// Reuse LabeledScene as the test-case shape. Basename =
+			// matcher input (the release string); StashDBID = ground
+			// truth. ID = corpus row id for failure-CSV identification.
+			gt = append(gt, stash.LabeledScene{
+				ID:        e.ID,
+				Basename:  e.Release,
+				StashDBID: e.ExpectedScene,
+			})
+		}
+		// Corpus releases are already the full release-name string —
+		// no folder context to add. Single "release" mode.
+		modes = []struct {
+			Name  string
+			Input func(stash.LabeledScene) string
+		}{
+			{"release", func(s stash.LabeledScene) string { return s.Basename }},
+		}
+	} else {
+		log.Info("fetching labeled scenes", "limit", *limit)
+		t0 = time.Now()
+		scenes, err := stashClient.FindLabeledScenes(ctx, *limit)
+		if err != nil {
+			log.Error("find scenes", "err", err)
+			os.Exit(1)
+		}
+		log.Info("fetched scenes", "count", len(scenes), "elapsed", time.Since(t0))
+
+		gt = make([]stash.LabeledScene, 0, len(scenes))
+		for _, s := range scenes {
+			if s.StashDBID != "" {
+				gt = append(gt, s)
+			}
+		}
+		log.Info("with-stashdb-id", "count", len(gt))
+
+		modes = []struct {
+			Name  string
+			Input func(stash.LabeledScene) string
+		}{
+			{"basename", func(s stash.LabeledScene) string { return s.Basename }},
+			{"basename_folder", func(s stash.LabeledScene) string {
+				parts := append([]string{s.Basename}, s.Folders...)
+				return strings.Join(parts, " ")
+			}},
+		}
 	}
 
 	results := make([]*modeResult, 0, len(modes))
@@ -316,4 +367,95 @@ func pct(n, total int) float64 {
 		return 0
 	}
 	return float64(n) / float64(total)
+}
+
+// corpusEntry mirrors the shape build-corpus writes. Hand-parsed
+// below to avoid pulling in a yaml dependency for one file.
+type corpusEntry struct {
+	ID            string
+	Release       string
+	ExpectedScene string
+	Source        string
+	FilePath      string
+}
+
+// loadCorpus parses the YAML format build-corpus emits. The format is
+// a simple list of objects, each on consecutive lines with single-
+// quoted string values (escape: '' for a literal quote). One pass,
+// state-machine style. Doesn't try to be a general YAML parser —
+// only handles the shape we control.
+func loadCorpus(path string) ([]corpusEntry, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var (
+		out []corpusEntry
+		cur *corpusEntry
+	)
+	scanner := bufio.NewScanner(f)
+	// Some release names + paths get long; bump the buffer.
+	scanner.Buffer(make([]byte, 0, 8*1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		stripped := strings.TrimSpace(line)
+		if stripped == "" || strings.HasPrefix(stripped, "#") {
+			continue
+		}
+		// New entry header: starts with `- ` at indent zero, value is
+		// the first field (id). All later fields share a 2-space indent.
+		if strings.HasPrefix(line, "- ") {
+			if cur != nil {
+				out = append(out, *cur)
+			}
+			cur = &corpusEntry{}
+			rest := strings.TrimPrefix(line, "- ")
+			parseField(cur, rest)
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		parseField(cur, stripped)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	if cur != nil {
+		out = append(out, *cur)
+	}
+	return out, nil
+}
+
+func parseField(e *corpusEntry, line string) {
+	colon := strings.Index(line, ":")
+	if colon < 0 {
+		return
+	}
+	key := strings.TrimSpace(line[:colon])
+	val := strings.TrimSpace(line[colon+1:])
+	val = unquoteYAML(val)
+	switch key {
+	case "id":
+		e.ID = val
+	case "release":
+		e.Release = val
+	case "expected_scene_id":
+		e.ExpectedScene = val
+	case "source":
+		e.Source = val
+	case "file_path":
+		e.FilePath = val
+	}
+}
+
+// unquoteYAML strips surrounding single quotes from a YAML scalar and
+// unescapes embedded '' → '. Returns plain strings unchanged.
+func unquoteYAML(s string) string {
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		s = s[1 : len(s)-1]
+		s = strings.ReplaceAll(s, "''", "'")
+	}
+	return s
 }

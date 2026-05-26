@@ -26,10 +26,17 @@ RUN go build -trimpath \
     -ldflags="-s -w" \
     -o /out/build-corpus ./tools/build-corpus
 
+# matcher-bench runs the production matcher against either the user's
+# Stash library OR a pre-built corpus YAML, reporting P@1/P@3/P@10.
+RUN go build -trimpath \
+    -ldflags="-s -w" \
+    -o /out/matcher-bench ./tools/matcher-bench
+
 # ── Runtime stage ──────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/forager /forager
 COPY --from=build /out/build-corpus /build-corpus
+COPY --from=build /out/matcher-bench /matcher-bench
 
 # Persistent SQLite cache. Mount a volume here.
 VOLUME ["/data"]

@@ -29,6 +29,7 @@ plugin/scripts/push.sh
 # via `docker exec forager /build-corpus`. Contains real StashDB scene
 # IDs and personal release-name history; never commit.
 tools/matcher-bench/corpus.yaml
+tools/matcher-bench/*.matcher.failures.csv
 
 # Editor / OS
 .DS_Store
