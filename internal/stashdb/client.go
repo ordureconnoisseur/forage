@@ -1,0 +1,377 @@
+package stashdb
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// Client talks to a StashDB endpoint (default https://stashdb.cc). In
+// the scaffolding phase we only validate the API key at startup; scene
+// search + studio queries arrive with the matcher build step.
+type Client struct {
+	baseURL string
+	apiKey  string
+	http    *http.Client
+}
+
+func New(baseURL, apiKey string) *Client {
+	return &Client{
+		baseURL: strings.TrimRight(baseURL, "/"),
+		apiKey:  apiKey,
+		http:    &http.Client{Timeout: 60 * time.Second},
+	}
+}
+
+type gqlError struct {
+	Message string `json:"message"`
+}
+
+func (c *Client) do(ctx context.Context, query string, vars map[string]any, out any) error {
+	body, err := json.Marshal(map[string]any{"query": query, "variables": vars})
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/graphql", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("ApiKey", c.apiKey)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode != 200 {
+		return fmt.Errorf("stashdb graphql %d: %s", resp.StatusCode, raw)
+	}
+	var wrap struct {
+		Data   json.RawMessage `json:"data"`
+		Errors []gqlError      `json:"errors,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return fmt.Errorf("decode: %w (body=%s)", err, raw)
+	}
+	if len(wrap.Errors) > 0 {
+		return fmt.Errorf("stashdb graphql errors: %+v", wrap.Errors)
+	}
+	if out != nil {
+		if err := json.Unmarshal(wrap.Data, out); err != nil {
+			return fmt.Errorf("decode data: %w", err)
+		}
+	}
+	return nil
+}
+
+// Me returns the authenticated user's name. Used as a low-cost auth
+// probe at boot: a 401/403 here means the API key is wrong, and we'd
+// rather find out before pulling thousands of records.
+func (c *Client) Me(ctx context.Context) (string, error) {
+	var resp struct {
+		Me struct {
+			Name string `json:"name"`
+		} `json:"me"`
+	}
+	if err := c.do(ctx, `{ me { name } }`, nil, &resp); err != nil {
+		return "", err
+	}
+	return resp.Me.Name, nil
+}
+
+// ── Scene types ──────────────────────────────────────────────────────
+//
+// The shapes below are the slim projection the matcher cares about,
+// not the full StashDB Scene type. Add fields as the matcher's scoring
+// layer grows.
+
+type Scene struct {
+	ID         string
+	Title      string
+	Date       string
+	Studio     *SceneStudio
+	Performers []ScenePerformer
+	URLs       []SceneURL
+	Images     []SceneImage
+}
+
+// SceneImage is a single image associated with a scene. StashDB
+// typically returns one or more — the first is conventionally the
+// poster / wide thumbnail (1920×1080 or similar).
+type SceneImage struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+}
+
+type SceneStudio struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type ScenePerformer struct {
+	ID   string `json:"-"`
+	Name string `json:"-"`
+	As   string `json:"as"`
+}
+
+// scenePerformerWire is the GraphQL response shape — the StashDB
+// `performers` field on a scene is a list of `ScenePerformerType`
+// objects, each wrapping the underlying Performer plus an `as` field
+// (the credited stage name on that scene).
+type scenePerformerWire struct {
+	Performer struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"performer"`
+	As string `json:"as"`
+}
+
+type SceneURL struct {
+	URL  string `json:"url"`
+	Type string `json:"-"`
+}
+
+type sceneURLWire struct {
+	URL  string `json:"url"`
+	Site struct {
+		Name string `json:"name"`
+	} `json:"site"`
+}
+
+type sceneWire struct {
+	ID         string               `json:"id"`
+	Title      string               `json:"title"`
+	Date       string               `json:"date"`
+	Studio     *SceneStudio         `json:"studio"`
+	Performers []scenePerformerWire `json:"performers"`
+	URLs       []sceneURLWire       `json:"urls"`
+	Images     []SceneImage         `json:"images"`
+}
+
+func (w sceneWire) toScene() Scene {
+	s := Scene{
+		ID:     w.ID,
+		Title:  w.Title,
+		Date:   w.Date,
+		Studio: w.Studio,
+		Images: w.Images,
+	}
+	for _, p := range w.Performers {
+		s.Performers = append(s.Performers, ScenePerformer{
+			ID:   p.Performer.ID,
+			Name: p.Performer.Name,
+			As:   p.As,
+		})
+	}
+	for _, u := range w.URLs {
+		s.URLs = append(s.URLs, SceneURL{URL: u.URL, Type: u.Site.Name})
+	}
+	return s
+}
+
+const sceneFields = `
+  id
+  title
+  date
+  studio { id name }
+  performers { performer { id name } as }
+  urls { url site { name } }
+  images { url width height }
+`
+
+// ── searchScenes ─────────────────────────────────────────────────────
+
+// SearchScenes hands a release-name-shaped string to StashDB's
+// full-text search and returns the ranked candidates. This is Phase A
+// "Track B" — complementary to the structured QueryScenes path.
+//
+// limit caps the page size (default 25 if ≤ 0). StashDB ranks results
+// by relevance internally; we return them in that order.
+func (c *Client) SearchScenes(ctx context.Context, term string, limit int) ([]Scene, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	q := `
+query ForagerSearchScenes($term: String!, $limit: Int!) {
+  searchScenes(term: $term, limit: $limit) {
+    count
+    scenes {
+      ` + sceneFields + `
+    }
+  }
+}`
+	var resp struct {
+		SearchScenes struct {
+			Count  int         `json:"count"`
+			Scenes []sceneWire `json:"scenes"`
+		} `json:"searchScenes"`
+	}
+	if err := c.do(ctx, q, map[string]any{"term": term, "limit": limit}, &resp); err != nil {
+		return nil, err
+	}
+	out := make([]Scene, 0, len(resp.SearchScenes.Scenes))
+	for _, w := range resp.SearchScenes.Scenes {
+		out = append(out, w.toScene())
+	}
+	return out, nil
+}
+
+// ── queryScenes ──────────────────────────────────────────────────────
+
+// SceneQuery filters StashDB's structured scene index. Empty fields
+// are omitted from the GraphQL input. PerformerIDs uses INCLUDES_ALL
+// semantics (scene must contain *all* listed performers); StudioIDs
+// uses INCLUDES (scene's studio is any of the listed). Date is an
+// exact-match filter — for ±N day windows the caller should call
+// QueryScenes multiple times or omit Date and post-filter.
+type SceneQuery struct {
+	PerformerIDs []string
+	StudioIDs    []string
+	Date         string // YYYY-MM-DD; exact match if non-empty
+	Page         int
+	PerPage      int
+	// Sort overrides the default "DATE" sort. Common values: "DATE",
+	// "TRENDING", "CREATED_AT". Empty falls through to the default.
+	Sort string
+}
+
+// QueryScenesResult is what StashDB returns from queryScenes — the
+// match count plus the paged scene list.
+type QueryScenesResult struct {
+	Count  int
+	Scenes []Scene
+}
+
+const queryScenesGQL = `
+query ForagerQueryScenes($input: SceneQueryInput!) {
+  queryScenes(input: $input) {
+    count
+    scenes {
+      ` + sceneFields + `
+    }
+  }
+}`
+
+// FindScene returns a single scene by its StashDB UUID, or nil if no
+// such scene exists. Used by /scenes/{id}/releases to look up the
+// target scene's title + studio + date before searching Prowlarr.
+func (c *Client) FindScene(ctx context.Context, id string) (*Scene, error) {
+	if id == "" {
+		return nil, nil
+	}
+	q := `
+query ForagerFindScene($id: ID!) {
+  findScene(id: $id) {
+    ` + sceneFields + `
+  }
+}`
+	var resp struct {
+		FindScene *sceneWire `json:"findScene"`
+	}
+	if err := c.do(ctx, q, map[string]any{"id": id}, &resp); err != nil {
+		return nil, err
+	}
+	if resp.FindScene == nil {
+		return nil, nil
+	}
+	s := resp.FindScene.toScene()
+	return &s, nil
+}
+
+// QueryAllScenes loops QueryScenes through every page until the result
+// set is exhausted. Use sparingly — a popular performer can have
+// hundreds of scenes (≥10 round-trips). hardCap stops the loop early
+// for defensive purposes; 0 means no cap.
+func (c *Client) QueryAllScenes(ctx context.Context, q SceneQuery, hardCap int) ([]Scene, error) {
+	if q.PerPage == 0 {
+		q.PerPage = 50
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	var all []Scene
+	for {
+		page := q
+		res, err := c.QueryScenes(ctx, page)
+		if err != nil {
+			return nil, err
+		}
+		if len(res.Scenes) == 0 {
+			break
+		}
+		all = append(all, res.Scenes...)
+		if len(res.Scenes) < q.PerPage {
+			break
+		}
+		if hardCap > 0 && len(all) >= hardCap {
+			all = all[:hardCap]
+			break
+		}
+		q.Page++
+	}
+	return all, nil
+}
+
+func (c *Client) QueryScenes(ctx context.Context, q SceneQuery) (*QueryScenesResult, error) {
+	if q.PerPage == 0 {
+		q.PerPage = 25
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	sort := q.Sort
+	if sort == "" {
+		sort = "DATE"
+	}
+	input := map[string]any{
+		"page":      q.Page,
+		"per_page":  q.PerPage,
+		"sort":      sort,
+		"direction": "DESC",
+	}
+	if len(q.PerformerIDs) > 0 {
+		input["performers"] = map[string]any{
+			"value":    q.PerformerIDs,
+			"modifier": "INCLUDES_ALL",
+		}
+	}
+	if len(q.StudioIDs) > 0 {
+		input["studios"] = map[string]any{
+			"value":    q.StudioIDs,
+			"modifier": "INCLUDES",
+		}
+	}
+	if q.Date != "" {
+		input["date"] = map[string]any{
+			"value":    q.Date,
+			"modifier": "EQUALS",
+		}
+	}
+
+	var resp struct {
+		QueryScenes struct {
+			Count  int         `json:"count"`
+			Scenes []sceneWire `json:"scenes"`
+		} `json:"queryScenes"`
+	}
+	if err := c.do(ctx, queryScenesGQL, map[string]any{"input": input}, &resp); err != nil {
+		return nil, err
+	}
+	out := &QueryScenesResult{Count: resp.QueryScenes.Count}
+	for _, w := range resp.QueryScenes.Scenes {
+		out.Scenes = append(out.Scenes, w.toScene())
+	}
+	return out, nil
+}

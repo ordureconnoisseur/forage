@@ -1,0 +1,174 @@
+package api
+
+import (
+	"context"
+	"database/sql"
+	"net/http"
+	"strings"
+
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
+)
+
+type missingScene struct {
+	StashDBID  string             `json:"stashdb_id"`
+	Title      string             `json:"title"`
+	Date       string             `json:"date,omitempty"`
+	Studio     string             `json:"studio,omitempty"`
+	StudioID   string             `json:"studio_id,omitempty"`
+	Performers []missingPerformer `json:"performers"`
+	URL        string             `json:"url,omitempty"`
+	ImageURL   string             `json:"image_url,omitempty"`
+}
+
+type missingPerformer struct {
+	Name string `json:"name"`
+	As   string `json:"as,omitempty"`
+}
+
+type missingResponse struct {
+	Performer struct {
+		LocalID   string `json:"local_id"`
+		StashDBID string `json:"stashdb_id"`
+		Name      string `json:"name"`
+	} `json:"performer"`
+	TotalScenes int            `json:"total_scenes"`
+	OwnedCount  int            `json:"owned_count"`
+	Missing     []missingScene `json:"missing"`
+}
+
+// getMissingScenes returns the StashDB scenes featuring the given
+// performer that aren't already in the user's local Stash library.
+//
+//	GET /missing-scenes?performer=<local_stash_id>
+//
+// Powers the planned Stash plugin's "Forage" tab on performer pages:
+// show me the gap between "what StashDB knows about this performer"
+// and "what I have."
+func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
+	localID := r.URL.Query().Get("performer")
+	if localID == "" {
+		writeErr(w, http.StatusBadRequest, "performer query param required")
+		return
+	}
+	stashC := s.pool.Stash()
+	stashDBC := s.pool.StashDB()
+	if stashC == nil || stashDBC == nil {
+		writeErr(w, http.StatusServiceUnavailable, "stash and stashdb must be configured (see Settings)")
+		return
+	}
+
+	// 1. Resolve local performer → StashDB cross-id. Without one we
+	// can't query StashDB for the performer's filmography.
+	perf, err := loadPerformerByID(r.Context(), s.db, localID)
+	if err == sql.ErrNoRows {
+		writeErr(w, http.StatusNotFound, "performer not found")
+		return
+	}
+	if err != nil {
+		s.log.Error("performer lookup", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	stashDBPerformerID, err := lookupStashDBPerformerID(r.Context(), s.db, localID)
+	if err != nil {
+		s.log.Error("stashdb cross-id lookup", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	if stashDBPerformerID == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "performer has no StashDB cross-id; can't query StashDB for their filmography")
+		return
+	}
+
+	// 2. Pull every StashDB scene featuring this performer.
+	scenes, err := stashDBC.QueryAllScenes(r.Context(), stashdb.SceneQuery{
+		PerformerIDs: []string{stashDBPerformerID},
+		PerPage:      50,
+	}, 2000) // hardCap — a single performer with 2000+ scenes is pathological
+	if err != nil {
+		s.log.Error("stashdb scenes by performer", "err", err)
+		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
+		return
+	}
+
+	// 3. Pull the scenes the user already has for this performer,
+	// extract their StashDB cross-ids. Build a set for O(1) lookup.
+	owned, err := stashC.FindScenesByPerformer(r.Context(), localID)
+	if err != nil {
+		s.log.Error("stash scenes by performer", "err", err)
+		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
+		return
+	}
+	ownedSet := make(map[string]bool, len(owned))
+	for _, o := range owned {
+		if o.StashDBID != "" {
+			ownedSet[o.StashDBID] = true
+		}
+	}
+
+	// 4. Diff. Anything in `scenes` whose ID isn't in `ownedSet`.
+	missing := make([]missingScene, 0, len(scenes))
+	for _, sc := range scenes {
+		if ownedSet[sc.ID] {
+			continue
+		}
+		missing = append(missing, toMissingScene(sc))
+	}
+
+	out := missingResponse{
+		TotalScenes: len(scenes),
+		OwnedCount:  len(scenes) - len(missing),
+		Missing:     missing,
+	}
+	out.Performer.LocalID = perf.StashID
+	out.Performer.StashDBID = stashDBPerformerID
+	out.Performer.Name = perf.Name
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// lookupStashDBPerformerID reads the local performer's StashDB cross-id
+// from performer_cache. Returns "" if the performer has no cross-id
+// (e.g. only on TPDB or FansDB or never scraped).
+func lookupStashDBPerformerID(ctx context.Context, db *sql.DB, localID string) (string, error) {
+	var sid sql.NullString
+	err := db.QueryRowContext(ctx,
+		`SELECT stashdb_id FROM performer_cache WHERE stash_id = ?`, localID,
+	).Scan(&sid)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !sid.Valid {
+		return "", nil
+	}
+	return strings.TrimSpace(sid.String), nil
+}
+
+func toMissingScene(s stashdb.Scene) missingScene {
+	out := missingScene{
+		StashDBID: s.ID,
+		Title:     s.Title,
+		Date:      s.Date,
+	}
+	if s.Studio != nil {
+		out.Studio = s.Studio.Name
+		out.StudioID = s.Studio.ID
+	}
+	for _, p := range s.Performers {
+		out.Performers = append(out.Performers, missingPerformer{
+			Name: p.Name,
+			As:   p.As,
+		})
+	}
+	if len(s.URLs) > 0 {
+		out.URL = s.URLs[0].URL
+	}
+	if len(s.Images) > 0 {
+		out.ImageURL = s.Images[0].URL
+	}
+	return out
+}
+

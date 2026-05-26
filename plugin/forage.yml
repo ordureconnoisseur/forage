@@ -1,0 +1,9 @@
+name: Forage
+description: Browse StashDB scenes missing from your library by performer; find releases and grab via forager (qBit + SAB).
+version: 0.1.0
+url: https://github.com/ordureconnoisseur/forage-plugin
+ui:
+  assets:
+    /: .
+  javascript:
+    - forage.entry.js

@@ -1,0 +1,16 @@
+forager
+forager.exe
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.err
+.git
+.idea
+.vscode
+.env
+.env.local
+bench-out
+matcher-bench-out
+studio-bench-out
+date-bench-out

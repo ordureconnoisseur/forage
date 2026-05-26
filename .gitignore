@@ -1,0 +1,33 @@
+# forager — runtime state
+data/
+forager.db
+forager.db-shm
+forager.db-wal
+*.db
+*.db-shm
+*.db-wal
+tailscale-state/
+
+# secrets (env layered atop config.json — never commit a real .env)
+.env
+.env.local
+.env.*.local
+
+# Go build artefacts
+/forager
+*.test
+*.prof
+
+# Plugin (Node/Vite)
+plugin/node_modules/
+plugin/dist/
+
+# Personal deploy shortcut — keep your local copy at plugin/scripts/push.sh
+plugin/scripts/push.sh
+
+# Editor / OS
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/

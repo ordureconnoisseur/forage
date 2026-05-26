@@ -1,0 +1,96 @@
+# forager docker-compose template.
+#
+# Copy this to docker-compose.yml and edit the volume mounts to match
+# your environment. Pair with a filled-in .env (see .env.example).
+#
+# The critical thing this file demonstrates: bind-mount ONE filesystem
+# at a single in-container path, and have qBit/SAB's complete-downloads
+# directory AND the library directory both live inside it. That way
+# placement is a metadata-only hardlink — no copying, no double storage,
+# and torrents keep seeding from the staging dir while Stash scans
+# them from the library dir.
+
+services:
+  forager:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-docker}
+    image: forager:latest
+    container_name: forager
+    restart: unless-stopped
+    ports:
+      - "7979:7979"
+    env_file:
+      - .env
+    volumes:
+      # SQLite DB + config.json + backups. Stays in the repo dir.
+      - ./data:/data
+
+      # ─── Pick ONE of the following patterns ─────────────────────
+      #
+      # PATTERN A — local host directory (single-machine setups).
+      # Whatever the path is on your host, mount it at the same in-
+      # container path so qBit/SAB's category save_paths and forager's
+      # FORAGER_LIBRARY_ROOT all agree on layout.
+      #
+      #   - /host/path/to/media:/data/media
+      #
+      # Where /host/path/to/media contains:
+      #   /host/path/to/media/downloads/complete/     ← qBit + SAB write here
+      #   /host/path/to/media/library/                ← FORAGER_LIBRARY_ROOT
+      #
+      # PATTERN B — Docker named volume (NAS / CIFS / NFS).
+      # Define the volume in the `volumes:` block at the bottom of this
+      # file. Useful when forager runs in the same compose stack as the
+      # download clients and they already share a NAS-backed volume —
+      # forager mounts the same volume so paths line up.
+      #
+      #   - media_share:/data/media
+      #
+      # PATTERN C — share with an existing compose stack (advanced).
+      # If your download clients live in a separate compose project,
+      # declare the volume as external and reference the canonical
+      # project-prefixed name:
+      #
+      #   - downloads_share:/data/media
+      #
+      # with the volume defined below as:
+      #
+      #   downloads_share:
+      #     external: true
+      #     name: otherproject_media_share
+
+  # ─── Optional Tailscale sidecar for HTTPS over your tailnet ─────
+  # Stash UIs served over HTTPS can't call HTTP forager endpoints
+  # (mixed-content blocking). Easiest fix is to expose forager via
+  # Tailscale Serve. Uncomment + add a TS_AUTHKEY to .env to enable.
+  #
+  # forage:
+  #   image: tailscale/tailscale:latest
+  #   container_name: forage
+  #   hostname: forage
+  #   environment:
+  #     - TS_AUTHKEY=${TS_AUTHKEY}
+  #     - TS_STATE_DIR=/var/lib/tailscale
+  #     - TS_USERSPACE=false
+  #     - TS_EXTRA_ARGS=--accept-dns=false
+  #   volumes:
+  #     - ./tailscale-state:/var/lib/tailscale
+  #     - /dev/net/tun:/dev/net/tun
+  #   cap_add:
+  #     - net_admin
+  #     - sys_module
+  #   restart: unless-stopped
+  #
+  # After first boot, run inside the container:
+  #   tailscale serve --bg --https=443 http://forager:7979
+  # — and forager is reachable at https://forage.<tailnet>.ts.net.
+
+# volumes:
+#   media_share:
+#     driver: local
+#     driver_opts:
+#       type: cifs
+#       o: "username=${NAS_USER},password=${NAS_PASS},vers=3.0,uid=${PUID},gid=${PGID},iocharset=utf8,file_mode=0664,dir_mode=0775"
+#       device: "//${NAS_SERVER}/${NAS_SHARE}"

@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>forager</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --border: #242938;
+    --text: #d6dae3;
+    --text-dim: #8b93a6;
+    --accent: #6aa6ff;
+    --green: #5fb87a;
+    --amber: #d4a14a;
+    --grey: #595e6b;
+    --shadow: 0 1px 0 rgba(255,255,255,0.04), 0 8px 24px rgba(0,0,0,0.3);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 18px;
+  }
+  header h1 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+  header .meta { color: var(--text-dim); font-size: 12px; }
+  main {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  .controls {
+    display: grid;
+    grid-template-columns: 1fr 140px 110px;
+    gap: 12px;
+    align-items: center;
+    margin-bottom: 24px;
+  }
+  .perf-wrap { position: relative; }
+  input[type="text"], input[type="number"] {
+    width: 100%;
+    padding: 10px 12px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font: inherit;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    padding: 10px 14px;
+    background: var(--accent);
+    color: #0a0d12;
+    border: 0;
+    border-radius: 8px;
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  .perf-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0; right: 0;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 10;
+    box-shadow: var(--shadow);
+    display: none;
+  }
+  .perf-dropdown.visible { display: block; }
+  .perf-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .perf-item:hover, .perf-item.active { background: rgba(106,166,255,0.1); }
+  .perf-item .count { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+  .status { color: var(--text-dim); padding: 8px 0; min-height: 20px; }
+  .release {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 12px;
+    overflow: hidden;
+    display: grid;
+    grid-template-columns: 64px 1fr;
+  }
+  .conf {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    color: #0a0d12;
+    font-size: 16px;
+  }
+  .conf-green { background: var(--green); }
+  .conf-amber { background: var(--amber); }
+  .conf-grey  { background: var(--grey); color: var(--text); }
+  .release-body { padding: 12px 16px; }
+  .rel-title {
+    font-weight: 500;
+    word-break: break-all;
+    margin-bottom: 4px;
+  }
+  .rel-scene {
+    color: var(--text-dim);
+    font-size: 13px;
+    margin-bottom: 6px;
+  }
+  .rel-scene a { color: var(--accent); text-decoration: none; }
+  .rel-scene a:hover { text-decoration: underline; }
+  .rel-meta {
+    color: var(--text-dim);
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    font-variant-numeric: tabular-nums;
+  }
+  .rel-reasons {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--border);
+    color: var(--text-dim);
+    font-size: 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .alt {
+    margin-top: 6px;
+    color: var(--text-dim);
+    font-size: 12px;
+  }
+  .alt summary { cursor: pointer; user-select: none; }
+  .alt .alt-cand {
+    padding: 4px 0;
+    border-top: 1px dotted var(--border);
+    margin-top: 4px;
+  }
+  .alt .alt-cand .conf-inline {
+    display: inline-block;
+    min-width: 38px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+  }
+  .dupes {
+    grid-column: 1 / -1;
+    margin: 0 16px 8px 16px;
+    color: var(--text-dim);
+    font-size: 12px;
+    border-top: 1px dashed var(--border);
+    padding-top: 6px;
+  }
+  .dupes summary { cursor: pointer; user-select: none; padding: 4px 0; }
+  .dupe {
+    padding: 6px 0;
+    border-top: 1px dotted var(--border);
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 8px;
+    align-items: start;
+  }
+  .dupe-title { word-break: break-all; color: var(--text); }
+  .dupe-meta { margin-top: 2px; }
+  .release-body { position: relative; }
+  .grab {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 6px 12px;
+    background: var(--accent);
+    color: #0a0d12;
+    border: 0;
+    border-radius: 6px;
+    font: inherit;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .grab.muted { background: var(--border); color: var(--text); }
+  .grab:disabled { cursor: not-allowed; opacity: 0.7; }
+  .grab.success { background: var(--green); color: #0a0d12; }
+  .grab.failure { background: #c25151; color: #fff; }
+  .grab.tiny { padding: 3px 8px; font-size: 12px; margin-top: 0; }
+  .grab-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .grab-status { color: var(--text-dim); font-size: 12px; }
+
+  /* ── tab nav ──────────────────────────────────────────────── */
+  .tabs {
+    display: flex;
+    gap: 18px;
+    border-bottom: 1px solid var(--border);
+    padding: 0 24px;
+    margin-bottom: 24px;
+  }
+  .tab {
+    background: transparent;
+    border: 0;
+    color: var(--text-dim);
+    padding: 10px 0;
+    cursor: pointer;
+    font: inherit;
+    font-size: 14px;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .view { display: none; }
+  .view.active { display: block; }
+
+  /* ── grabs view ───────────────────────────────────────────── */
+  .totals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    padding: 12px 16px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .totals .t-cell { color: var(--text-dim); }
+  .totals .t-cell strong { color: var(--text); margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .grab-row-item {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 10px;
+    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 12px;
+    align-items: center;
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    background: var(--grey);
+    color: var(--text);
+  }
+  .badge.queued      { background: #595e6b; }
+  .badge.downloading { background: #6aa6ff; color: #0a0d12; }
+  .badge.completed   { background: #777f8e; color: #0a0d12; }
+  .badge.confirmed   { background: var(--green); color: #0a0d12; }
+  .badge.mismatched  { background: var(--amber); color: #0a0d12; }
+  .badge.orphaned    { background: #c25151; color: #fff; }
+  .badge.failed      { background: #c25151; color: #fff; }
+  .grab-row-item .body { min-width: 0; }
+  .grab-row-item .release { font-weight: 500; word-break: break-all; }
+  .grab-row-item .scene-line { color: var(--text-dim); font-size: 13px; margin-top: 4px; }
+  .grab-row-item .scene-line a { color: var(--accent); text-decoration: none; }
+  .grab-row-item .scene-line a:hover { text-decoration: underline; }
+  .grab-row-item .when { color: var(--text-dim); font-size: 12px; white-space: nowrap; text-align: right; }
+  .grab-empty { color: var(--text-dim); font-style: italic; padding: 16px 0; }
+  .empty { color: var(--text-dim); font-style: italic; padding: 8px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>forager</h1>
+  <span class="meta" id="meta">loading…</span>
+</header>
+<nav class="tabs">
+  <button class="tab active" data-tab="search">Search</button>
+  <button class="tab" data-tab="grabs">Grabs <span id="grabs-count" style="opacity:0.6"></span></button>
+</nav>
+<main>
+  <section class="view active" data-view="search">
+    <div class="controls">
+      <div class="perf-wrap">
+        <input type="text" id="perf" placeholder="Type a performer…" autocomplete="off">
+        <div class="perf-dropdown" id="perf-dropdown"></div>
+      </div>
+      <input type="number" id="min-seeders" placeholder="Min seeders" value="0" min="0">
+      <button id="search-btn" disabled>Search</button>
+    </div>
+    <div class="status" id="status"></div>
+    <div id="results"></div>
+  </section>
+  <section class="view" data-view="grabs">
+    <div class="totals" id="totals"></div>
+    <div id="grabs-list"></div>
+  </section>
+</main>
+<script>
+const $ = sel => document.querySelector(sel);
+const perfInput = $('#perf');
+const perfDropdown = $('#perf-dropdown');
+const minSeedersInput = $('#min-seeders');
+const searchBtn = $('#search-btn');
+const statusEl = $('#status');
+const resultsEl = $('#results');
+const metaEl = $('#meta');
+
+let performers = [];
+let selectedPerformer = null;
+let qbitConfigured = false;
+let qbitCategory = '';
+let sabConfigured = false;
+let sabCategory = '';
+
+async function init() {
+  try {
+    const [hz, pf] = await Promise.all([
+      fetch('/healthz').then(r => r.json()),
+      fetch('/performers?sort=scene_count').then(r => r.json()),
+    ]);
+    performers = pf.performers || [];
+    qbitConfigured = !!hz.qbitConfigured;
+    qbitCategory = hz.qbitCategory || '';
+    sabConfigured = !!hz.sabConfigured;
+    sabCategory = hz.sabCategory || '';
+    const bits = [
+      `${performers.length} performers`,
+      `${hz.studioCount} studios`,
+      hz.prowlarrConfigured ? 'prowlarr ready' : 'PROWLARR NOT CONFIGURED',
+      qbitConfigured ? `qbit → ${qbitCategory}` : 'qbit n/a',
+      sabConfigured ? `sab → ${sabCategory}` : 'sab n/a',
+    ];
+    metaEl.textContent = bits.join(' · ');
+    if (!hz.prowlarrConfigured) {
+      statusEl.textContent = 'Set FORAGER_PROWLARR_URL + FORAGER_PROWLARR_API_KEY to enable search.';
+    }
+  } catch (e) {
+    metaEl.textContent = 'failed to load: ' + e.message;
+  }
+}
+
+perfInput.addEventListener('input', renderDropdown);
+perfInput.addEventListener('focus', renderDropdown);
+perfInput.addEventListener('blur', () => setTimeout(() => perfDropdown.classList.remove('visible'), 200));
+
+function renderDropdown() {
+  const q = perfInput.value.trim().toLowerCase();
+  const matches = performers.filter(p => {
+    if (!q) return p.favorite;
+    if (p.name.toLowerCase().includes(q)) return true;
+    return (p.aliases || []).some(a => a.toLowerCase().includes(q));
+  }).slice(0, 30);
+  if (matches.length === 0) {
+    perfDropdown.classList.remove('visible');
+    return;
+  }
+  perfDropdown.innerHTML = matches.map(p =>
+    `<div class="perf-item" data-id="${p.stash_id}" data-name="${escapeHtml(p.name)}">
+       <span>${escapeHtml(p.name)}${p.favorite ? ' ⭐' : ''}</span>
+       <span class="count">${p.scene_count}</span>
+     </div>`
+  ).join('');
+  perfDropdown.classList.add('visible');
+  perfDropdown.querySelectorAll('.perf-item').forEach(el => {
+    el.addEventListener('mousedown', () => selectPerformer(el.dataset.id, el.dataset.name));
+  });
+}
+
+function selectPerformer(id, name) {
+  selectedPerformer = id;
+  perfInput.value = name;
+  perfDropdown.classList.remove('visible');
+  searchBtn.disabled = false;
+}
+
+let currentEvent = null;
+
+searchBtn.addEventListener('click', () => {
+  if (!selectedPerformer) return;
+  // Cancel any in-flight stream.
+  if (currentEvent) {
+    currentEvent.close();
+    currentEvent = null;
+  }
+  const minSeeders = parseInt(minSeedersInput.value, 10) || 0;
+  searchBtn.disabled = true;
+  resultsEl.innerHTML = '';
+  statusEl.textContent = `Searching Prowlarr for "${perfInput.value}"…`;
+  const t0 = Date.now();
+
+  const params = new URLSearchParams({
+    performer: selectedPerformer,
+    min_seeders: String(minSeeders),
+  });
+  const evt = new EventSource('/search?' + params);
+  currentEvent = evt;
+
+  // Per-search state: groups by top-candidate scene_id. Order is
+  // (confidence-bucket, primary-popularity desc): green cards first
+  // ordered by seeders, then amber, then grey. Re-sorted on every
+  // event so phase-2/3 results re-rank correctly.
+  const groups = []; // [{key, releases: [...]}]
+  const groupByKey = new Map();
+  let total = 0;
+  let scored = 0;
+  let nomatchCounter = 0;
+  let refining = null; // {studios:[], scenes:[]} once received
+
+  function tick() {
+    let s = `${scored} scored`;
+    if (total) s = `${scored}/${total} scored`;
+    if (refining) {
+      s += ` · refining (${refining.studios.length} studios, ${refining.scenes.length} scenes)`;
+    }
+    s += ` · ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+    statusEl.textContent = s;
+  }
+
+  function bucketOf(conf) {
+    if (conf >= 0.85) return 0; // green
+    if (conf >= 0.5) return 1; // amber
+    return 2;                  // grey
+  }
+  function groupPrimaryPop(g) {
+    return g.releases[0]?.popularity || 0;
+  }
+  function groupTopConf(g) {
+    let best = 0;
+    for (const r of g.releases) {
+      const c = r.candidates && r.candidates[0] && r.candidates[0].confidence;
+      if (c && c > best) best = c;
+    }
+    return best;
+  }
+
+  function placeIntoGroups(release) {
+    const top = release.candidates && release.candidates[0];
+    const key = top ? top.scene_id : `__nomatch_${nomatchCounter++}`;
+    let g = groupByKey.get(key);
+    if (!g) {
+      g = { key, releases: [release] };
+      groupByKey.set(key, g);
+      groups.push(g);
+    } else {
+      g.releases.push(release);
+    }
+    // Within-group: highest popularity is the primary card.
+    g.releases.sort((a, b) => b.popularity - a.popularity);
+    // Across groups: (confidence-bucket ascending, primary popularity descending).
+    groups.sort((a, b) => {
+      const ba = bucketOf(groupTopConf(a));
+      const bb = bucketOf(groupTopConf(b));
+      if (ba !== bb) return ba - bb;
+      return groupPrimaryPop(b) - groupPrimaryPop(a);
+    });
+    rerender();
+  }
+
+  function rerender() {
+    if (groups.length === 0) {
+      resultsEl.innerHTML = '';
+      return;
+    }
+    resultsEl.innerHTML = groups
+      .map(g => renderRelease(g.releases[0], g.releases.slice(1)))
+      .join('');
+  }
+
+  evt.addEventListener('meta', (e) => {
+    const m = JSON.parse(e.data);
+    total = m.release_count || 0;
+    if (total === 0) {
+      statusEl.textContent = 'No releases.';
+      resultsEl.innerHTML = '<div class="empty">No releases for this performer (or all filtered by min seeders).</div>';
+    } else {
+      tick();
+    }
+  });
+
+  evt.addEventListener('release', (e) => {
+    scored++;
+    const rel = JSON.parse(e.data);
+    placeIntoGroups(rel);
+    tick();
+  });
+
+  evt.addEventListener('refining', (e) => {
+    refining = JSON.parse(e.data);
+    tick();
+  });
+
+  evt.addEventListener('error', (e) => {
+    // Per-release error events carry data; connection errors come as
+    // generic events on evt.onerror.
+    if (e && e.data) {
+      try {
+        const err = JSON.parse(e.data);
+        console.warn('match error', err);
+      } catch (_) { /* connection-level error, ignored here */ }
+    }
+  });
+
+  evt.addEventListener('done', () => {
+    evt.close();
+    currentEvent = null;
+    searchBtn.disabled = false;
+    statusEl.textContent = `${scored} releases · ${groups.length} unique scenes · ${((Date.now() - t0) / 1000).toFixed(1)}s`;
+  });
+
+  evt.onerror = () => {
+    // EventSource fires onerror on both terminal close and transient
+    // failures. If we've already seen 'done', this is benign cleanup.
+    if (currentEvent !== evt) return;
+    evt.close();
+    currentEvent = null;
+    searchBtn.disabled = false;
+    if (scored < total) {
+      statusEl.textContent = `connection lost at ${scored}/${total}`;
+    }
+  };
+});
+
+function renderRelease(r, dupes = []) {
+  const top = (r.candidates || [])[0];
+  const conf = top ? top.confidence : 0;
+  const confClass = conf >= 0.85 ? 'conf-green' : conf >= 0.5 ? 'conf-amber' : 'conf-grey';
+  const confLabel = conf > 0 ? conf.toFixed(2) : '—';
+
+  let sceneLine = '<span class="rel-scene"><em>no match</em></span>';
+  if (top) {
+    const studio = top.studio ? `${escapeHtml(top.studio)} · ` : '';
+    const link = top.url ? `<a href="${escapeHtml(top.url)}" target="_blank" rel="noopener">${escapeHtml(top.title || '(untitled)')}</a>` : escapeHtml(top.title || '(untitled)');
+    sceneLine = `<div class="rel-scene">${studio}${link}${top.date ? ' · ' + top.date : ''}</div>`;
+  }
+
+  const meta = [
+    r.indexer,
+    r.protocol,
+    humanSize(r.size),
+    r.protocol === 'usenet' ? `${r.grabs} grabs` : `${r.seeders} seeders`,
+    r.publish_date ? r.publish_date.slice(0, 10) : '',
+  ].filter(Boolean).join(' · ');
+
+  const reasons = top && top.reasons ? top.reasons.map(escapeHtml).join(' · ') : '';
+  const reasonsLine = reasons ? `<div class="rel-reasons">${reasons}</div>` : '';
+
+  // Alternate candidates (rank 2-3)
+  const alts = (r.candidates || []).slice(1);
+  let altBlock = '';
+  if (alts.length) {
+    altBlock = `<details class="alt"><summary>${alts.length} more candidate${alts.length > 1 ? 's' : ''}</summary>` +
+      alts.map(c => {
+        const link = c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || '(untitled)')}</a>` : escapeHtml(c.title || '(untitled)');
+        return `<div class="alt-cand"><span class="conf-inline">${c.confidence.toFixed(2)}</span> ${link}${c.date ? ' · ' + c.date : ''}${c.studio ? ' · ' + escapeHtml(c.studio) : ''}</div>`;
+      }).join('') +
+      `</details>`;
+  }
+
+  // Grab button: only for torrent releases when qBit is configured.
+  // (Usenet releases go to SABnzbd, which we don't integrate with yet.)
+  const grabRow = renderGrabRow(r, conf, false);
+
+  let dupesBlock = '';
+  if (dupes.length) {
+    dupesBlock = `<details class="dupes"><summary>+${dupes.length} other release${dupes.length > 1 ? 's' : ''} of this scene</summary>` +
+      dupes.map(d => {
+        const dmeta = [
+          d.indexer,
+          d.protocol,
+          humanSize(d.size),
+          d.protocol === 'usenet' ? `${d.grabs} grabs` : `${d.seeders} seeders`,
+        ].filter(Boolean).join(' · ');
+        const dgrab = renderGrabBtn(d, true);
+        return `<div class="dupe">
+          <div>
+            <div class="dupe-title">${escapeHtml(d.title)}</div>
+            <div class="rel-meta dupe-meta">${dmeta}</div>
+          </div>
+          ${dgrab}
+        </div>`;
+      }).join('') +
+      `</details>`;
+  }
+
+  return `<div class="release">
+    <div class="conf ${confClass}">${confLabel}</div>
+    <div class="release-body">
+      <div class="rel-title">${escapeHtml(r.title)}</div>
+      ${sceneLine}
+      <div class="rel-meta">${meta}</div>
+      ${reasonsLine}
+      ${altBlock}
+      ${grabRow}
+    </div>
+    ${dupesBlock}
+  </div>`;
+}
+
+function clientForProtocol(p) {
+  if (p === 'torrent') return qbitConfigured;
+  if (p === 'usenet')  return sabConfigured;
+  return false;
+}
+
+function renderGrabRow(r, conf, tiny) {
+  if (!clientForProtocol(r.protocol) || !r.download_url) return '';
+  const btn = renderGrabBtn(r, tiny);
+  return `<div class="grab-row">${btn}<span class="grab-status" data-grab-status-for="${escapeHtml(r.download_url)}"></span></div>`;
+}
+
+function renderGrabBtn(r, tiny) {
+  if (!clientForProtocol(r.protocol) || !r.download_url) return '';
+  const top = r.candidates && r.candidates[0];
+  const conf = top ? top.confidence : 0;
+  const muted = conf && conf < 0.85 ? ' muted' : '';
+  const cls = `grab${muted}${tiny ? ' tiny' : ''}`;
+  return `<button class="${cls}"
+    data-grab
+    data-download-url="${escapeHtml(r.download_url)}"
+    data-release-title="${escapeHtml(r.title)}"
+    data-release-size="${r.size || 0}"
+    data-release-indexer="${escapeHtml(r.indexer || '')}"
+    data-protocol="${escapeHtml(r.protocol || '')}"
+    data-scene-id="${escapeHtml(top ? top.scene_id : '')}"
+    data-confidence="${conf || 0}"
+  >Grab ↓</button>`;
+}
+
+// Delegated click handler — fires for any .grab button anywhere in
+// the results list (primary or dupe-row).
+resultsEl.addEventListener('click', async (e) => {
+  const btn = e.target.closest('[data-grab]');
+  if (!btn || btn.disabled) return;
+  e.preventDefault();
+  const payload = {
+    download_url: btn.dataset.downloadUrl,
+    release_title: btn.dataset.releaseTitle,
+    release_size: parseInt(btn.dataset.releaseSize, 10) || 0,
+    release_indexer: btn.dataset.releaseIndexer || '',
+    protocol: btn.dataset.protocol || '',
+    scene_id: btn.dataset.sceneId || undefined,
+    confidence: parseFloat(btn.dataset.confidence) || 0,
+  };
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Queueing…';
+  try {
+    const res = await fetch('/grab', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }));
+      throw new Error(err.error || ('HTTP ' + res.status));
+    }
+    const data = await res.json();
+    btn.classList.add('success');
+    btn.textContent = `Queued → ${data.category || ''}`.trim();
+  } catch (err) {
+    btn.classList.add('failure');
+    btn.disabled = false;
+    btn.textContent = `Failed — retry (${err.message})`.slice(0, 60);
+  }
+});
+
+function humanSize(b) {
+  if (!b) return '';
+  const units = ['B', 'K', 'M', 'G', 'T'];
+  let i = 0; let v = b;
+  while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+  return v.toFixed(1) + units[i] + 'B';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ── Tab nav + Grabs view ────────────────────────────────────────────
+let grabsRefreshTimer = null;
+let activeTab = 'search';
+
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+function switchTab(name) {
+  if (name === activeTab) return;
+  activeTab = name;
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+  document.querySelectorAll('.view').forEach(v => v.classList.toggle('active', v.dataset.view === name));
+  if (name === 'grabs') {
+    refreshGrabs();
+    if (!grabsRefreshTimer) {
+      grabsRefreshTimer = setInterval(refreshGrabs, 30000);
+    }
+  } else {
+    if (grabsRefreshTimer) {
+      clearInterval(grabsRefreshTimer);
+      grabsRefreshTimer = null;
+    }
+  }
+}
+
+async function refreshGrabs() {
+  try {
+    const res = await fetch('/grabs?limit=200');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    renderGrabs(data);
+  } catch (e) {
+    document.getElementById('grabs-list').innerHTML = `<div class="grab-empty">failed to load: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderGrabs({ grabs, totals }) {
+  const totalsEl = document.getElementById('totals');
+  const order = ['queued', 'downloading', 'completed', 'confirmed', 'mismatched', 'orphaned', 'failed'];
+  const cells = order.map(k => `<span class="t-cell"><strong>${totals[k] || 0}</strong>${k}</span>`).join('');
+  totalsEl.innerHTML = cells;
+
+  // header chip count
+  const total = order.reduce((acc, k) => acc + (totals[k] || 0), 0);
+  document.getElementById('grabs-count').textContent = total ? `(${total})` : '';
+
+  const list = document.getElementById('grabs-list');
+  if (!grabs || grabs.length === 0) {
+    list.innerHTML = '<div class="grab-empty">No grabs yet. Click Grab on a search result to start one.</div>';
+    return;
+  }
+  list.innerHTML = grabs.map(renderGrabRow).join('');
+}
+
+function renderGrabRow(g) {
+  const badge = `<span class="badge ${g.status}">${g.status}</span>`;
+  const conf = g.predicted_confidence ? ` · conf ${g.predicted_confidence.toFixed(2)}` : '';
+  const predLink = g.predicted_stashdb_id
+    ? `<a href="https://stashdb.org/scenes/${escapeHtml(g.predicted_stashdb_id)}" target="_blank" rel="noopener">predicted scene</a>`
+    : '<em>no prediction</em>';
+  let sceneLine = `<div class="scene-line">${predLink}${conf}`;
+  if (g.status === 'mismatched' && g.actual_stashdb_id) {
+    sceneLine += ` · actual: <a href="https://stashdb.org/scenes/${escapeHtml(g.actual_stashdb_id)}" target="_blank" rel="noopener">${escapeHtml(g.actual_stashdb_id.slice(0, 8))}…</a>`;
+  } else if (g.status === 'confirmed') {
+    sceneLine += ' · ✓ phash confirmed';
+  }
+  if (g.reason) sceneLine += ` · <span style="opacity:0.7">${escapeHtml(g.reason)}</span>`;
+  sceneLine += '</div>';
+
+  const when = g.confirmed_at
+    ? `confirmed ${ago(g.confirmed_at)}`
+    : g.completed_at
+      ? `completed ${ago(g.completed_at)}`
+      : `grabbed ${ago(g.grabbed_at)}`;
+
+  return `<div class="grab-row-item">
+    ${badge}
+    <div class="body">
+      <div class="release">${escapeHtml(g.release_title)}</div>
+      ${sceneLine}
+    </div>
+    <div class="when">${when}</div>
+  </div>`;
+}
+
+function ago(unixSec) {
+  if (!unixSec) return '';
+  const delta = Math.floor(Date.now() / 1000 - unixSec);
+  if (delta < 60) return `${delta}s ago`;
+  if (delta < 3600) return `${Math.floor(delta / 60)}m ago`;
+  if (delta < 86400) return `${Math.floor(delta / 3600)}h ago`;
+  return `${Math.floor(delta / 86400)}d ago`;
+}
+
+init();
+</script>
+</body>
+</html>

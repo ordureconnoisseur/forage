@@ -1,0 +1,465 @@
+// Package poller is the Phase B background loop. It watches qBit for
+// completion of forager-tracked grabs, then watches Stash for the
+// corresponding scene to surface, and records actual-vs-predicted
+// StashDB IDs on each grab.
+//
+// The state machine lives here. internal/grabs.Repo is just storage.
+package poller
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/clientpool"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
+)
+
+// Poller advances grab state machines on a fixed interval. Holds a
+// *clientpool.Pool rather than individual clients so /config saves
+// reach the next tick automatically — every call into a client goes
+// through the pool's atomic accessor.
+type Poller struct {
+	repo     *grabs.Repo
+	pool     *clientpool.Pool
+	log      *slog.Logger
+	interval time.Duration
+	orphan   time.Duration
+}
+
+func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
+	if interval <= 0 {
+		interval = 60 * time.Second
+	}
+	if orphanAfter <= 0 {
+		orphanAfter = 6 * time.Hour
+	}
+	return &Poller{repo: repo, pool: pool, log: log, interval: interval, orphan: orphanAfter}
+}
+
+// Run ticks once at startup then on `interval` until ctx is cancelled.
+// Errors are logged and the loop continues; a single bad tick doesn't
+// kill the poller.
+func (p *Poller) Run(ctx context.Context) {
+	p.log.Info("poller starting", "interval", p.interval, "orphan_after", p.orphan)
+	if err := p.tickOnce(ctx); err != nil {
+		p.log.Error("initial tick", "err", err)
+	}
+	t := time.NewTicker(p.interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			p.log.Info("poller stopping")
+			return
+		case <-t.C:
+			if err := p.tickOnce(ctx); err != nil {
+				p.log.Error("tick", "err", err)
+			}
+		}
+	}
+}
+
+// tickOnce advances every active grab by one step.
+//
+// Step 1 — Enrich qbit_hash for grabs that don't yet have one. We
+// look at qBit's recent additions (filtered by our category) and
+// match against the grab's title-token signature + add-time window.
+//
+// Step 2 — Refresh qBit state for any tracked grab. Status updates:
+// downloading | completed | failed (when qBit no longer knows about it).
+//
+// Step 3 — For completed grabs without an actual_stashdb_id yet,
+// query Stash by filename. If Stash has indexed the file and has a
+// StashDB cross-id for it, set actual_stashdb_id and transition to
+// confirmed (matches prediction) or mismatched (doesn't). If still
+// not in Stash after `orphan_after`, mark orphaned.
+func (p *Poller) tickOnce(ctx context.Context) error {
+	t0 := time.Now()
+	active, err := p.repo.Active(ctx)
+	if err != nil {
+		return err
+	}
+	if len(active) == 0 {
+		return nil
+	}
+
+	// Step 1: enrich qBit grabs without client_ids (qBit's add API
+	// doesn't return the info_hash; we match by recent-additions).
+	// SAB grabs already have client_id set synchronously at /grab time.
+	needsQbitEnrichment := false
+	for _, g := range active {
+		if g.Client == "qbit" && g.ClientID == "" {
+			needsQbitEnrichment = true
+			break
+		}
+	}
+	var recentQbit []qbit.Torrent
+	if qb := p.pool.Qbit(); needsQbitEnrichment && qb != nil {
+		recentQbit, err = qb.ListTorrents(ctx, qbit.ListOpts{
+			Filter: "all", Sort: "added_on", Reverse: true, Limit: 50,
+		})
+		if err != nil {
+			p.log.Warn("list torrents for enrichment", "err", err)
+		}
+	}
+
+	// Pre-fetch SAB queue + history once per tick if we have any SAB
+	// grabs to advance. Both endpoints are cheap; one request each
+	// covers an unbounded number of active SAB grabs.
+	var sabQueue, sabHistory []sabnzbd.Item
+	hasSabActive := false
+	for _, g := range active {
+		if g.Client == "sabnzbd" {
+			hasSabActive = true
+			break
+		}
+	}
+	if sb := p.pool.Sab(); hasSabActive && sb != nil {
+		sabQueue, err = sb.Queue(ctx)
+		if err != nil {
+			p.log.Warn("sab queue fetch", "err", err)
+		}
+		sabHistory, err = sb.History(ctx, 50)
+		if err != nil {
+			p.log.Warn("sab history fetch", "err", err)
+		}
+	}
+
+	// Track hashes already linked so we don't double-assign one qBit
+	// torrent to multiple forager grabs in this tick. (SAB grabs have
+	// their client_id set at insert time, so no collision risk there.)
+	claimed := make(map[string]bool, len(active))
+	for _, g := range active {
+		if g.Client == "qbit" && g.ClientID != "" {
+			claimed[g.ClientID] = true
+		}
+	}
+
+	for i := range active {
+		if err := p.advance(ctx, &active[i], recentQbit, claimed, sabQueue, sabHistory); err != nil {
+			p.log.Warn("advance grab", "id", active[i].ID, "err", err)
+		}
+	}
+
+	p.log.Debug("tick done", "active", len(active), "elapsed", time.Since(t0))
+	return nil
+}
+
+func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment []qbit.Torrent, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item) error {
+	dirty := false
+	// srcPath is the live full filesystem path the client reports for
+	// this grab — qBit's ContentPath, SAB's history Path. Used by the
+	// place step below. Empty when unknown (still queued, or client
+	// no longer tracks it).
+	var srcPath string
+
+	// ── Steps 1 + 2 — client-specific enrichment + state refresh.
+	switch g.Client {
+	case "qbit":
+		d, sp, err := p.advanceQbit(ctx, g, recentForEnrichment, claimed)
+		if err != nil {
+			return err
+		}
+		dirty = dirty || d
+		srcPath = sp
+	case "sabnzbd":
+		d, sp, err := p.advanceSab(g, sabQueue, sabHistory)
+		if err != nil {
+			return err
+		}
+		dirty = dirty || d
+		srcPath = sp
+	default:
+		// Unknown client kind — leave the grab alone, log once.
+		p.log.Warn("unknown grab client", "id", g.ID, "client", g.Client)
+	}
+
+	// ── Step 3 — place the finished download into the library.
+	// Skipped when the placer isn't configured (libraryRoot unset) —
+	// the file stays in the download client's complete dir and Stash
+	// confirmation works against that location instead.
+	pl := p.pool.Placer()
+	if g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" {
+		res, err := pl.Place(srcPath, g.PerformerName)
+		if err != nil {
+			// Don't flip status — stay in "completed" so we retry next
+			// tick. Surface the error so the UI can show it.
+			if g.PlaceError != err.Error() {
+				g.PlaceError = err.Error()
+				g.Reason = "place failed: " + err.Error()
+				dirty = true
+				p.log.Warn("place failed", "id", g.ID, "src", srcPath, "err", err)
+			}
+		} else {
+			g.PlacedPath = res.Path
+			g.PlacedAt = time.Now().Unix()
+			g.PlaceError = ""
+			g.Status = "placed"
+			if res.Mode != "" {
+				g.Reason = "placed via " + res.Mode
+			} else {
+				g.Reason = "place idempotent (already present)"
+			}
+			dirty = true
+			p.log.Info("placed", "id", g.ID, "path", res.Path, "mode", res.Mode)
+		}
+	}
+
+	// ── Step 4 — try to confirm against Stash once the file is in
+	// place (or, if placement is disabled, once the client reports
+	// completion). Stash needs to have scanned the file's location;
+	// FindSceneByPathContains matches on the basename which is the
+	// same for hardlinked + copied files. Skipped when Stash isn't
+	// configured — we'll re-try once credentials are saved.
+	confirmable := g.Status == "placed" || (g.Status == "completed" && !pl.Configured())
+	stashC := p.pool.Stash()
+	if confirmable && g.ActualStashDBID == "" && stashC != nil {
+		needle := g.ClientName
+		if g.PlacedPath != "" {
+			// Prefer the placed-path basename — that's what Stash will
+			// have indexed if the library_root is in Stash's paths.
+			needle = baseName(g.PlacedPath)
+		}
+		if needle != "" {
+			scene, err := stashC.FindSceneByPathContains(ctx, needle)
+			if err != nil {
+				return err
+			}
+			if scene != nil && scene.StashDBID != "" {
+				g.ActualStashDBID = scene.StashDBID
+				g.ConfirmedAt = time.Now().Unix()
+				if scene.StashDBID == g.PredictedStashDBID {
+					g.Status = "confirmed"
+					g.Reason = "stash phash → predicted scene"
+				} else {
+					g.Status = "mismatched"
+					g.Reason = "stash phash → different scene than predicted"
+				}
+				dirty = true
+			} else if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan {
+				g.Status = "orphaned"
+				g.Reason = "placed but never appeared in Stash"
+				dirty = true
+			}
+		}
+	}
+
+	if dirty {
+		return p.repo.Update(ctx, *g)
+	}
+	return nil
+}
+
+// advanceQbit handles the qBit-specific enrichment + state-refresh
+// steps. Returns (dirty, contentPath). contentPath is qBit's full
+// filesystem path for the torrent — passed to the placer when status
+// flips to "completed".
+func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.Torrent, claimed map[string]bool) (bool, string, error) {
+	dirty := false
+	qb := p.pool.Qbit()
+	if qb == nil {
+		return false, "", nil
+	}
+	// Link the info_hash if we don't have it yet (qBit doesn't return
+	// it from /torrents/add).
+	if g.ClientID == "" {
+		if t := pickRecent(recent, g, claimed); t != nil {
+			g.ClientID = t.Hash
+			g.ClientName = t.Name
+			g.Reason = "enriched from qBit recent-additions"
+			claimed[t.Hash] = true
+			dirty = true
+		}
+	}
+	if g.ClientID == "" {
+		return dirty, "", nil
+	}
+	t, err := qb.TorrentInfo(ctx, g.ClientID)
+	if err != nil {
+		return dirty, "", err
+	}
+	if t == nil {
+		if g.Status != "failed" {
+			g.Status = "failed"
+			g.Reason = "qbit no longer tracks this torrent"
+			dirty = true
+		}
+		return dirty, "", nil
+	}
+	if t.Name != "" && t.Name != g.ClientName {
+		g.ClientName = t.Name
+		dirty = true
+	}
+	newStatus := classifyQbitState(t.State)
+	// Don't downgrade "placed" back to "completed" just because qBit
+	// still reports the torrent as seeding (the most common case).
+	if g.Status != "placed" && g.Status != newStatus && newStatus != "" {
+		g.Status = newStatus
+		if newStatus == "completed" && g.CompletedAt == 0 {
+			g.CompletedAt = time.Now().Unix()
+		}
+		g.Reason = "qbit state=" + t.State
+		dirty = true
+	}
+	return dirty, t.ContentPath, nil
+}
+
+// advanceSab handles SAB tracking. SAB grabs already have client_id
+// set at /grab time (mode=addurl returns the nzo_id synchronously),
+// so there's no enrichment step.
+//
+// Lookup precedence: queue first (active downloads), then history
+// (completed/failed). If found in neither it means SAB doesn't know
+// about it — either user removed it or it never made it in, mark
+// failed.
+func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool, string, error) {
+	dirty := false
+	if g.ClientID == "" {
+		// No nzo_id to look up — shouldn't normally happen. Skip.
+		return false, "", nil
+	}
+	if item := findByNzo(queue, g.ClientID); item != nil {
+		if item.Name != "" && item.Name != g.ClientName {
+			g.ClientName = item.Name
+			dirty = true
+		}
+		if g.Status != "downloading" {
+			g.Status = "downloading"
+			g.Reason = "sab status=" + item.Status
+			dirty = true
+		}
+		return dirty, "", nil
+	}
+	if item := findByNzo(history, g.ClientID); item != nil {
+		// Prefer the final on-disk path's basename when available —
+		// that's what Stash will see during a scan.
+		name := item.Name
+		if item.Path != "" {
+			name = baseName(item.Path)
+		}
+		if name != "" && name != g.ClientName {
+			g.ClientName = name
+			dirty = true
+		}
+		switch item.Status {
+		case "Completed":
+			if g.Status != "placed" && g.Status != "completed" {
+				g.Status = "completed"
+				if g.CompletedAt == 0 {
+					g.CompletedAt = time.Now().Unix()
+				}
+				g.Reason = "sab status=Completed"
+				dirty = true
+			} else if g.Status == "completed" && g.CompletedAt == 0 {
+				g.CompletedAt = time.Now().Unix()
+				dirty = true
+			}
+		case "Failed":
+			if g.Status != "failed" {
+				g.Status = "failed"
+				g.Reason = "sab status=Failed"
+				dirty = true
+			}
+		default:
+			// Verifying / Repairing / Extracting / etc. — still
+			// post-processing, treat as in-progress.
+			if g.Status != "downloading" {
+				g.Status = "downloading"
+				g.Reason = "sab status=" + item.Status
+				dirty = true
+			}
+		}
+		return dirty, item.Path, nil
+	}
+	// Not in queue, not in history — SAB has discarded it. Mark
+	// failed unless we already marked it completed/placed (history
+	// can roll over with very large user histories; don't undo
+	// later-stage state).
+	if g.Status != "completed" && g.Status != "placed" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
+		g.Status = "failed"
+		g.Reason = "sab no longer tracks this nzo_id"
+		dirty = true
+	}
+	return dirty, "", nil
+}
+
+func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {
+	for i := range items {
+		if items[i].NzoID == nzoID {
+			return &items[i]
+		}
+	}
+	return nil
+}
+
+func baseName(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' || path[i] == '\\' {
+			return path[i+1:]
+		}
+	}
+	return path
+}
+
+// classifyQbitState was previously classifyState — renamed to make
+// the qBit-specific meaning explicit now that SAB has its own state
+// vocabulary handled in advanceSab.
+func classifyQbitState(state string) string {
+	switch state {
+	case "downloading", "stalledDL", "metaDL", "queuedDL", "checkingDL", "forcedDL", "allocating":
+		return "downloading"
+	case "uploading", "stalledUP", "queuedUP", "checkingUP", "forcedUP", "pausedUP":
+		return "completed"
+	case "missingFiles", "error":
+		return "failed"
+	}
+	// "completed" and other terminal-success states.
+	return "completed"
+}
+
+// pickRecent links a yet-to-be-enriched grab to a qBit torrent.
+//
+// Empirically the qBit internal torrent name (e.g. "BLACKED_RAW_106289_
+// 1080P.mp4") has near-zero token overlap with the curated Prowlarr
+// release title — so token-similarity is unreliable. Instead we use:
+//
+//   - time window (±2 min around grab time, tolerates clock drift)
+//   - category match (must equal grab's configured qBit category)
+//   - not-already-claimed (avoid two grabs grabbing the same torrent)
+//
+// Among candidates we prefer the one added closest to the grab's time.
+// In typical use the user clicks Grab one-at-a-time so the most-recent
+// qBit add in the window is unambiguously theirs.
+func pickRecent(ts []qbit.Torrent, g *grabs.Grab, claimed map[string]bool) *qbit.Torrent {
+	if len(ts) == 0 {
+		return nil
+	}
+	windowStart := g.GrabbedAt - 120
+	windowEnd := time.Now().Unix() + 120
+	var best *qbit.Torrent
+	bestDelta := int64(1<<62 - 1)
+	for i := range ts {
+		t := &ts[i]
+		if t.AddedOn < windowStart || t.AddedOn > windowEnd {
+			continue
+		}
+		if g.Category != "" && t.Category != g.Category {
+			continue
+		}
+		if claimed[t.Hash] {
+			continue
+		}
+		delta := t.AddedOn - g.GrabbedAt
+		if delta < 0 {
+			delta = -delta
+		}
+		if delta < bestDelta {
+			bestDelta = delta
+			best = t
+		}
+	}
+	return best
+}

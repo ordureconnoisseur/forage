@@ -1,0 +1,52 @@
+services:
+  # Tailscale sidecar — joins your tailnet as `forage`, gives forager
+  # an HTTPS endpoint via `tailscale serve` (configured once after
+  # first boot, persists in the tailscale-state volume).
+  #
+  # Mirrors the binge-bypass pattern: forager runs with
+  # network_mode: service:forage and shares this container's network
+  # namespace, so forager's localhost:7979 is visible to `tailscale
+  # serve` here.
+  forage:
+    image: tailscale/tailscale:latest
+    container_name: forage
+    hostname: forage
+    environment:
+      - TS_AUTHKEY=${TS_AUTHKEY}
+      - TS_STATE_DIR=/var/lib/tailscale
+      - TS_USERSPACE=false
+      # No --exit-node: forage only needs inbound HTTPS via tailnet,
+      # not VPN egress.
+      - TS_EXTRA_ARGS=--accept-dns=false
+    volumes:
+      - ./tailscale-state:/var/lib/tailscale
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - net_admin
+      - sys_module
+    restart: unless-stopped
+    # Publish forager's port to the host so the existing standalone UI
+    # at http://mini:7979 still works alongside the new HTTPS endpoint.
+    ports:
+      - "7979:7979"
+
+  forager:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-docker}
+    image: forager:latest
+    container_name: forager
+    restart: unless-stopped
+    # Share network namespace with the tailscale sidecar — forager's
+    # listener becomes `tailscale serve`-able at 127.0.0.1:7979.
+    network_mode: "service:forage"
+    depends_on:
+      - forage
+    volumes:
+      # Bind mount (host path) — OrbStack handles the UID remap so the
+      # distroless nonroot user can read/write here even though the host
+      # directory is owned by the regular user.
+      - ./data:/data
+    env_file:
+      - .env

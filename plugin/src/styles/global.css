@@ -1,0 +1,1531 @@
+/* Forage — design tokens mirror refract's iOS-Liquid-Glass aesthetic
+   (https://github.com/ordureconnoisseur/stash-refract): same Albert
+   Sans variable font, same glass surface semantics, same pink neon
+   heartbeat on favourites. Accent shifts from refract's orange to a
+   leafy green — forage is about gathering things from the wild. */
+
+/* Self-host the variable Albert Sans font that refract bundles.
+   When the plugin is loaded inside Stash, this path resolves to
+   refract's plugin assets (if installed). If refract isn't installed
+   or we're in dev mode, the @font-face just 404s silently and we
+   fall back to system-ui via the stack. */
+@font-face {
+  font-family: "Albert Sans";
+  src: url("/plugin/refract/assets/fonts/AlbertSans-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* Bg / surfaces */
+  --bg-0: #0a0a0a;
+  --bg-1: #111;
+  --text: rgba(255, 255, 255, 0.92);
+  --text-muted: rgba(255, 255, 255, 0.55);
+  --text-dim: rgba(255, 255, 255, 0.45);
+
+  --glass-bg: rgba(255, 255, 255, 0.06);
+  --glass-bg-strong: rgba(255, 255, 255, 0.10);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-border-bright: rgba(255, 255, 255, 0.22);
+  --glass-blur: blur(20px) saturate(140%);
+
+  /* Leafy green — settled forest leaf, not spring shoot. Reads
+     calmer against the dark glass surfaces; hover lifts it brighter. */
+  --accent: #16a34a;
+  --accent-bright: #22c55e;
+  --accent-deep: #14532d;
+  --accent-rgb: 22, 163, 74;
+  --accent-glow: rgba(var(--accent-rgb), 0.32);
+  --accent-glow-wide: rgba(var(--accent-rgb), 0.18);
+  --accent-tint: rgba(var(--accent-rgb), 0.14);
+
+  /* Pink neon heart — inherited verbatim from refract's favourite
+     glow so cards feel consistent when refract is active. */
+  --heart: #f472b6;
+  --heart-rgb: 244, 114, 182;
+
+  --amber: #d4a14a;
+  --red: #ef4444;
+
+  --radius: 16px;
+  --radius-sm: 12px;
+  --radius-pill: 9999px;
+
+  --shadow-sm: 0 2px 10px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.25);
+  --shadow-lg: 0 8px 26px rgba(0, 0, 0, 0.32);
+  --shadow-xl: 0 12px 40px rgba(0, 0, 0, 0.55);
+
+  --font-stack: "Albert Sans", -apple-system, BlinkMacSystemFont, "SF Pro Text",
+    system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  font-family: var(--font-stack);
+  font-size: 14px;
+  line-height: 1.5;
+  letter-spacing: 0.005em;
+  color: var(--text);
+  background:
+    radial-gradient(120% 80% at 20% 0%, rgba(255, 255, 255, 0.04) 0%, transparent 55%),
+    radial-gradient(100% 60% at 100% 30%, rgba(var(--accent-rgb), 0.06) 0%, transparent 50%),
+    linear-gradient(180deg, var(--bg-1) 0%, var(--bg-0) 100%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+a {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+/* ── App shell ───────────────────────────────────────────────── */
+
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  padding: 14px 24px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  background: rgba(10, 10, 10, 0.65);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border-bottom: 1px solid var(--glass-border);
+}
+.brand {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.brand-icon {
+  width: 22px;
+  height: 22px;
+  display: inline-block;
+  color: var(--accent);
+  filter: drop-shadow(0 0 6px var(--accent-glow));
+}
+.brand-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+.breadcrumb {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.breadcrumb a { color: var(--text-muted); }
+.breadcrumb a:hover { color: var(--text); text-decoration: none; }
+.breadcrumb .sep { margin: 0 8px; opacity: 0.6; }
+
+/* Top-nav lives in the header next to the brand. Highlights the
+   currently-active top-level section (Performers vs Grabs) with the
+   leafy accent so the user always knows which view they're in. */
+.top-nav {
+  display: flex;
+  gap: 4px;
+  margin-left: 8px;
+}
+.top-nav a {
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.top-nav a:hover {
+  color: var(--text);
+  text-decoration: none;
+  background: var(--glass-bg);
+}
+.top-nav a.active {
+  color: var(--accent-bright);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+
+.app-main {
+  flex: 1;
+  max-width: 1280px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 28px 24px 64px 24px;
+}
+
+.empty {
+  padding: 32px 0;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.empty.error {
+  color: var(--red);
+  font-style: normal;
+}
+
+/* ── Section headers ─────────────────────────────────────────── */
+
+.page-header { margin-bottom: 24px; }
+.page-header h2 {
+  margin: 0 0 8px 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.page-header .meta { color: var(--text-muted); font-size: 13px; }
+
+.section-header {
+  margin: 28px 0 12px 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.section-header.collapsible {
+  cursor: pointer;
+  user-select: none;
+}
+
+/* ── Controls (filter input, etc.) ───────────────────────────── */
+
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 24px;
+  flex-wrap: wrap;
+}
+.controls input[type="text"] {
+  flex: 1;
+  min-width: 220px;
+  max-width: 400px;
+  padding: 10px 14px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  font: inherit;
+}
+.controls input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.controls .check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  user-select: none;
+  font-size: 13px;
+}
+.sort-select,
+.discover-days {
+  padding: 9px 12px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+.sort-select:focus,
+.discover-days:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.controls .count {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+
+/* ── PerformersList ─────────────────────────────────────────── */
+
+.performer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
+}
+.performer-card {
+  text-align: left;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 0;
+  color: var(--text);
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  display: flex;
+  flex-direction: column;
+}
+.performer-card:hover {
+  border-color: var(--glass-border-bright);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.performer-card.fav {
+  /* Pink halo bleeding inward from the heart in the top-right corner.
+     Matches refract's `:has(.favorite-button.favorite)` card-level glow
+     but baked into the .fav modifier since we own the markup here. */
+  background:
+    radial-gradient(120% 100% at 100% 0%, rgba(var(--heart-rgb), 0.12) 0%, transparent 55%),
+    var(--glass-bg);
+  border-color: rgba(var(--heart-rgb), 0.28);
+}
+.performer-card.fav:hover {
+  border-color: rgba(var(--heart-rgb), 0.5);
+  box-shadow:
+    0 0 0 1px rgba(var(--heart-rgb), 0.15),
+    var(--shadow-lg);
+}
+.perf-image {
+  aspect-ratio: 3 / 4;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
+  position: relative;
+  overflow: hidden;
+}
+.perf-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* Pink neon heart for favourites — same colour, same dual-drop-shadow
+   stack, same heartbeat keyframes as refract (css/03_cards.css), so a
+   refract user reads the visual language without any cognitive shift.
+   The sparkle pseudo is the same idea too, scoped to hover. */
+.heart-icon {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 22px;
+  height: 22px;
+  color: var(--heart);
+  filter:
+    drop-shadow(0 0 6px rgba(var(--heart-rgb), 0.85))
+    drop-shadow(0 0 14px rgba(var(--heart-rgb), 0.45));
+  animation: forageHeartbeat 1.2s ease-in-out infinite;
+  transform-origin: center center;
+  pointer-events: none;
+  z-index: 2;
+}
+.heart-icon svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+.heart-icon::before {
+  content: "";
+  position: absolute;
+  inset: -14px;
+  background-image:
+    radial-gradient(circle 1.5px at 12% 22%, rgba(255, 255, 255, 1), transparent 60%),
+    radial-gradient(circle 2px   at 85% 18%, rgba(var(--heart-rgb), 0.95), transparent 60%),
+    radial-gradient(circle 1.2px at 50% 5%,  rgba(255, 255, 255, 0.95), transparent 60%),
+    radial-gradient(circle 1.5px at 90% 75%, rgba(255, 255, 255, 0.9), transparent 60%),
+    radial-gradient(circle 1.8px at 8% 80%,  rgba(var(--heart-rgb), 0.9), transparent 60%),
+    radial-gradient(circle 1.2px at 55% 95%, rgba(255, 255, 255, 0.85), transparent 60%);
+  opacity: 0;
+  pointer-events: none;
+}
+.performer-card:hover .heart-icon::before {
+  animation: forageHeartSparkle 1.4s ease-in-out infinite;
+}
+@keyframes forageHeartbeat {
+  0%, 100% { transform: scale(1); }
+  14%      { transform: scale(1.16); }
+  28%      { transform: scale(0.96); }
+  42%      { transform: scale(1.1); }
+  56%      { transform: scale(1); }
+}
+@keyframes forageHeartSparkle {
+  0%, 100% { opacity: 0; transform: scale(0.8); }
+  20%, 80% { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .heart-icon {
+    animation: none;
+  }
+  .performer-card:hover .heart-icon::before {
+    animation: none;
+  }
+}
+
+.perf-info {
+  padding: 12px 14px;
+}
+.perf-info .name {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.perf-info .meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── MissingScenes ───────────────────────────────────────────── */
+
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+.scene-card {
+  text-align: left;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 0;
+  color: var(--text);
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  display: flex;
+  flex-direction: column;
+}
+.scene-card:hover {
+  border-color: var(--glass-border-bright);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-lg);
+}
+.scene-thumb {
+  aspect-ratio: 16 / 9;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
+  position: relative;
+  overflow: hidden;
+}
+.scene-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.scene-info {
+  padding: 12px 14px 14px 14px;
+}
+.scene-info .title {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  margin-bottom: 4px;
+  line-height: 1.35;
+  /* Clamp to 2 lines */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.scene-info .meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+.scene-info .performers {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── SceneReleases hero ───────────────────────────────────────── */
+
+.scene-hero {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) 2fr;
+  gap: 24px;
+  margin-bottom: 32px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+.scene-hero-img {
+  width: 100%;
+  height: 100%;
+  min-height: 200px;
+  object-fit: cover;
+  display: block;
+}
+.scene-hero-info {
+  padding: 24px 28px 24px 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 8px;
+}
+.scene-hero-info h2 {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.scene-hero-info .meta { color: var(--text-muted); font-size: 13px; }
+@media (max-width: 720px) {
+  .scene-hero {
+    grid-template-columns: 1fr;
+  }
+  .scene-hero-info {
+    padding: 16px 20px 20px 20px;
+  }
+}
+
+/* ── Release list ────────────────────────────────────────────── */
+
+.release-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.release {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 16px;
+  align-items: center;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 14px 18px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Confidence outline — five-tier gradient meter. The matcher emits
+   a 0..1 score per verified release; we band so at-a-glance you can
+   pick the safest grab without reading the numeric. Banding (best→worst):
+     conf-1 ≥ .70  bright leafy green + glow
+     conf-2 ≥ .55  leaf green
+     conf-3 ≥ .40  lime / olive (the green→amber pivot)
+     conf-4 ≥ .25  amber
+     conf-5 < .25  red-clay
+   Only applied to verified releases — the unverified section already
+   labels itself, so its rows stay neutral glass. */
+.release::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+  transition: background 0.2s ease;
+}
+
+.release.conf-1 {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  box-shadow:
+    0 0 0 1px rgba(var(--accent-rgb), 0.22),
+    0 4px 18px rgba(var(--accent-rgb), 0.14);
+}
+.release.conf-1::before {
+  background: linear-gradient(180deg, var(--accent-bright), var(--accent));
+  box-shadow: 0 0 12px rgba(var(--accent-rgb), 0.6);
+}
+
+.release.conf-2 {
+  border-color: rgba(var(--accent-rgb), 0.3);
+}
+.release.conf-2::before {
+  background: var(--accent);
+}
+
+/* Olive / lime — the colour shift that says "we're leaving green
+   territory now." Lime-600 (#65a30d) reads as cautious but still
+   plant-y, keeping the forage palette coherent. */
+.release.conf-3 {
+  border-color: rgba(132, 204, 22, 0.3);
+}
+.release.conf-3::before {
+  background: #84cc16;
+}
+
+.release.conf-4 {
+  border-color: rgba(212, 161, 74, 0.32);
+}
+.release.conf-4::before {
+  background: var(--amber);
+}
+
+.release.conf-5 {
+  border-color: rgba(184, 84, 84, 0.32);
+}
+.release.conf-5::before {
+  background: #b85454;
+}
+.release-title {
+  font-weight: 500;
+  word-break: break-all;
+  margin-bottom: 4px;
+}
+.release-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.grab-btn {
+  padding: 9px 16px;
+  background: var(--accent);
+  color: #0a0a0a;
+  border: 0;
+  border-radius: var(--radius-pill);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15), 0 4px 14px var(--accent-glow);
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+.grab-btn:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.15), 0 6px 20px var(--accent-glow);
+}
+.grab-btn:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.grab-btn.queued {
+  /* Once queued, drop to a darker forest-green so the bright leafy
+     "Grab" call-to-action stays distinct in a list of mixed states. */
+  background: var(--accent-deep);
+  color: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.2), 0 4px 14px rgba(22, 163, 74, 0.32);
+}
+.grab-btn.error {
+  background: var(--red);
+  color: #fff;
+}
+
+/* ── Header settings + banner ─────────────────────────────────── */
+
+.header-settings {
+  margin-left: auto;
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
+  font-size: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  padding: 0;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.header-settings svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  transition: transform 0.4s ease;
+}
+.header-settings:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+.header-settings:hover svg {
+  transform: rotate(45deg);
+}
+
+.banner {
+  margin: 0;
+  padding: 10px 24px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.banner-warn {
+  background: rgba(212, 161, 74, 0.12);
+  color: var(--amber);
+}
+.banner-setup {
+  background: rgba(var(--accent-rgb), 0.10);
+  color: var(--accent-bright);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid rgba(var(--accent-rgb), 0.25);
+}
+.banner-action {
+  background: var(--accent);
+  color: #0a0a0a;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 5px 14px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* ── Settings modal ───────────────────────────────────────────── */
+
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.settings-panel {
+  background: rgba(20, 20, 24, 0.97);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 28px;
+  width: 100%;
+  max-width: 560px;
+  box-shadow: var(--shadow-xl);
+}
+.settings-panel h2 {
+  margin: 0 0 10px 0;
+  font-size: 20px;
+  font-weight: 600;
+}
+.settings-explain {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin: 0 0 14px 0;
+  line-height: 1.55;
+}
+.settings-warn {
+  background: rgba(212, 161, 74, 0.12);
+  color: var(--amber);
+  border: 1px solid rgba(212, 161, 74, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+  font-size: 12px;
+  margin-bottom: 14px;
+}
+.settings-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 20px;
+}
+.settings-row span {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.settings-row input {
+  padding: 11px 14px;
+  background: var(--bg-0);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+.settings-row input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-bottom: 10px;
+}
+.settings-cancel {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  padding: 9px 18px;
+  font-weight: 500;
+}
+.settings-save {
+  background: var(--accent);
+  color: #0a0a0a;
+  border: 0;
+  border-radius: var(--radius-pill);
+  padding: 9px 18px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.settings-save:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.settings-tip {
+  font-size: 12px;
+  color: var(--text-dim);
+  margin: 6px 0 0 0;
+}
+
+/* ── Sectioned Settings (config-store rewrite, 2026-05-26) ────── */
+
+/* Wider modal needed once the panel turned into a multi-section form
+   instead of the single-URL input it used to be. Cap at 720px so it
+   stays readable on small screens. */
+.settings-panel.wide {
+  max-width: 720px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 24px 28px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.settings-head h2 {
+  margin: 0;
+}
+.settings-close {
+  background: transparent;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 24px;
+  line-height: 1;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+.settings-close:hover {
+  color: var(--text);
+  background: var(--glass-bg);
+}
+
+.settings-section {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.settings-section.open {
+  background: var(--glass-bg);
+}
+.settings-section-head {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.settings-section-head .caret {
+  color: var(--text-muted);
+  font-size: 10px;
+  width: 12px;
+}
+.settings-section-head .title {
+  flex: 1;
+}
+.settings-section-body {
+  padding: 4px 16px 18px 16px;
+}
+.settings-section .settings-row {
+  margin-bottom: 14px;
+}
+.settings-section .settings-row-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-section .settings-row-input input {
+  flex: 1;
+  padding: 9px 12px;
+}
+.settings-subhead {
+  margin: 18px 0 8px 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Secret input: password field + show/hide toggle on the right. */
+.secret-input {
+  flex: 1;
+  display: flex;
+  gap: 6px;
+}
+.secret-input input {
+  flex: 1;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.02em;
+}
+.secret-toggle {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  padding: 0 12px;
+  font-size: 11px;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.secret-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* Source badge: tiny chip that shows "env" when a hand-edited .env
+   value is overriding the JSON-config layer. Silent for json + default
+   sources — those are the boring cases. */
+.source-badge {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: rgba(212, 161, 74, 0.18);
+  color: var(--amber);
+  border: 1px solid rgba(212, 161, 74, 0.3);
+  white-space: nowrap;
+}
+
+/* Probe chip on a section header: green check / red cross next to the
+   section title once Test has been clicked. */
+.probe-chip {
+  font-size: 13px;
+  font-weight: 700;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+.probe-chip.ok {
+  background: rgba(var(--accent-rgb), 0.2);
+  color: var(--accent-bright);
+}
+.probe-chip.err {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.settings-actions.inline {
+  margin: 4px 0 0 0;
+  justify-content: flex-start;
+}
+.settings-test {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-test:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+.settings-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 16px;
+  border-top: 1px solid var(--glass-border);
+  position: sticky;
+  bottom: -24px;
+  margin: 16px -28px -24px -28px;
+  padding: 16px 28px;
+  background: rgba(20, 20, 24, 0.95);
+  backdrop-filter: var(--glass-blur);
+}
+.settings-msg {
+  margin-right: auto;
+  font-size: 12px;
+}
+.settings-msg.ok {
+  color: var(--accent-bright);
+}
+.settings-msg.err {
+  color: #fca5a5;
+}
+.settings-save.force {
+  background: rgba(212, 161, 74, 0.85);
+  color: #0a0a0a;
+  box-shadow: 0 4px 14px rgba(212, 161, 74, 0.32);
+}
+
+/* ── GrabsList ─────────────────────────────────────────────────── */
+
+/* Per-status colour palette — keys off the poller's state machine.
+   Greens for success (placed, confirmed), amber for in-flight,
+   red-ish for failure modes. Each chip + badge + row-left-stripe
+   reads from these tokens so the palette stays consistent. */
+:root {
+  --status-queued: rgba(255, 255, 255, 0.5);
+  --status-queued-bg: rgba(255, 255, 255, 0.08);
+  --status-downloading: #d4a14a;
+  --status-downloading-bg: rgba(212, 161, 74, 0.18);
+  --status-completed: #84cc16;
+  --status-completed-bg: rgba(132, 204, 22, 0.18);
+  --status-placed: var(--accent-bright);
+  --status-placed-bg: rgba(var(--accent-rgb), 0.18);
+  --status-confirmed: var(--accent-bright);
+  --status-confirmed-bg: rgba(var(--accent-rgb), 0.22);
+  --status-mismatched: #f59e0b;
+  --status-mismatched-bg: rgba(245, 158, 11, 0.18);
+  --status-orphaned: #d4a14a;
+  --status-orphaned-bg: rgba(212, 161, 74, 0.18);
+  --status-failed: #ef4444;
+  --status-failed-bg: rgba(239, 68, 68, 0.18);
+}
+
+.grab-chip-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 20px 0;
+}
+.grab-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+}
+.grab-chip:hover {
+  color: var(--text);
+  border-color: var(--glass-border-bright);
+}
+.grab-chip .chip-label {
+  text-transform: lowercase;
+  font-weight: 500;
+}
+.grab-chip .chip-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 1px 8px;
+  border-radius: var(--radius-pill);
+  color: var(--text);
+}
+
+/* Active filter chip: thicker outline + chip's status colour. */
+.grab-chip.active {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+.grab-chip.chip-queued.active     { border-color: var(--status-queued);     background: var(--status-queued-bg);     color: var(--text); }
+.grab-chip.chip-downloading.active{ border-color: var(--status-downloading);background: var(--status-downloading-bg);color: var(--status-downloading); }
+.grab-chip.chip-completed.active  { border-color: var(--status-completed);  background: var(--status-completed-bg);  color: var(--status-completed); }
+.grab-chip.chip-placed.active     { border-color: var(--status-placed);     background: var(--status-placed-bg);     color: var(--status-placed); }
+.grab-chip.chip-confirmed.active  { border-color: var(--status-confirmed);  background: var(--status-confirmed-bg);  color: var(--status-confirmed); }
+.grab-chip.chip-mismatched.active { border-color: var(--status-mismatched); background: var(--status-mismatched-bg); color: var(--status-mismatched); }
+.grab-chip.chip-orphaned.active   { border-color: var(--status-orphaned);   background: var(--status-orphaned-bg);   color: var(--status-orphaned); }
+.grab-chip.chip-failed.active     { border-color: var(--status-failed);     background: var(--status-failed-bg);     color: var(--status-failed); }
+
+.grab-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.grab-row {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  position: relative;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.grab-row:hover {
+  border-color: var(--glass-border-bright);
+}
+.grab-row.open {
+  background: rgba(255, 255, 255, 0.04);
+}
+.grab-row::before {
+  /* Left-edge accent stripe coloured by status — same pattern as the
+     confidence outline on releases, makes status scannable from far. */
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+}
+.grab-row.status-queued::before     { background: var(--status-queued); }
+.grab-row.status-downloading::before{ background: var(--status-downloading); }
+.grab-row.status-completed::before  { background: var(--status-completed); }
+.grab-row.status-placed::before     { background: var(--status-placed); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.55); }
+.grab-row.status-confirmed::before  { background: linear-gradient(180deg, var(--accent-bright), var(--accent)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); }
+.grab-row.status-mismatched::before { background: var(--status-mismatched); }
+.grab-row.status-orphaned::before   { background: var(--status-orphaned); }
+.grab-row.status-failed::before     { background: var(--status-failed); }
+
+.grab-row-head {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  padding: 12px 16px 12px 22px;
+  display: grid;
+  grid-template-columns: 96px 1fr 16px;
+  gap: 12px;
+  align-items: center;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+}
+.grab-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: lowercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.grab-status-badge.chip-queued     { background: var(--status-queued-bg);     color: var(--text-muted); }
+.grab-status-badge.chip-downloading{ background: var(--status-downloading-bg);color: var(--status-downloading); }
+.grab-status-badge.chip-completed  { background: var(--status-completed-bg);  color: var(--status-completed); }
+.grab-status-badge.chip-placed     { background: var(--status-placed-bg);    color: var(--status-placed); }
+.grab-status-badge.chip-confirmed  { background: var(--status-confirmed-bg); color: var(--status-confirmed); }
+.grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
+.grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }
+.grab-status-badge.chip-failed     { background: var(--status-failed-bg);    color: var(--status-failed); }
+
+.grab-row-body {
+  min-width: 0;
+}
+.grab-title {
+  font-weight: 500;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 3px;
+}
+.grab-meta {
+  color: var(--text-muted);
+  font-size: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.grab-meta .sep {
+  opacity: 0.5;
+}
+.grab-caret {
+  color: var(--text-dim);
+  font-size: 10px;
+  text-align: center;
+}
+
+.grab-row-detail {
+  border-top: 1px solid var(--glass-border);
+  padding: 14px 16px 16px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.detail-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 12px;
+  font-size: 12px;
+  align-items: baseline;
+}
+.detail-label {
+  color: var(--text-muted);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+}
+.detail-value {
+  color: var(--text);
+  word-break: break-word;
+}
+.detail-value code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  background: var(--bg-0);
+  border: 1px solid var(--glass-border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.detail-value .sep {
+  opacity: 0.5;
+  margin: 0 6px;
+}
+.detail-value .muted {
+  color: var(--text-muted);
+}
+.detail-row.err .detail-value {
+  color: #fca5a5;
+}
+.detail-row.warn .detail-value {
+  color: var(--status-mismatched);
+}
+
+/* ── Discover view ─────────────────────────────────────────────── */
+
+/* Discover cards reuse .scene-card from MissingScenes for layout +
+   thumb styling. The added piece is the .perf-chips row inside
+   .scene-info — clickable chips for each library performer in the
+   scene. Clicking a chip navigates to that performer's missing-scenes
+   view (see DiscoverList.onPickPerformer → App.goPerformer). */
+
+.discover-card {
+  /* Discover cards aren't buttons (the whole card opens StashDB),
+     but the chips inside ARE buttons. Override the all-button hover
+     transform so it doesn't shift on chip hover. */
+  cursor: default;
+}
+.discover-card .scene-thumb {
+  display: block;
+  text-decoration: none;
+}
+.discover-card:hover {
+  /* Use chip-style border highlight on hover instead of the lift the
+     button-style .scene-card uses, since the card itself isn't
+     clickable as a unit. */
+  border-color: var(--glass-border-bright);
+  transform: none;
+  box-shadow: var(--shadow-md);
+}
+
+.perf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.perf-chip {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  border-radius: var(--radius-pill);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+  white-space: nowrap;
+}
+.perf-chip:hover {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
+.perf-chip.fav {
+  /* Inherit the pink heart treatment from the performer-card.fav
+     pattern, scaled down to chip size. The "♥" in the label is the
+     heart glyph — colour-coded here. */
+  color: var(--heart);
+  border-color: rgba(var(--heart-rgb), 0.4);
+  background: rgba(var(--heart-rgb), 0.08);
+}
+.perf-chip.fav:hover {
+  border-color: var(--heart);
+  background: rgba(var(--heart-rgb), 0.18);
+  color: var(--heart);
+}
+
+.trending-section {
+  margin-bottom: 32px;
+}
+.trending-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+.trending-head .section-header {
+  flex: 1;
+  margin: 0;
+}
+.trending-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+}
+.trending-meta .muted {
+  color: var(--text-dim);
+}
+.section-header.from-your-performers {
+  margin-top: 8px;
+}
+
+/* ── Trending carousel ──────────────────────────────────────────
+   Single-row strip of compact cards with chevron pagination — no
+   native scrolling so it looks like a deliberate carousel and not a
+   wide overflow. Each chevron click translates the track by one
+   viewport, snapping the final (partial) page. */
+
+.trending-carousel {
+  display: grid;
+  grid-template-columns: 40px 1fr 40px;
+  align-items: stretch;
+  gap: 12px;
+}
+.carousel-row {
+  display: flex;
+  gap: 12px;
+  /* Centre when the page has fewer than 5 cards (final partial page).
+     With 5 explicitly-sized cards filling the row, this is a no-op. */
+  justify-content: center;
+}
+.carousel-chev {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-sm);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.carousel-chev:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.10);
+}
+.carousel-chev:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Compact card variant — image + title + meta + a single primary
+   library-performer chip. Width = (row - 4 gaps) / 5 so exactly 5
+   cards fill the strip regardless of viewport width. The partial
+   final page is centred via .carousel-row justify-content. */
+.trending-card {
+  flex: 0 0 calc((100% - 48px) / 5);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.trending-card:hover {
+  border-color: var(--glass-border-bright);
+  box-shadow: var(--shadow-md);
+}
+.trending-card .scene-thumb {
+  aspect-ratio: 16 / 9;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
+  position: relative;
+  overflow: hidden;
+  display: block;
+  text-decoration: none;
+}
+.trending-card .scene-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.trending-card-body {
+  padding: 8px 10px 10px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+.trending-card-title {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.trending-card-meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.trending-card .perf-chip {
+  align-self: flex-start;
+  margin-top: 2px;
+  font-size: 10px;
+  padding: 2px 8px;
+}
+
+/* ── Performer hovercard ──────────────────────────────────────────
+   Rendered via portal into <body> with position: fixed so it escapes
+   any overflow:hidden ancestor (notably the trending carousel
+   viewport). 250ms open delay on the chip prevents flicker on quick
+   pointer passes. */
+.perf-hovercard {
+  position: fixed;
+  z-index: 200;
+  background: rgba(18, 18, 22, 0.96);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-xl);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  overflow: hidden;
+  pointer-events: none;  /* purely informational — hovering it shouldn't keep it open */
+  /* Opacity-only fade — anything that touches transform here would
+     conflict with the inline `translateY(-100%)` set by the flip-above
+     logic in PerformerHovercard, causing a visible jump on appear. */
+  animation: hovercard-in 0.14s ease-out;
+}
+@keyframes hovercard-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.perf-hovercard-img {
+  aspect-ratio: 3 / 4;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
+  position: relative;
+  overflow: hidden;
+}
+.perf-hovercard-img img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.perf-hovercard-fav {
+  margin-left: 6px;
+  color: var(--heart);
+  font-size: 13px;
+  filter:
+    drop-shadow(0 0 4px rgba(var(--heart-rgb), 0.85))
+    drop-shadow(0 0 10px rgba(var(--heart-rgb), 0.45));
+}
+.perf-hovercard-body {
+  padding: 10px 12px 12px 12px;
+}
+.perf-hovercard-name {
+  font-weight: 600;
+  font-size: 14px;
+  margin-bottom: 6px;
+  display: inline-flex;
+  align-items: baseline;
+}
+.perf-hovercard-stats {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: 12px;
+}
+.perf-hovercard-stats dt {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.perf-hovercard-stats dd {
+  margin: 0;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
