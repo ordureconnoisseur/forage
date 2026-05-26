@@ -144,7 +144,7 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if sc := s.pool.Stash(); sc != nil {
 				_ = cache.RefreshPerformers(ctx, sc, s.db, s.log.With("op", "performers", "trigger", "config-save"))
-				_ = cache.RefreshStudios(ctx, sc, s.db, s.log.With("op", "studios", "trigger", "config-save"))
+				_ = cache.RefreshStudios(ctx, sc, s.pool.StashDB(), s.db, s.log.With("op", "studios", "trigger", "config-save"))
 			}
 		}()
 	}

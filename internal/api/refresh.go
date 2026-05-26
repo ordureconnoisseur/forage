@@ -35,7 +35,7 @@ func (s *Server) postRefresh(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "performer refresh: "+err.Error())
 		return
 	}
-	if err := cache.RefreshStudios(ctx, stashC, s.db, s.log.With("op", "studios")); err != nil {
+	if err := cache.RefreshStudios(ctx, stashC, s.pool.StashDB(), s.db, s.log.With("op", "studios")); err != nil {
 		s.log.Error("studio refresh failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "studio refresh: "+err.Error())
 		return

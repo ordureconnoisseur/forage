@@ -6,24 +6,47 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/stash"
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
 const metaKeyStudioRefreshed = "studio_refreshed_at"
 
-// RefreshStudios pulls every studio from local Stash. Studios in Stash
-// already include alias_list (sourced from StashDB/FansDB on scrape),
-// which is what the matcher will scan against — no separate StashDB
-// pull is needed in this phase.
-func RefreshStudios(ctx context.Context, sc *stash.Client, db *sql.DB, log *slog.Logger) error {
+// RefreshStudios pulls every studio from local Stash, then enriches
+// each studio's alias list with StashDB's current view (which can be
+// fresher than Stash's locally-scraped copy) plus its parent studio's
+// name. The parent inclusion closes the LegalPorno → American Anal
+// matcher failure mode: release names that mention the parent studio
+// will match scenes catalogued under the child.
+//
+// sdb may be nil — when so, the StashDB enrichment is skipped and the
+// cache holds the Stash-side aliases only.
+func RefreshStudios(ctx context.Context, sc *stash.Client, sdb *stashdb.Client, db *sql.DB, log *slog.Logger) error {
 	start := time.Now().Unix()
 	log.Info("studio refresh starting")
 
 	studios, err := sc.FindStudios(ctx)
 	if err != nil {
 		return fmt.Errorf("fetch studios: %w", err)
+	}
+
+	// Bulk-pull StashDB studios so we can union their aliases (+ parent
+	// name) into what local Stash gave us. Keyed by StashDB id.
+	stashdbStudios := map[string]stashdb.Studio{}
+	if sdb != nil {
+		t0 := time.Now()
+		all, err := sdb.QueryAllStudios(ctx)
+		if err != nil {
+			log.Warn("stashdb QueryAllStudios failed; alias enrichment skipped", "err", err)
+		} else {
+			for _, s := range all {
+				stashdbStudios[s.ID] = s
+			}
+			log.Info("stashdb studios fetched", "count", len(all), "elapsed", time.Since(t0))
+		}
 	}
 
 	tx, err := db.BeginTx(ctx, nil)
@@ -49,13 +72,23 @@ func RefreshStudios(ctx context.Context, sc *stash.Client, db *sql.DB, log *slog
 	}
 	defer stmt.Close()
 
-	upserted := 0
+	upserted, enriched := 0, 0
 	for _, s := range studios {
 		key := stash.PickStashDBID(s.StashIDs)
 		if key == "" {
 			key = "stash:" + s.ID
 		}
-		aliasesJSON, _ := json.Marshal(s.Aliases)
+		// Start with what local Stash returned; union in StashDB
+		// aliases + parent name when we have a cross-id match.
+		aliases := mergeAliases(s.Aliases)
+		if sdbStudio, ok := stashdbStudios[key]; ok {
+			aliases = mergeAliases(aliases, sdbStudio.Aliases...)
+			if sdbStudio.ParentName != "" {
+				aliases = mergeAliases(aliases, sdbStudio.ParentName)
+			}
+			enriched++
+		}
+		aliasesJSON, _ := json.Marshal(aliases)
 		if _, err := stmt.ExecContext(ctx, key, s.Name, string(aliasesJSON), start); err != nil {
 			return fmt.Errorf("upsert studio %s (%s): %w", s.ID, s.Name, err)
 		}
@@ -81,9 +114,39 @@ func RefreshStudios(ctx context.Context, sc *stash.Client, db *sql.DB, log *slog
 
 	log.Info("studio refresh done",
 		"upserted", upserted,
+		"enriched_from_stashdb", enriched,
 		"deleted", deleted,
 		"elapsed", time.Since(time.Unix(start, 0)))
 	return nil
+}
+
+// mergeAliases unions multiple alias sources into a single
+// deduplicated, order-preserving list. Comparison is case-insensitive
+// + whitespace-trimmed so "BLACKED" and "Blacked" don't show up
+// twice. Original casing is preserved from the first occurrence so
+// the matcher's tokenization keeps producing the same tokens.
+func mergeAliases(base []string, extra ...string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(base)+len(extra))
+	add := func(a string) {
+		a = strings.TrimSpace(a)
+		if a == "" {
+			return
+		}
+		k := strings.ToLower(a)
+		if seen[k] {
+			return
+		}
+		seen[k] = true
+		out = append(out, a)
+	}
+	for _, a := range base {
+		add(a)
+	}
+	for _, a := range extra {
+		add(a)
+	}
+	return out
 }
 
 func StudioRefreshedAt(ctx context.Context, db *sql.DB) (int64, error) {

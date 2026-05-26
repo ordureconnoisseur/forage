@@ -191,7 +191,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 		}
 	}
 	if studAt < cutoff {
-		if err := cache.RefreshStudios(ctx, sc, database, log.With("op", "studios")); err != nil {
+		if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
 			log.Error("boot studio refresh failed", "err", err)
 		}
 	}
@@ -252,7 +252,7 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 			if err := cache.RefreshPerformers(ctx, sc, database, log.With("op", "performers")); err != nil {
 				log.Error("ticker performer refresh failed", "err", err)
 			}
-			if err := cache.RefreshStudios(ctx, sc, database, log.With("op", "studios")); err != nil {
+			if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
 				log.Error("ticker studio refresh failed", "err", err)
 			}
 			// Scene cache piggy-backs on the same tick. Needs StashDB

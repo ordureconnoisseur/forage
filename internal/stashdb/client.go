@@ -375,3 +375,89 @@ func (c *Client) QueryScenes(ctx context.Context, q SceneQuery) (*QueryScenesRes
 	}
 	return out, nil
 }
+
+// ── queryStudios ─────────────────────────────────────────────────────
+
+// Studio is the slim projection used to enrich the local studio_cache
+// with StashDB-side aliases (and the parent studio's name, which is
+// effectively another alias — e.g. "LegalPorno" is the parent of
+// "American Anal", and release names that say "LegalPorno" should
+// match American Anal scenes).
+type Studio struct {
+	ID         string
+	Name       string
+	Aliases    []string
+	ParentName string
+}
+
+const queryStudiosGQL = `
+query ForagerQueryStudios($input: StudioQueryInput!) {
+  queryStudios(input: $input) {
+    count
+    studios {
+      id
+      name
+      aliases
+      parent { id name }
+    }
+  }
+}`
+
+type studioWire struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Aliases []string `json:"aliases"`
+	Parent  *struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"parent"`
+}
+
+func (w studioWire) toStudio() Studio {
+	s := Studio{ID: w.ID, Name: w.Name, Aliases: append([]string(nil), w.Aliases...)}
+	if w.Parent != nil {
+		s.ParentName = w.Parent.Name
+	}
+	return s
+}
+
+// QueryAllStudios paginates through every StashDB studio and returns
+// the slim Studio projection (id, name, aliases, parent name). Used
+// once per studio-cache refresh to enrich Stash-side aliases (which
+// can be stale or partial) with StashDB's current view + parent name.
+//
+// StashDB has on the order of low-thousands of studios; per_page=100
+// puts the full sweep around 30-50 requests.
+func (c *Client) QueryAllStudios(ctx context.Context) ([]Studio, error) {
+	page := 1
+	perPage := 100
+	var out []Studio
+	for {
+		input := map[string]any{
+			"page":      page,
+			"per_page":  perPage,
+			"sort":      "NAME",
+			"direction": "ASC",
+		}
+		var resp struct {
+			QueryStudios struct {
+				Count   int          `json:"count"`
+				Studios []studioWire `json:"studios"`
+			} `json:"queryStudios"`
+		}
+		if err := c.do(ctx, queryStudiosGQL, map[string]any{"input": input}, &resp); err != nil {
+			return nil, err
+		}
+		if len(resp.QueryStudios.Studios) == 0 {
+			break
+		}
+		for _, w := range resp.QueryStudios.Studios {
+			out = append(out, w.toStudio())
+		}
+		if len(resp.QueryStudios.Studios) < perPage {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
