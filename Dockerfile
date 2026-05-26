@@ -18,9 +18,18 @@ RUN go build -trimpath \
     -ldflags="-s -w -X main.Version=${VERSION}" \
     -o /out/forager .
 
+# build-corpus is a one-shot tool that walks qBit + SAB history and
+# emits a YAML matcher-test corpus. Ships in the same image so it
+# can be invoked via `docker exec forager /build-corpus ...` with
+# the daemon's env (host.docker.internal resolution + .env credentials).
+RUN go build -trimpath \
+    -ldflags="-s -w" \
+    -o /out/build-corpus ./tools/build-corpus
+
 # ── Runtime stage ──────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/forager /forager
+COPY --from=build /out/build-corpus /build-corpus
 
 # Persistent SQLite cache. Mount a volume here.
 VOLUME ["/data"]

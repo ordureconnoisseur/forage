@@ -25,6 +25,11 @@ plugin/dist/
 # Personal deploy shortcut — keep your local copy at plugin/scripts/push.sh
 plugin/scripts/push.sh
 
+# Real-cache matcher corpus — built from the user's qBit + SAB history
+# via `docker exec forager /build-corpus`. Contains real StashDB scene
+# IDs and personal release-name history; never commit.
+tools/matcher-bench/corpus.yaml
+
 # Editor / OS
 .DS_Store
 *.swp
