@@ -4,29 +4,46 @@
 
 A backend daemon (Go) + Stash plugin (React) that lets you browse a performer's StashDB filmography against your local library, find releases for the gaps, grab them via qBittorrent or SABnzbd, and have the finished files dropped into a per-performer folder structure — without the arr-stack's import-orchestration fragility.
 
-```
-              ┌─────────────────────────┐
-              │  Stash plugin (Forage)  │  in-Stash UI
-              │  React + TS · Vite      │
-              └────────────┬────────────┘
-                           │ HTTPS
-              ┌────────────▼────────────┐
-              │  forager daemon  (Go)   │
-              │  • cache: performers,   │
-              │    studios, scenes      │
-              │  • matcher: tokenized   │
-              │    release → scene      │
-              │  • poller: grab state   │
-              │    machine              │
-              │  • placer: hardlink     │
-              │    into library         │
-              │  • configstore: JSON    │
-              │    overrides .env       │
-              └─┬─────┬─────┬──────┬────┘
-                │     │     │      │
-   StashDB ◄────┘     │     │      └────► Stash (local library)
-   Prowlarr ◄─────────┘     │
-   qBit / SABnzbd ◄─────────┘
+```mermaid
+flowchart LR
+    UI["🌰 Stash plugin (Forage)<br/><i>React · Vite single-file bundle</i>"]
+
+    subgraph Daemon ["forager daemon (Go)"]
+        direction TB
+        API[HTTP API<br/>chi/v5]
+        Matcher[matcher<br/>release → scene]
+        Cache[("SQLite cache<br/>performers · scenes · grabs · config")]
+        Poller[poller<br/>grab state machine]
+        Placer[placer<br/>hardlink → library]
+        API --> Matcher
+        API --> Cache
+        Poller --> Cache
+        Poller --> Placer
+    end
+
+    Stash[("Stash<br/>local library")]
+    StashDB[("StashDB<br/>scene metadata")]
+    Prowlarr[("Prowlarr<br/>release indexer")]
+    Qbit[("qBittorrent")]
+    Sab[("SABnzbd")]
+    Library[/"&lt;library&gt;/&lt;performer&gt;/&lt;file&gt;"/]
+
+    UI <-->|HTTPS| API
+
+    Cache <-->|cache sync| Stash
+    Cache <-->|cache sync| StashDB
+    Matcher -->|targeted search| Prowlarr
+    API -->|submit torrent| Qbit
+    API -->|submit NZB| Sab
+    Poller -.->|poll status| Qbit
+    Poller -.->|poll status| Sab
+    Placer -->|hardlink| Library
+    Library -.->|library scan| Stash
+
+    classDef ext fill:#1a1a1a,stroke:#666,color:#ddd
+    classDef daemon fill:#0d1f12,stroke:#22c55e,color:#86efac
+    class Stash,StashDB,Prowlarr,Qbit,Sab,Library ext
+    class API,Matcher,Cache,Poller,Placer daemon
 ```
 
 ## The problem this solves
@@ -153,9 +170,29 @@ Hovering performer chips on scene cards shows an instant popover with image, fav
 
 ### Grabs view
 
-Live tracker for every grab you've submitted. Status totals chip-strip at the top (queued / downloading / completed / placed / confirmed / mismatched / orphaned / failed) — click any to filter. Expand a row for the full timeline + reason + placed path + StashDB scene cross-id.
+Live tracker for every grab you've submitted. Status totals chip-strip at the top — click any to filter by state. Expand a row for the full timeline + reason + placed path + StashDB scene cross-id.
 
-Auto-polls every 5 seconds when there are non-terminal grabs in flight; slows to 30 seconds when everything's settled.
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> downloading: client picks up
+    downloading --> completed: download finishes
+    completed --> placed: placer hardlinks<br/>into library
+    placed --> confirmed: Stash phash<br/>matches prediction
+    placed --> mismatched: Stash phash<br/>matches different scene
+    placed --> orphaned: not in Stash<br/>after orphan_after
+
+    queued --> failed
+    downloading --> failed: client error
+    completed --> failed: place_error<br/>(persistent)
+
+    confirmed --> [*]
+    mismatched --> [*]
+    orphaned --> [*]
+    failed --> [*]
+```
+
+Auto-polls every 5 seconds when there are non-terminal grabs in flight; slows to 30 seconds when everything's settled. When `FORAGER_LIBRARY_ROOT` is unset, `completed` transitions directly to `confirmed` / `mismatched` / `orphaned` (placer skipped — files stay in the download client's complete dir).
 
 ### Placement
 
