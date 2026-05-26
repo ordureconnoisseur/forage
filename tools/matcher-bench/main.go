@@ -202,6 +202,12 @@ type failureRow struct {
 	TopConf     float64
 	TopReasons  string
 	Input       string
+	// Filled when the correct scene appears at rank ≥ 2 (so we can
+	// compare what won vs what should have won — drives the
+	// profile-and-reweight workflow). Empty for no_candidates /
+	// missing_from_top10.
+	GTConf    float64
+	GTReasons string
 }
 
 func runMode(ctx context.Context, log *slog.Logger, m *matcher.Matcher, scenes []stash.LabeledScene, name string, inputFn func(stash.LabeledScene) string, concurrency int) *modeResult {
@@ -310,8 +316,7 @@ func runMode(ctx context.Context, log *slog.Logger, m *matcher.Matcher, scenes [
 					kind = fmt.Sprintf("rank=%d", pos+1)
 				}
 				top := cands[0]
-				failuresMu.Lock()
-				r.Failures = append(r.Failures, failureRow{
+				row := failureRow{
 					SceneID:     sc.ID,
 					GTStashDBID: sc.StashDBID,
 					Kind:        kind,
@@ -319,7 +324,17 @@ func runMode(ctx context.Context, log *slog.Logger, m *matcher.Matcher, scenes [
 					TopConf:     top.Confidence,
 					TopReasons:  strings.Join(top.Reasons, "; "),
 					Input:       inputFn(sc),
-				})
+				}
+				// Capture the correct candidate's score + reasons when
+				// it's in the pool but not at rank 1 — gives us a
+				// side-by-side to spot scoring patterns.
+				if pos > 0 {
+					gt := cands[pos]
+					row.GTConf = gt.Confidence
+					row.GTReasons = strings.Join(gt.Reasons, "; ")
+				}
+				failuresMu.Lock()
+				r.Failures = append(r.Failures, row)
 				failuresMu.Unlock()
 			}
 		}
@@ -334,7 +349,12 @@ func writeFailures(path string, rows []failureRow, cap int) error {
 	defer f.Close()
 	w := csv.NewWriter(f)
 	defer w.Flush()
-	if err := w.Write([]string{"scene_id", "gt_stashdb_id", "kind", "top_id", "top_confidence", "top_reasons", "input"}); err != nil {
+	if err := w.Write([]string{
+		"scene_id", "gt_stashdb_id", "kind",
+		"top_id", "top_confidence", "top_reasons",
+		"gt_confidence", "gt_reasons",
+		"input",
+	}); err != nil {
 		return err
 	}
 	n := len(rows)
@@ -343,7 +363,12 @@ func writeFailures(path string, rows []failureRow, cap int) error {
 	}
 	for i := 0; i < n; i++ {
 		r := rows[i]
-		if err := w.Write([]string{r.SceneID, r.GTStashDBID, r.Kind, r.TopID, fmt.Sprintf("%.3f", r.TopConf), r.TopReasons, r.Input}); err != nil {
+		if err := w.Write([]string{
+			r.SceneID, r.GTStashDBID, r.Kind,
+			r.TopID, fmt.Sprintf("%.3f", r.TopConf), r.TopReasons,
+			fmt.Sprintf("%.3f", r.GTConf), r.GTReasons,
+			r.Input,
+		}); err != nil {
 			return err
 		}
 	}

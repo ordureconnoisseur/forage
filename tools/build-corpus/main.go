@@ -61,6 +61,16 @@ type entry struct {
 	FilePath      string
 }
 
+// candidate is the pre-Stash-lookup shape: a release-name claim from
+// some source (qBit / SAB history / orphaned .torrent file). The main
+// loop joins each candidate against Stash; matches become entries.
+type candidate struct {
+	Release  string
+	FilePath string
+	Source   string // "qbit" | "sab" | "torrent"
+	Category string
+}
+
 type stats struct {
 	candidates       int
 	wrongCategory    int
@@ -76,6 +86,7 @@ func main() {
 	outPath := flag.String("out", "/data/corpus.yaml", "output YAML path")
 	limit := flag.Int("limit", 0, "stop after N successful entries (0 = no limit)")
 	verbose := flag.Bool("v", false, "log per-candidate decisions to stderr")
+	torrentsDir := flag.String("torrents-dir", "", "optional directory of .torrent files to also harvest; each torrent's info.name is treated as a release name")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -97,12 +108,6 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 
-	type candidate struct {
-		Release  string
-		FilePath string
-		Source   string
-		Category string
-	}
 	var candidates []candidate
 
 	if qbitC != nil {
@@ -143,6 +148,13 @@ func main() {
 			}
 			fmt.Fprintf(os.Stderr, "  %d completed SAB items\n", len(history))
 		}
+	}
+
+	if *torrentsDir != "" {
+		fmt.Fprintf(os.Stderr, "scanning .torrent files in %s…\n", *torrentsDir)
+		torrentCands, parseErrors := harvestTorrents(*torrentsDir)
+		candidates = append(candidates, torrentCands...)
+		fmt.Fprintf(os.Stderr, "  %d torrent files parsed (%d parse errors)\n", len(torrentCands), parseErrors)
 	}
 
 	var s stats
@@ -311,4 +323,47 @@ func warn(format string, args ...any) {
 func die(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, "ERROR: "+format+"\n", args...)
 	os.Exit(1)
+}
+
+// harvestTorrents walks dir (non-recursively) for .torrent files,
+// parses each, and emits a candidate per file using the bencoded
+// info.name as both the "release name" and the basename needle the
+// Stash-side lookup will search by. Files that fail to parse are
+// counted and skipped; the function never aborts on per-file errors
+// because the directory might contain unrelated files.
+func harvestTorrents(dir string) (cands []candidate, parseErrors int) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		warn("read torrents dir %q: %v", dir, err)
+		return nil, 0
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".torrent") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		torrentName, err := extractTorrentName(path)
+		if err != nil {
+			parseErrors++
+			continue
+		}
+		if torrentName == "" {
+			continue
+		}
+		cands = append(cands, candidate{
+			Release: torrentName,
+			// FilePath empty — there's no file on disk for orphaned
+			// torrents. The Stash-lookup falls back to the release name
+			// as its needle (see the main loop's `needle = c.Release`
+			// branch when basename ends up empty).
+			FilePath: "",
+			Source:   "torrent",
+			Category: "",
+		})
+	}
+	return cands, parseErrors
 }

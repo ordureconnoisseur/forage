@@ -31,6 +31,13 @@ type Candidate struct {
 	Confidence float64
 	Tracks     []string
 	Reasons    []string
+	// TitleOverlap is the stopword-filtered Jaccard between the
+	// release's tokens and the scene title's tokens. Stored separately
+	// (in addition to being a component of Confidence) so the sort
+	// comparator can use it as a tiebreaker when two candidates have
+	// confidences within tiebreakerEpsilon — the most-frequent failure
+	// mode the bench surfaced was true ties resolved arbitrarily.
+	TitleOverlap float64
 }
 
 // BatchResult is one match result emitted by MatchStream. Index is the
@@ -249,7 +256,7 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 	stashDBPerfSet := stringSet(stashDBPerfIDs)
 	stashDBStudioSet := stringSet(stashDBStudioIDs)
 	for _, c := range candidates {
-		c.Confidence, c.Reasons = score(c, releaseTokenSet, stashDBPerfSet, stashDBStudioSet, date)
+		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, stashDBPerfSet, stashDBStudioSet, date)
 	}
 
 	out := make([]Candidate, 0, len(candidates))
@@ -352,7 +359,7 @@ const (
 	minTitleScore   = 0.05
 )
 
-func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[string]bool, releaseDate string) (float64, []string) {
+func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[string]bool, releaseDate string) (float64, []string, float64) {
 	pScore, pReason := performerOverlap(c.Scene, perfSet)
 	sScore, sReason := studioMatch(c.Scene, studioSet)
 	dScore, dReason := dateProximity(c.Scene.Date, releaseDate)
@@ -370,7 +377,7 @@ func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[s
 	}
 
 	reasons := []string{pReason, sReason, dReason, tReason, "tracks: " + strings.Join(c.Tracks, "+")}
-	return total, reasons
+	return total, reasons, tScore
 }
 
 func performerOverlap(scene stashdb.Scene, detected map[string]bool) (float64, string) {
