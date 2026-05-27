@@ -109,7 +109,6 @@ export default function PerformersList({
           <PerformerCard
             key={p.stash_id}
             p={p}
-            sort={sort}
             onPick={() => onPick(p.stash_id)}
           />
         ))}
@@ -120,14 +119,18 @@ export default function PerformersList({
 
 function PerformerCard({
   p,
-  sort,
   onPick,
 }: {
   p: Performer;
-  sort: PerformerSort;
   onPick: () => void;
 }) {
   const imgURL = performerImageURL(p.stash_id);
+  const hasStashDBData = p.total_stashdb_scenes > 0;
+  const missing = Math.max(0, p.total_stashdb_scenes - p.owned_scenes_count);
+  const lastRelease =
+    p.last_release_unix > 0
+      ? new Date(p.last_release_unix * 1000).toISOString().slice(0, 10)
+      : null;
   return (
     <button
       className={"performer-card" + (p.favorite ? " fav" : "")}
@@ -148,34 +151,29 @@ function PerformerCard({
       </div>
       <div className="perf-info">
         <div className="name">{p.name}</div>
-        <div className="meta">{metaForSort(p, sort)}</div>
+        {/* Two-line stats block — same data the Discover hovercard
+            shows, in a compact card-friendly layout. Library count is
+            always rendered; the StashDB-derived stats (missing, last
+            release) only appear when the scene cache has populated
+            data for this performer (i.e. they have a StashDB cross-id
+            + the 12h refresh has run). */}
+        <div className="meta">
+          <span className="primary">{p.scene_count} in library</span>
+          {hasStashDBData && (
+            <>
+              <span className="sep"> · </span>
+              <span className={missing > 0 ? "missing" : ""}>
+                {missing} missing
+              </span>
+            </>
+          )}
+        </div>
+        {lastRelease && (
+          <div className="meta dim">last release {lastRelease}</div>
+        )}
       </div>
     </button>
   );
-}
-
-// metaForSort surfaces the sort-relevant aggregate as the card's meta
-// line. Default (scene_count / name) keeps the existing "X scenes"
-// text; the new sorts swap in their own number so it's obvious what's
-// driving the ranking.
-function metaForSort(p: Performer, sort: PerformerSort): string {
-  const sceneCount = `${p.scene_count} scenes`;
-  switch (sort) {
-    case "last_release": {
-      if (p.last_release_unix > 0) {
-        const d = new Date(p.last_release_unix * 1000);
-        const iso = d.toISOString().slice(0, 10);
-        return `${sceneCount} · last release ${iso}`;
-      }
-      return `${sceneCount} · no release date`;
-    }
-    case "missing_count": {
-      const missing = Math.max(0, p.total_stashdb_scenes - p.owned_scenes_count);
-      return `${sceneCount} · ${missing} missing`;
-    }
-    default:
-      return sceneCount;
-  }
 }
 
 /* Solid heart glyph — Font Awesome 6 "heart" path, MIT licensed.
