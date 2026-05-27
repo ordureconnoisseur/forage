@@ -5,7 +5,7 @@ import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
 import DiscoverList from "./views/DiscoverList";
 import Settings from "./views/Settings";
-import { fetchHealth, Health, mixedContentBlocked } from "./api";
+import { fetchHealth, foragerBase, Health, mixedContentBlocked } from "./api";
 
 // URL-hash routes, parsed by parseRoute. The scene route carries the
 // performer name in a query string so /grab can tell the placer which
@@ -51,6 +51,15 @@ export default function App() {
   const [route, setRoute] = useState<Route>(parseRoute(location.hash));
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [health, setHealth] = useState<Health | null>(null);
+  // Non-null when /healthz failed to load — daemon URL set but
+  // unreachable, or returning HTML (wrong host, plugin pointed at
+  // Stash itself, etc.). Distinguished from "unconfigured daemon"
+  // which still returns valid JSON with `unconfigured: true`.
+  const [healthError, setHealthError] = useState<string | null>(null);
+  // foragerBase() is read once per render; useEffect below re-runs
+  // when settings open/close so a Save updates the URL → triggers a
+  // fresh health probe.
+  const apiURL = foragerBase();
 
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
@@ -58,22 +67,39 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
-  // Poll /healthz so the first-run banner flips off as soon as the
-  // user finishes configuring + saves. Refresh once on mount, then
-  // whenever the Settings modal closes (cheap; one request).
+  // Probe /healthz on mount + after Settings closes. When the URL
+  // isn't set yet, skip the fetch (it'd hit Stash's origin and
+  // JSON.parse-fail on Stash's HTML index — that's the bug this
+  // guard fixes). Setup banner picks up the empty state instead.
   useEffect(() => {
+    if (!apiURL) {
+      setHealth(null);
+      setHealthError(null);
+      return;
+    }
     let cancelled = false;
     fetchHealth()
       .then((h) => {
-        if (!cancelled) setHealth(h);
+        if (cancelled) return;
+        setHealth(h);
+        setHealthError(null);
       })
-      .catch(() => {
-        // Silent — banner stays neutral when the daemon is unreachable.
+      .catch((e) => {
+        if (cancelled) return;
+        setHealthError((e as Error).message);
+        setHealth(null);
       });
     return () => {
       cancelled = true;
     };
-  }, [settingsOpen]);
+  }, [settingsOpen, apiURL]);
+
+  // Three distinct "needs setup" states, each with its own banner copy:
+  //   - no URL → user has never configured (or localStorage was cleared)
+  //   - URL set but unreachable → daemon down, wrong URL, mixed-content
+  //   - URL set, healthz OK, but Stash creds missing → unconfigured daemon
+  const needsSetup =
+    !apiURL || !!healthError || health?.unconfigured === true;
 
   const goPerformers = () => setHash("#/");
   const goDiscover = () => setHash("#/discover");
@@ -157,10 +183,24 @@ export default function App() {
           URL, or open Stash via a non-HTTPS URL.
         </div>
       )}
-      {health?.unconfigured && (
+      {needsSetup && (
         <div className="banner banner-setup">
-          🌱 Welcome to Forage — your daemon needs credentials before it can
-          do anything.{" "}
+          {!apiURL ? (
+            <>
+              🌱 Forager API URL isn't set. Point the plugin at your daemon to
+              get started.{" "}
+            </>
+          ) : healthError ? (
+            <>
+              ⚠ Can't reach the forager daemon at <code>{apiURL}</code> —{" "}
+              {healthError}.{" "}
+            </>
+          ) : (
+            <>
+              🌱 Welcome to Forage — your daemon needs credentials before it can
+              do anything.{" "}
+            </>
+          )}
           <button
             className="banner-action"
             onClick={() => setSettingsOpen(true)}
@@ -170,26 +210,29 @@ export default function App() {
         </div>
       )}
       <main className="app-main">
-        {!health?.unconfigured && route.kind === "performers" && (
+        {!needsSetup && route.kind === "performers" && (
           <PerformersList onPick={goPerformer} />
         )}
-        {!health?.unconfigured && route.kind === "missing" && (
+        {!needsSetup && route.kind === "missing" && (
           <MissingScenes performerId={route.performerId} onPickScene={goScene} />
         )}
-        {!health?.unconfigured && route.kind === "scene" && (
+        {!needsSetup && route.kind === "scene" && (
           <SceneReleases
             sceneId={route.sceneId}
             performerName={route.performerName}
           />
         )}
-        {!health?.unconfigured && route.kind === "discover" && (
+        {!needsSetup && route.kind === "discover" && (
           <DiscoverList onPickPerformer={goPerformer} />
         )}
-        {!health?.unconfigured && route.kind === "grabs" && <GrabsList />}
-        {health?.unconfigured && (
+        {!needsSetup && route.kind === "grabs" && <GrabsList />}
+        {needsSetup && (
           <div className="empty">
-            Forage can't load any data until Stash + StashDB credentials are
-            configured. Use the Settings button above to get started.
+            {!apiURL
+              ? "Set the Forager API URL in Settings to get started."
+              : healthError
+                ? "Check your Forager API URL and that the daemon is running."
+                : "Forage can't load any data until Stash + StashDB credentials are configured. Use the Settings button above to get started."}
           </div>
         )}
       </main>
