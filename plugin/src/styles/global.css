@@ -1093,6 +1093,8 @@ button {
   --status-completed-bg: rgba(132, 204, 22, 0.18);
   --status-placed: var(--accent-bright);
   --status-placed-bg: rgba(var(--accent-rgb), 0.18);
+  --status-scanned: #3b82f6;
+  --status-scanned-bg: rgba(59, 130, 246, 0.18);
   --status-confirmed: var(--accent-bright);
   --status-confirmed-bg: rgba(var(--accent-rgb), 0.22);
   --status-mismatched: #f59e0b;
@@ -1151,6 +1153,7 @@ button {
 .grab-chip.chip-downloading.active{ border-color: var(--status-downloading);background: var(--status-downloading-bg);color: var(--status-downloading); }
 .grab-chip.chip-completed.active  { border-color: var(--status-completed);  background: var(--status-completed-bg);  color: var(--status-completed); }
 .grab-chip.chip-placed.active     { border-color: var(--status-placed);     background: var(--status-placed-bg);     color: var(--status-placed); }
+.grab-chip.chip-scanned.active    { border-color: var(--status-scanned);    background: var(--status-scanned-bg);    color: var(--status-scanned); }
 .grab-chip.chip-confirmed.active  { border-color: var(--status-confirmed);  background: var(--status-confirmed-bg);  color: var(--status-confirmed); }
 .grab-chip.chip-mismatched.active { border-color: var(--status-mismatched); background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-chip.chip-orphaned.active   { border-color: var(--status-orphaned);   background: var(--status-orphaned-bg);   color: var(--status-orphaned); }
@@ -1195,6 +1198,7 @@ button {
 .grab-row.status-downloading::before{ background: var(--status-downloading); }
 .grab-row.status-completed::before  { background: var(--status-completed); }
 .grab-row.status-placed::before     { background: var(--status-placed); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.55); }
+.grab-row.status-scanned::before    { background: var(--status-scanned); box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); }
 .grab-row.status-confirmed::before  { background: linear-gradient(180deg, var(--accent-bright), var(--accent)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); }
 .grab-row.status-mismatched::before { background: var(--status-mismatched); }
 .grab-row.status-orphaned::before   { background: var(--status-orphaned); }
@@ -1230,6 +1234,7 @@ button {
 .grab-status-badge.chip-downloading{ background: var(--status-downloading-bg);color: var(--status-downloading); }
 .grab-status-badge.chip-completed  { background: var(--status-completed-bg);  color: var(--status-completed); }
 .grab-status-badge.chip-placed     { background: var(--status-placed-bg);    color: var(--status-placed); }
+.grab-status-badge.chip-scanned    { background: var(--status-scanned-bg);   color: var(--status-scanned); }
 .grab-status-badge.chip-confirmed  { background: var(--status-confirmed-bg); color: var(--status-confirmed); }
 .grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }

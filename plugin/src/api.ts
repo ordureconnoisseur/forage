@@ -298,6 +298,7 @@ export type GrabStatus =
   | "downloading"
   | "completed"
   | "placed"
+  | "scanned"
   | "confirmed"
   | "mismatched"
   | "orphaned"
@@ -348,11 +349,15 @@ export function fetchGrabs(opts?: {
 
 // Non-terminal statuses — used by the GrabsList view to decide poll
 // cadence: if any active grabs exist, poll fast; otherwise slow.
+// `scanned` is non-terminal: the daemon keeps re-checking until
+// Stash's identify attaches a StashDB cross-id and we transition to
+// confirmed/mismatched.
 export const ACTIVE_STATUSES: GrabStatus[] = [
   "queued",
   "downloading",
   "completed",
   "placed",
+  "scanned",
 ];
 
 export function isActiveStatus(s: GrabStatus): boolean {

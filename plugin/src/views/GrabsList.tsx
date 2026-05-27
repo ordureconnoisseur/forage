@@ -10,8 +10,9 @@ import {
 
 // GrabsList surfaces the full state machine the poller advances:
 //
-//   queued → downloading → completed → placed → confirmed
-//                                            ↘ mismatched / orphaned
+//   queued → downloading → completed → placed → scanned → confirmed
+//                                                       ↘ mismatched
+//                                                       ↘ orphaned
 //                                ↘ failed
 //
 // Auto-polls /grabs while the tab is visible; fast cadence when any
@@ -32,6 +33,7 @@ const STATUS_ORDER: (GrabStatus | "any")[] = [
   "downloading",
   "completed",
   "placed",
+  "scanned",
   "confirmed",
   "mismatched",
   "orphaned",

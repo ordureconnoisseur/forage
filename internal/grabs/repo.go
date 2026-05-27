@@ -124,12 +124,21 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 }
 
 // Active returns grabs the poller still cares about — anything not in
-// a terminal state. `placed` joins the active set so the poller can
-// re-check Stash for confirmation once the file is in the library.
+// a terminal state.
+//
+//   - placed: file is on disk but not yet seen in Stash; the poller
+//     re-checks each tick until it confirms or orphans.
+//   - scanned: Stash has the file but hasn't attached a StashDB
+//     cross-id yet (identify pending); we keep polling to detect when
+//     the identify completes.
+//   - orphaned: Stash didn't pick up the file within the orphan
+//     window. Stays in Active so a later scan/identify (manual or
+//     scheduled) can promote it back to scanned/confirmed instead of
+//     leaving the user with a permanent false orphan label.
 func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 	return r.query(ctx, `
 		SELECT * FROM grabs
-		WHERE status IN ('queued', 'downloading', 'completed', 'placed')
+		WHERE status IN ('queued', 'downloading', 'completed', 'placed', 'scanned', 'orphaned')
 		ORDER BY grabbed_at ASC`)
 }
 

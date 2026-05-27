@@ -241,7 +241,12 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 	// FindSceneByPathContains matches on the basename which is the
 	// same for hardlinked + copied files. Skipped when Stash isn't
 	// configured — we'll re-try once credentials are saved.
-	confirmable := g.Status == "placed" || (g.Status == "completed" && !pl.Configured())
+	//
+	// scanned + orphaned grabs join confirmable so we keep
+	// re-evaluating: scanned waits for Stash's identify to attach a
+	// StashDB cross-id; orphaned can recover if the user (or a
+	// scheduled task) later scans the file in.
+	confirmable := g.Status == "placed" || g.Status == "scanned" || g.Status == "orphaned" || (g.Status == "completed" && !pl.Configured())
 	stashC := p.pool.Stash()
 	if confirmable && g.ActualStashDBID == "" && stashC != nil {
 		needle := g.ClientName
@@ -255,7 +260,8 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 			if err != nil {
 				return err
 			}
-			if scene != nil && scene.StashDBID != "" {
+			switch {
+			case scene != nil && scene.StashDBID != "":
 				g.ActualStashDBID = scene.StashDBID
 				g.ConfirmedAt = time.Now().Unix()
 				if scene.StashDBID == g.PredictedStashDBID {
@@ -266,10 +272,21 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 					g.Reason = "stash phash → different scene than predicted"
 				}
 				dirty = true
-			} else if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan {
-				g.Status = "orphaned"
-				g.Reason = "placed but never appeared in Stash"
-				dirty = true
+			case scene != nil:
+				// Stash has the file but no StashDB cross-id yet —
+				// scan completed, identify hasn't run. Distinct from
+				// orphaned (Stash never saw it at all).
+				if g.Status != "scanned" {
+					g.Status = "scanned"
+					g.Reason = "in Stash, awaiting identify"
+					dirty = true
+				}
+			case g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan:
+				if g.Status != "orphaned" {
+					g.Status = "orphaned"
+					g.Reason = "placed but Stash never picked up the file"
+					dirty = true
+				}
 			}
 		}
 	}
@@ -405,7 +422,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 	// failed unless we already marked it completed/placed (history
 	// can roll over with very large user histories; don't undo
 	// later-stage state).
-	if g.Status != "completed" && g.Status != "placed" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
+	if g.Status != "completed" && g.Status != "placed" && g.Status != "scanned" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
 		g.Status = "failed"
 		g.Reason = "sab no longer tracks this nzo_id"
 		dirty = true
