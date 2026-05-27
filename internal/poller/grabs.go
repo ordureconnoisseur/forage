@@ -9,6 +9,8 @@ package poller
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
@@ -205,6 +207,31 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 			}
 			dirty = true
 			p.log.Info("placed", "id", g.ID, "path", res.Path, "mode", res.Mode)
+
+			// Trigger Stash to scan + generate phashes for the new file
+			// immediately, so the placed → confirmed transition takes
+			// minutes instead of waiting on Stash's scheduled scan.
+			// Best-effort: if it fails, the passive confirmation path
+			// still works on Stash's next tick.
+			//
+			// Stash's library paths can differ from forager-container
+			// paths (e.g. forager sees /data/media/Media but Stash on
+			// Windows sees Z:\Media). FORAGER_STASH_PATH_MAPPING lets
+			// the user opt into scoped scans; otherwise we trigger a
+			// full-library scan (slow per scan but always works since
+			// Stash skips unchanged files cheaply).
+			if sc := p.pool.Stash(); sc != nil {
+				stashSidePath := translateStashPath(filepath.Dir(res.Path), p.pool.Settings().StashPathMapping)
+				var scanPaths []string
+				if stashSidePath != "" {
+					scanPaths = []string{stashSidePath}
+				}
+				if jobID, err := sc.MetadataScan(ctx, scanPaths); err != nil {
+					p.log.Warn("metadataScan trigger failed", "id", g.ID, "paths", scanPaths, "err", err)
+				} else {
+					p.log.Info("metadataScan triggered", "id", g.ID, "paths", scanPaths, "job_id", jobID)
+				}
+			}
 		}
 	}
 
@@ -402,6 +429,47 @@ func baseName(path string) string {
 		}
 	}
 	return path
+}
+
+// translateStashPath rewrites a forager-side filesystem path into the
+// path Stash uses for the same file, so a scoped metadataScan call
+// hits actual files. Mapping is "<forager-prefix>:<stash-prefix>";
+// e.g. "/data/media/Media:Z:\\Media" turns
+// "/data/media/Media/Hazel Moore/scene.mp4" into
+// "Z:\\Media\\Hazel Moore\\scene.mp4".
+//
+// Returns empty when:
+//   - mapping is unset (caller falls back to full-library scan)
+//   - the prefix doesn't match (path is outside the configured mount)
+//
+// Path separators are normalised — forager's container view uses '/',
+// Stash on Windows uses '\'. We detect Windows-style targets and flip
+// any '/' characters after the prefix to '\'.
+func translateStashPath(foragerPath, mapping string) string {
+	if mapping == "" || foragerPath == "" {
+		return ""
+	}
+	idx := strings.Index(mapping, ":")
+	// Find the LAST colon-pair boundary — Windows targets contain
+	// embedded colons (Z:\Media). We look for the first ":" only when
+	// it's followed by something that doesn't look like a drive letter.
+	// Practically: split on the first colon, accept any prefix on the
+	// left, and treat the rest as the stash-side target verbatim.
+	if idx <= 0 || idx == len(mapping)-1 {
+		return ""
+	}
+	foragerPrefix := mapping[:idx]
+	stashPrefix := mapping[idx+1:]
+	if !strings.HasPrefix(foragerPath, foragerPrefix) {
+		return ""
+	}
+	suffix := foragerPath[len(foragerPrefix):]
+	if strings.ContainsRune(stashPrefix, '\\') {
+		// Windows-style target — flip forward slashes in the suffix
+		// to backslashes so the joined path is well-formed.
+		suffix = strings.ReplaceAll(suffix, "/", `\`)
+	}
+	return stashPrefix + suffix
 }
 
 // classifyQbitState was previously classifyState — renamed to make

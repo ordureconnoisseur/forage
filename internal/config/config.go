@@ -44,6 +44,13 @@ type Config struct {
 	SabAPIKey          string
 	SabCategory        string
 	LibraryRoot        string
+	// StashPathMapping translates forager-container paths to Stash's
+	// view of the same files, for scoped metadataScan calls after
+	// placement. Format: "<forager-prefix>:<stash-prefix>" (e.g.
+	// "/data/media/Media:Z:\\Media"). When unset, forager triggers a
+	// full-library scan after each placement — slower but always
+	// works regardless of mount layout differences.
+	StashPathMapping   string
 	PollInterval       time.Duration
 	OrphanAfter        time.Duration
 	CacheRefresh       time.Duration
@@ -102,6 +109,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SabAPIKey = b.envOr("FORAGER_SAB_API_KEY", "", "sabApiKey")
 	b.SabCategory = b.envOr("FORAGER_SAB_CATEGORY", "manual", "sabCategory")
 	b.LibraryRoot = strings.TrimRight(b.envOr("FORAGER_LIBRARY_ROOT", "", "libraryRoot"), "/")
+	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")

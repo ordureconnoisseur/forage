@@ -513,6 +513,48 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 	return out, nil
 }
 
+// MetadataScan asks Stash to scan + generate phashes for new files.
+// Used by the poller right after a successful placement: shortens
+// the placed → confirmed transition from "whenever Stash's scheduled
+// scan runs" (hours-to-days) to "minutes".
+//
+// If paths is empty, Stash scans its full library — slow on a huge
+// library but bounded (Stash's scan skips unchanged files cheaply, so
+// the cost is dominated by new files needing phash compute, which is
+// exactly what we want).
+//
+// Passing scoped paths is faster but requires the forager-side path
+// strings to match what Stash sees on its filesystem — which they
+// usually DON'T when forager runs in Docker on Linux and Stash runs
+// on Windows/macOS over a NAS mount. The poller handles this via
+// FORAGER_STASH_PATH_MAPPING (see config); if no mapping is
+// configured we fall back to a full-library scan.
+//
+// Returns the queued job ID. Non-fatal — if it fails, the poller's
+// passive confirmation path still works on Stash's next scheduled
+// scan; we just lose the latency win.
+func (c *Client) MetadataScan(ctx context.Context, paths []string) (string, error) {
+	q := `mutation ForagerMetadataScan($input: ScanMetadataInput!) {
+  metadataScan(input: $input)
+}`
+	input := map[string]any{
+		// We explicitly ask for phashes — that's the whole point of
+		// triggering this scan. Other generation flags (covers,
+		// sprites, previews) inherit from the user's Stash defaults.
+		"scanGeneratePhashes": true,
+	}
+	if len(paths) > 0 {
+		input["paths"] = paths
+	}
+	var resp struct {
+		MetadataScan string `json:"metadataScan"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return "", fmt.Errorf("metadataScan: %w", err)
+	}
+	return resp.MetadataScan, nil
+}
+
 // Version is a trivial query used to validate the URL + API key at
 // startup before we kick off a full performer sync.
 func (c *Client) Version(ctx context.Context) (string, error) {
