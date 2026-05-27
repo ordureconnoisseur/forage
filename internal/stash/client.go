@@ -555,6 +555,78 @@ func (c *Client) MetadataScan(ctx context.Context, paths []string) (string, erro
 	return resp.MetadataScan, nil
 }
 
+// StashBoxes returns the endpoint URLs of the user's configured
+// stash-boxes (StashDB et al). The Identify task takes a source
+// list that must reference these endpoints exactly — passing our own
+// FORAGER_STASHDB_URL would silently no-op if the user's Stash is
+// configured with a slightly different host or trailing-slash form.
+//
+// Returns the list in user-configured order; callers can pick the
+// first StashDB-host entry to match what forager's predictions are
+// based on.
+func (c *Client) StashBoxes(ctx context.Context) ([]string, error) {
+	q := `{ configuration { general { stashBoxes { endpoint } } } }`
+	var resp struct {
+		Configuration struct {
+			General struct {
+				StashBoxes []struct {
+					Endpoint string `json:"endpoint"`
+				} `json:"stashBoxes"`
+			} `json:"general"`
+		} `json:"configuration"`
+	}
+	if err := c.do(ctx, q, nil, &resp); err != nil {
+		return nil, fmt.Errorf("stashBoxes: %w", err)
+	}
+	out := make([]string, 0, len(resp.Configuration.General.StashBoxes))
+	for _, b := range resp.Configuration.General.StashBoxes {
+		if b.Endpoint != "" {
+			out = append(out, b.Endpoint)
+		}
+	}
+	return out, nil
+}
+
+// MetadataIdentify enqueues Stash's Identify task scoped to the given
+// scene IDs, sourcing from the supplied stash-box endpoint. Used by
+// the poller right after a scene appears in Stash without a StashDB
+// cross-id: lets Stash scrape title/performers/tags/cross-id so the
+// scene fully populates instead of sitting in the library as a bare
+// file with no metadata.
+//
+// stashBoxEndpoint must match one of the user's configured stash-box
+// endpoints (see StashBoxes); a mismatch causes Stash to reject the
+// task. Returns the queued job ID. Non-fatal failure mode: identify
+// can also be triggered manually by the user from Stash's UI.
+func (c *Client) MetadataIdentify(ctx context.Context, sceneIDs []string, stashBoxEndpoint string) (string, error) {
+	if len(sceneIDs) == 0 {
+		return "", nil
+	}
+	if stashBoxEndpoint == "" {
+		return "", fmt.Errorf("metadataIdentify: stash-box endpoint required")
+	}
+	q := `mutation ForagerMetadataIdentify($input: IdentifyMetadataInput!) {
+  metadataIdentify(input: $input)
+}`
+	input := map[string]any{
+		"sceneIDs": sceneIDs,
+		"sources": []map[string]any{
+			{
+				"source": map[string]any{
+					"stash_box_endpoint": stashBoxEndpoint,
+				},
+			},
+		},
+	}
+	var resp struct {
+		MetadataIdentify string `json:"metadataIdentify"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return "", fmt.Errorf("metadataIdentify: %w", err)
+	}
+	return resp.MetadataIdentify, nil
+}
+
 // Version is a trivial query used to validate the URL + API key at
 // startup before we kick off a full performer sync.
 func (c *Client) Version(ctx context.Context) (string, error) {

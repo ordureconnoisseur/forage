@@ -11,12 +11,14 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
 	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
 // Poller advances grab state machines on a fixed interval. Holds a
@@ -29,6 +31,13 @@ type Poller struct {
 	log      *slog.Logger
 	interval time.Duration
 	orphan   time.Duration
+
+	// stashBoxEndpoint caches the user's StashDB endpoint as
+	// configured in Stash. Identify needs it to match exactly;
+	// fetched lazily on the first scanned-state transition and
+	// reused for the rest of the daemon's lifetime.
+	identifyMu       sync.Mutex
+	stashBoxEndpoint string
 }
 
 func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
@@ -280,6 +289,16 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 					g.Status = "scanned"
 					g.Reason = "in Stash, awaiting identify"
 					dirty = true
+					// Kick Stash's Identify task once on the transition.
+					// Best-effort: if it fails (no stash-box configured,
+					// network blip), the user can still trigger
+					// identify manually from Stash's UI and the next
+					// poll will detect the resulting stash_id.
+					if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
+						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
+					} else if jobID != "" {
+						p.log.Info("metadataIdentify triggered", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+					}
 				}
 			case g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan:
 				if g.Status != "orphaned" {
@@ -487,6 +506,55 @@ func translateStashPath(foragerPath, mapping string) string {
 		suffix = strings.ReplaceAll(suffix, "/", `\`)
 	}
 	return stashPrefix + suffix
+}
+
+// triggerIdentify fires Stash's Identify task on the given Stash
+// scene ID, sourcing from the user's first StashDB-host stash-box.
+// Cached endpoint lookup so we don't hit Stash's configuration query
+// every transition.
+//
+// Returns (jobID, nil) on success; ("", nil) if the user has no
+// stash-box configured (we log + skip rather than treating that as
+// an error — the user can still identify manually).
+func (p *Poller) triggerIdentify(ctx context.Context, sc *stash.Client, sceneID string) (string, error) {
+	endpoint, err := p.identifyEndpoint(ctx, sc)
+	if err != nil {
+		return "", err
+	}
+	if endpoint == "" {
+		return "", nil
+	}
+	return sc.MetadataIdentify(ctx, []string{sceneID}, endpoint)
+}
+
+// identifyEndpoint returns the user's StashDB stash-box endpoint,
+// populated once on first need and reused. The endpoint string has
+// to match exactly what Stash has configured (trailing slash + path
+// included), so we use Stash's own value rather than synthesising
+// one from FORAGER_STASHDB_URL.
+func (p *Poller) identifyEndpoint(ctx context.Context, sc *stash.Client) (string, error) {
+	p.identifyMu.Lock()
+	defer p.identifyMu.Unlock()
+	if p.stashBoxEndpoint != "" {
+		return p.stashBoxEndpoint, nil
+	}
+	boxes, err := sc.StashBoxes(ctx)
+	if err != nil {
+		return "", err
+	}
+	// Prefer the StashDB-host box; fall back to the first configured
+	// box. If none configured, return empty and the caller skips.
+	for _, ep := range boxes {
+		if strings.Contains(ep, stash.StashDBEndpointHost) {
+			p.stashBoxEndpoint = ep
+			return ep, nil
+		}
+	}
+	if len(boxes) > 0 {
+		p.stashBoxEndpoint = boxes[0]
+		return boxes[0], nil
+	}
+	return "", nil
 }
 
 // classifyQbitState was previously classifyState — renamed to make
