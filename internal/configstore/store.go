@@ -49,6 +49,13 @@ type StoredConfig struct {
 	SabAPIKey          *string `json:"sabApiKey,omitempty"`
 	SabCategory        *string `json:"sabCategory,omitempty"`
 	LibraryRoot        *string `json:"libraryRoot,omitempty"`
+	// StashPathMapping translates the forager-container path of a
+	// placed file into the path Stash sees for the same file (the two
+	// often differ when forager runs in Docker on Linux and Stash is
+	// on Windows over a NAS mount). Used by the post-place
+	// metadataScan trigger. Format "<forager-prefix>:<stash-prefix>"
+	// — e.g. "/data/media/Media:Z:\\Media".
+	StashPathMapping *string `json:"stashPathMapping,omitempty"`
 	// Duration fields are stored as strings ("60s", "6h") so the JSON
 	// stays human-readable and round-trips cleanly through the UI.
 	PollInterval  *string `json:"pollInterval,omitempty"`
@@ -265,6 +272,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.LibraryRoot != nil {
 		base.LibraryRoot = patch.LibraryRoot
+	}
+	if patch.StashPathMapping != nil {
+		base.StashPathMapping = patch.StashPathMapping
 	}
 	if patch.PollInterval != nil {
 		base.PollInterval = patch.PollInterval

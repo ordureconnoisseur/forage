@@ -419,6 +419,7 @@ export interface ConfigPatch {
   sabApiKey?: string;
   sabCategory?: string;
   libraryRoot?: string;
+  stashPathMapping?: string;
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;

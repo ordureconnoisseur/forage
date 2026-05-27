@@ -181,6 +181,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SabAPIKey = str("sabApiKey", stored.SabAPIKey, b.SabAPIKey, "")
 	out.SabCategory = str("sabCategory", stored.SabCategory, b.SabCategory, "manual")
 	out.LibraryRoot = str("libraryRoot", stored.LibraryRoot, b.LibraryRoot, "")
+	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)

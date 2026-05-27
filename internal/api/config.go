@@ -61,6 +61,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"sabApiKey":          secretField(cfg.SabAPIKey, sources["sabApiKey"]),
 		"sabCategory":        {Value: cfg.SabCategory, Source: sources["sabCategory"]},
 		"libraryRoot":        {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
+		"stashPathMapping":   {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
 		"pollInterval":       {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":        {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":       {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
@@ -223,6 +224,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	if patch.LibraryRoot != nil {
 		merged.LibraryRoot = patch.LibraryRoot
 	}
+	if patch.StashPathMapping != nil {
+		merged.StashPathMapping = patch.StashPathMapping
+	}
 	if patch.PollInterval != nil {
 		merged.PollInterval = patch.PollInterval
 	}
@@ -258,7 +262,7 @@ func sectionsTouchedBy(patch configstore.Patch) []string {
 	if patch.SabURL != nil || patch.SabAPIKey != nil || patch.SabCategory != nil {
 		out["sab"] = true
 	}
-	if patch.LibraryRoot != nil {
+	if patch.LibraryRoot != nil || patch.StashPathMapping != nil {
 		out["placement"] = true
 	}
 	keys := make([]string, 0, len(out))

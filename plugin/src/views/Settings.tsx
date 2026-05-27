@@ -497,6 +497,28 @@ export default function Settings({ onClose, health }: Props) {
             work — otherwise the placer falls back to copy. Leave blank
             to disable placement (files stay where the client put them).
           </p>
+          <Field label="Stash path mapping">
+            <input
+              type="text"
+              value={displayValue(
+                "stashPathMapping",
+                data?.fields["stashPathMapping"],
+              )}
+              onChange={(e) => setField("stashPathMapping", e.target.value)}
+              placeholder="/data/media/Media:Z:\Media"
+              spellCheck={false}
+            />
+            <SourceBadge field={data?.fields["stashPathMapping"]} />
+          </Field>
+          <p className="settings-tip">
+            Optional. Translates a forager-container path to the path
+            Stash sees for the same file when forager triggers a scan
+            after placement. Format <code>forager-prefix:stash-prefix</code>
+            — e.g. forager mounts the NAS at <code>/data/media/Media</code>
+            but Stash on Windows sees it as <code>Z:\Media</code>.
+            Leave blank to fall back to a full-library scan after each
+            placement (slower but works regardless of mount layout).
+          </p>
           <div className="settings-actions inline">
             <button
               className="settings-test"
