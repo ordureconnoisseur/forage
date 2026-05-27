@@ -19,14 +19,22 @@ type Entity struct {
 // via the collision bench.
 var tokenSplit = regexp.MustCompile(`[._\-\s\[\]()!,@'"&+]+`)
 
-// caseAndDigitSplit further splits each piece into [a-z]+ / [A-Z][a-z]*
-// / \d+ runs. This handles two real-world cases the studio bench
-// surfaced:
-//  1. CamelCase run-together names (`BangBros18` → bang/bros/18)
-//  2. letter-digit boundaries even in lowercase (`cum4k` → cum/4k)
-// Apply this BEFORE lower-casing so the case information is still
-// present to split on.
-var caseAndDigitSplit = regexp.MustCompile(`[a-z]+|[A-Z][a-z]*|[A-Z]+(?:[^a-z]|$)|\d+`)
+// caseAndDigitSplit further splits each piece into runs:
+//  1. lowercase runs (most common)
+//  2. all-uppercase runs ending in non-lowercase or end of string —
+//     keeps JAV codes (`SNOS`, `OAE`) and other acronyms intact
+//     (`HTTP`, `USB`)
+//  3. CamelCase words (`Bang`, `Bros`)
+//  4. digit runs
+//
+// Ordering matters: Go's RE2 uses leftmost-first alternation, so an
+// earlier alternative wins even if a later one would match longer.
+// The all-caps alternative MUST precede the single-uppercase one or
+// it never fires — `[A-Z][a-z]*` would match the first letter of
+// `SNOS` standalone and shatter the rest into [s n o s]. That was
+// the tokenizer bug that caused JAV release names to score against
+// the wrong StashDB scenes.
+var caseAndDigitSplit = regexp.MustCompile(`[a-z]+|[A-Z]+(?:[^a-z]|$)|[A-Z][a-z]*|\d+`)
 
 // Tokenize splits s on punctuation/whitespace, then further splits each
 // piece on case and letter-digit boundaries. Output is lowercase, in

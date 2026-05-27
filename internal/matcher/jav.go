@@ -2,59 +2,75 @@ package matcher
 
 import "regexp"
 
-// javCodeRegex matches the canonical JAV scene-identifier shape:
-// a 2-6 letter studio code, an optional separator, and a 3-5 digit
-// release number. StashDB stores JAV scene titles in this form
-// (`SNOS-233`, `IPX-1234`), and the matching uploader-supplied code
-// in release filenames is a much stronger identity signal than the
-// fuzzy title overlap that drives most western matches.
+// javCodeRegex matches canonical JAV scene-identifier shapes:
 //
-// Uppercase-only intentional: case-insensitive matching false-
-// positives on long English titles (`School.300`, `Volume.4000`),
-// and both StashDB titles and the overwhelming majority of JAV
-// release names preserve the canonical caps. Edge-case lowercase
-// uploaders are a follow-up if/when the corpus shows we miss them.
-var javCodeRegex = regexp.MustCompile(`\b[A-Z]{2,6}[-._]?\d{3,5}\b`)
+//	SNOS-233          → snos-233      (the canonical form)
+//	SNOS.233 / snos233→ snos-233      (separator + case variants)
+//	OAE-302ch         → oae-302       (trailing chapter/version marker)
+//	SSIS-984-C_GG5    → ssis-984      (trailing re-edition marker)
+//	326FCT-221        → fct-221 + 326fct-221 (digit-prefixed
+//	                    distributor codes — StashDB inconsistently
+//	                    stores these with or without the prefix, so
+//	                    ExtractJAVCodes emits both forms to match
+//	                    either)
+//
+// Uppercase-only on the letter block: case-insensitive matching
+// false-positives on long English titles (`School.300`,
+// `Volume.4000`). Both StashDB titles and the overwhelming majority
+// of JAV release names preserve the canonical caps.
+//
+// No trailing word-boundary: the `OAE-302ch` variant runs lowercase
+// letters straight after the digits, and `\b` between `2` and `c`
+// (both word characters) fails. Greedy `\d{3,5}` still bounds the
+// digit count.
+var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,5})`)
 
 // ExtractJAVCodes returns normalized codes ("snos-233" form) found
 // in s. De-duplicated, preserves first-occurrence order, returns nil
-// when none present.
+// when none present. When the source string carries a digit prefix
+// (e.g. `326FCT-221`), both the full form (`326fct-221`) and the
+// bare studio+number form (`fct-221`) are emitted — StashDB does
+// not consistently include the prefix, so we match on either.
 func ExtractJAVCodes(s string) []string {
-	matches := javCodeRegex.FindAllString(s, -1)
+	matches := javCodeRegex.FindAllStringSubmatch(s, -1)
 	if len(matches) == 0 {
 		return nil
 	}
 	seen := map[string]bool{}
-	out := make([]string, 0, len(matches))
+	out := make([]string, 0, len(matches)*2)
+	emit := func(code string) {
+		if code == "" || seen[code] {
+			return
+		}
+		seen[code] = true
+		out = append(out, code)
+	}
 	for _, m := range matches {
-		n := normalizeJAVCode(m)
-		if n == "" || seen[n] {
+		// m[1] = digit prefix (may be empty)
+		// m[2] = letter block
+		// m[3] = digit suffix
+		letters := lowercaseASCII(m[2])
+		digits := m[3]
+		if letters == "" || digits == "" {
 			continue
 		}
-		seen[n] = true
-		out = append(out, n)
+		bare := letters + "-" + digits
+		emit(bare)
+		if m[1] != "" {
+			emit(m[1] + bare)
+		}
 	}
 	return out
 }
 
-// normalizeJAVCode lowercases letters, drops any separator, and
-// reinserts a single dash between the letter prefix and digit
-// suffix. "SNOS-233", "SNOS.233", "snos233" all map to "snos-233".
-func normalizeJAVCode(s string) string {
-	var letters, digits []byte
+func lowercaseASCII(s string) string {
+	buf := make([]byte, len(s))
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		switch {
-		case c >= 'A' && c <= 'Z':
-			letters = append(letters, c+('a'-'A'))
-		case c >= 'a' && c <= 'z':
-			letters = append(letters, c)
-		case c >= '0' && c <= '9':
-			digits = append(digits, c)
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
 		}
+		buf[i] = c
 	}
-	if len(letters) == 0 || len(digits) == 0 {
-		return ""
-	}
-	return string(letters) + "-" + string(digits)
+	return string(buf)
 }
