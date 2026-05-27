@@ -223,7 +223,7 @@ export default function App() {
           />
         )}
         {!needsSetup && route.kind === "discover" && (
-          <DiscoverList onPickPerformer={goPerformer} />
+          <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
         )}
         {!needsSetup && route.kind === "grabs" && <GrabsList />}
         {needsSetup && (

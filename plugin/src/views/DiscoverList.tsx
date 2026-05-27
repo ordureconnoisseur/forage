@@ -28,8 +28,13 @@ const TRENDING_LIMIT = 50;
 
 export default function DiscoverList({
   onPickPerformer,
+  onPickScene,
 }: {
   onPickPerformer: (localID: string) => void;
+  // Navigate straight to a scene's release-search page. Carries the
+  // optional performer name so the placer can drop the file under
+  // <library>/<performer>/ when the user grabs from this jump-point.
+  onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -149,6 +154,7 @@ export default function DiscoverList({
           <TrendingCarousel
             scenes={data.trending}
             onPickPerformer={onPickPerformer}
+            onPickScene={onPickScene}
           />
         </section>
       )}
@@ -201,6 +207,7 @@ export default function DiscoverList({
               key={s.stashdb_id}
               s={s}
               onPickPerformer={onPickPerformer}
+              onPickScene={onPickScene}
             />
           ))}
         </div>
@@ -219,9 +226,11 @@ const TRENDING_PAGE_SIZE = 5;
 function TrendingCarousel({
   scenes,
   onPickPerformer,
+  onPickScene,
 }: {
   scenes: DiscoverScene[];
   onPickPerformer: (localID: string) => void;
+  onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [page, setPage] = useState(0);
   const pageCount = Math.max(1, Math.ceil(scenes.length / TRENDING_PAGE_SIZE));
@@ -251,6 +260,7 @@ function TrendingCarousel({
             key={s.stashdb_id}
             s={s}
             onPickPerformer={onPickPerformer}
+            onPickScene={onPickScene}
           />
         ))}
       </div>
@@ -267,15 +277,17 @@ function TrendingCarousel({
 }
 
 // TrendingCard is the compact variant — image + title + single meta
-// line, no chips. Clicking the thumb opens StashDB (same as regular
-// DiscoverCard); the whole card is also keyboard-actionable via the
-// thumb anchor.
+// line. Thumb click is the primary forage action: navigate in-app to
+// the scene's release-search page. Small overlay link goes to StashDB
+// for verification.
 function TrendingCard({
   s,
   onPickPerformer,
+  onPickScene,
 }: {
   s: DiscoverScene;
   onPickPerformer: (localID: string) => void;
+  onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   // First library performer (if any) gets a tiny chip beneath the
   // title — keeps the card height bounded while still surfacing the
@@ -283,12 +295,11 @@ function TrendingCard({
   const primaryLibraryPerformer = s.performers[0];
   return (
     <div className="trending-card">
-      <a
-        href={`https://stashdb.org/scenes/${s.stashdb_id}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="scene-thumb"
-        title={s.title || "Open on StashDB"}
+      <button
+        type="button"
+        className="scene-thumb scene-thumb-button"
+        onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
+        title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
       >
         {s.image_url ? (
           <img
@@ -300,7 +311,17 @@ function TrendingCard({
             }}
           />
         ) : null}
-      </a>
+        <a
+          href={`https://stashdb.org/scenes/${s.stashdb_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="thumb-external"
+          title="Open on StashDB"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ↗
+        </a>
+      </button>
       <div className="trending-card-body">
         <div className="trending-card-title" title={s.title || ""}>
           {s.title || "(untitled)"}
@@ -329,18 +350,26 @@ function TrendingCard({
 function DiscoverCard({
   s,
   onPickPerformer,
+  onPickScene,
 }: {
   s: DiscoverScene;
   onPickPerformer: (localID: string) => void;
+  onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
+  // Pick a library performer to pass to the placer when the user
+  // grabs a release of this scene — whichever performer is in their
+  // library determines the destination folder. If multiple library
+  // performers feature, take the first one (sufficient for one folder
+  // per grab; the scene file ends up tagged with all performers in
+  // Stash regardless of folder choice).
+  const primaryLibraryPerformer = s.performers[0];
   return (
     <div className="scene-card discover-card">
-      <a
-        href={`https://stashdb.org/scenes/${s.stashdb_id}`}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="scene-thumb"
-        title="Open on StashDB"
+      <button
+        type="button"
+        className="scene-thumb scene-thumb-button"
+        onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
+        title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
       >
         {s.image_url ? (
           <img
@@ -352,7 +381,17 @@ function DiscoverCard({
             }}
           />
         ) : null}
-      </a>
+        <a
+          href={`https://stashdb.org/scenes/${s.stashdb_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="thumb-external"
+          title="Open on StashDB"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ↗
+        </a>
+      </button>
       <div className="scene-info">
         <div className="title">{s.title || "(untitled)"}</div>
         <div className="meta">

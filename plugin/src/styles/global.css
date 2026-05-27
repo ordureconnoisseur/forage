@@ -467,6 +467,50 @@ button {
   object-fit: cover;
   display: block;
 }
+/* When scene-thumb is the primary "find releases" click target, it
+   renders as a <button> — reset the default button styling so it
+   visually matches the <a>/div variants. */
+.scene-thumb-button {
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  display: block;
+  width: 100%;
+}
+/* Tiny corner overlay link → opens StashDB scene page. Sits on top
+   of the thumb but doesn't compete with the primary thumb-click
+   action (stopPropagation in the React layer). */
+.thumb-external {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  color: rgba(255, 255, 255, 0.85);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.scene-thumb:hover .thumb-external,
+.thumb-external:focus-visible {
+  opacity: 1;
+}
+.thumb-external:hover {
+  background: rgba(0, 0, 0, 0.75);
+  color: #fff;
+  text-decoration: none;
+}
 .scene-info {
   padding: 12px 14px 14px 14px;
 }
