@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -453,10 +454,23 @@ type SceneMatch struct {
 	StashDBID string
 }
 
+// findScenesByPathQuery uses MATCHES_REGEX instead of INCLUDES.
+//
+// Stash's `path INCLUDES` filter tokenises the value on whitespace and
+// treats `-` as a special "exclude" operator, so any multi-word
+// release basename (e.g. `ExCoGiGirls - Livi, Megan - Girls 101 ...`)
+// causes the filter to return tens of thousands of unrelated scenes.
+// The poller would then pick whichever scene happened to sort first
+// by created_at DESC and write its stash_id as the grab's
+// actual_stashdb_id — silently mis-confirming every multi-word grab.
+//
+// MATCHES_REGEX evaluates the value as a plain regex against the file
+// path with no tokenisation, so an escaped needle (regexp.QuoteMeta)
+// gives us the substring-match semantics we actually want.
 const findScenesByPathQuery = `
 query ForagerFindSceneByPath($value: String!) {
   findScenes(
-    scene_filter: { path: { value: $value, modifier: INCLUDES } }
+    scene_filter: { path: { value: $value, modifier: MATCHES_REGEX } }
     filter: { page: 1, per_page: 5, sort: "created_at", direction: DESC }
   ) {
     count
@@ -480,6 +494,7 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 	if needle == "" {
 		return nil, nil
 	}
+	pattern := regexp.QuoteMeta(needle)
 	var resp struct {
 		FindScenes struct {
 			Count  int `json:"count"`
@@ -494,7 +509,7 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 			} `json:"scenes"`
 		} `json:"findScenes"`
 	}
-	if err := c.do(ctx, findScenesByPathQuery, map[string]any{"value": needle}, &resp); err != nil {
+	if err := c.do(ctx, findScenesByPathQuery, map[string]any{"value": pattern}, &resp); err != nil {
 		return nil, fmt.Errorf("findScenes by path: %w", err)
 	}
 	if len(resp.FindScenes.Scenes) == 0 {
@@ -538,10 +553,15 @@ func (c *Client) MetadataScan(ctx context.Context, paths []string) (string, erro
   metadataScan(input: $input)
 }`
 	input := map[string]any{
-		// We explicitly ask for phashes — that's the whole point of
-		// triggering this scan. Other generation flags (covers,
-		// sprites, previews) inherit from the user's Stash defaults.
-		"scanGeneratePhashes": true,
+		// Ask Stash to fully process new files: cover thumbnail,
+		// perceptual hash, seekbar sprite sheet, hover preview. These
+		// are all things the user expects to see on the scene card
+		// without manually running Generate afterwards. Stash skips
+		// any artifact that already exists, so re-scanning is cheap.
+		"scanGenerateCovers":   true,
+		"scanGeneratePhashes":  true,
+		"scanGeneratePreviews": true,
+		"scanGenerateSprites":  true,
 	}
 	if len(paths) > 0 {
 		input["paths"] = paths
