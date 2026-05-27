@@ -188,6 +188,18 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 		p.log.Warn("unknown grab client", "id", g.ID, "client", g.Client)
 	}
 
+	// Re-derive state from data. Earlier versions of the qBit/SAB
+	// advance steps could downgrade a placed grab back to "completed"
+	// when the source client still reported the torrent as active. If
+	// we see a placed_path on a grab whose status got downgraded, lift
+	// it back to "placed" so Step 4 can continue confirming.
+	if g.PlacedPath != "" && (g.Status == "completed" || g.Status == "downloading") {
+		prev := g.Status
+		g.Status = "placed"
+		g.Reason = "heal: placed_path set, status was " + prev
+		dirty = true
+	}
+
 	// ── Step 3 — place the finished download into the library.
 	// Skipped when the placer isn't configured (libraryRoot unset) —
 	// the file stays in the download client's complete dir and Stash
@@ -357,9 +369,12 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		dirty = true
 	}
 	newStatus := classifyQbitState(t.State)
-	// Don't downgrade "placed" back to "completed" just because qBit
-	// still reports the torrent as seeding (the most common case).
-	if g.Status != "placed" && g.Status != newStatus && newStatus != "" {
+	// Don't downgrade post-completed states (placed/scanned/etc.)
+	// back to "completed" just because qBit still reports the torrent
+	// as seeding (the most common case). qBit's view is limited to
+	// download progress — anything we've learned downstream about
+	// placement or Stash status is more authoritative.
+	if !isPostCompleted(g.Status) && g.Status != newStatus && newStatus != "" {
 		g.Status = newStatus
 		if newStatus == "completed" && g.CompletedAt == 0 {
 			g.CompletedAt = time.Now().Unix()
@@ -555,6 +570,19 @@ func (p *Poller) identifyEndpoint(ctx context.Context, sc *stash.Client) (string
 		return boxes[0], nil
 	}
 	return "", nil
+}
+
+// isPostCompleted reports whether the grab has moved beyond the
+// download-client's purview — placement, Stash scan, identify, or a
+// terminal Stash-side result. The qBit/SAB advance steps must not
+// downgrade these back to "completed" or earlier just because the
+// client still reports the source torrent/nzo as active.
+func isPostCompleted(status string) bool {
+	switch status {
+	case "placed", "scanned", "confirmed", "mismatched", "orphaned":
+		return true
+	}
+	return false
 }
 
 // classifyQbitState was previously classifyState — renamed to make
