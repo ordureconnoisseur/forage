@@ -13,6 +13,11 @@ tailscale-state/
 .env.local
 .env.*.local
 
+# Per-deployment compose — copy docker-compose.example.yml to
+# docker-compose.yml and customise volume mounts / users for your
+# environment. Never commit your filled-in copy.
+docker-compose.yml
+
 # Go build artefacts
 /forager
 *.test

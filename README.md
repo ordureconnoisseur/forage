@@ -84,9 +84,13 @@ Fill in the values for `FORAGER_STASH_URL`, `FORAGER_STASH_API_KEY`, `FORAGER_ST
 
 Set `FORAGER_LIBRARY_ROOT` to the directory you want forager to drop placed files into. **This path is inside the container** — make sure the volume mount in compose puts the real host directory there.
 
-### 2. Wire volumes in `docker-compose.yml`
+### 2. Wire volumes
 
-See `docker-compose.example.yml` for a template. The pattern is: bind-mount one filesystem at a single in-container path, and have qBit/SAB's complete-downloads directory + the library directory both live inside that mount. That way hardlinking is a metadata-only operation.
+```bash
+cp docker-compose.example.yml docker-compose.yml
+```
+
+Then edit `docker-compose.yml` to point at your environment. The file is gitignored — your customisations stay local. The pattern: bind-mount one filesystem at a single in-container path, and have qBit/SAB's complete-downloads directory + the library directory both live inside that mount. That way hardlinking is a metadata-only operation.
 
 Typical layout (in-container):
 
