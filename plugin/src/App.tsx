@@ -166,7 +166,6 @@ export default function App() {
             Grabs
           </a>
         </nav>
-        <Breadcrumb route={route} onPerformers={goPerformers} />
         <button
           className="header-settings"
           onClick={() => setSettingsOpen(true)}
@@ -240,36 +239,6 @@ export default function App() {
         <Settings onClose={() => setSettingsOpen(false)} health={health} />
       )}
     </div>
-  );
-}
-
-function Breadcrumb({
-  route,
-  onPerformers,
-}: {
-  route: Route;
-  onPerformers: () => void;
-}) {
-  // Breadcrumb only renders for sub-routes under Performers. Top-level
-  // routes (performers list, grabs list) get their nav highlight from
-  // the .top-nav element instead.
-  if (route.kind !== "missing" && route.kind !== "scene") return null;
-  return (
-    <nav className="breadcrumb">
-      <a
-        href="#/"
-        onClick={(e) => {
-          e.preventDefault();
-          onPerformers();
-        }}
-      >
-        Performers
-      </a>
-      <span className="sep">›</span>
-      <span>
-        {route.kind === "missing" ? "Missing scenes" : "Scene releases"}
-      </span>
-    </nav>
   );
 }
 

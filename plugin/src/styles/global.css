@@ -140,14 +140,6 @@ button {
   display: block;
   fill: currentColor;
 }
-.breadcrumb {
-  color: var(--text-muted);
-  font-size: 13px;
-}
-.breadcrumb a { color: var(--text-muted); }
-.breadcrumb a:hover { color: var(--text); text-decoration: none; }
-.breadcrumb .sep { margin: 0 8px; opacity: 0.6; }
-
 /* Top-nav lives in the header next to the brand. Highlights the
    currently-active top-level section (Performers vs Grabs) with the
    leafy accent so the user always knows which view they're in. */
