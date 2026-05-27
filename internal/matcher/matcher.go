@@ -255,8 +255,9 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 	releaseTokenSet := tokenSet(filteredTokens)
 	stashDBPerfSet := stringSet(stashDBPerfIDs)
 	stashDBStudioSet := stringSet(stashDBStudioIDs)
+	releaseJAVCodes := stringSet(ExtractJAVCodes(releaseName))
 	for _, c := range candidates {
-		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, stashDBPerfSet, stashDBStudioSet, date)
+		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, stashDBPerfSet, stashDBStudioSet, date, releaseJAVCodes)
 	}
 
 	out := make([]Candidate, 0, len(candidates))
@@ -357,9 +358,16 @@ const (
 	weightTitle     = 0.20
 	bothTracksBonus = 0.05
 	minTitleScore   = 0.05
+	// javCodeFloor: when release and scene title share a JAV studio
+	// code (e.g. both contain `SNOS-233`), force confidence to at
+	// least this value. JAV codes are uniquely allocated per studio,
+	// so a code match is a near-deterministic identity. Set below 1.0
+	// so a candidate with code-match AND strong other signals still
+	// outranks code-match alone.
+	javCodeFloor = 0.85
 )
 
-func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[string]bool, releaseDate string) (float64, []string, float64) {
+func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[string]bool, releaseDate string, releaseJAVCodes map[string]bool) (float64, []string, float64) {
 	pScore, pReason := performerOverlap(c.Scene, perfSet)
 	sScore, sReason := studioMatch(c.Scene, studioSet)
 	dScore, dReason := dateProximity(c.Scene.Date, releaseDate)
@@ -369,6 +377,20 @@ func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[s
 	if len(c.Tracks) >= 2 {
 		total += bothTracksBonus
 	}
+
+	javReason := ""
+	if len(releaseJAVCodes) > 0 {
+		for _, code := range ExtractJAVCodes(c.Scene.Title) {
+			if releaseJAVCodes[code] {
+				if total < javCodeFloor {
+					total = javCodeFloor
+				}
+				javReason = "jav-code: " + code
+				break
+			}
+		}
+	}
+
 	if total > 1 {
 		total = 1
 	}
@@ -377,6 +399,9 @@ func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[s
 	}
 
 	reasons := []string{pReason, sReason, dReason, tReason, "tracks: " + strings.Join(c.Tracks, "+")}
+	if javReason != "" {
+		reasons = append(reasons, javReason)
+	}
 	return total, reasons, tScore
 }
 
@@ -504,6 +529,11 @@ var titleStopwords = map[string]bool{
 	"sd": true, "hd": true, "fhd": true, "uhd": true,
 	"480p": true, "720p": true, "1080p": true, "2160p": true,
 	"4k": true, "8k": true,
+	// resolution-suffix orphans — the case+digit tokenizer always
+	// splits `1080p` → `1080`+`p`, so the full-string entries above
+	// never actually fire. Cover the post-split forms too.
+	"480": true, "720": true, "1080": true, "2160": true,
+	"p": true,
 	// generic noise
 	"xxx": true, "com": true, "net": true, "org": true,
 	"г": true, // Cyrillic year marker found in PornoLab feeds
