@@ -5,6 +5,7 @@ import {
   type SceneRelease,
   type SceneReleasesResponse,
 } from "../api";
+import { ResBadge } from "../ResBadge";
 
 // Map the matcher's 0..1 confidence into one of five outline tiers.
 // Only applied to verified releases — the unverified section already
@@ -274,6 +275,7 @@ function ReleaseList({
             <div className="release-body">
               <div className="release-title">{r.title}</div>
               <div className="release-meta">
+                <ResBadge title={r.title} />
                 <span>{r.indexer}</span>
                 <span>·</span>
                 <span>{r.protocol}</span>
