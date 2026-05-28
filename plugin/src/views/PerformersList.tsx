@@ -127,6 +127,12 @@ function PerformerCard({
   const imgURL = performerImageURL(p.stash_id);
   const hasStashDBData = p.total_stashdb_scenes > 0;
   const missing = Math.max(0, p.total_stashdb_scenes - p.owned_scenes_count);
+  const completion = hasStashDBData
+    ? Math.min(
+        100,
+        Math.round((p.owned_scenes_count / p.total_stashdb_scenes) * 100),
+      )
+    : null;
   const lastRelease =
     p.last_release_unix > 0
       ? new Date(p.last_release_unix * 1000).toISOString().slice(0, 10)
@@ -136,42 +142,53 @@ function PerformerCard({
       className={"performer-card" + (p.favorite ? " fav" : "")}
       onClick={onPick}
     >
-      <div className="perf-image">
-        {imgURL ? (
-          <img
-            src={imgURL}
-            alt=""
-            loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-        ) : null}
-        {p.favorite ? <HeartIcon /> : null}
-      </div>
-      <div className="perf-info">
-        <div className="name">{p.name}</div>
-        {/* Two-line stats block — same data the Discover hovercard
-            shows, in a compact card-friendly layout. Library count is
-            always rendered; the StashDB-derived stats (missing, last
-            release) only appear when the scene cache has populated
-            data for this performer (i.e. they have a StashDB cross-id
-            + the 12h refresh has run). */}
-        <div className="meta">
-          <span className="primary">{p.scene_count} in library</span>
-          {hasStashDBData && (
+      {imgURL ? (
+        <img
+          className="perf-img"
+          src={imgURL}
+          alt=""
+          loading="lazy"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      ) : (
+        <div className="perf-img perf-img-empty">{p.name.slice(0, 1)}</div>
+      )}
+      {p.favorite ? <HeartIcon /> : null}
+      <div className="perf-scrim">
+        <div className="perf-name">{p.name}</div>
+        {/* StashDB-derived stats (missing, owned/total, last release)
+            only appear once the scene cache has data for this performer
+            — a cross-id + the 12h refresh. Otherwise just the raw
+            library count. */}
+        <div className="perf-stats">
+          {hasStashDBData ? (
             <>
-              <span className="sep"> · </span>
-              <span className={missing > 0 ? "missing" : ""}>
-                {missing} missing
+              <span className="perf-missing">
+                {missing > 0 ? `${missing} missing` : "complete"}
               </span>
+              <span className="sep">·</span>
+              <span>
+                {p.owned_scenes_count}/{p.total_stashdb_scenes}
+              </span>
+              {lastRelease && (
+                <>
+                  <span className="sep">·</span>
+                  <span>{lastRelease}</span>
+                </>
+              )}
             </>
+          ) : (
+            <span>{p.scene_count} in library</span>
           )}
         </div>
-        {lastRelease && (
-          <div className="meta dim">last release {lastRelease}</div>
-        )}
       </div>
+      {completion != null && (
+        <div className="perf-bar" title={`${completion}% of StashDB scenes`}>
+          <div className="perf-bar-fill" style={{ width: `${completion}%` }} />
+        </div>
+      )}
     </button>
   );
 }
