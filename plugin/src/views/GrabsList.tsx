@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ACTIVE_STATUSES,
   fetchGrabs,
@@ -24,16 +24,19 @@ import {
 const FAST_POLL_MS = 5_000;
 const SLOW_POLL_MS = 30_000;
 
-// Filter chips in their display order. "any" leads so the user's
-// default landing view shows everything; the rest follow the natural
-// life-cycle order.
-const STATUS_ORDER: (GrabStatus | "any")[] = [
-  "any",
+// The filter pills mirror the poller's state machine in two visual
+// groups: the in-flight pipeline (linear progression, shown with
+// arrows) and the terminal outcomes (confirmed is the happy end;
+// mismatched/orphaned/failed are the off-ramps). "All" is a master
+// toggle that leads the strip.
+const IN_FLIGHT: GrabStatus[] = [
   "queued",
   "downloading",
   "completed",
   "placed",
   "scanned",
+];
+const OUTCOME: GrabStatus[] = [
   "confirmed",
   "mismatched",
   "orphaned",
@@ -137,24 +140,53 @@ export default function GrabsList() {
         </div>
       </div>
 
-      <div className="grab-chip-strip">
-        {STATUS_ORDER.map((s) => {
-          const count = s === "any" ? anyTotal : totals[s] || 0;
-          return (
-            <button
-              key={s}
-              className={
-                "grab-chip" +
-                (filter === s ? " active" : "") +
-                ` chip-${s}`
-              }
-              onClick={() => setFilter(s)}
-            >
-              <span className="chip-label">{s}</span>
-              <span className="chip-count">{count}</span>
-            </button>
-          );
-        })}
+      <div className="grab-filter">
+        <button
+          className={"grab-chip chip-any" + (filter === "any" ? " active" : "")}
+          onClick={() => setFilter("any")}
+        >
+          <span className="chip-label">all</span>
+          <span className="chip-count">{anyTotal}</span>
+        </button>
+
+        <div className="grab-flow">
+          <div className="grab-flow-group">
+            <span className="grab-flow-label">In flight</span>
+            <div className="grab-flow-pills">
+              {IN_FLIGHT.map((s, i) => (
+                <Fragment key={s}>
+                  {i > 0 && (
+                    <span className="grab-flow-arrow" aria-hidden="true">
+                      ›
+                    </span>
+                  )}
+                  <FilterChip
+                    status={s}
+                    count={totals[s] || 0}
+                    active={filter === s}
+                    onClick={() => setFilter(s)}
+                  />
+                </Fragment>
+              ))}
+            </div>
+          </div>
+
+          <div className="grab-flow-group">
+            <span className="grab-flow-label">Outcome</span>
+            <div className="grab-flow-pills">
+              {OUTCOME.map((s) => (
+                <FilterChip
+                  key={s}
+                  status={s}
+                  count={totals[s] || 0}
+                  active={filter === s}
+                  onClick={() => setFilter(s)}
+                  dot
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       </div>
 
       <div className="controls">
@@ -191,6 +223,31 @@ export default function GrabsList() {
         </ul>
       )}
     </div>
+  );
+}
+
+function FilterChip({
+  status,
+  count,
+  active,
+  onClick,
+  dot,
+}: {
+  status: GrabStatus;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+  dot?: boolean;
+}) {
+  return (
+    <button
+      className={"grab-chip chip-" + status + (active ? " active" : "")}
+      onClick={onClick}
+    >
+      {dot && <span className="chip-dot" aria-hidden="true" />}
+      <span className="chip-label">{status}</span>
+      <span className="chip-count">{count}</span>
+    </button>
   );
 }
 

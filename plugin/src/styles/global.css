@@ -1119,12 +1119,58 @@ button {
   --status-failed-bg: rgba(239, 68, 68, 0.18);
 }
 
-.grab-chip-strip {
+/* Filter strip laid out as the state machine: a leading "all" toggle,
+   then two labelled groups — the in-flight pipeline (arrow-connected)
+   and the terminal outcomes (status-coloured dots). */
+.grab-filter {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 16px 20px;
   margin: 0 0 20px 0;
 }
+.grab-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px 28px;
+}
+.grab-flow-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.grab-flow-label {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+.grab-flow-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.grab-flow-arrow {
+  color: var(--text-muted);
+  opacity: 0.5;
+  font-size: 14px;
+  user-select: none;
+}
+.chip-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  flex: none;
+}
+.chip-confirmed .chip-dot  { background: var(--status-confirmed); }
+.chip-mismatched .chip-dot { background: var(--status-mismatched); }
+.chip-orphaned .chip-dot   { background: var(--status-orphaned); }
+.chip-failed .chip-dot     { background: var(--status-failed); }
+
 .grab-chip {
   display: inline-flex;
   align-items: center;
