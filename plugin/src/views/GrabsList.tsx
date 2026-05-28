@@ -168,18 +168,35 @@ export default function GrabsList() {
 
   return (
     <div>
-      <div className="page-header">
-        <h2>Grabs</h2>
-        <div className="meta">
-          {anyTotal} total ·{" "}
-          {(ACTIVE_STATUSES as GrabStatus[]).reduce(
-            (s, k) => s + (totals[k] || 0),
-            0,
-          )}{" "}
-          in flight
+      {/* Toolbar: identity (title + stats) on the left, search +
+          live count on the right — one row that uses the width. */}
+      <div className="grab-toolbar">
+        <div className="grab-toolbar-id">
+          <h2>Grabs</h2>
+          <span className="grab-toolbar-stats">
+            {anyTotal} total ·{" "}
+            {(ACTIVE_STATUSES as GrabStatus[]).reduce(
+              (s, k) => s + (totals[k] || 0),
+              0,
+            )}{" "}
+            in flight
+          </span>
+        </div>
+        <div className="grab-toolbar-search">
+          <input
+            type="text"
+            placeholder="Filter by title, performer, indexer…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+          <span className="grab-toolbar-count">
+            {filtered.length}/{data.grabs.length}
+          </span>
         </div>
       </div>
 
+      {/* Filter strip: "all" leads, bottom-aligned with the two
+          labelled groups, all on one row. */}
       <div className="grab-filter">
         <button
           className={"grab-chip chip-any" + (filter === "any" ? " active" : "")}
@@ -189,56 +206,42 @@ export default function GrabsList() {
           <span className="chip-count">{anyTotal}</span>
         </button>
 
-        <div className="grab-flow">
-          <div className="grab-flow-group">
-            <span className="grab-flow-label">In flight</span>
-            <div className="grab-flow-pills">
-              {IN_FLIGHT.map((s, i) => (
-                <Fragment key={s}>
-                  {i > 0 && (
-                    <span className="grab-flow-arrow" aria-hidden="true">
-                      ›
-                    </span>
-                  )}
-                  <FilterChip
-                    status={s}
-                    count={totals[s] || 0}
-                    active={filter === s}
-                    onClick={() => setFilter(s)}
-                  />
-                </Fragment>
-              ))}
-            </div>
-          </div>
-
-          <div className="grab-flow-group">
-            <span className="grab-flow-label">Outcome</span>
-            <div className="grab-flow-pills">
-              {OUTCOME.map((s) => (
+        <div className="grab-flow-group">
+          <span className="grab-flow-label">In flight</span>
+          <div className="grab-flow-pills">
+            {IN_FLIGHT.map((s, i) => (
+              <Fragment key={s}>
+                {i > 0 && (
+                  <span className="grab-flow-arrow" aria-hidden="true">
+                    ›
+                  </span>
+                )}
                 <FilterChip
-                  key={s}
                   status={s}
                   count={totals[s] || 0}
                   active={filter === s}
                   onClick={() => setFilter(s)}
-                  dot
                 />
-              ))}
-            </div>
+              </Fragment>
+            ))}
           </div>
         </div>
-      </div>
 
-      <div className="controls">
-        <input
-          type="text"
-          placeholder="Filter by title, performer, indexer…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <span className="count">
-          {filtered.length} / {data.grabs.length}
-        </span>
+        <div className="grab-flow-group">
+          <span className="grab-flow-label">Outcome</span>
+          <div className="grab-flow-pills">
+            {OUTCOME.map((s) => (
+              <FilterChip
+                key={s}
+                status={s}
+                count={totals[s] || 0}
+                active={filter === s}
+                onClick={() => setFilter(s)}
+                dot
+              />
+            ))}
+          </div>
+        </div>
       </div>
 
       {notice && (

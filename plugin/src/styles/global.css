@@ -1122,22 +1122,73 @@ button {
 /* Filter strip laid out as the state machine: a leading "all" toggle,
    then two labelled groups — the in-flight pipeline (arrow-connected)
    and the terminal outcomes (status-coloured dots). */
+/* Toolbar — title/stats left, search/count right. */
+.grab-toolbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  margin-bottom: 18px;
+}
+.grab-toolbar-id {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.grab-toolbar-id h2 {
+  margin: 0;
+}
+.grab-toolbar-stats {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.grab-toolbar-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1 1 260px;
+  max-width: 440px;
+}
+.grab-toolbar-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 14px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  font: inherit;
+}
+.grab-toolbar-search input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+.grab-toolbar-count {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Filter strip — "all" + the two labelled groups on one row, bottom
+   aligned so "all" sits level with the group pills. */
 .grab-filter {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-start;
-  gap: 16px 20px;
-  margin: 0 0 20px 0;
-}
-.grab-flow {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 28px;
+  align-items: flex-end;
+  gap: 14px 28px;
+  margin: 0 0 22px 0;
 }
 .grab-flow-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 7px;
 }
 .grab-flow-label {
   font-size: 10px;
