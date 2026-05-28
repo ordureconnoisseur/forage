@@ -2362,13 +2362,16 @@ code.grab-fact-v,
   gap: 8px;
 }
 .coll-row {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  overflow: hidden;
+}
+.coll-row-head {
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 10px 14px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--glass-bg);
 }
 .coll-thumb {
   flex: none;
@@ -2514,4 +2517,98 @@ code.grab-fact-v,
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Expand affordance + candidate panel */
+.coll-expand {
+  flex: none;
+  width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 5px 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.coll-expand:hover {
+  color: var(--text);
+  border-color: var(--glass-border-bright);
+}
+.coll-expand.placeholder {
+  border-color: transparent;
+  cursor: default;
+}
+.coll-expand-n {
+  font-variant-numeric: tabular-nums;
+}
+.coll-cands {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 14px 12px 52px;
+  border-top: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.18);
+}
+.coll-cand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.coll-cand:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.coll-cand.sel {
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.coll-cand input {
+  flex: none;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.coll-cand-tag {
+  flex: none;
+  width: 96px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 0;
+  border-radius: var(--radius-pill);
+  font-variant-numeric: tabular-nums;
+}
+.coll-cand-tag.verified {
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-bright);
+}
+.coll-cand-tag.guess {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+}
+.coll-cand-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coll-cand-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--text);
+  word-break: break-all;
+}
+.coll-cand-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.coll-cand-warn {
+  color: var(--status-mismatched);
 }

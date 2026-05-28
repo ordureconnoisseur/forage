@@ -37,6 +37,7 @@ export default function CollectionMode({
   const [performerName, setPerformerName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, RowState>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   // Load the target set.
   useEffect(() => {
@@ -130,6 +131,22 @@ export default function CollectionMode({
       return { ...r, [s.stashdb_id]: { ...row, pickedURL: next } };
     });
 
+  // Choose a specific release for a scene (from the expanded
+  // candidate list). Selecting always ticks the row.
+  const pick = (id: string, url: string) =>
+    setRows((r) => ({
+      ...r,
+      [id]: { ...(r[id] || blankRow()), pickedURL: url },
+    }));
+
+  const toggleExpand = (id: string) =>
+    setExpanded((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
   return (
     <div>
       <div className="coll-header">
@@ -174,7 +191,10 @@ export default function CollectionMode({
               key={s.stashdb_id}
               scene={s}
               row={rows[s.stashdb_id] || blankRow()}
+              expanded={expanded.has(s.stashdb_id)}
               onToggle={() => toggle(s)}
+              onExpand={() => toggleExpand(s.stashdb_id)}
+              onPick={(url) => pick(s.stashdb_id, url)}
             />
           ))}
         </ul>
@@ -186,82 +206,155 @@ export default function CollectionMode({
 function CollectionRow({
   scene,
   row,
+  expanded,
   onToggle,
+  onExpand,
+  onPick,
 }: {
   scene: MissingScene;
   row: RowState;
+  expanded: boolean;
   onToggle: () => void;
+  onExpand: () => void;
+  onPick: (downloadURL: string) => void;
 }) {
   const picked = row.releases.find((r) => r.download_url === row.pickedURL);
   const selectable = row.status === "done";
-  const verifiedCount = row.releases.filter((r) => r.verified).length;
+  const canExpand = row.status === "done" && row.releases.length > 0;
 
   return (
     <li className={"coll-row" + (row.pickedURL ? " picked" : "")}>
-      <label className="coll-check">
-        <input
-          type="checkbox"
-          checked={row.pickedURL != null}
-          disabled={!selectable}
-          onChange={onToggle}
-        />
-      </label>
-      <div className="coll-thumb">
-        {scene.image_url ? (
-          <img
-            src={scene.image_url}
-            alt=""
-            loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.visibility = "hidden";
-            }}
+      <div className="coll-row-head">
+        <label className="coll-check">
+          <input
+            type="checkbox"
+            checked={row.pickedURL != null}
+            disabled={!selectable}
+            onChange={onToggle}
           />
-        ) : null}
-      </div>
-      <div className="coll-row-main">
-        <div className="coll-row-title">{scene.title || "(untitled)"}</div>
-        <div className="coll-row-meta">
-          {scene.date && <span>{scene.date}</span>}
-          {scene.date && scene.studio && <span className="sep">·</span>}
-          {scene.studio && <span>{scene.studio}</span>}
+        </label>
+        <div className="coll-thumb">
+          {scene.image_url ? (
+            <img
+              src={scene.image_url}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.visibility =
+                  "hidden";
+              }}
+            />
+          ) : null}
         </div>
+        <div className="coll-row-main">
+          <div className="coll-row-title">{scene.title || "(untitled)"}</div>
+          <div className="coll-row-meta">
+            {scene.date && <span>{scene.date}</span>}
+            {scene.date && scene.studio && <span className="sep">·</span>}
+            {scene.studio && <span>{scene.studio}</span>}
+          </div>
+        </div>
+        <div className="coll-row-result">
+          {row.status === "pending" && (
+            <span className="coll-state muted">queued…</span>
+          )}
+          {row.status === "searching" && (
+            <span className="coll-state">
+              <span className="coll-spinner" /> searching…
+            </span>
+          )}
+          {row.status === "error" && (
+            <span className="coll-state err">search failed</span>
+          )}
+          {row.status === "empty" && (
+            <span className="coll-state muted">no releases found</span>
+          )}
+          {row.status === "done" && picked && (
+            <div className="coll-pick">
+              <span
+                className={
+                  "coll-pick-tag " + (picked.verified ? "verified" : "guess")
+                }
+              >
+                {picked.verified ? "verified" : "unverified"}{" "}
+                {picked.confidence.toFixed(2)}
+              </span>
+              <code className="coll-pick-file">{picked.title}</code>
+            </div>
+          )}
+          {row.status === "done" && !picked && (
+            <span className="coll-state warn">no confident match</span>
+          )}
+        </div>
+        {canExpand ? (
+          <button
+            className="coll-expand"
+            onClick={onExpand}
+            title="Show all candidates"
+          >
+            {expanded ? "▾" : "▸"}{" "}
+            <span className="coll-expand-n">{row.releases.length}</span>
+          </button>
+        ) : (
+          <span className="coll-expand placeholder" />
+        )}
       </div>
-      <div className="coll-row-result">
-        {row.status === "pending" && (
-          <span className="coll-state muted">queued…</span>
-        )}
-        {row.status === "searching" && (
-          <span className="coll-state">
-            <span className="coll-spinner" /> searching…
-          </span>
-        )}
-        {row.status === "error" && (
-          <span className="coll-state err">search failed</span>
-        )}
-        {row.status === "empty" && (
-          <span className="coll-state muted">no releases found</span>
-        )}
-        {row.status === "done" && picked && (
-          <div className="coll-pick">
-            <span
+
+      {expanded && canExpand && (
+        <div className="coll-cands">
+          {row.releases.map((rel) => (
+            <label
+              key={rel.download_url}
               className={
-                "coll-pick-tag " + (picked.verified ? "verified" : "guess")
+                "coll-cand" +
+                (rel.download_url === row.pickedURL ? " sel" : "")
               }
             >
-              {picked.verified
-                ? `verified ${picked.confidence.toFixed(2)}`
-                : `unverified ${picked.confidence.toFixed(2)}`}
-            </span>
-            <code className="coll-pick-file">{picked.title}</code>
-          </div>
-        )}
-        {row.status === "done" && !picked && (
-          <span className="coll-state warn">
-            no confident match — {verifiedCount === 0 ? row.releases.length : 0}{" "}
-            to review
-          </span>
-        )}
-      </div>
+              <input
+                type="radio"
+                name={"pick-" + scene.stashdb_id}
+                checked={rel.download_url === row.pickedURL}
+                onChange={() => onPick(rel.download_url)}
+              />
+              <span
+                className={
+                  "coll-cand-tag " + (rel.verified ? "verified" : "guess")
+                }
+              >
+                {rel.verified ? "verified" : "unverified"}{" "}
+                {rel.confidence.toFixed(2)}
+              </span>
+              <span className="coll-cand-body">
+                <code className="coll-cand-file">{rel.title}</code>
+                <span className="coll-cand-meta">
+                  {rel.indexer} · {rel.protocol} · {humanSize(rel.size)} ·{" "}
+                  {rel.protocol === "usenet"
+                    ? `${rel.grabs} grabs`
+                    : `${rel.seeders} seeders`}
+                  {!rel.verified && rel.best_match_title && (
+                    <span className="coll-cand-warn">
+                      {" "}
+                      · looks like {rel.best_match_title}
+                    </span>
+                  )}
+                </span>
+              </span>
+            </label>
+          ))}
+        </div>
+      )}
     </li>
   );
+}
+
+function humanSize(b: number): string {
+  if (!b) return "?";
+  const units = ["B", "K", "M", "G", "T"];
+  let i = 0;
+  let v = b;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return v.toFixed(1) + units[i] + "B";
 }
