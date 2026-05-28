@@ -60,9 +60,10 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"sabUrl":             {Value: cfg.SabURL, Source: sources["sabUrl"]},
 		"sabApiKey":          secretField(cfg.SabAPIKey, sources["sabApiKey"]),
 		"sabCategory":        {Value: cfg.SabCategory, Source: sources["sabCategory"]},
-		"libraryRoot":        {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
-		"stashPathMapping":   {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
-		"pollInterval":       {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
+		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
+		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
+		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
+		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":        {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":       {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
 		"allowedOrigin":      {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
@@ -227,6 +228,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	if patch.StashPathMapping != nil {
 		merged.StashPathMapping = patch.StashPathMapping
 	}
+	if patch.SabDeleteAfterPlace != nil {
+		merged.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
+	}
 	if patch.PollInterval != nil {
 		merged.PollInterval = patch.PollInterval
 	}
@@ -259,7 +263,7 @@ func sectionsTouchedBy(patch configstore.Patch) []string {
 	if patch.QbitURL != nil || patch.QbitUsername != nil || patch.QbitPassword != nil || patch.QbitCategory != nil {
 		out["qbit"] = true
 	}
-	if patch.SabURL != nil || patch.SabAPIKey != nil || patch.SabCategory != nil {
+	if patch.SabURL != nil || patch.SabAPIKey != nil || patch.SabCategory != nil || patch.SabDeleteAfterPlace != nil {
 		out["sab"] = true
 	}
 	if patch.LibraryRoot != nil || patch.StashPathMapping != nil {

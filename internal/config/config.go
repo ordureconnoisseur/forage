@@ -51,7 +51,15 @@ type Config struct {
 	// full-library scan after each placement — slower but always
 	// works regardless of mount layout differences.
 	StashPathMapping   string
-	PollInterval       time.Duration
+	// SabDeleteAfterPlace removes a SAB download (history entry +
+	// downloaded files) once forage has placed it into the library.
+	// Usenet doesn't seed, so the SAB copy is redundant after
+	// placement — this is the *arr-style "remove completed download"
+	// behaviour. Safe: placement hardlinks/copies into the library
+	// first, so deleting the SAB source leaves the library file
+	// intact. qBit grabs are never touched (torrents keep seeding).
+	SabDeleteAfterPlace bool
+	PollInterval        time.Duration
 	OrphanAfter        time.Duration
 	CacheRefresh       time.Duration
 	LogLevel           slog.Level
@@ -110,6 +118,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SabCategory = b.envOr("FORAGER_SAB_CATEGORY", "manual", "sabCategory")
 	b.LibraryRoot = strings.TrimRight(b.envOr("FORAGER_LIBRARY_ROOT", "", "libraryRoot"), "/")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
+	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -131,6 +140,21 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	// when the env var was actually set; otherwise default.
 	str := func(field string, stored *string, envVal, defaultVal string) string {
 		if stored != nil && *stored != "" {
+			src[field] = SourceJSON
+			return *stored
+		}
+		if b.set[field] {
+			src[field] = SourceEnv
+			return envVal
+		}
+		src[field] = SourceDefault
+		return defaultVal
+	}
+
+	// boolean: stored pointer wins when non-nil (an explicit false is
+	// a real choice, unlike the empty-string sentinel strings use).
+	boolean := func(field string, stored *bool, envVal, defaultVal bool) bool {
+		if stored != nil {
 			src[field] = SourceJSON
 			return *stored
 		}
@@ -182,6 +206,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SabCategory = str("sabCategory", stored.SabCategory, b.SabCategory, "manual")
 	out.LibraryRoot = str("libraryRoot", stored.LibraryRoot, b.LibraryRoot, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
+	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
@@ -240,6 +265,22 @@ func (b *BootstrapConfig) envDuration(key string, def time.Duration, field strin
 	}
 	b.set[field] = true
 	return d
+}
+
+func (b *BootstrapConfig) envBool(key string, def bool, field string) bool {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "yes", "on":
+		b.set[field] = true
+		return true
+	case "0", "false", "no", "off":
+		b.set[field] = true
+		return false
+	}
+	return def
 }
 
 // parseCSVInts converts "6000,6010,6020" to []int{6000,6010,6020}.

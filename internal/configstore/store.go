@@ -56,6 +56,10 @@ type StoredConfig struct {
 	// metadataScan trigger. Format "<forager-prefix>:<stash-prefix>"
 	// — e.g. "/data/media/Media:Z:\\Media".
 	StashPathMapping *string `json:"stashPathMapping,omitempty"`
+	// SabDeleteAfterPlace: remove the SAB download after placement.
+	// *bool so an explicit false round-trips (nil = fall through to
+	// env/default).
+	SabDeleteAfterPlace *bool `json:"sabDeleteAfterPlace,omitempty"`
 	// Duration fields are stored as strings ("60s", "6h") so the JSON
 	// stays human-readable and round-trips cleanly through the UI.
 	PollInterval  *string `json:"pollInterval,omitempty"`
@@ -275,6 +279,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.StashPathMapping != nil {
 		base.StashPathMapping = patch.StashPathMapping
+	}
+	if patch.SabDeleteAfterPlace != nil {
+		base.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
 	}
 	if patch.PollInterval != nil {
 		base.PollInterval = patch.PollInterval

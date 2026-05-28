@@ -120,6 +120,14 @@ export default function Settings({ onClose, health }: Props) {
     return String(field.value ?? "");
   }
 
+  // boolValue resolves a checkbox's state: the user's pending patch
+  // wins, else the server-loaded value, else false.
+  function boolValue(name: keyof ConfigPatch, field?: ConfigField): boolean {
+    if (patch[name] !== undefined) return !!patch[name];
+    if (field && typeof field.value === "boolean") return field.value;
+    return false;
+  }
+
   // hasSecretPlaceholder asks whether a sensitive field should show
   // the "••••••" placeholder because the daemon has a stored value
   // that the user hasn't touched in this session.
@@ -468,6 +476,29 @@ export default function Settings({ onClose, health }: Props) {
             />
             <SourceBadge field={data?.fields["sabCategory"]} />
           </Field>
+          <Field label="Delete after placement">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={boolValue(
+                  "sabDeleteAfterPlace",
+                  data?.fields["sabDeleteAfterPlace"],
+                )}
+                onChange={(e) =>
+                  setField("sabDeleteAfterPlace", e.target.checked)
+                }
+              />
+              Remove the SAB download once forage has placed it
+            </label>
+            <SourceBadge field={data?.fields["sabDeleteAfterPlace"]} />
+          </Field>
+          <p className="settings-tip">
+            Usenet doesn't seed, so the SAB copy is redundant once the
+            file is in your library. Deletes the history entry and the
+            downloaded files — safe, since placement hardlinks/copies
+            into the library first. Torrents are never touched (they
+            keep seeding).
+          </p>
           <div className="settings-actions inline">
             <button className="settings-test" onClick={() => runTest("sab")}>
               Test SAB

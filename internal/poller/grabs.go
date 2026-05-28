@@ -258,6 +258,26 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 					p.log.Info("metadataScan triggered", "id", g.ID, "paths", scanPaths, "job_id", jobID)
 				}
 			}
+
+			// Usenet doesn't seed, so once the file is in the library
+			// the SAB-side copy is dead weight. When enabled, remove
+			// it (history entry + downloaded files). Safe: placement
+			// already linked/copied the data into the library, so the
+			// SAB files can go without touching the library copy.
+			// qBit grabs are never cleaned here — torrents keep
+			// seeding. Best-effort; a failure just leaves the download
+			// in SAB. After deletion SAB no longer tracks the nzo_id,
+			// but the grab is "placed" now so advanceSab's not-found
+			// branch correctly leaves it alone.
+			if g.Client == "sabnzbd" && g.ClientID != "" && p.pool.Settings().SabDeleteAfterPlace {
+				if sb := p.pool.Sab(); sb != nil {
+					if err := sb.DeleteHistory(ctx, g.ClientID, true); err != nil {
+						p.log.Warn("sab cleanup after place failed", "id", g.ID, "nzo_id", g.ClientID, "err", err)
+					} else {
+						p.log.Info("sab download removed after place", "id", g.ID, "nzo_id", g.ClientID)
+					}
+				}
+			}
 		}
 	}
 

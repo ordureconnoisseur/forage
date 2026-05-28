@@ -100,6 +100,42 @@ func (c *Client) AddURL(ctx context.Context, nzbURL, category string) (string, e
 	return resp.NzoIDs[0], nil
 }
 
+// DeleteHistory removes a completed/failed item from SAB's history.
+// When delFiles is true SAB also deletes the downloaded files from
+// its complete storage. forage uses this after placing a usenet grab
+// into the library — usenet doesn't seed, so the SAB copy is dead
+// weight once it's been hardlinked/copied across. Safe with
+// delFiles: placement already linked the data into the library, so
+// removing the SAB-side files leaves the library copy intact.
+func (c *Client) DeleteHistory(ctx context.Context, nzoID string, delFiles bool) error {
+	if nzoID == "" {
+		return fmt.Errorf("nzo_id is empty")
+	}
+	q := url.Values{
+		"mode":  {"history"},
+		"name":  {"delete"},
+		"value": {nzoID},
+	}
+	if delFiles {
+		q.Set("del_files", "1")
+	}
+	body, err := c.get(ctx, q)
+	if err != nil {
+		return err
+	}
+	var resp struct {
+		Status bool   `json:"status"`
+		ErrMsg string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return fmt.Errorf("decode history delete: %w (body=%s)", err, body)
+	}
+	if !resp.Status {
+		return fmt.Errorf("sab refused history delete: %s", resp.ErrMsg)
+	}
+	return nil
+}
+
 // Queue returns the currently-active downloads (queued, downloading,
 // verifying). Used by the poller to detect "still in progress" state.
 func (c *Client) Queue(ctx context.Context) ([]Item, error) {

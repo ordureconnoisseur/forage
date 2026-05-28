@@ -401,7 +401,7 @@ export type FieldSource = "json" | "env" | "default";
 export interface ConfigField {
   // value is omitted (empty) for masked secrets; UI shows a placeholder
   // when hasSecret is true.
-  value: string | number[] | null;
+  value: string | number[] | boolean | null;
   source: FieldSource;
   hasSecret?: boolean;
 }
@@ -431,6 +431,7 @@ export interface ConfigPatch {
   sabCategory?: string;
   libraryRoot?: string;
   stashPathMapping?: string;
+  sabDeleteAfterPlace?: boolean;
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;

@@ -58,6 +58,9 @@ type Settings struct {
 	// "<forager-prefix>:<stash-prefix>". When empty the poller
 	// triggers full-library scans instead of scoped ones.
 	StashPathMapping string
+	// SabDeleteAfterPlace tells the poller to delete a SAB download
+	// (history + files) once it's been placed into the library.
+	SabDeleteAfterPlace bool
 }
 
 // New returns an empty Pool. Reload it before using.
@@ -108,11 +111,12 @@ func (p *Pool) Reload(cfg config.Config) {
 	p.placer.Store(placer.New(cfg.LibraryRoot, nil))
 
 	p.settings.Store(&Settings{
-		QbitCategory:       cfg.QbitCategory,
-		SabCategory:        cfg.SabCategory,
-		LibraryRoot:        cfg.LibraryRoot,
-		ProwlarrCategories: append([]int(nil), cfg.ProwlarrCategories...),
-		StashPathMapping:   cfg.StashPathMapping,
+		QbitCategory:        cfg.QbitCategory,
+		SabCategory:         cfg.SabCategory,
+		LibraryRoot:         cfg.LibraryRoot,
+		ProwlarrCategories:  append([]int(nil), cfg.ProwlarrCategories...),
+		StashPathMapping:    cfg.StashPathMapping,
+		SabDeleteAfterPlace: cfg.SabDeleteAfterPlace,
 	})
 }
 
