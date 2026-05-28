@@ -195,8 +195,10 @@ export default function GrabsList() {
         </div>
       </div>
 
-      {/* Filter strip: "all" leads, bottom-aligned with the two
-          labelled groups, all on one row. */}
+      {/* Filter strip — one compact row. "all" leads, then the
+          in-flight pipeline (arrow-linked), a divider, then the
+          outcome states (status dots). Inline micro-labels, no
+          stacked headers, everything centre-aligned. */}
       <div className="grab-filter">
         <button
           className={"grab-chip chip-any" + (filter === "any" ? " active" : "")}
@@ -206,41 +208,39 @@ export default function GrabsList() {
           <span className="chip-count">{anyTotal}</span>
         </button>
 
-        <div className="grab-flow-group">
-          <span className="grab-flow-label">In flight</span>
-          <div className="grab-flow-pills">
-            {IN_FLIGHT.map((s, i) => (
-              <Fragment key={s}>
-                {i > 0 && (
-                  <span className="grab-flow-arrow" aria-hidden="true">
-                    ›
-                  </span>
-                )}
-                <FilterChip
-                  status={s}
-                  count={totals[s] || 0}
-                  active={filter === s}
-                  onClick={() => setFilter(s)}
-                />
-              </Fragment>
-            ))}
-          </div>
-        </div>
-
-        <div className="grab-flow-group">
-          <span className="grab-flow-label">Outcome</span>
-          <div className="grab-flow-pills">
-            {OUTCOME.map((s) => (
+        <span className="grab-filter-sep" />
+        <span className="grab-filter-label">flight</span>
+        <div className="grab-flow-pills">
+          {IN_FLIGHT.map((s, i) => (
+            <Fragment key={s}>
+              {i > 0 && (
+                <span className="grab-flow-arrow" aria-hidden="true">
+                  ›
+                </span>
+              )}
               <FilterChip
-                key={s}
                 status={s}
                 count={totals[s] || 0}
                 active={filter === s}
                 onClick={() => setFilter(s)}
-                dot
               />
-            ))}
-          </div>
+            </Fragment>
+          ))}
+        </div>
+
+        <span className="grab-filter-sep" />
+        <span className="grab-filter-label">outcome</span>
+        <div className="grab-flow-pills">
+          {OUTCOME.map((s) => (
+            <FilterChip
+              key={s}
+              status={s}
+              count={totals[s] || 0}
+              active={filter === s}
+              onClick={() => setFilter(s)}
+              dot
+            />
+          ))}
         </div>
       </div>
 

@@ -1176,33 +1176,34 @@ button {
   white-space: nowrap;
 }
 
-/* Filter strip — "all" + the two labelled groups on one row, bottom
-   aligned so "all" sits level with the group pills. */
+/* Filter strip — one compact, centre-aligned row. */
 .grab-filter {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 14px 28px;
+  align-items: center;
+  gap: 8px 10px;
   margin: 0 0 22px 0;
 }
-.grab-flow-group {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-}
-.grab-flow-label {
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
+.grab-filter-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-muted);
-  opacity: 0.7;
+  opacity: 0.55;
+}
+.grab-filter-sep {
+  width: 1px;
+  align-self: stretch;
+  min-height: 22px;
+  background: var(--glass-border);
+  margin: 0 4px;
 }
 .grab-flow-pills {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .grab-flow-arrow {
   color: var(--text-muted);
@@ -1225,15 +1226,16 @@ button {
 .grab-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   color: var(--text-muted);
   border-radius: var(--radius-pill);
-  padding: 6px 14px;
-  font-size: 12px;
-  letter-spacing: 0.02em;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  letter-spacing: 0.01em;
   cursor: pointer;
+  white-space: nowrap;
   transition: color 0.12s ease, border-color 0.12s ease, background 0.12s ease;
 }
 .grab-chip:hover {
@@ -1244,14 +1246,14 @@ button {
   text-transform: lowercase;
   font-weight: 500;
 }
+/* Count is a quiet inline tabular number, not a heavy badge — keeps
+   the dense row legible. Dims to zero-state when count is 0. */
 .grab-chip .chip-count {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  font-size: 11px;
-  background: rgba(255, 255, 255, 0.08);
-  padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  font-size: 10.5px;
   color: var(--text);
+  opacity: 0.85;
 }
 
 /* Active filter chip: thicker outline + chip's status colour. */
