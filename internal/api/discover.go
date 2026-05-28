@@ -108,7 +108,7 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 		`SELECT stashdb_id, title, release_date, release_unix,
 		        studio_name, image_url, local_performer_ids
 		   FROM recent_scene_cache
-		  WHERE trending_rank > 0
+		  WHERE trending_rank > 0 AND owned = 0
 		  ORDER BY trending_rank ASC
 		  LIMIT ?`, trendingLimit)
 	if err != nil {

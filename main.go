@@ -216,7 +216,7 @@ func runTrendingTicker(ctx context.Context, pool *clientpool.Pool, database *sql
 		if sdb == nil {
 			return
 		}
-		if err := cache.RefreshTrending(ctx, sdb, database, log); err != nil {
+		if err := cache.RefreshTrending(ctx, pool.Stash(), sdb, database, log); err != nil {
 			log.Error("trending refresh failed", "err", err)
 		}
 	}

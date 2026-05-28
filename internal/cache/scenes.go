@@ -295,13 +295,31 @@ const (
 //
 // Scenes that previously held a trending_rank > 0 but aren't in the
 // new top-N get reset to 0 so the trending list stays tight.
-func RefreshTrending(ctx context.Context, sdb *stashdb.Client, db *sql.DB, log *slog.Logger) error {
+func RefreshTrending(ctx context.Context, sc *stash.Client, sdb *stashdb.Client, db *sql.DB, log *slog.Logger) error {
 	if sdb == nil {
 		log.Info("trending refresh skipped (stashdb not configured)")
 		return nil
 	}
 	start := time.Now().Unix()
 	log.Info("trending refresh starting", "top_n", trendingTopN)
+
+	// Owned sweep so trending rows carry an accurate owned flag and the
+	// discover endpoint can hide already-owned scenes without waiting
+	// on the 12h pass. Best-effort: on failure (or Stash unconfigured)
+	// we preserve whatever owned flag the 12h pass last set rather than
+	// clobbering it to 0.
+	ownedSet := map[string]bool{}
+	sweepOK := false
+	if sc != nil {
+		if ids, err := sc.FindAllOwnedStashDBSceneIDs(ctx); err != nil {
+			log.Warn("trending owned sweep failed; preserving owned flags", "err", err)
+		} else {
+			sweepOK = true
+			for _, id := range ids {
+				ownedSet[id] = true
+			}
+		}
+	}
 
 	scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
 		Sort:    "TRENDING",
@@ -346,10 +364,14 @@ func RefreshTrending(ctx context.Context, sdb *stashdb.Client, db *sql.DB, log *
 		return fmt.Errorf("reset trending: %w", err)
 	}
 
-	// ON CONFLICT clause deliberately omits `owned` — preserves whatever
-	// the 12h pass last set. Includes local_performer_ids so a newly
-	// trending scene picks up its chips immediately rather than
-	// waiting for the next 12h refresh.
+	// Update `owned` on conflict only when the sweep succeeded (then
+	// it's authoritative); otherwise preserve whatever the 12h pass set.
+	// local_performer_ids is always refreshed so a newly trending scene
+	// picks up its chips immediately.
+	ownedConflict := ""
+	if sweepOK {
+		ownedConflict = "owned = excluded.owned,\n\t\t  "
+	}
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO recent_scene_cache (
 		  stashdb_id, title, release_date, release_unix,
@@ -363,7 +385,7 @@ func RefreshTrending(ctx context.Context, sdb *stashdb.Client, db *sql.DB, log *
 		  studio_name         = excluded.studio_name,
 		  image_url           = excluded.image_url,
 		  local_performer_ids = excluded.local_performer_ids,
-		  trending_rank       = excluded.trending_rank,
+		  `+ownedConflict+`trending_rank       = excluded.trending_rank,
 		  cached_at           = excluded.cached_at
 	`)
 	if err != nil {
@@ -373,7 +395,7 @@ func RefreshTrending(ctx context.Context, sdb *stashdb.Client, db *sql.DB, log *
 
 	for i, s := range scenes {
 		rank := i + 1
-		row := buildSceneRow(s, parseStashDBDate(s.Date), stashdbToLocal, map[string]bool{})
+		row := buildSceneRow(s, parseStashDBDate(s.Date), stashdbToLocal, ownedSet)
 		idsJSON, _ := json.Marshal(row.localPerformerIDs)
 		ownedFlag := 0
 		if row.owned {
