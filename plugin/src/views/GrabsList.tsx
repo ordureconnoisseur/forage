@@ -370,62 +370,43 @@ function Pipeline({ g }: { g: Grab }) {
   );
 }
 
-// MatchFact is one roomy full-width line combining the matcher's
-// prediction with Stash's verdict, reading left→right as a sentence:
-//   <predicted id> · <score> → ✓ matches prediction
-//                            → ✗ actually <real id>
-//                            → awaiting confirmation
-// Replaces the cramped half-width predicted/actual cells. The cell is
-// toned green/amber/neutral by the outcome.
-function MatchFact({ g }: { g: Grab }) {
+// Verdict is the "Actual" card — its own row beside Predicted, always
+// shown, toned by outcome: green tick when Stash agrees, amber cross +
+// the real scene when it doesn't, muted while still confirming.
+function Verdict({ g }: { g: Grab }) {
   const actual = g.actual_stashdb_id;
-  let tone = "pending";
-  let verdict: React.ReactNode;
   if (actual && actual === g.predicted_stashdb_id) {
-    tone = "ok";
-    verdict = <span className="grab-match-verdict">✓ matches prediction</span>;
-  } else if (actual) {
-    tone = "warn";
-    verdict = (
-      <span className="grab-match-verdict">
-        ✗ actually{" "}
-        <a
-          href={`https://stashdb.org/scenes/${actual}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {actual.slice(0, 8)}…
-        </a>
-      </span>
+    return (
+      <div className="grab-fact ok">
+        <span className="grab-fact-k">Actual</span>
+        <span className="grab-fact-v">✓ matches prediction</span>
+      </div>
     );
-  } else {
-    verdict = (
-      <span className="grab-match-verdict">
+  }
+  if (actual) {
+    return (
+      <div className="grab-fact warn">
+        <span className="grab-fact-k">Actual</span>
+        <span className="grab-fact-v">
+          ✗ different scene —{" "}
+          <a
+            href={`https://stashdb.org/scenes/${actual}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {actual.slice(0, 8)}…
+          </a>
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="grab-fact pending">
+      <span className="grab-fact-k">Actual</span>
+      <span className="grab-fact-v">
         {g.status === "orphaned" || g.status === "failed"
           ? "not in Stash"
           : "awaiting confirmation"}
-      </span>
-    );
-  }
-
-  return (
-    <div className={"grab-fact grab-match " + tone}>
-      <span className="grab-fact-k">Match</span>
-      <span className="grab-fact-v grab-match-line">
-        <a
-          href={`https://stashdb.org/scenes/${g.predicted_stashdb_id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {(g.predicted_stashdb_id || "").slice(0, 8)}…
-        </a>
-        {g.predicted_confidence != null && g.predicted_confidence > 0 && (
-          <span className="grab-match-badge">
-            {g.predicted_confidence.toFixed(2)}
-          </span>
-        )}
-        <span className="grab-match-arrow">→</span>
-        {verdict}
       </span>
     </div>
   );
@@ -609,7 +590,27 @@ function GrabRow({
 
           {/* The record — labelled cards, not a flat list. */}
           <div className="grab-facts">
-            {g.predicted_stashdb_id && <MatchFact g={g} />}
+            {g.predicted_stashdb_id && (
+              <div className="grab-fact">
+                <span className="grab-fact-k">Predicted</span>
+                <span className="grab-fact-v grab-match-line">
+                  <a
+                    href={`https://stashdb.org/scenes/${g.predicted_stashdb_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {g.predicted_stashdb_id.slice(0, 8)}…
+                  </a>
+                  {g.predicted_confidence != null &&
+                    g.predicted_confidence > 0 && (
+                      <span className="grab-match-badge">
+                        match {g.predicted_confidence.toFixed(2)}
+                      </span>
+                    )}
+                </span>
+              </div>
+            )}
+            {g.predicted_stashdb_id && <Verdict g={g} />}
             {g.placed_path && (
               <div className="grab-fact">
                 <span className="grab-fact-k">Placed</span>

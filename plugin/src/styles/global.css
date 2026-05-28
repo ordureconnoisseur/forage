@@ -1374,7 +1374,7 @@ button {
   display: grid;
   grid-template-columns: 300px 1fr;
   gap: 24px;
-  align-items: start;
+  align-items: stretch;
 }
 @media (max-width: 680px) {
   .grab-dossier {
@@ -1493,10 +1493,13 @@ button {
 /* Life-cycle pipeline stepper */
 .grab-pipe {
   list-style: none;
-  margin: 14px 0 2px;
-  padding: 0;
+  /* auto top/bottom margins vertically centre the stepper in whatever
+     space is left under the identity block (poster is usually taller),
+     instead of leaving a void beneath it. Full column width — not
+     shortened. */
+  margin: auto 0;
+  padding: 14px 0;
   display: flex;
-  max-width: 460px;
 }
 .grab-pipe-step {
   flex: 1;
@@ -1672,20 +1675,31 @@ code.grab-fact-v,
   color: var(--accent-bright);
   font-variant-numeric: tabular-nums;
 }
-/* Card toning by outcome — border tint only; the value text colour
-   is handled per-element (verdict, place-error). */
+/* Card toning by outcome — tinted border + matching value colour. */
 .grab-fact.ok {
   border-color: rgba(var(--accent-rgb), 0.35);
   background: rgba(var(--accent-rgb), 0.06);
 }
+.grab-fact.ok .grab-fact-v {
+  color: var(--accent-bright);
+  font-weight: 600;
+}
 .grab-fact.warn {
   border-color: rgba(245, 158, 11, 0.3);
+}
+.grab-fact.warn .grab-fact-v {
+  color: var(--status-mismatched);
+  font-weight: 600;
 }
 .grab-fact.err {
   border-color: rgba(239, 68, 68, 0.3);
 }
 .grab-fact.err .grab-fact-v {
   color: #fca5a5;
+}
+.grab-fact.pending .grab-fact-v {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Download progress — full-width band: a stat line above a bar. */
