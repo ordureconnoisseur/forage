@@ -9,6 +9,12 @@ import {
 
 const SEARCH_CONCURRENCY = 4;
 const GRAB_CONCURRENCY = 3;
+// Only pre-tick a scene when its best verified release clears this
+// confidence. The verifier flags any release whose top candidate is
+// the target scene, which includes near-zero coincidental title-token
+// matches (e.g. "Oil Overload" 0.03) — those must NOT auto-select.
+// Below the floor the scene waits for manual review.
+const AUTO_PICK_FLOOR = 0.5;
 
 type RowStatus = "pending" | "searching" | "done" | "empty" | "error";
 type GrabState = "idle" | "queued" | "error";
@@ -86,12 +92,20 @@ export default function CollectionMode({
         try {
           const res = await fetchSceneReleases(scene.stashdb_id, ctrl.signal);
           if (cancelled) return;
-          const releases = res.releases || [];
-          const topVerified = releases.find((x) => x.verified);
+          // Rank by confidence so the strongest match leads (the
+          // endpoint sorts verified-first/popularity, which floats
+          // junk coincidental "verified" matches above the real one).
+          const releases = (res.releases || [])
+            .slice()
+            .sort((a, b) => b.confidence - a.confidence);
+          const best = releases.find((x) => x.verified);
           setRow(scene.stashdb_id, {
             status: releases.length === 0 ? "empty" : "done",
             releases,
-            pickedURL: topVerified ? topVerified.download_url : null,
+            pickedURL:
+              best && best.confidence >= AUTO_PICK_FLOOR
+                ? best.download_url
+                : null,
           });
         } catch (e) {
           if (cancelled || ctrl.signal.aborted) return;
