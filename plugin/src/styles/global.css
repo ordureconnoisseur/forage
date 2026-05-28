@@ -675,6 +675,11 @@ button {
   gap: 6px;
   font-variant-numeric: tabular-nums;
 }
+.release-controls {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
+}
 .release-warn {
   margin-top: 6px;
   font-size: 12px;
