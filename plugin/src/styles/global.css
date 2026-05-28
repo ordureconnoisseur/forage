@@ -1632,7 +1632,7 @@ button {
   word-break: break-all;
   min-width: 0;
 }
-/* The Match line lays out inline with comfortable gaps. */
+/* Predicted line lays out inline with comfortable gaps. */
 .grab-match-line {
   display: flex;
   align-items: center;
@@ -1644,22 +1644,105 @@ button {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-.grab-match-arrow {
-  opacity: 0.4;
-}
-.grab-match-verdict {
-  font-weight: 600;
-}
-.grab-match.ok .grab-match-verdict {
-  color: var(--accent-bright);
-}
-.grab-match.warn .grab-match-verdict {
-  color: var(--status-mismatched);
-}
-.grab-match.pending .grab-match-verdict {
+.grab-match-pending {
   color: var(--text-muted);
   font-style: italic;
-  font-weight: 500;
+}
+
+/* Unified "match confirmed" hero — shown only when the prediction and
+   Stash's identification are the same scene. One emphatic green
+   indicator instead of two cards to compare. */
+.grab-match-hero {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 15px 18px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: linear-gradient(
+    110deg,
+    rgba(var(--accent-rgb), 0.16),
+    rgba(var(--accent-rgb), 0.04) 70%
+  );
+  box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.14);
+  position: relative;
+  overflow: hidden;
+}
+/* One-time light sweep across the card on reveal. */
+.grab-match-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 30%,
+    rgba(255, 255, 255, 0.08) 50%,
+    transparent 70%
+  );
+  transform: translateX(-120%);
+  animation: matchSweep 0.9s 0.2s ease both;
+}
+@keyframes matchSweep {
+  to {
+    transform: translateX(120%);
+  }
+}
+.grab-match-check {
+  width: 42px;
+  height: 42px;
+  flex: none;
+}
+.grab-match-check .ring {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  opacity: 0.45;
+  transform-origin: center;
+  animation: matchRing 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+@keyframes matchRing {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+}
+.grab-match-check .tick {
+  fill: none;
+  stroke: var(--accent-bright);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 32;
+  stroke-dashoffset: 32;
+  animation: matchTick 0.45s 0.22s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+@keyframes matchTick {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+.grab-match-hero-body {
+  min-width: 0;
+}
+.grab-match-hero-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--accent-bright);
+}
+.grab-match-hero-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+.grab-match-hero-sub a {
+  color: var(--text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.grab-match-hero-sub .grab-match-badge {
+  margin-left: 8px;
 }
 code.grab-fact-v,
 .grab-fact-v code {

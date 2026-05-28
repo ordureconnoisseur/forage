@@ -370,43 +370,89 @@ function Pipeline({ g }: { g: Grab }) {
   );
 }
 
-// Verdict is the "Actual" card — its own row beside Predicted, always
-// shown, toned by outcome: green tick when Stash agrees, amber cross +
-// the real scene when it doesn't, muted while still confirming.
-function Verdict({ g }: { g: Grab }) {
+const stashdbScene = (id: string) => `https://stashdb.org/scenes/${id}`;
+
+// MatchBlock unifies predicted-vs-actual by outcome:
+//   • match    → ONE green "match confirmed" hero (the prediction and
+//                Stash's identification are the same scene, so there's
+//                nothing to compare — collapse them into a single
+//                emphatic positive indicator).
+//   • mismatch → TWO cards: Predicted (neutral) + Actual (amber), so
+//                the divergence is obvious and both ids are visible.
+//   • pending  → one Predicted card with an awaiting/not-in-Stash tag.
+function MatchBlock({ g }: { g: Grab }) {
+  const predicted = g.predicted_stashdb_id;
+  if (!predicted) return null;
   const actual = g.actual_stashdb_id;
-  if (actual && actual === g.predicted_stashdb_id) {
+  const conf =
+    g.predicted_confidence != null && g.predicted_confidence > 0
+      ? g.predicted_confidence.toFixed(2)
+      : null;
+
+  if (actual && actual === predicted) {
     return (
-      <div className="grab-fact ok">
-        <span className="grab-fact-k">Actual</span>
-        <span className="grab-fact-v">✓ matches prediction</span>
+      <div className="grab-match-hero">
+        <svg
+          className="grab-match-check"
+          viewBox="0 0 40 40"
+          aria-hidden="true"
+        >
+          <circle className="ring" cx="20" cy="20" r="17" />
+          <path className="tick" d="M12 20.5 L18 26 L28 14" />
+        </svg>
+        <div className="grab-match-hero-body">
+          <div className="grab-match-hero-title">Match confirmed</div>
+          <div className="grab-match-hero-sub">
+            Stash identified the scene forage predicted ·{" "}
+            <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
+              {predicted.slice(0, 8)}…
+            </a>
+            {conf && <span className="grab-match-badge">{conf}</span>}
+          </div>
+        </div>
       </div>
     );
   }
+
   if (actual) {
     return (
-      <div className="grab-fact warn">
-        <span className="grab-fact-k">Actual</span>
-        <span className="grab-fact-v">
-          ✗ different scene —{" "}
-          <a
-            href={`https://stashdb.org/scenes/${actual}`}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {actual.slice(0, 8)}…
-          </a>
-        </span>
-      </div>
+      <>
+        <div className="grab-fact">
+          <span className="grab-fact-k">Predicted</span>
+          <span className="grab-fact-v grab-match-line">
+            <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
+              {predicted.slice(0, 8)}…
+            </a>
+            {conf && <span className="grab-match-badge">match {conf}</span>}
+          </span>
+        </div>
+        <div className="grab-fact warn">
+          <span className="grab-fact-k">Actual</span>
+          <span className="grab-fact-v">
+            ✗ different scene —{" "}
+            <a href={stashdbScene(actual)} target="_blank" rel="noopener noreferrer">
+              {actual.slice(0, 8)}…
+            </a>
+          </span>
+        </div>
+      </>
     );
   }
+
   return (
     <div className="grab-fact pending">
-      <span className="grab-fact-k">Actual</span>
-      <span className="grab-fact-v">
-        {g.status === "orphaned" || g.status === "failed"
-          ? "not in Stash"
-          : "awaiting confirmation"}
+      <span className="grab-fact-k">Predicted</span>
+      <span className="grab-fact-v grab-match-line">
+        <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
+          {predicted.slice(0, 8)}…
+        </a>
+        {conf && <span className="grab-match-badge">match {conf}</span>}
+        <span className="grab-match-pending">
+          ·{" "}
+          {g.status === "orphaned" || g.status === "failed"
+            ? "not in Stash"
+            : "awaiting confirmation"}
+        </span>
       </span>
     </div>
   );
@@ -590,27 +636,7 @@ function GrabRow({
 
           {/* The record — labelled cards, not a flat list. */}
           <div className="grab-facts">
-            {g.predicted_stashdb_id && (
-              <div className="grab-fact">
-                <span className="grab-fact-k">Predicted</span>
-                <span className="grab-fact-v grab-match-line">
-                  <a
-                    href={`https://stashdb.org/scenes/${g.predicted_stashdb_id}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    {g.predicted_stashdb_id.slice(0, 8)}…
-                  </a>
-                  {g.predicted_confidence != null &&
-                    g.predicted_confidence > 0 && (
-                      <span className="grab-match-badge">
-                        match {g.predicted_confidence.toFixed(2)}
-                      </span>
-                    )}
-                </span>
-              </div>
-            )}
-            {g.predicted_stashdb_id && <Verdict g={g} />}
+            {g.predicted_stashdb_id && <MatchBlock g={g} />}
             {g.placed_path && (
               <div className="grab-fact">
                 <span className="grab-fact-k">Placed</span>
