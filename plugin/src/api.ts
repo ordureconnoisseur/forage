@@ -46,8 +46,8 @@ export function mixedContentBlocked(): boolean {
   );
 }
 
-async function get<T>(path: string): Promise<T> {
-  const r = await fetch(foragerBase() + path);
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  const r = await fetch(foragerBase() + path, { signal });
   if (!r.ok) {
     const e = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(e.error || `HTTP ${r.status}`);
@@ -257,8 +257,14 @@ export function performerImageURL(localStashID: string): string | null {
   return `${base}/performer/${encodeURIComponent(localStashID)}/image`;
 }
 
-export function fetchSceneReleases(stashDBID: string): Promise<SceneReleasesResponse> {
-  return get<SceneReleasesResponse>(`/scenes/${encodeURIComponent(stashDBID)}/releases`);
+export function fetchSceneReleases(
+  stashDBID: string,
+  signal?: AbortSignal,
+): Promise<SceneReleasesResponse> {
+  return get<SceneReleasesResponse>(
+    `/scenes/${encodeURIComponent(stashDBID)}/releases`,
+    signal,
+  );
 }
 
 // ── Grab ───────────────────────────────────────────────────────────
