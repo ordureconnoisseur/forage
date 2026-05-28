@@ -284,6 +284,43 @@ func (c *Client) TorrentInfo(ctx context.Context, hash string) (*Torrent, error)
 	return nil, nil
 }
 
+// DeleteTorrent removes a torrent from qBit. When deleteFiles is true
+// qBit also deletes the downloaded data from disk. Used by the grab
+// purge ("delete, no traces"): for torrents we stop seeding and wipe
+// the download-client copy. Safe alongside a hardlinked library file —
+// deleting qBit's copy leaves the library hardlink intact.
+func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles bool) error {
+	if hash == "" {
+		return fmt.Errorf("hash is empty")
+	}
+	if err := c.Login(ctx); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	form := url.Values{}
+	form.Set("hashes", hash)
+	if deleteFiles {
+		form.Set("deleteFiles", "true")
+	} else {
+		form.Set("deleteFiles", "false")
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/delete", strings.NewReader(form.Encode()))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", c.baseURL)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("qbit delete %d: %s", resp.StatusCode, body)
+	}
+	return nil
+}
+
 func (c *Client) postAdd(ctx context.Context, body *bytes.Buffer, contentType string) error {
 	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/add", body)
 	if err != nil {

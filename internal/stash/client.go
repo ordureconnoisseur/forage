@@ -647,6 +647,37 @@ func (c *Client) MetadataIdentify(ctx context.Context, sceneIDs []string, stashB
 	return resp.MetadataIdentify, nil
 }
 
+// SceneDestroy removes a scene from Stash. deleteFile also unlinks the
+// underlying media file from disk; deleteGenerated also removes the
+// scene's covers/sprites/previews. Used by the grab purge to leave no
+// trace of an unwanted download. Safe with a hardlinked library file:
+// Stash deletes the library-side path it knows about, and any other
+// hardlink (e.g. the download client's copy, if still present) keeps
+// the data alive until it too is removed.
+func (c *Client) SceneDestroy(ctx context.Context, id string, deleteFile, deleteGenerated bool) error {
+	if id == "" {
+		return fmt.Errorf("scene id is empty")
+	}
+	q := `mutation ForagerSceneDestroy($input: SceneDestroyInput!) {
+  sceneDestroy(input: $input)
+}`
+	input := map[string]any{
+		"id":               id,
+		"delete_file":      deleteFile,
+		"delete_generated": deleteGenerated,
+	}
+	var resp struct {
+		SceneDestroy bool `json:"sceneDestroy"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return fmt.Errorf("sceneDestroy: %w", err)
+	}
+	if !resp.SceneDestroy {
+		return fmt.Errorf("sceneDestroy returned false for scene %s", id)
+	}
+	return nil
+}
+
 // Version is a trivial query used to validate the URL + API key at
 // startup before we kick off a full performer sync.
 func (c *Client) Version(ctx context.Context) (string, error) {

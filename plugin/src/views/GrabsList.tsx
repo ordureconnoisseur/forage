@@ -1,8 +1,19 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ACTIVE_STATUSES,
+  deleteGrab,
+  DeleteGrabResult,
+  fetchGrabDetail,
   fetchGrabs,
   Grab,
+  GrabDetail,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -50,7 +61,36 @@ export default function GrabsList() {
   const [filter, setFilter] = useState<GrabStatus | "any">("any");
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [notice, setNotice] = useState<string | null>(null);
   const lastFetch = useRef(0);
+
+  // Immediate refetch, used after a delete so the row disappears
+  // without waiting for the next poll tick.
+  const refresh = useCallback(async () => {
+    try {
+      const r = await fetchGrabs({ limit: 200 });
+      setData(r);
+    } catch {
+      /* next poll tick will recover */
+    }
+  }, []);
+
+  const handleDeleted = useCallback(
+    (id: number, res: DeleteGrabResult) => {
+      setExpanded((s) => {
+        const next = new Set(s);
+        next.delete(id);
+        return next;
+      });
+      if (res.errors && res.errors.length > 0) {
+        setNotice(`Removed with issues: ${res.errors.join("; ")}`);
+      } else {
+        setNotice(`Removed: ${res.removed.join(", ")}`);
+      }
+      void refresh();
+    },
+    [refresh],
+  );
 
   // Poll loop — uses setTimeout (not setInterval) so we can adapt the
   // delay between ticks based on whether there are active grabs.
@@ -201,6 +241,13 @@ export default function GrabsList() {
         </span>
       </div>
 
+      {notice && (
+        <div className="grab-notice" onClick={() => setNotice(null)}>
+          {notice}
+          <span className="grab-notice-x">×</span>
+        </div>
+      )}
+
       {filtered.length === 0 ? (
         <div className="empty">No grabs match this filter.</div>
       ) : (
@@ -218,6 +265,7 @@ export default function GrabsList() {
                   return next;
                 })
               }
+              onDeleted={(res) => handleDeleted(g.id, res)}
             />
           ))}
         </ul>
@@ -255,17 +303,75 @@ function GrabRow({
   g,
   expanded,
   onToggle,
+  onDeleted,
 }: {
   g: Grab;
   expanded: boolean;
   onToggle: () => void;
+  onDeleted: (res: DeleteGrabResult) => void;
 }) {
+  const [detail, setDetail] = useState<GrabDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const confirmTimer = useRef<number | undefined>(undefined);
+
+  // Fetch the rich detail (scene thumbnail/title/performers + local
+  // Stash link) the first time the row opens. Cheap to keep cached
+  // for the row's lifetime.
+  useEffect(() => {
+    if (!expanded || detail || detailLoading) return;
+    let cancelled = false;
+    setDetailLoading(true);
+    fetchGrabDetail(g.id)
+      .then((d) => {
+        if (!cancelled) setDetail(d);
+      })
+      .catch(() => {
+        /* card just renders without the hero */
+      })
+      .finally(() => {
+        if (!cancelled) setDetailLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, detail, detailLoading, g.id]);
+
+  useEffect(() => {
+    return () => {
+      if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    };
+  }, []);
+
+  async function handleDelete() {
+    // Two-step: first click arms, second click within 4s commits.
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      confirmTimer.current = window.setTimeout(
+        () => setConfirmDelete(false),
+        4000,
+      );
+      return;
+    }
+    if (confirmTimer.current) clearTimeout(confirmTimer.current);
+    setConfirmDelete(false);
+    setDeleting(true);
+    setDeleteErr(null);
+    try {
+      const res = await deleteGrab(g.id);
+      onDeleted(res); // parent refreshes the list; row unmounts
+    } catch (e) {
+      setDeleteErr((e as Error).message);
+      setDeleting(false);
+    }
+  }
+
   return (
     <li className={"grab-row status-" + g.status + (expanded ? " open" : "")}>
       <button className="grab-row-head" onClick={onToggle}>
-        <span className={"grab-status-badge chip-" + g.status}>
-          {g.status}
-        </span>
+        <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>
           <div className="grab-meta">
@@ -293,9 +399,53 @@ function GrabRow({
 
       {expanded && (
         <div className="grab-row-detail">
-          {g.reason && (
-            <DetailRow label="Reason">{g.reason}</DetailRow>
+          {/* Scene hero — thumbnail + title + performer chips. Only
+              once the detail fetch resolves to a real scene. */}
+          {detail && (detail.title || detail.image_url) && (
+            <div className="grab-scene">
+              {detail.image_url && (
+                <div className="grab-scene-thumb">
+                  <img
+                    src={detail.image_url}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.display =
+                        "none";
+                    }}
+                  />
+                </div>
+              )}
+              <div className="grab-scene-info">
+                <div className="grab-scene-title">
+                  {detail.title || "(untitled scene)"}
+                </div>
+                {(detail.date || detail.studio) && (
+                  <div className="grab-scene-meta">
+                    {detail.date && <span>{detail.date}</span>}
+                    {detail.date && detail.studio && (
+                      <span className="sep">·</span>
+                    )}
+                    {detail.studio && <span>{detail.studio}</span>}
+                  </div>
+                )}
+                {detail.performers.length > 0 && (
+                  <div className="grab-perf-chips">
+                    {detail.performers.map((p, i) => (
+                      <span className="grab-perf-chip" key={i}>
+                        {p.name}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
+          {detailLoading && !detail && (
+            <div className="grab-scene-loading">Loading scene…</div>
+          )}
+
+          {g.reason && <DetailRow label="Reason">{g.reason}</DetailRow>}
           {g.place_error && (
             <DetailRow label="Place error" className="err">
               {g.place_error}
@@ -320,25 +470,28 @@ function GrabRow({
               >
                 {g.predicted_stashdb_id}
               </a>
-              {g.predicted_confidence != null && g.predicted_confidence > 0 && (
-                <span className="muted">
-                  {" "}(conf {g.predicted_confidence.toFixed(2)})
-                </span>
-              )}
+              {g.predicted_confidence != null &&
+                g.predicted_confidence > 0 && (
+                  <span className="muted">
+                    {" "}
+                    (match {g.predicted_confidence.toFixed(2)})
+                  </span>
+                )}
             </DetailRow>
           )}
-          {g.actual_stashdb_id && g.actual_stashdb_id !== g.predicted_stashdb_id && (
-            <DetailRow label="Actual scene" className="warn">
-              <a
-                href={`https://stashdb.org/scenes/${g.actual_stashdb_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {g.actual_stashdb_id}
-              </a>{" "}
-              <span className="muted">(differs from predicted)</span>
-            </DetailRow>
-          )}
+          {g.actual_stashdb_id &&
+            g.actual_stashdb_id !== g.predicted_stashdb_id && (
+              <DetailRow label="Actual scene" className="warn">
+                <a
+                  href={`https://stashdb.org/scenes/${g.actual_stashdb_id}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {g.actual_stashdb_id}
+                </a>{" "}
+                <span className="muted">(differs from predicted)</span>
+              </DetailRow>
+            )}
           <DetailRow label="Timeline">
             <span>grabbed {relativeTime(g.grabbed_at)}</span>
             {g.completed_at && g.completed_at > 0 && (
@@ -360,6 +513,36 @@ function GrabRow({
               </>
             )}
           </DetailRow>
+
+          {/* Action bar */}
+          <div className="grab-actions">
+            {detail?.stash_scene_url && (
+              <a
+                className="grab-action open-stash"
+                href={detail.stash_scene_url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Open in Stash ↗
+              </a>
+            )}
+            <div className="grab-actions-right">
+              {deleteErr && <span className="grab-delete-err">{deleteErr}</span>}
+              <button
+                className={
+                  "grab-action delete" + (confirmDelete ? " confirm" : "")
+                }
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting
+                  ? "Deleting…"
+                  : confirmDelete
+                    ? "Confirm delete?"
+                    : "Delete"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </li>

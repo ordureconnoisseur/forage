@@ -353,6 +353,39 @@ export function fetchGrabs(opts?: {
   return get<GrabsResponse>("/grabs" + (qs ? "?" + qs : ""));
 }
 
+// GrabDetail enriches the expanded grab card: StashDB scene metadata
+// plus a deep-link into the user's local Stash when the file has
+// landed there.
+export interface GrabDetail {
+  stashdb_id?: string;
+  title?: string;
+  date?: string;
+  studio?: string;
+  image_url?: string;
+  performers: { name: string; as?: string }[];
+  local_scene_id?: string;
+  stash_scene_url?: string;
+}
+
+export function fetchGrabDetail(id: number): Promise<GrabDetail> {
+  return get<GrabDetail>(`/grabs/${id}/detail`);
+}
+
+export interface DeleteGrabResult {
+  ok: boolean;
+  removed: string[];
+  errors?: string[];
+}
+
+export async function deleteGrab(id: number): Promise<DeleteGrabResult> {
+  const r = await fetch(foragerBase() + `/grabs/${id}`, { method: "DELETE" });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(e.error || `HTTP ${r.status}`);
+  }
+  return r.json() as Promise<DeleteGrabResult>;
+}
+
 // Non-terminal statuses — used by the GrabsList view to decide poll
 // cadence: if any active grabs exist, poll fast; otherwise slow.
 // `scanned` is non-terminal: the daemon keeps re-checking until

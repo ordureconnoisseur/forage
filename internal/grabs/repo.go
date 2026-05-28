@@ -192,6 +192,23 @@ func (r *Repo) ByDownloadURL(ctx context.Context, url string) (*Grab, error) {
 	return &g, nil
 }
 
+// Get returns a single grab by id, or (nil, nil) when not found.
+func (r *Repo) Get(ctx context.Context, id int64) (*Grab, error) {
+	grabs, err := r.query(ctx, `SELECT * FROM grabs WHERE id = ? LIMIT 1`, id)
+	if err != nil || len(grabs) == 0 {
+		return nil, err
+	}
+	g := grabs[0]
+	return &g, nil
+}
+
+// Delete removes a grab row. Used by the purge flow after the file +
+// Stash scene + download-client copy have been torn down.
+func (r *Repo) Delete(ctx context.Context, id int64) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM grabs WHERE id = ?`, id)
+	return err
+}
+
 // query is the shared SELECT path. The column order MUST match the
 // scanRow helper.
 func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, error) {

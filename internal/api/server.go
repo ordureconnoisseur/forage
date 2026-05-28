@@ -80,6 +80,8 @@ func (s *Server) Router() http.Handler {
 	r.Get("/search", s.getSearch)
 	r.Post("/grab", s.postGrab)
 	r.Get("/grabs", s.getGrabs)
+	r.Get("/grabs/{id}/detail", s.getGrabDetail)
+	r.Delete("/grabs/{id}", s.deleteGrab)
 	r.Get("/missing-scenes", s.getMissingScenes)
 	r.Get("/scenes/{id}/releases", s.getSceneReleases)
 	r.Get("/discover", s.getDiscover)
