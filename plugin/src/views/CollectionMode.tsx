@@ -205,6 +205,22 @@ export default function CollectionMode({
       return n;
     });
 
+  // Bulk (de)selection over non-queued rows.
+  const bulkSet = (fn: (row: RowState) => string | null) =>
+    setRows((r) => {
+      if (!scenes) return r;
+      const next = { ...r };
+      for (const s of scenes) {
+        const row = next[s.stashdb_id];
+        if (!row || row.grab === "queued") continue;
+        next[s.stashdb_id] = { ...row, pickedURL: fn(row) };
+      }
+      return next;
+    });
+  const selectAllVerified = () =>
+    bulkSet((row) => row.releases.find((x) => x.verified)?.download_url ?? null);
+  const clearAll = () => bulkSet(() => null);
+
   return (
     <div>
       <div className="coll-header">
@@ -226,6 +242,13 @@ export default function CollectionMode({
               : `${total} scenes · ${selectedCount} selected`}
             {queuedCount > 0 && ` · ${queuedCount} queued`}
           </span>
+          {!scanning && total > 0 && (
+            <div className="coll-bulk">
+              <button onClick={selectAllVerified}>select verified</button>
+              <span className="coll-bulk-sep">·</span>
+              <button onClick={clearAll}>clear</button>
+            </div>
+          )}
         </div>
         <button
           className="coll-grab"
