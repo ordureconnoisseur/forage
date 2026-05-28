@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import PerformersList from "./views/PerformersList";
 import MissingScenes from "./views/MissingScenes";
+import CollectionMode from "./views/CollectionMode";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
 import DiscoverList from "./views/DiscoverList";
@@ -15,6 +16,7 @@ import { fetchHealth, foragerBase, Health, mixedContentBlocked } from "./api";
 type Route =
   | { kind: "performers" }
   | { kind: "missing"; performerId: string }
+  | { kind: "collection"; performerId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "grabs" };
@@ -25,6 +27,9 @@ function parseRoute(hash: string): Route {
   const parts = pathPart.split("/").filter(Boolean);
   const query = new URLSearchParams(queryPart || "");
   if (parts[0] === "performer" && parts[1]) {
+    if (parts[2] === "collection") {
+      return { kind: "collection", performerId: parts[1] };
+    }
     return { kind: "missing", performerId: parts[1] };
   }
   if (parts[0] === "scene" && parts[1]) {
@@ -105,6 +110,7 @@ export default function App() {
   const goDiscover = () => setHash("#/discover");
   const goGrabs = () => setHash("#/grabs");
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
+  const goCollection = (id: string) => setHash(`#/performer/${id}/collection`);
   const goScene = (id: string, performerName?: string) => {
     const suffix = performerName
       ? `?p=${encodeURIComponent(performerName)}`
@@ -138,6 +144,7 @@ export default function App() {
             className={
               route.kind === "performers" ||
               route.kind === "missing" ||
+              route.kind === "collection" ||
               route.kind === "scene"
                 ? "active"
                 : ""
@@ -213,7 +220,17 @@ export default function App() {
           <PerformersList onPick={goPerformer} />
         )}
         {!needsSetup && route.kind === "missing" && (
-          <MissingScenes performerId={route.performerId} onPickScene={goScene} />
+          <MissingScenes
+            performerId={route.performerId}
+            onPickScene={goScene}
+            onCollection={goCollection}
+          />
+        )}
+        {!needsSetup && route.kind === "collection" && (
+          <CollectionMode
+            performerId={route.performerId}
+            onBack={goPerformer}
+          />
         )}
         {!needsSetup && route.kind === "scene" && (
           <SceneReleases

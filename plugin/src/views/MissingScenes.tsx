@@ -4,12 +4,15 @@ import { fetchMissing, type MissingResponse, type MissingScene } from "../api";
 export default function MissingScenes({
   performerId,
   onPickScene,
+  onCollection,
 }: {
   performerId: string;
   // Receives the performer name too so the scene-releases page can
   // pass it through to /grab — the placer needs to know which library
   // folder to drop the file in.
   onPickScene: (stashDBID: string, performerName: string) => void;
+  // Launches "complete the collection" mode for this performer.
+  onCollection: (performerId: string) => void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,12 +47,22 @@ export default function MissingScenes({
 
   return (
     <div>
-      <div className="page-header">
-        <h2>{data.performer.name}</h2>
-        <div className="meta">
-          {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
-          <strong>{data.missing.length} missing</strong>
+      <div className="page-header page-header-row">
+        <div>
+          <h2>{data.performer.name}</h2>
+          <div className="meta">
+            {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
+            <strong>{data.missing.length} missing</strong>
+          </div>
         </div>
+        {data.missing.length > 0 && (
+          <button
+            className="collection-cta"
+            onClick={() => onCollection(performerId)}
+          >
+            Complete collection →
+          </button>
+        )}
       </div>
       {data.missing.length === 0 ? (
         <div className="empty">

@@ -2276,3 +2276,137 @@ code.grab-fact-v,
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── Missing-scenes "Complete collection" CTA ──────────────────── */
+.page-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.collection-cta {
+  flex: none;
+  padding: 9px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(var(--accent-rgb), 0.4);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-bright);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.collection-cta:hover {
+  background: rgba(var(--accent-rgb), 0.2);
+  border-color: var(--accent);
+}
+
+/* ── Collection mode ───────────────────────────────────────────── */
+.coll-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px 24px;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.coll-head-id {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.coll-head-id h2 {
+  margin: 0;
+}
+.coll-back {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  width: fit-content;
+}
+.coll-back:hover {
+  color: var(--accent-bright);
+}
+.coll-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+.coll-grab {
+  flex: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.coll-grab:disabled {
+  opacity: 0.45;
+  cursor: default;
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  border-color: var(--glass-border);
+}
+
+.coll-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.coll-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+}
+.coll-thumb {
+  flex: none;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg-0);
+}
+.coll-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.coll-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.coll-row-title {
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.coll-row-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.coll-row-meta .sep {
+  margin: 0 6px;
+  opacity: 0.5;
+}
+.coll-row-status {
+  flex: none;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}
