@@ -1328,94 +1328,142 @@ button {
   text-align: center;
 }
 
+/* ── Expanded grab: the "dossier" ──────────────────────────────────
+   Not a list. A poster rail, an identity block with a life-cycle
+   pipeline, and a grouped fact grid — revealed in a short stagger. */
 .grab-row-detail {
   border-top: 1px solid var(--glass-border);
-  padding: 14px 16px 16px 22px;
+  padding: 18px 20px 18px 22px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 18px;
+  background:
+    radial-gradient(
+      120% 100% at 0% 0%,
+      rgba(var(--accent-rgb), 0.05),
+      transparent 60%
+    );
 }
-.detail-row {
-  display: grid;
-  grid-template-columns: 130px 1fr;
-  gap: 12px;
-  font-size: 12px;
-  align-items: baseline;
+@keyframes grabReveal {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
-.detail-label {
-  color: var(--text-muted);
-  font-weight: 500;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  font-size: 11px;
+.grab-row-detail > * {
+  animation: grabReveal 0.3s cubic-bezier(0.2, 0.7, 0.3, 1) both;
 }
-.detail-value {
-  color: var(--text);
-  word-break: break-word;
+.grab-row-detail > *:nth-child(1) {
+  animation-delay: 0.02s;
 }
-.detail-value code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11px;
-  background: var(--bg-0);
-  border: 1px solid var(--glass-border);
-  border-radius: 4px;
-  padding: 1px 6px;
+.grab-row-detail > *:nth-child(2) {
+  animation-delay: 0.09s;
 }
-.detail-value .sep {
-  opacity: 0.5;
-  margin: 0 6px;
-}
-.detail-value .muted {
-  color: var(--text-muted);
-}
-.detail-row.err .detail-value {
-  color: #fca5a5;
-}
-.detail-row.warn .detail-value {
-  color: var(--status-mismatched);
+.grab-row-detail > *:nth-child(3) {
+  animation-delay: 0.16s;
 }
 
-/* Expanded-grab scene hero: thumbnail + title + performer chips, sat
-   above the technical detail rows. */
-.grab-scene {
-  display: flex;
-  gap: 14px;
-  padding-bottom: 12px;
-  margin-bottom: 2px;
-  border-bottom: 1px solid var(--glass-border);
+.grab-dossier {
+  display: grid;
+  grid-template-columns: 248px 1fr;
+  gap: 20px;
+  align-items: start;
 }
-.grab-scene-thumb {
-  flex: none;
-  width: 168px;
+@media (max-width: 620px) {
+  .grab-dossier {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Poster rail */
+.grab-poster {
+  position: relative;
   aspect-ratio: 16 / 9;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md, 10px);
   overflow: hidden;
   background: var(--bg-0);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.35);
 }
-.grab-scene-thumb img {
+.grab-poster img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
 }
-.grab-scene-info {
+.grab-poster-empty {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
+.grab-poster-badge {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: rgba(10, 10, 10, 0.7);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  color: var(--text);
+}
+.grab-poster-badge.chip-confirmed {
+  color: var(--status-confirmed);
+}
+.grab-poster-badge.chip-mismatched {
+  color: var(--status-mismatched);
+}
+.grab-poster-badge.chip-orphaned {
+  color: var(--status-orphaned);
+}
+.grab-poster-badge.chip-failed {
+  color: var(--status-failed);
+}
+.grab-poster-badge.chip-scanned {
+  color: var(--status-scanned);
+}
+
+/* Identity block */
+.grab-dossier-main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
-.grab-scene-title {
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.3;
+.grab-ident-title {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
 }
-.grab-scene-meta {
-  font-size: 12px;
+.grab-ident-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
   color: var(--text-muted);
 }
-.grab-scene-meta .sep {
-  margin: 0 6px;
-  opacity: 0.5;
+.grab-ident-dot {
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.6;
 }
 .grab-perf-chips {
   display: flex;
@@ -1425,16 +1473,186 @@ button {
 }
 .grab-perf-chip {
   font-size: 11px;
-  padding: 3px 10px;
+  padding: 3px 11px;
   border-radius: var(--radius-pill);
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
+  background: rgba(var(--accent-rgb), 0.1);
+  border: 1px solid rgba(var(--accent-rgb), 0.25);
   color: var(--text);
 }
-.grab-scene-loading {
+.grab-reason {
   font-size: 12px;
   color: var(--text-muted);
-  padding-bottom: 8px;
+  font-style: italic;
+  padding-left: 10px;
+  border-left: 2px solid rgba(var(--accent-rgb), 0.4);
+}
+
+/* Life-cycle pipeline stepper */
+.grab-pipe {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+}
+.grab-pipe-step {
+  flex: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
+  min-width: 0;
+}
+/* Connector to the previous node — muted by default, accent when both
+   ends are reached. Sits behind the node. */
+.grab-pipe-step::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 50%;
+  width: 100%;
+  height: 2px;
+  background: var(--glass-border);
+  z-index: 0;
+}
+.grab-pipe-step:first-child::before {
+  display: none;
+}
+.grab-pipe-step.linked::before {
+  background: var(--accent);
+}
+.grab-pipe-node {
+  position: relative;
+  z-index: 1;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--bg-0);
+  border: 2px solid var(--glass-border);
+  transition: all 0.2s ease;
+}
+.grab-pipe-step.done .grab-pipe-node {
+  background: var(--accent);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.15);
+}
+.grab-pipe-step.active .grab-pipe-node {
+  border-color: var(--status-scanned);
+  background: transparent;
+  animation: pipePulse 1.4s ease-in-out infinite;
+}
+@keyframes pipePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(59, 130, 246, 0);
+  }
+}
+.grab-pipe-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.grab-pipe-step.done .grab-pipe-label {
+  color: var(--text);
+}
+.grab-pipe-time {
+  font-size: 10px;
+  color: var(--text-muted);
+  opacity: 0.7;
+  min-height: 12px;
+  font-variant-numeric: tabular-nums;
+}
+/* Terminal tones override the accent on the final node + its
+   incoming connector. */
+.grab-pipe-step.tone-mismatched.done .grab-pipe-node,
+.grab-pipe-step.tone-orphaned.done .grab-pipe-node {
+  background: var(--status-mismatched);
+  border-color: var(--status-mismatched);
+  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.15);
+}
+.grab-pipe-step.tone-failed.done .grab-pipe-node {
+  background: var(--status-failed);
+  border-color: var(--status-failed);
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+}
+.grab-pipe-step.tone-mismatched.linked::before,
+.grab-pipe-step.tone-orphaned.linked::before {
+  background: var(--status-mismatched);
+}
+.grab-pipe-step.tone-mismatched.done .grab-pipe-label,
+.grab-pipe-step.tone-orphaned.done .grab-pipe-label {
+  color: var(--status-mismatched);
+}
+.grab-pipe-step.tone-failed.done .grab-pipe-label {
+  color: var(--status-failed);
+}
+
+/* Fact grid — the technical record */
+.grab-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.grab-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.025);
+  border: 1px solid var(--glass-border);
+}
+.grab-fact.wide {
+  grid-column: 1 / -1;
+}
+.grab-fact-k {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.75;
+}
+.grab-fact-v {
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+code.grab-fact-v,
+.grab-fact-v code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+.grab-match-badge {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: rgba(var(--accent-rgb), 0.15);
+  color: var(--accent-bright);
+  font-variant-numeric: tabular-nums;
+}
+.grab-fact.warn {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+.grab-fact.warn .grab-fact-v {
+  color: var(--status-mismatched);
+}
+.grab-fact.err {
+  border-color: rgba(239, 68, 68, 0.3);
+}
+.grab-fact.err .grab-fact-v {
+  color: #fca5a5;
 }
 
 /* Action bar at the foot of the expanded grab. */

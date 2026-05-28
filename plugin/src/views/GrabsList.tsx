@@ -299,6 +299,77 @@ function FilterChip({
   );
 }
 
+// Pipeline renders the grab's life-cycle as a horizontal stepper:
+// Grabbed → Downloaded → Placed → <terminal>. Nodes light when their
+// timestamp exists; connectors fill only between consecutive done
+// nodes. The terminal node adapts to the grab's outcome (confirmed /
+// mismatched / orphaned / failed) or shows a pending/active state
+// while the file is still working through Stash.
+function Pipeline({ g }: { g: Grab }) {
+  type Step = {
+    label: string;
+    at: number;
+    done: boolean;
+    active?: boolean;
+    tone?: string;
+  };
+
+  const confirmedAt = g.confirmed_at ?? 0;
+  const completedAt = g.completed_at ?? 0;
+  const placedAt = g.placed_at ?? 0;
+
+  let terminal: Step;
+  switch (g.status) {
+    case "confirmed":
+      terminal = { label: "Confirmed", at: confirmedAt, done: true, tone: "confirmed" };
+      break;
+    case "mismatched":
+      terminal = { label: "Mismatched", at: confirmedAt, done: true, tone: "mismatched" };
+      break;
+    case "orphaned":
+      terminal = { label: "Orphaned", at: 0, done: true, tone: "orphaned" };
+      break;
+    case "failed":
+      terminal = { label: "Failed", at: 0, done: true, tone: "failed" };
+      break;
+    case "scanned":
+      terminal = { label: "Identifying", at: 0, done: false, active: true };
+      break;
+    default:
+      terminal = { label: "Confirmed", at: 0, done: false, active: g.status === "placed" };
+  }
+
+  const steps: Step[] = [
+    { label: "Grabbed", at: g.grabbed_at, done: g.grabbed_at > 0 },
+    { label: "Downloaded", at: completedAt, done: completedAt > 0 },
+    { label: "Placed", at: placedAt, done: placedAt > 0 },
+    terminal,
+  ];
+
+  return (
+    <ol className="grab-pipe">
+      {steps.map((s, i) => {
+        const linked = i > 0 && s.done && steps[i - 1].done;
+        const cls =
+          "grab-pipe-step" +
+          (s.done ? " done" : "") +
+          (s.active ? " active" : "") +
+          (linked ? " linked" : "") +
+          (s.tone ? " tone-" + s.tone : "");
+        return (
+          <li key={i} className={cls}>
+            <span className="grab-pipe-node" />
+            <span className="grab-pipe-label">{s.label}</span>
+            <span className="grab-pipe-time">
+              {s.at > 0 ? relativeTime(s.at) : " "}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
 function GrabRow({
   g,
   expanded,
@@ -396,120 +467,114 @@ function GrabRow({
 
       {expanded && (
         <div className="grab-row-detail">
-          {/* Scene hero — thumbnail + title + performer chips. Only
-              once the detail fetch resolves to a real scene. */}
-          {detail && (detail.title || detail.image_url) && (
-            <div className="grab-scene">
-              {detail.image_url && (
-                <div className="grab-scene-thumb">
-                  <img
-                    src={detail.image_url}
-                    alt=""
-                    loading="lazy"
-                    onError={(e) => {
-                      (e.currentTarget as HTMLImageElement).style.display =
-                        "none";
-                    }}
-                  />
+          {/* Dossier: poster rail + identity/pipeline. */}
+          <div className="grab-dossier">
+            <div className="grab-poster">
+              {detail?.image_url ? (
+                <img
+                  src={detail.image_url}
+                  alt=""
+                  loading="lazy"
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.visibility =
+                      "hidden";
+                  }}
+                />
+              ) : (
+                <div className="grab-poster-empty">
+                  {detailLoading ? "" : "no preview"}
                 </div>
               )}
-              <div className="grab-scene-info">
-                <div className="grab-scene-title">
-                  {detail.title || "(untitled scene)"}
-                </div>
-                {(detail.date || detail.studio) && (
-                  <div className="grab-scene-meta">
-                    {detail.date && <span>{detail.date}</span>}
-                    {detail.date && detail.studio && (
-                      <span className="sep">·</span>
-                    )}
-                    {detail.studio && <span>{detail.studio}</span>}
-                  </div>
-                )}
-                {detail.performers.length > 0 && (
-                  <div className="grab-perf-chips">
-                    {detail.performers.map((p, i) => (
-                      <span className="grab-perf-chip" key={i}>
-                        {p.name}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
+              <span className={"grab-poster-badge chip-" + g.status}>
+                {g.status}
+              </span>
             </div>
-          )}
-          {detailLoading && !detail && (
-            <div className="grab-scene-loading">Loading scene…</div>
-          )}
 
-          {g.reason && <DetailRow label="Reason">{g.reason}</DetailRow>}
-          {g.place_error && (
-            <DetailRow label="Place error" className="err">
-              {g.place_error}
-            </DetailRow>
-          )}
-          {g.placed_path && (
-            <DetailRow label="Placed path">
-              <code>{g.placed_path}</code>
-            </DetailRow>
-          )}
-          {g.client_name && (
-            <DetailRow label="Client file">
-              <code>{g.client_name}</code>
-            </DetailRow>
-          )}
-          {g.predicted_stashdb_id && (
-            <DetailRow label="Predicted scene">
-              <a
-                href={`https://stashdb.org/scenes/${g.predicted_stashdb_id}`}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {g.predicted_stashdb_id}
-              </a>
-              {g.predicted_confidence != null &&
-                g.predicted_confidence > 0 && (
-                  <span className="muted">
-                    {" "}
-                    (match {g.predicted_confidence.toFixed(2)})
+            <div className="grab-dossier-main">
+              <h3 className="grab-ident-title">
+                {detail?.title || g.release_title}
+              </h3>
+              {(detail?.date || detail?.studio) && (
+                <div className="grab-ident-sub">
+                  {detail.date && <span>{detail.date}</span>}
+                  {detail.date && detail.studio && (
+                    <span className="grab-ident-dot" />
+                  )}
+                  {detail.studio && <span>{detail.studio}</span>}
+                </div>
+              )}
+              {detail && detail.performers.length > 0 && (
+                <div className="grab-perf-chips">
+                  {detail.performers.map((p, i) => (
+                    <span className="grab-perf-chip" key={i}>
+                      {p.name}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {g.reason && <div className="grab-reason">{g.reason}</div>}
+
+              <Pipeline g={g} />
+            </div>
+          </div>
+
+          {/* Fact grid — the technical record, grouped + de-emphasised. */}
+          <div className="grab-facts">
+            {g.placed_path && (
+              <div className="grab-fact wide">
+                <span className="grab-fact-k">Placed</span>
+                <code className="grab-fact-v">{g.placed_path}</code>
+              </div>
+            )}
+            {g.client_name && (
+              <div className="grab-fact wide">
+                <span className="grab-fact-k">Client file</span>
+                <code className="grab-fact-v">{g.client_name}</code>
+              </div>
+            )}
+            {g.predicted_stashdb_id && (
+              <div className="grab-fact">
+                <span className="grab-fact-k">Predicted scene</span>
+                <span className="grab-fact-v">
+                  <a
+                    href={`https://stashdb.org/scenes/${g.predicted_stashdb_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {g.predicted_stashdb_id.slice(0, 8)}…
+                  </a>
+                  {g.predicted_confidence != null &&
+                    g.predicted_confidence > 0 && (
+                      <span className="grab-match-badge">
+                        match {g.predicted_confidence.toFixed(2)}
+                      </span>
+                    )}
+                </span>
+              </div>
+            )}
+            {g.actual_stashdb_id &&
+              g.actual_stashdb_id !== g.predicted_stashdb_id && (
+                <div className="grab-fact warn">
+                  <span className="grab-fact-k">Actual scene</span>
+                  <span className="grab-fact-v">
+                    <a
+                      href={`https://stashdb.org/scenes/${g.actual_stashdb_id}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {g.actual_stashdb_id.slice(0, 8)}…
+                    </a>{" "}
+                    differs from predicted
                   </span>
-                )}
-            </DetailRow>
-          )}
-          {g.actual_stashdb_id &&
-            g.actual_stashdb_id !== g.predicted_stashdb_id && (
-              <DetailRow label="Actual scene" className="warn">
-                <a
-                  href={`https://stashdb.org/scenes/${g.actual_stashdb_id}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  {g.actual_stashdb_id}
-                </a>{" "}
-                <span className="muted">(differs from predicted)</span>
-              </DetailRow>
+                </div>
+              )}
+            {g.place_error && (
+              <div className="grab-fact err wide">
+                <span className="grab-fact-k">Place error</span>
+                <span className="grab-fact-v">{g.place_error}</span>
+              </div>
             )}
-          <DetailRow label="Timeline">
-            <span>grabbed {relativeTime(g.grabbed_at)}</span>
-            {g.completed_at && g.completed_at > 0 && (
-              <>
-                <span className="sep">·</span>
-                <span>completed {relativeTime(g.completed_at)}</span>
-              </>
-            )}
-            {g.placed_at && g.placed_at > 0 && (
-              <>
-                <span className="sep">·</span>
-                <span>placed {relativeTime(g.placed_at)}</span>
-              </>
-            )}
-            {g.confirmed_at && g.confirmed_at > 0 && (
-              <>
-                <span className="sep">·</span>
-                <span>confirmed {relativeTime(g.confirmed_at)}</span>
-              </>
-            )}
-          </DetailRow>
+          </div>
 
           {/* Action bar */}
           <div className="grab-actions">
@@ -543,23 +608,6 @@ function GrabRow({
         </div>
       )}
     </li>
-  );
-}
-
-function DetailRow({
-  label,
-  className,
-  children,
-}: {
-  label: string;
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className={"detail-row" + (className ? " " + className : "")}>
-      <span className="detail-label">{label}</span>
-      <span className="detail-value">{children}</span>
-    </div>
   );
 }
 
