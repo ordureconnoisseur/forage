@@ -405,7 +405,7 @@ function MatchBlock({ g }: { g: Grab }) {
           <div className="grab-match-hero-sub">
             Stash identified the scene forage predicted ·{" "}
             <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
-              {predicted.slice(0, 8)}…
+              {predicted}
             </a>
             {conf && <span className="grab-match-badge">{conf}</span>}
           </div>
@@ -432,7 +432,7 @@ function MatchBlock({ g }: { g: Grab }) {
             <span className="grab-match-leg">
               <span className="grab-match-leg-k">predicted</span>
               <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
-                {predicted.slice(0, 8)}…
+                {predicted}
               </a>
               {conf && <span className="grab-match-badge dim">{conf}</span>}
             </span>
@@ -440,7 +440,7 @@ function MatchBlock({ g }: { g: Grab }) {
             <span className="grab-match-leg">
               <span className="grab-match-leg-k">stash got</span>
               <a href={stashdbScene(actual)} target="_blank" rel="noopener noreferrer">
-                {actual.slice(0, 8)}…
+                {actual}
               </a>
             </span>
           </div>
@@ -454,7 +454,7 @@ function MatchBlock({ g }: { g: Grab }) {
       <span className="grab-fact-k">Predicted</span>
       <span className="grab-fact-v grab-match-line">
         <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
-          {predicted.slice(0, 8)}…
+          {predicted}
         </a>
         {conf && <span className="grab-match-badge">match {conf}</span>}
         <span className="grab-match-pending">
