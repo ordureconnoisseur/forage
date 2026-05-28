@@ -1652,21 +1652,33 @@ button {
 /* Unified "match confirmed" hero — shown only when the prediction and
    Stash's identification are the same scene. One emphatic green
    indicator instead of two cards to compare. */
+/* Match hero — one emphatic verdict card. Shared layout; the colour
+   story (green confirmed vs amber mismatch) is per-variant, driven by
+   a --tone / --tone-rgb pair so the glyph, border, gradient and glow
+   all stay in sync. */
 .grab-match-hero {
   display: flex;
   align-items: center;
   gap: 16px;
   padding: 15px 18px;
   border-radius: var(--radius-md, 10px);
-  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  border: 1px solid rgba(var(--tone-rgb), 0.45);
   background: linear-gradient(
     110deg,
-    rgba(var(--accent-rgb), 0.16),
-    rgba(var(--accent-rgb), 0.04) 70%
+    rgba(var(--tone-rgb), 0.16),
+    rgba(var(--tone-rgb), 0.04) 70%
   );
-  box-shadow: 0 0 24px rgba(var(--accent-rgb), 0.14);
+  box-shadow: 0 0 24px rgba(var(--tone-rgb), 0.14);
   position: relative;
   overflow: hidden;
+}
+.grab-match-hero.confirmed {
+  --tone: var(--accent-bright);
+  --tone-rgb: var(--accent-rgb);
+}
+.grab-match-hero.mismatch {
+  --tone: #f8b34d;
+  --tone-rgb: 245, 158, 11;
 }
 /* One-time light sweep across the card on reveal. */
 .grab-match-hero::after {
@@ -1687,14 +1699,14 @@ button {
     transform: translateX(120%);
   }
 }
-.grab-match-check {
+.grab-match-glyph {
   width: 42px;
   height: 42px;
   flex: none;
 }
-.grab-match-check .ring {
+.grab-match-glyph .ring {
   fill: none;
-  stroke: var(--accent);
+  stroke: rgba(var(--tone-rgb), 1);
   stroke-width: 2.5;
   opacity: 0.45;
   transform-origin: center;
@@ -1706,15 +1718,26 @@ button {
     opacity: 0;
   }
 }
-.grab-match-check .tick {
+.grab-match-glyph .tick,
+.grab-match-glyph .x1,
+.grab-match-glyph .x2 {
   fill: none;
-  stroke: var(--accent-bright);
+  stroke: var(--tone);
   stroke-width: 3.5;
   stroke-linecap: round;
   stroke-linejoin: round;
   stroke-dasharray: 32;
   stroke-dashoffset: 32;
-  animation: matchTick 0.45s 0.22s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+  animation: matchTick 0.4s cubic-bezier(0.2, 0.7, 0.3, 1) forwards;
+}
+.grab-match-glyph .tick {
+  animation-delay: 0.22s;
+}
+.grab-match-glyph .x1 {
+  animation-delay: 0.2s;
+}
+.grab-match-glyph .x2 {
+  animation-delay: 0.32s;
 }
 @keyframes matchTick {
   to {
@@ -1729,7 +1752,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-  color: var(--accent-bright);
+  color: var(--tone);
 }
 .grab-match-hero-sub {
   font-size: 12px;
@@ -1743,6 +1766,34 @@ button {
 }
 .grab-match-hero-sub .grab-match-badge {
   margin-left: 8px;
+}
+/* Mismatch sub: predicted → actual legs */
+.grab-match-diff {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.grab-match-leg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.grab-match-leg-k {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.65;
+}
+.grab-match-rarr {
+  color: var(--tone);
+  opacity: 0.7;
+}
+.grab-match-badge.dim {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
 }
 code.grab-fact-v,
 .grab-fact-v code {

@@ -391,9 +391,9 @@ function MatchBlock({ g }: { g: Grab }) {
 
   if (actual && actual === predicted) {
     return (
-      <div className="grab-match-hero">
+      <div className="grab-match-hero confirmed">
         <svg
-          className="grab-match-check"
+          className="grab-match-glyph"
           viewBox="0 0 40 40"
           aria-hidden="true"
         >
@@ -416,26 +416,36 @@ function MatchBlock({ g }: { g: Grab }) {
 
   if (actual) {
     return (
-      <>
-        <div className="grab-fact">
-          <span className="grab-fact-k">Predicted</span>
-          <span className="grab-fact-v grab-match-line">
-            <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
-              {predicted.slice(0, 8)}…
-            </a>
-            {conf && <span className="grab-match-badge">match {conf}</span>}
-          </span>
+      <div className="grab-match-hero mismatch">
+        <svg
+          className="grab-match-glyph"
+          viewBox="0 0 40 40"
+          aria-hidden="true"
+        >
+          <circle className="ring" cx="20" cy="20" r="17" />
+          <path className="x1" d="M14 14 L26 26" />
+          <path className="x2" d="M26 14 L14 26" />
+        </svg>
+        <div className="grab-match-hero-body">
+          <div className="grab-match-hero-title">Different scene</div>
+          <div className="grab-match-hero-sub grab-match-diff">
+            <span className="grab-match-leg">
+              <span className="grab-match-leg-k">predicted</span>
+              <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
+                {predicted.slice(0, 8)}…
+              </a>
+              {conf && <span className="grab-match-badge dim">{conf}</span>}
+            </span>
+            <span className="grab-match-rarr">→</span>
+            <span className="grab-match-leg">
+              <span className="grab-match-leg-k">stash got</span>
+              <a href={stashdbScene(actual)} target="_blank" rel="noopener noreferrer">
+                {actual.slice(0, 8)}…
+              </a>
+            </span>
+          </div>
         </div>
-        <div className="grab-fact warn">
-          <span className="grab-fact-k">Actual</span>
-          <span className="grab-fact-v">
-            ✗ different scene —{" "}
-            <a href={stashdbScene(actual)} target="_blank" rel="noopener noreferrer">
-              {actual.slice(0, 8)}…
-            </a>
-          </span>
-        </div>
-      </>
+      </div>
     );
   }
 
