@@ -213,6 +213,12 @@ export interface SceneRelease {
   download_url: string;
   verified: boolean;
   confidence: number;
+  // Populated only when the release is NOT verified because the
+  // matcher thinks it's a different scene. Lets the UI warn the user
+  // that grabbing this would not get them the scene they're viewing.
+  best_match_id?: string;
+  best_match_title?: string;
+  best_match_conf?: number;
 }
 
 export interface SceneReleasesResponse {

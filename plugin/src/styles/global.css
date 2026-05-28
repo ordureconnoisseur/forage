@@ -675,6 +675,15 @@ button {
   gap: 6px;
   font-variant-numeric: tabular-nums;
 }
+.release-warn {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #f59e0b;
+}
+.release-warn strong {
+  color: #fbbf24;
+  font-weight: 600;
+}
 
 .grab-btn {
   padding: 9px 16px;

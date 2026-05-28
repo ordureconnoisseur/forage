@@ -19,6 +19,15 @@ type sceneReleasesResponse struct {
 	Releases []sceneRelease `json:"releases"`
 }
 
+// verifyTopMargin is how far below the matcher's #1 candidate the
+// viewed scene can sit and still earn the Verified badge. Set tight:
+// a release is "verified" for the scene you're viewing only when that
+// scene is the matcher's best pick or in a near-tie for it. Anything
+// looser re-introduces the false-verified bug where a release for a
+// clearly different scene gets badged green just because the viewed
+// scene also appears lower in the candidate list.
+const verifyTopMargin = 0.05
+
 type sceneRelease struct {
 	Title       string  `json:"title"`
 	Indexer     string  `json:"indexer"`
@@ -32,6 +41,12 @@ type sceneRelease struct {
 	DownloadURL string  `json:"download_url"`
 	Verified    bool    `json:"verified"` // matcher confirms this release is the target scene
 	Confidence  float64 `json:"confidence"`
+	// When a release is NOT verified because the matcher thinks it's a
+	// different scene, these name that scene so the UI can warn the
+	// user ("this looks like X, not the scene you're viewing").
+	BestMatchID    string  `json:"best_match_id,omitempty"`
+	BestMatchTitle string  `json:"best_match_title,omitempty"`
+	BestMatchConf  float64 `json:"best_match_conf,omitempty"`
 }
 
 // getSceneReleases finds Prowlarr releases for a specific StashDB
@@ -106,32 +121,54 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		rel := releases[res.Index]
 		var conf float64
 		verified := false
-		// Verification: look for the target scene in the candidate
-		// list. We accept anywhere in the top-N because a release
-		// might match this scene strongly but the matcher's broader
-		// pool put another scene first by a small margin.
-		if res.Err == nil {
+		// Verification: the viewed scene counts as verified only when
+		// it's the matcher's best pick for this release, or within a
+		// hair of it. Accepting the scene *anywhere* in the top-N (the
+		// old behaviour) badged releases green even when a clearly
+		// different scene outscored the viewed one — e.g. a "Gooey Anal
+		// Stuffing" release (0.62) showing Verified on the "Gooey Anal
+		// Toe Sucking" page just because that scene also appeared at
+		// rank 3 (0.41). The user then grabs the wrong scene trusting
+		// the badge.
+		//
+		// bestOther is the top candidate whose scene ISN'T the viewed
+		// one — used to tell the UI what the release actually looks
+		// like when we withhold the Verified badge.
+		var bestOtherID, bestOtherTitle string
+		var bestOtherConf float64
+		if res.Err == nil && len(res.Candidates) > 0 {
+			top := res.Candidates[0]
 			for _, c := range res.Candidates {
 				if c.Scene.ID == id {
-					verified = true
 					conf = c.Confidence
+					if top.Confidence-c.Confidence <= verifyTopMargin {
+						verified = true
+					}
 					break
 				}
 			}
+			if !verified && top.Scene.ID != id {
+				bestOtherID = top.Scene.ID
+				bestOtherTitle = top.Scene.Title
+				bestOtherConf = top.Confidence
+			}
 		}
 		out[res.Index] = sceneRelease{
-			Title:       rel.Title,
-			Indexer:     rel.Indexer,
-			Protocol:    rel.Protocol,
-			Size:        rel.Size,
-			Popularity:  rel.Popularity,
-			Seeders:     rel.Seeders,
-			Grabs:       rel.Grabs,
-			PublishDate: rel.PublishDate,
-			InfoURL:     rel.InfoURL,
-			DownloadURL: rel.DownloadURL,
-			Verified:    verified,
-			Confidence:  conf,
+			Title:          rel.Title,
+			Indexer:        rel.Indexer,
+			Protocol:       rel.Protocol,
+			Size:           rel.Size,
+			Popularity:     rel.Popularity,
+			Seeders:        rel.Seeders,
+			Grabs:          rel.Grabs,
+			PublishDate:    rel.PublishDate,
+			InfoURL:        rel.InfoURL,
+			DownloadURL:    rel.DownloadURL,
+			Verified:       verified,
+			Confidence:     conf,
+			BestMatchID:    bestOtherID,
+			BestMatchTitle: bestOtherTitle,
+			BestMatchConf:  bestOtherConf,
 		}
 	}
 

@@ -217,6 +217,15 @@ function ReleaseList({
                   </>
                 )}
               </div>
+              {!r.verified && r.best_match_title && (
+                <div className="release-warn">
+                  ⚠ Looks like <strong>{r.best_match_title}</strong>
+                  {r.best_match_conf
+                    ? ` (${(r.best_match_conf * 100).toFixed(0)}%)`
+                    : ""}{" "}
+                  — not the scene you're viewing.
+                </div>
+              )}
             </div>
             <GrabButton state={state} onClick={() => onGrab(r)} />
           </li>
