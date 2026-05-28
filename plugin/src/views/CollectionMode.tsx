@@ -398,6 +398,7 @@ function CollectionRow({
                     {picked.verified ? "verified" : "unverified"}{" "}
                     {picked.confidence.toFixed(2)}
                   </span>
+                  <ResBadge title={picked.title} />
                   <code className="coll-pick-file">{picked.title}</code>
                   {row.grab === "error" && (
                     <span className="coll-grab-err">grab failed</span>
@@ -448,6 +449,7 @@ function CollectionRow({
                 {rel.verified ? "verified" : "unverified"}{" "}
                 {rel.confidence.toFixed(2)}
               </span>
+              <ResBadge title={rel.title} />
               <span className="coll-cand-body">
                 <code className="coll-cand-file">{rel.title}</code>
                 <span className="coll-cand-meta">
@@ -469,6 +471,23 @@ function CollectionRow({
       )}
     </li>
   );
+}
+
+// resolution pulls a quality label out of a release title. Returns
+// null when no resolution token is present (e.g. a bare "SiteRip").
+function resolution(title: string): { label: string; cls: string } | null {
+  const t = title.toLowerCase();
+  if (/\b(2160p?|4k|uhd)\b/.test(t)) return { label: "4K", cls: "res-4k" };
+  if (/\b1080p?\b/.test(t)) return { label: "1080p", cls: "res-1080" };
+  if (/\b720p?\b/.test(t)) return { label: "720p", cls: "res-720" };
+  if (/\b480p?\b/.test(t)) return { label: "480p", cls: "res-480" };
+  return null;
+}
+
+function ResBadge({ title }: { title: string }) {
+  const res = resolution(title);
+  if (!res) return null;
+  return <span className={"res-badge " + res.cls}>{res.label}</span>;
 }
 
 function humanSize(b: number): string {

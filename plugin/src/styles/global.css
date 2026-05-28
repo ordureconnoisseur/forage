@@ -2659,3 +2659,37 @@ code.grab-fact-v,
 .coll-cand-warn {
   color: var(--status-mismatched);
 }
+
+/* Resolution badge — extracted from the release filename. 4K pops
+   gold, 1080p blue, lower tiers stay muted. */
+.res-badge {
+  flex: none;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+.res-badge.res-4k {
+  background: rgba(245, 200, 80, 0.18);
+  color: #f5c850;
+}
+.res-badge.res-1080 {
+  background: rgba(59, 130, 246, 0.2);
+  color: #7dafff;
+}
+.res-badge.res-720 {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-muted);
+}
+.res-badge.res-480 {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-muted);
+  opacity: 0.85;
+}
+.coll-pick .res-badge,
+.coll-cand .res-badge {
+  align-self: center;
+}
