@@ -316,28 +316,25 @@ function GrabRow({
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const confirmTimer = useRef<number | undefined>(undefined);
+  const fetchedDetail = useRef(false);
 
   // Fetch the rich detail (scene thumbnail/title/performers + local
-  // Stash link) the first time the row opens. Cheap to keep cached
-  // for the row's lifetime.
+  // Stash link) the first time the row opens, exactly once. A ref
+  // guards the one-shot — deliberately NOT detailLoading state in the
+  // dep array, which would make the effect re-run the instant it set
+  // loading, fire its own cleanup, and cancel the in-flight fetch
+  // (leaving "Loading scene…" stuck forever).
   useEffect(() => {
-    if (!expanded || detail || detailLoading) return;
-    let cancelled = false;
+    if (!expanded || fetchedDetail.current) return;
+    fetchedDetail.current = true;
     setDetailLoading(true);
     fetchGrabDetail(g.id)
-      .then((d) => {
-        if (!cancelled) setDetail(d);
-      })
+      .then(setDetail)
       .catch(() => {
         /* card just renders without the hero */
       })
-      .finally(() => {
-        if (!cancelled) setDetailLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [expanded, detail, detailLoading, g.id]);
+      .finally(() => setDetailLoading(false));
+  }, [expanded, g.id]);
 
   useEffect(() => {
     return () => {
