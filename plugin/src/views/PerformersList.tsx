@@ -168,10 +168,6 @@ function PerformerCard({
               <span className="perf-missing">
                 {missing > 0 ? `${missing} missing` : "complete"}
               </span>
-              <span className="sep">·</span>
-              <span>
-                {p.owned_scenes_count}/{p.total_stashdb_scenes}
-              </span>
               {lastRelease && (
                 <>
                   <span className="sep">·</span>
