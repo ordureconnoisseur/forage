@@ -2472,6 +2472,31 @@ code.grab-fact-v,
 .coll-state.warn {
   color: var(--status-mismatched);
 }
+.coll-state.queued {
+  color: var(--accent-bright);
+  font-weight: 600;
+  font-style: normal;
+}
+.coll-row.queued {
+  border-color: rgba(var(--accent-rgb), 0.3);
+  background: rgba(var(--accent-rgb), 0.05);
+  opacity: 0.85;
+}
+.coll-queued-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 17px;
+  height: 17px;
+  color: var(--accent-bright);
+  font-weight: 800;
+  font-size: 14px;
+}
+.coll-grab-err {
+  flex: none;
+  font-size: 11px;
+  color: #fca5a5;
+}
 .coll-pick {
   display: flex;
   align-items: center;

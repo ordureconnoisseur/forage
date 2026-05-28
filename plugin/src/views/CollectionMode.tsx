@@ -2,24 +2,29 @@ import { useEffect, useState } from "react";
 import {
   fetchMissing,
   fetchSceneReleases,
+  postGrab,
   type MissingScene,
   type SceneRelease,
 } from "../api";
 
 const SEARCH_CONCURRENCY = 4;
+const GRAB_CONCURRENCY = 3;
 
 type RowStatus = "pending" | "searching" | "done" | "empty" | "error";
+type GrabState = "idle" | "queued" | "error";
 
 interface RowState {
   status: RowStatus;
   releases: SceneRelease[];
   // download_url of the chosen release, or null = nothing picked.
   pickedURL: string | null;
+  // grab lifecycle for the picked release, once the user fires it.
+  grab: GrabState;
   error?: string;
 }
 
 function blankRow(): RowState {
-  return { status: "pending", releases: [], pickedURL: null };
+  return { status: "pending", releases: [], pickedURL: null, grab: "idle" };
 }
 
 // CollectionMode — "complete the collection" for one performer. P2:
@@ -38,6 +43,7 @@ export default function CollectionMode({
   const [error, setError] = useState<string | null>(null);
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [grabbing, setGrabbing] = useState(false);
 
   // Load the target set.
   useEffect(() => {
@@ -114,10 +120,62 @@ export default function CollectionMode({
     return st === "done" || st === "empty" || st === "error";
   }).length;
   const total = scenes.length;
-  const selectedCount = scenes.filter(
-    (s) => rows[s.stashdb_id]?.pickedURL,
+  const selectedCount = scenes.filter((s) => {
+    const row = rows[s.stashdb_id];
+    return row?.pickedURL && row.grab !== "queued";
+  }).length;
+  const queuedCount = scenes.filter(
+    (s) => rows[s.stashdb_id]?.grab === "queued",
   ).length;
   const scanning = searched < total;
+
+  // Fire a grab for every picked-but-not-yet-queued scene, bounded.
+  // Rows flip to "queued" in place as each returns; failures stay
+  // selectable for a retry.
+  async function bulkGrab() {
+    if (!scenes || grabbing) return;
+    const targets = scenes
+      .map((s) => {
+        const row = rows[s.stashdb_id];
+        if (!row || row.grab === "queued" || !row.pickedURL) return null;
+        const rel = row.releases.find((r) => r.download_url === row.pickedURL);
+        return rel ? { scene: s, rel } : null;
+      })
+      .filter((t): t is { scene: MissingScene; rel: SceneRelease } => !!t);
+    if (targets.length === 0) return;
+
+    setGrabbing(true);
+    const queue = [...targets];
+    const setRow = (id: string, patch: Partial<RowState>) =>
+      setRows((r) => ({ ...r, [id]: { ...(r[id] || blankRow()), ...patch } }));
+
+    async function worker() {
+      for (;;) {
+        const t = queue.shift();
+        if (!t) return;
+        try {
+          await postGrab({
+            download_url: t.rel.download_url,
+            release_title: t.rel.title,
+            release_size: t.rel.size,
+            release_indexer: t.rel.indexer,
+            protocol: t.rel.protocol,
+            scene_id: t.scene.stashdb_id,
+            confidence: t.rel.confidence,
+            performer_name: performerName,
+          });
+          setRow(t.scene.stashdb_id, { grab: "queued" });
+        } catch {
+          setRow(t.scene.stashdb_id, { grab: "error" });
+        }
+      }
+    }
+
+    await Promise.allSettled(
+      Array.from({ length: GRAB_CONCURRENCY }, () => worker()),
+    );
+    setGrabbing(false);
+  }
 
   const toggle = (s: MissingScene) =>
     setRows((r) => {
@@ -166,10 +224,15 @@ export default function CollectionMode({
             {scanning
               ? `searching ${searched}/${total}…`
               : `${total} scenes · ${selectedCount} selected`}
+            {queuedCount > 0 && ` · ${queuedCount} queued`}
           </span>
         </div>
-        <button className="coll-grab" disabled={selectedCount === 0}>
-          Grab {selectedCount} selected
+        <button
+          className="coll-grab"
+          disabled={selectedCount === 0 || grabbing}
+          onClick={bulkGrab}
+        >
+          {grabbing ? "Grabbing…" : `Grab ${selectedCount} selected`}
         </button>
       </div>
 
@@ -222,16 +285,30 @@ function CollectionRow({
   const selectable = row.status === "done";
   const canExpand = row.status === "done" && row.releases.length > 0;
 
+  const queued = row.grab === "queued";
+
   return (
-    <li className={"coll-row" + (row.pickedURL ? " picked" : "")}>
+    <li
+      className={
+        "coll-row" +
+        (row.pickedURL ? " picked" : "") +
+        (queued ? " queued" : "")
+      }
+    >
       <div className="coll-row-head">
         <label className="coll-check">
-          <input
-            type="checkbox"
-            checked={row.pickedURL != null}
-            disabled={!selectable}
-            onChange={onToggle}
-          />
+          {queued ? (
+            <span className="coll-queued-check" aria-label="queued">
+              ✓
+            </span>
+          ) : (
+            <input
+              type="checkbox"
+              checked={row.pickedURL != null}
+              disabled={!selectable}
+              onChange={onToggle}
+            />
+          )}
         </label>
         <div className="coll-thumb">
           {scene.image_url ? (
@@ -255,35 +332,45 @@ function CollectionRow({
           </div>
         </div>
         <div className="coll-row-result">
-          {row.status === "pending" && (
-            <span className="coll-state muted">queued…</span>
-          )}
-          {row.status === "searching" && (
-            <span className="coll-state">
-              <span className="coll-spinner" /> searching…
-            </span>
-          )}
-          {row.status === "error" && (
-            <span className="coll-state err">search failed</span>
-          )}
-          {row.status === "empty" && (
-            <span className="coll-state muted">no releases found</span>
-          )}
-          {row.status === "done" && picked && (
-            <div className="coll-pick">
-              <span
-                className={
-                  "coll-pick-tag " + (picked.verified ? "verified" : "guess")
-                }
-              >
-                {picked.verified ? "verified" : "unverified"}{" "}
-                {picked.confidence.toFixed(2)}
-              </span>
-              <code className="coll-pick-file">{picked.title}</code>
-            </div>
-          )}
-          {row.status === "done" && !picked && (
-            <span className="coll-state warn">no confident match</span>
+          {queued ? (
+            <span className="coll-state queued">queued ✓</span>
+          ) : (
+            <>
+              {row.status === "pending" && (
+                <span className="coll-state muted">queued…</span>
+              )}
+              {row.status === "searching" && (
+                <span className="coll-state">
+                  <span className="coll-spinner" /> searching…
+                </span>
+              )}
+              {row.status === "error" && (
+                <span className="coll-state err">search failed</span>
+              )}
+              {row.status === "empty" && (
+                <span className="coll-state muted">no releases found</span>
+              )}
+              {row.status === "done" && picked && (
+                <div className="coll-pick">
+                  <span
+                    className={
+                      "coll-pick-tag " +
+                      (picked.verified ? "verified" : "guess")
+                    }
+                  >
+                    {picked.verified ? "verified" : "unverified"}{" "}
+                    {picked.confidence.toFixed(2)}
+                  </span>
+                  <code className="coll-pick-file">{picked.title}</code>
+                  {row.grab === "error" && (
+                    <span className="coll-grab-err">grab failed</span>
+                  )}
+                </div>
+              )}
+              {row.status === "done" && !picked && (
+                <span className="coll-state warn">no confident match</span>
+              )}
+            </>
           )}
         </div>
         {canExpand ? (
