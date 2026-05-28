@@ -38,7 +38,21 @@ type Poller struct {
 	// reused for the rest of the daemon's lifetime.
 	identifyMu       sync.Mutex
 	stashBoxEndpoint string
+
+	// lastScan throttles per-grab metadataScan retries. The initial
+	// post-placement scan can be coalesced by Stash with a concurrent
+	// one (e.g. several grabs placed into the same folder in one tick)
+	// and miss the file, leaving the grab stuck at "placed". The
+	// confirmation step re-triggers the scan on a throttle until Stash
+	// indexes the file.
+	scanMu   sync.Mutex
+	lastScan map[int64]time.Time
 }
+
+// scanRetryInterval is the minimum gap between metadataScan retries
+// for a single stuck grab. Short enough to recover quickly, long
+// enough not to spam Stash every poll tick.
+const scanRetryInterval = 90 * time.Second
 
 func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
 	if interval <= 0 {
@@ -47,7 +61,14 @@ func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, or
 	if orphanAfter <= 0 {
 		orphanAfter = 6 * time.Hour
 	}
-	return &Poller{repo: repo, pool: pool, log: log, interval: interval, orphan: orphanAfter}
+	return &Poller{
+		repo:     repo,
+		pool:     pool,
+		log:      log,
+		interval: interval,
+		orphan:   orphanAfter,
+		lastScan: map[int64]time.Time{},
+	}
 }
 
 // Run ticks once at startup then on `interval` until ctx is cancelled.
@@ -247,16 +268,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 			// full-library scan (slow per scan but always works since
 			// Stash skips unchanged files cheaply).
 			if sc := p.pool.Stash(); sc != nil {
-				stashSidePath := translateStashPath(filepath.Dir(res.Path), p.pool.Settings().StashPathMapping)
-				var scanPaths []string
-				if stashSidePath != "" {
-					scanPaths = []string{stashSidePath}
-				}
-				if jobID, err := sc.MetadataScan(ctx, scanPaths); err != nil {
-					p.log.Warn("metadataScan trigger failed", "id", g.ID, "paths", scanPaths, "err", err)
-				} else {
-					p.log.Info("metadataScan triggered", "id", g.ID, "paths", scanPaths, "job_id", jobID)
-				}
+				p.triggerPlacementScan(ctx, sc, g.ID, res.Path)
 			}
 
 			// Usenet doesn't seed, so once the file is in the library
@@ -342,6 +354,17 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 					g.Status = "orphaned"
 					g.Reason = "placed but Stash never picked up the file"
 					dirty = true
+				}
+			default:
+				// scene == nil and not past the orphan window. The file
+				// is on disk (we placed it) but Stash hasn't indexed it
+				// — the initial post-placement scan can be coalesced
+				// with a concurrent one and miss it. Re-fire the scan,
+				// throttled, until Stash picks it up. Without this the
+				// grab sits at "placed" until it wrongly orphans, despite
+				// the file being right there on disk.
+				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) {
+					p.triggerPlacementScan(ctx, stashC, g.ID, g.PlacedPath)
 				}
 			}
 		}
@@ -569,6 +592,41 @@ func translateStashPath(foragerPath, mapping string) string {
 		suffix = strings.ReplaceAll(suffix, "/", `\`)
 	}
 	return stashPrefix + suffix
+}
+
+// triggerPlacementScan asks Stash to scan the directory the placed
+// file lives in, so the placed → confirmed transition takes minutes
+// rather than waiting on Stash's scheduled scan. Records the attempt
+// time so the confirmation step can throttle retries. Best-effort.
+//
+// The scan is scoped to the placed file's parent via
+// FORAGER_STASH_PATH_MAPPING when set; otherwise paths is empty and
+// Stash does a full-library scan (slow but always correct since it
+// skips unchanged files).
+func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, grabID int64, placedPath string) {
+	stashSidePath := translateStashPath(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
+	var scanPaths []string
+	if stashSidePath != "" {
+		scanPaths = []string{stashSidePath}
+	}
+	p.scanMu.Lock()
+	p.lastScan[grabID] = time.Now()
+	p.scanMu.Unlock()
+	if jobID, err := sc.MetadataScan(ctx, scanPaths); err != nil {
+		p.log.Warn("metadataScan trigger failed", "id", grabID, "paths", scanPaths, "err", err)
+	} else {
+		p.log.Info("metadataScan triggered", "id", grabID, "paths", scanPaths, "job_id", jobID)
+	}
+}
+
+// scanThrottleElapsed reports whether enough time has passed since the
+// last scan attempt for this grab to retry. Read-only; triggering the
+// scan (via triggerPlacementScan) is what records the new timestamp.
+func (p *Poller) scanThrottleElapsed(grabID int64) bool {
+	p.scanMu.Lock()
+	defer p.scanMu.Unlock()
+	last, ok := p.lastScan[grabID]
+	return !ok || time.Since(last) >= scanRetryInterval
 }
 
 // triggerIdentify fires Stash's Identify task on the given Stash
