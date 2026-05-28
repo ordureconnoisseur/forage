@@ -41,6 +41,8 @@ type Item struct {
 	Status     string  // "Queued" | "Downloading" | "Completed" | "Failed" | ...
 	Percentage float64 // 0..100
 	Path       string  // history: final on-disk path / storage location
+	EtaSecs    int64   // queue: seconds remaining (parsed from timeleft)
+	SpeedBps   int64   // queue: current download speed, bytes/s (queue-global)
 }
 
 // Version is the low-cost reachability + auth probe used at boot and
@@ -143,33 +145,64 @@ func (c *Client) Queue(ctx context.Context) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	// SAB queue response: {"queue": {"slots": [...]}}.
+	// SAB queue response: {"queue": {"kbpersec": "...", "slots": [...]}}.
+	// kbpersec is queue-global; we attribute it to the active slot
+	// (SAB downloads one job at a time), which is good enough for a
+	// per-grab speed readout. timeleft is per-slot "HH:MM:SS".
 	var resp struct {
 		Queue struct {
-			Slots []struct {
+			KBPerSec string `json:"kbpersec"`
+			Slots    []struct {
 				NzoID      string `json:"nzo_id"`
 				Filename   string `json:"filename"`
 				Category   string `json:"cat"`
 				Status     string `json:"status"`
 				Percentage string `json:"percentage"`
+				TimeLeft   string `json:"timeleft"`
 			} `json:"slots"`
 		} `json:"queue"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return nil, fmt.Errorf("decode queue: %w (body=%s)", err, body)
 	}
+	kbps, _ := strconv.ParseFloat(resp.Queue.KBPerSec, 64)
+	speedBps := int64(kbps * 1024)
 	out := make([]Item, 0, len(resp.Queue.Slots))
 	for _, s := range resp.Queue.Slots {
 		pct, _ := strconv.ParseFloat(s.Percentage, 64)
-		out = append(out, Item{
+		it := Item{
 			NzoID:      s.NzoID,
 			Name:       s.Filename,
 			Category:   s.Category,
 			Status:     s.Status,
 			Percentage: pct,
-		})
+			EtaSecs:    parseTimeLeft(s.TimeLeft),
+		}
+		if strings.EqualFold(s.Status, "Downloading") {
+			it.SpeedBps = speedBps
+		}
+		out = append(out, it)
 	}
 	return out, nil
+}
+
+// parseTimeLeft converts SAB's "HH:MM:SS" (or "MM:SS") remaining-time
+// string to seconds. Returns 0 on anything unparseable.
+func parseTimeLeft(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "0:00:00" {
+		return 0
+	}
+	parts := strings.Split(s, ":")
+	var total int64
+	for _, p := range parts {
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			return 0
+		}
+		total = total*60 + n
+	}
+	return total
 }
 
 // History returns the most-recently-completed items, newest first.

@@ -370,6 +370,50 @@ function Pipeline({ g }: { g: Grab }) {
   );
 }
 
+// Verdict renders the predicted-vs-actual outcome as a single
+// always-present fact cell, so the prediction row is never half-empty
+// and the match status reads at a glance: green tick when Stash
+// agrees, amber cross (with the real scene) when it doesn't, muted
+// while still confirming.
+function Verdict({ g }: { g: Grab }) {
+  const actual = g.actual_stashdb_id;
+  if (actual && actual === g.predicted_stashdb_id) {
+    return (
+      <div className="grab-fact ok">
+        <span className="grab-fact-k">Stash match</span>
+        <span className="grab-fact-v">✓ matches prediction</span>
+      </div>
+    );
+  }
+  if (actual) {
+    return (
+      <div className="grab-fact warn">
+        <span className="grab-fact-k">Stash match</span>
+        <span className="grab-fact-v">
+          ✗ actually{" "}
+          <a
+            href={`https://stashdb.org/scenes/${actual}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {actual.slice(0, 8)}…
+          </a>
+        </span>
+      </div>
+    );
+  }
+  const pending =
+    g.status === "orphaned" || g.status === "failed"
+      ? "not in Stash"
+      : "awaiting confirmation";
+  return (
+    <div className="grab-fact pending">
+      <span className="grab-fact-k">Stash match</span>
+      <span className="grab-fact-v">{pending}</span>
+    </div>
+  );
+}
+
 function GrabRow({
   g,
   expanded,
@@ -467,27 +511,85 @@ function GrabRow({
 
       {expanded && (
         <div className="grab-row-detail">
-          {/* Dossier: poster rail + identity/pipeline. */}
+          {/* Dossier: left aside (poster · progress · actions) +
+              identity/pipeline main column. */}
           <div className="grab-dossier">
-            <div className="grab-poster">
-              {detail?.image_url ? (
-                <img
-                  src={detail.image_url}
-                  alt=""
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.visibility =
-                      "hidden";
-                  }}
-                />
-              ) : (
-                <div className="grab-poster-empty">
-                  {detailLoading ? "" : "no preview"}
+            <div className="grab-aside">
+              <div className="grab-poster">
+                {detail?.image_url ? (
+                  <img
+                    src={detail.image_url}
+                    alt=""
+                    loading="lazy"
+                    onError={(e) => {
+                      (e.currentTarget as HTMLImageElement).style.visibility =
+                        "hidden";
+                    }}
+                  />
+                ) : (
+                  <div className="grab-poster-empty">
+                    {detailLoading ? "" : "no preview"}
+                  </div>
+                )}
+                <span className={"grab-poster-badge chip-" + g.status}>
+                  {g.status}
+                </span>
+              </div>
+
+              {g.progress && (
+                <div className="grab-progress">
+                  <div className="grab-progress-track">
+                    <div
+                      className="grab-progress-fill"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, g.progress.percent)).toFixed(0)}%`,
+                      }}
+                    />
+                  </div>
+                  <div className="grab-progress-meta">
+                    <span className="grab-progress-pct">
+                      {g.progress.percent.toFixed(0)}%
+                    </span>
+                    <span className="grab-progress-rate">
+                      {g.progress.speed_bps
+                        ? `${humanSize(g.progress.speed_bps)}/s`
+                        : ""}
+                      {g.progress.eta_secs
+                        ? ` · ${humanDuration(g.progress.eta_secs)} left`
+                        : ""}
+                    </span>
+                  </div>
                 </div>
               )}
-              <span className={"grab-poster-badge chip-" + g.status}>
-                {g.status}
-              </span>
+
+              <div className="grab-actions">
+                {detail?.stash_scene_url && (
+                  <a
+                    className="grab-action open-stash"
+                    href={detail.stash_scene_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Open in Stash ↗
+                  </a>
+                )}
+                <button
+                  className={
+                    "grab-action delete" + (confirmDelete ? " confirm" : "")
+                  }
+                  onClick={handleDelete}
+                  disabled={deleting}
+                >
+                  {deleting
+                    ? "Deleting…"
+                    : confirmDelete
+                      ? "Confirm delete?"
+                      : "Delete"}
+                </button>
+                {deleteErr && (
+                  <span className="grab-delete-err">{deleteErr}</span>
+                )}
+              </div>
             </div>
 
             <div className="grab-dossier-main">
@@ -520,18 +622,6 @@ function GrabRow({
 
           {/* Fact grid — the technical record, grouped + de-emphasised. */}
           <div className="grab-facts">
-            {g.placed_path && (
-              <div className="grab-fact wide">
-                <span className="grab-fact-k">Placed</span>
-                <code className="grab-fact-v">{g.placed_path}</code>
-              </div>
-            )}
-            {g.client_name && (
-              <div className="grab-fact wide">
-                <span className="grab-fact-k">Client file</span>
-                <code className="grab-fact-v">{g.client_name}</code>
-              </div>
-            )}
             {g.predicted_stashdb_id && (
               <div className="grab-fact">
                 <span className="grab-fact-k">Predicted scene</span>
@@ -546,28 +636,25 @@ function GrabRow({
                   {g.predicted_confidence != null &&
                     g.predicted_confidence > 0 && (
                       <span className="grab-match-badge">
-                        match {g.predicted_confidence.toFixed(2)}
+                        {g.predicted_confidence.toFixed(2)}
                       </span>
                     )}
                 </span>
               </div>
             )}
-            {g.actual_stashdb_id &&
-              g.actual_stashdb_id !== g.predicted_stashdb_id && (
-                <div className="grab-fact warn">
-                  <span className="grab-fact-k">Actual scene</span>
-                  <span className="grab-fact-v">
-                    <a
-                      href={`https://stashdb.org/scenes/${g.actual_stashdb_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {g.actual_stashdb_id.slice(0, 8)}…
-                    </a>{" "}
-                    differs from predicted
-                  </span>
-                </div>
-              )}
+            {g.predicted_stashdb_id && <Verdict g={g} />}
+            {g.placed_path && (
+              <div className="grab-fact wide">
+                <span className="grab-fact-k">Placed</span>
+                <code className="grab-fact-v">{g.placed_path}</code>
+              </div>
+            )}
+            {g.client_name && (
+              <div className="grab-fact wide">
+                <span className="grab-fact-k">Client file</span>
+                <code className="grab-fact-v">{g.client_name}</code>
+              </div>
+            )}
             {g.place_error && (
               <div className="grab-fact err wide">
                 <span className="grab-fact-k">Place error</span>
@@ -575,40 +662,19 @@ function GrabRow({
               </div>
             )}
           </div>
-
-          {/* Action bar */}
-          <div className="grab-actions">
-            {detail?.stash_scene_url && (
-              <a
-                className="grab-action open-stash"
-                href={detail.stash_scene_url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                Open in Stash ↗
-              </a>
-            )}
-            <div className="grab-actions-right">
-              {deleteErr && <span className="grab-delete-err">{deleteErr}</span>}
-              <button
-                className={
-                  "grab-action delete" + (confirmDelete ? " confirm" : "")
-                }
-                onClick={handleDelete}
-                disabled={deleting}
-              >
-                {deleting
-                  ? "Deleting…"
-                  : confirmDelete
-                    ? "Confirm delete?"
-                    : "Delete"}
-              </button>
-            </div>
-          </div>
         </div>
       )}
     </li>
   );
+}
+
+function humanDuration(secs: number): string {
+  if (secs <= 0) return "";
+  if (secs < 60) return `${Math.round(secs)}s`;
+  const m = Math.floor(secs / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
 }
 
 function humanSize(b: number): string {

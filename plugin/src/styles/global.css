@@ -1369,14 +1369,21 @@ button {
 
 .grab-dossier {
   display: grid;
-  grid-template-columns: 248px 1fr;
-  gap: 20px;
+  grid-template-columns: 216px 1fr;
+  gap: 22px;
   align-items: start;
 }
 @media (max-width: 620px) {
   .grab-dossier {
     grid-template-columns: 1fr;
   }
+}
+/* Left aside stacks poster · progress · actions so the column reads
+   as a unit and never leaves a void under the thumbnail. */
+.grab-aside {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Poster rail */
@@ -1642,6 +1649,13 @@ code.grab-fact-v,
   color: var(--accent-bright);
   font-variant-numeric: tabular-nums;
 }
+.grab-fact.ok {
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.06);
+}
+.grab-fact.ok .grab-fact-v {
+  color: var(--accent-bright);
+}
 .grab-fact.warn {
   border-color: rgba(245, 158, 11, 0.3);
 }
@@ -1654,30 +1668,70 @@ code.grab-fact-v,
 .grab-fact.err .grab-fact-v {
   color: #fca5a5;
 }
+.grab-fact.pending .grab-fact-v {
+  color: var(--text-muted);
+  font-style: italic;
+}
+/* Scene id + match score on one line — short content, never wrap. */
+.grab-fact .grab-fact-v a {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Download progress (under the poster while in flight) */
+.grab-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.grab-progress-track {
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.grab-progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.5);
+  transition: width 0.4s ease;
+}
+.grab-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.grab-progress-pct {
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.grab-progress-rate {
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
 
 /* Action bar at the foot of the expanded grab. */
+/* Actions live in the left aside under the poster: full-width
+   stacked buttons that fill what used to be dead space. */
 .grab-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 6px;
-  padding-top: 12px;
-  border-top: 1px solid var(--glass-border);
-}
-.grab-actions-right {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-left: auto;
+  flex-direction: column;
+  gap: 8px;
 }
 .grab-action {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
+  width: 100%;
   font-size: 13px;
   font-weight: 600;
-  padding: 8px 16px;
+  padding: 9px 16px;
   border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);

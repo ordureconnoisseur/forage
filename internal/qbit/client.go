@@ -201,7 +201,9 @@ type Torrent struct {
 	Name        string  `json:"name"`
 	Category    string  `json:"category"`
 	State       string  `json:"state"`
-	Progress    float64 `json:"progress"`
+	Progress    float64 `json:"progress"` // 0..1
+	Dlspeed     int64   `json:"dlspeed"`  // bytes/s
+	Eta         int64   `json:"eta"`      // seconds; 8640000 = unknown/infinity
 	AddedOn     int64   `json:"added_on"`
 	ContentPath string  `json:"content_path"`
 }

@@ -3,7 +3,23 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"strings"
+
+	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
 )
+
+// grabProgress is live download state for an in-flight grab, pulled
+// fresh from the download client on each /grabs poll.
+type grabProgress struct {
+	Percent  float64 `json:"percent"`
+	SpeedBps int64   `json:"speed_bps,omitempty"`
+	EtaSecs  int64   `json:"eta_secs,omitempty"`
+}
+
+// qbitEtaUnknown is the sentinel qBit returns for "no ETA yet"
+// (100 days in seconds). Treat it as 0 = unknown.
+const qbitEtaUnknown = 8640000
 
 type grabOut struct {
 	ID                  int64   `json:"id"`
@@ -23,11 +39,12 @@ type grabOut struct {
 	PerformerName       string  `json:"performer_name,omitempty"`
 	PlacedPath          string  `json:"placed_path,omitempty"`
 	PlaceError          string  `json:"place_error,omitempty"`
-	GrabbedAt           int64   `json:"grabbed_at"`
-	UpdatedAt           int64   `json:"updated_at"`
-	CompletedAt         int64   `json:"completed_at,omitempty"`
-	PlacedAt            int64   `json:"placed_at,omitempty"`
-	ConfirmedAt         int64   `json:"confirmed_at,omitempty"`
+	GrabbedAt           int64         `json:"grabbed_at"`
+	UpdatedAt           int64         `json:"updated_at"`
+	CompletedAt         int64         `json:"completed_at,omitempty"`
+	PlacedAt            int64         `json:"placed_at,omitempty"`
+	ConfirmedAt         int64         `json:"confirmed_at,omitempty"`
+	Progress            *grabProgress `json:"progress,omitempty"`
 }
 
 type grabsResponse struct {
@@ -87,5 +104,72 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			ConfirmedAt:         g.ConfirmedAt,
 		})
 	}
+	s.enrichProgress(r, out)
 	writeJSON(w, http.StatusOK, grabsResponse{Grabs: out, Totals: totals})
+}
+
+// enrichProgress attaches live download progress to grabs that are
+// still downloading/queued, pulled fresh from the clients (one qBit
+// list + one SAB queue call, only when something is actually in
+// flight). The 5s list-poll then drives a live progress readout in
+// the UI without coupling the poller's slower cadence to it.
+func (s *Server) enrichProgress(r *http.Request, out []grabOut) {
+	anyActive := false
+	for i := range out {
+		if out[i].Status == "downloading" || out[i].Status == "queued" {
+			anyActive = true
+			break
+		}
+	}
+	if !anyActive {
+		return
+	}
+
+	qbitByHash := map[string]qbit.Torrent{}
+	if qb := s.pool.Qbit(); qb != nil {
+		if ts, err := qb.ListTorrents(r.Context(), qbit.ListOpts{Filter: "all"}); err == nil {
+			for _, t := range ts {
+				qbitByHash[strings.ToLower(t.Hash)] = t
+			}
+		}
+	}
+	sabByNzo := map[string]sabnzbd.Item{}
+	if sb := s.pool.Sab(); sb != nil {
+		if items, err := sb.Queue(r.Context()); err == nil {
+			for _, it := range items {
+				sabByNzo[it.NzoID] = it
+			}
+		}
+	}
+
+	for i := range out {
+		if out[i].Status != "downloading" && out[i].Status != "queued" {
+			continue
+		}
+		if out[i].ClientID == "" {
+			continue
+		}
+		switch out[i].Client {
+		case "qbit":
+			if t, ok := qbitByHash[strings.ToLower(out[i].ClientID)]; ok {
+				eta := t.Eta
+				if eta >= qbitEtaUnknown {
+					eta = 0
+				}
+				out[i].Progress = &grabProgress{
+					Percent:  t.Progress * 100,
+					SpeedBps: t.Dlspeed,
+					EtaSecs:  eta,
+				}
+			}
+		case "sabnzbd":
+			if it, ok := sabByNzo[out[i].ClientID]; ok {
+				out[i].Progress = &grabProgress{
+					Percent:  it.Percentage,
+					SpeedBps: it.SpeedBps,
+					EtaSecs:  it.EtaSecs,
+				}
+			}
+		}
+	}
 }

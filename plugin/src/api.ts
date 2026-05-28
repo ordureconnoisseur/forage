@@ -333,6 +333,8 @@ export interface Grab {
   completed_at?: number;
   placed_at?: number;
   confirmed_at?: number;
+  // Live download state, present only while downloading/queued.
+  progress?: { percent: number; speed_bps?: number; eta_secs?: number };
 }
 
 export interface GrabsResponse {
