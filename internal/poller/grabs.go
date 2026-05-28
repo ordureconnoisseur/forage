@@ -133,7 +133,12 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		if err != nil {
 			p.log.Warn("sab queue fetch", "err", err)
 		}
-		sabHistory, err = sb.History(ctx, 50)
+		// Fetch a deep history slice: SAB history mixes forager
+		// downloads with everything else the user grabs, so a
+		// forager item can be buried fast. Too small a window and a
+		// legitimately-completed grab scrolls out before the poller
+		// sees it land, leaving it stuck mid-pipeline.
+		sabHistory, err = sb.History(ctx, 200)
 		if err != nil {
 			p.log.Warn("sab history fetch", "err", err)
 		}
@@ -385,6 +390,15 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 	return dirty, t.ContentPath, nil
 }
 
+// sabRegisterGrace is how long after grabbing we tolerate a SAB
+// nzo_id being absent from both queue and history before declaring
+// the grab failed. SAB returns the nzo_id synchronously on add but
+// takes a few seconds to surface the job in its queue, and the
+// poller can tick within that window. Generous on purpose: a stuck
+// "queued" grab is far less harmful than a false "failed" on a
+// download that's actually in flight.
+const sabRegisterGrace = 5 * time.Minute
+
 // advanceSab handles SAB tracking. SAB grabs already have client_id
 // set at /grab time (mode=addurl returns the nzo_id synchronously),
 // so there's no enrichment step.
@@ -452,11 +466,25 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		}
 		return dirty, item.Path, nil
 	}
-	// Not in queue, not in history — SAB has discarded it. Mark
-	// failed unless we already marked it completed/placed (history
-	// can roll over with very large user histories; don't undo
-	// later-stage state).
+	// Not in queue, not in history. Don't undo a later-stage status
+	// (history rolls over on busy SABs; a grab we already advanced
+	// shouldn't regress). For grabs still early in the pipeline there
+	// are two sub-cases:
+	//
+	//   - Just grabbed: SAB accepted the nzo_id (it returned it on
+	//     add) but hasn't surfaced the job in its queue yet — there's
+	//     a few-second lag between add and the job appearing. Marking
+	//     failed here is the bug that killed the Comatozze grab: the
+	//     poller ran 1s after submit, didn't see the nzo_id, and gave
+	//     up — then SAB completed the download 20s later. Within the
+	//     registration grace we leave the grab alone.
+	//
+	//   - Long absent: past the grace window and still unknown to SAB
+	//     means it genuinely failed to add or was removed. Mark failed.
 	if g.Status != "completed" && g.Status != "placed" && g.Status != "scanned" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
+		if g.GrabbedAt > 0 && time.Since(time.Unix(g.GrabbedAt, 0)) < sabRegisterGrace {
+			return dirty, "", nil
+		}
 		g.Status = "failed"
 		g.Reason = "sab no longer tracks this nzo_id"
 		dirty = true
