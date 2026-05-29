@@ -411,7 +411,19 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	if g.PlacedPath == "" {
 		return false, nil
 	}
-	scenes, err := sc.FindScenesUnderPath(ctx, baseName(g.PlacedPath))
+	// Identify pack scenes by their full placed-directory path, not just
+	// its basename — the pack often lands at <performer>/<pack-name>
+	// where <pack-name> can equal the performer (e.g.
+	// /Media/comatozze/comatozze). The bare basename would then also
+	// match the performer's pre-existing scenes under /Media/comatozze,
+	// corrupting both the count and the dedup decision. Translate to the
+	// Stash-side path so the substring is specific; fall back to the
+	// basename only when no path mapping is configured.
+	needle := translateStashPath(g.PlacedPath, p.pool.Settings().StashPathMapping)
+	if needle == "" {
+		needle = baseName(g.PlacedPath)
+	}
+	scenes, err := sc.FindScenesUnderPath(ctx, needle)
 	if err != nil {
 		return false, err
 	}
@@ -470,13 +482,62 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	allIdentified := len(toIdentify) == 0 && (expected == 0 || found >= expected)
 	gaveUp := g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan
 	if g.Status == "scanned" && (allIdentified || gaveUp) {
+		// Download-then-dedup: now that the pack's scenes are identified,
+		// drop any whose StashDB id the library already had outside this
+		// pack (keeps the existing copy; the pack copy is the redundant
+		// one). Best-effort — a dedup failure still lets the pack confirm.
+		if deduped, err := p.dedupPack(ctx, sc, g, scenes, needle); err != nil {
+			p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
+		} else if deduped > 0 {
+			g.PackDeduped += deduped
+		}
 		g.Status = "confirmed"
 		g.ConfirmedAt = time.Now().Unix()
-		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified", identified, found)
+		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified, %d dup removed", identified, found, g.PackDeduped)
 		dirty = true
-		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "expected", expected)
+		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "expected", expected, "deduped", g.PackDeduped)
 	}
 	return dirty, nil
+}
+
+// dedupPack removes pack scenes the library already has elsewhere. For
+// each identified pack scene it checks whether the same StashDB id sits
+// on a file outside the pack directory; if so, that pack file is a
+// duplicate and is destroyed (file + generated assets). One library
+// sweep backs the whole pass. Returns how many scenes were removed.
+//
+// Keeps the pre-existing copy by design — swapping in a higher-quality
+// pack copy is a later refinement. The torrent keeps seeding (the
+// download client's copy is a separate hardlink); only the library
+// duplicate is removed.
+func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, packNeedle string) (int, error) {
+	libByID, err := sc.FindAllSceneStashDBIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	deduped := 0
+	for _, ps := range packScenes {
+		if ps.StashDBID == "" {
+			continue
+		}
+		external := false
+		for _, pth := range libByID[ps.StashDBID] {
+			if !strings.Contains(pth, packNeedle) {
+				external = true
+				break
+			}
+		}
+		if !external {
+			continue // unique to this pack — keep it
+		}
+		if err := sc.SceneDestroy(ctx, ps.ID, true, true); err != nil {
+			p.log.Warn("pack dedup destroy", "id", g.ID, "scene", ps.ID, "err", err)
+			continue
+		}
+		deduped++
+		p.log.Info("pack dedup removed duplicate", "id", g.ID, "scene", ps.ID, "stashdb", ps.StashDBID)
+	}
+	return deduped, nil
 }
 
 // triggerIdentifyBatch fires Stash's Identify task over a set of scene

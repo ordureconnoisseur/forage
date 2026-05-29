@@ -443,6 +443,58 @@ func (c *Client) FindAllOwnedStashDBSceneIDs(ctx context.Context) ([]string, err
 	return out, nil
 }
 
+const findAllScenesWithPathsQuery = `
+query ForagerAllScenesWithPaths($page: Int!, $perPage: Int!) {
+  findScenes(filter: { page: $page, per_page: $perPage }) {
+    scenes {
+      stash_ids { endpoint stash_id }
+      files { path }
+    }
+  }
+}`
+
+// FindAllSceneStashDBIDs sweeps the library and returns a map from each
+// scene's StashDB cross-id to the file paths carrying it. Pack dedup
+// uses it to answer "does the library already have this scene somewhere
+// outside the pack I just placed?" in a single sweep, rather than a
+// per-scene query. Scenes without a StashDB cross-id are skipped.
+func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]string, error) {
+	const perPage = 1000
+	out := map[string][]string{}
+	for page := 1; ; page++ {
+		var resp struct {
+			FindScenes struct {
+				Scenes []struct {
+					StashIDs []StashID `json:"stash_ids"`
+					Files    []struct {
+						Path string `json:"path"`
+					} `json:"files"`
+				} `json:"scenes"`
+			} `json:"findScenes"`
+		}
+		vars := map[string]any{"page": page, "perPage": perPage}
+		if err := c.do(ctx, findAllScenesWithPathsQuery, vars, &resp); err != nil {
+			return nil, fmt.Errorf("findScenes paths (page %d): %w", page, err)
+		}
+		if len(resp.FindScenes.Scenes) == 0 {
+			break
+		}
+		for _, s := range resp.FindScenes.Scenes {
+			id := PickStashDBID(s.StashIDs)
+			if id == "" {
+				continue
+			}
+			for _, f := range s.Files {
+				out[id] = append(out[id], f.Path)
+			}
+		}
+		if len(resp.FindScenes.Scenes) < perPage {
+			break
+		}
+	}
+	return out, nil
+}
+
 // SceneMatch is the slim shape Phase B uses to confirm a download.
 // FilePath is the first file's path on the Stash side; StashDBID is
 // the cross-id we compare against the matcher's prediction.
