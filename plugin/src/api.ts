@@ -267,6 +267,49 @@ export function fetchSceneReleases(
   );
 }
 
+// ── Performer packs ─────────────────────────────────────────────────
+//
+// A pack is a single torrent holding many of a performer's scenes. The
+// daemon finds them by searching the performer name on torrent indexers
+// and parsing each candidate's .torrent for an authoritative video
+// count. Grabbing a pack downloads the whole thing, then forage places
+// every file, identifies them against StashDB, and dedups any the
+// library already had.
+
+export interface Pack {
+  title: string;
+  indexer: string;
+  protocol: "torrent" | "usenet";
+  size: number;
+  // Authoritative video count when the .torrent was parsed; when
+  // `estimated` is true it's a best-effort guess (magnet/usenet) and may
+  // count non-video files.
+  video_count: number;
+  file_count?: number;
+  estimated?: boolean;
+  seeders: number;
+  grabs: number;
+  popularity: number;
+  publish_date: string;
+  info_url: string;
+  download_url: string;
+}
+
+export interface PacksResponse {
+  performer: { stash_id: string; name: string };
+  packs: Pack[];
+}
+
+export function fetchPacks(
+  performerId: string,
+  signal?: AbortSignal,
+): Promise<PacksResponse> {
+  return get<PacksResponse>(
+    `/performers/${encodeURIComponent(performerId)}/packs`,
+    signal,
+  );
+}
+
 // ── Grab ───────────────────────────────────────────────────────────
 
 export interface GrabRequest {
@@ -281,6 +324,11 @@ export interface GrabRequest {
   // the finished file will land in. Optional; defaults to "Unsorted"
   // server-side when missing.
   performer_name?: string;
+  // "pack" for a performer-pack grab (one torrent → many scenes). When
+  // set, video_count carries the parsed count so the daemon knows how
+  // many scenes to drive identify toward.
+  kind?: "single" | "pack";
+  video_count?: number;
 }
 
 export interface GrabResponse {
@@ -341,6 +389,12 @@ export interface Grab {
   confirmed_at?: number;
   // Live download state, present only while downloading/queued.
   progress?: { percent: number; speed_bps?: number; eta_secs?: number };
+  // Pack grabs (one torrent → many scenes). kind is "pack"; the
+  // counters track identify + dedup progress across the pack's files.
+  kind?: "single" | "pack";
+  pack_files?: number;
+  pack_identified?: number;
+  pack_deduped?: number;
 }
 
 export interface GrabsResponse {

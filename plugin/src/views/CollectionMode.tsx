@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import {
   fetchMissing,
+  fetchPacks,
   fetchSceneReleases,
   postGrab,
   type MissingScene,
+  type Pack,
   type SceneRelease,
 } from "../api";
 import { ResBadge } from "../ResBadge";
@@ -51,6 +53,45 @@ export default function CollectionMode({
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [grabbing, setGrabbing] = useState(false);
+
+  // Packs load independently of the per-scene scan (it's a slow
+  // indexer-search + .torrent-parse, so it shouldn't block the page).
+  const [packs, setPacks] = useState<Pack[] | null>(null);
+  const [packErr, setPackErr] = useState<string | null>(null);
+  const [packGrab, setPackGrab] = useState<Record<string, GrabState>>({});
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    setPacks(null);
+    setPackErr(null);
+    setPackGrab({});
+    fetchPacks(performerId, ctrl.signal)
+      .then((r) => setPacks(r.packs))
+      .catch((e) => {
+        if (ctrl.signal.aborted) return;
+        setPackErr((e as Error).message);
+      });
+    return () => ctrl.abort();
+  }, [performerId]);
+
+  async function grabPack(p: Pack) {
+    if (packGrab[p.download_url] === "queued") return;
+    try {
+      await postGrab({
+        download_url: p.download_url,
+        release_title: p.title,
+        release_size: p.size,
+        release_indexer: p.indexer,
+        protocol: p.protocol,
+        performer_name: performerName,
+        kind: "pack",
+        video_count: p.video_count,
+      });
+      setPackGrab((s) => ({ ...s, [p.download_url]: "queued" }));
+    } catch {
+      setPackGrab((s) => ({ ...s, [p.download_url]: "error" }));
+    }
+  }
 
   // Load the target set.
   useEffect(() => {
@@ -274,6 +315,13 @@ export default function CollectionMode({
         </button>
       </div>
 
+      <PacksSection
+        packs={packs}
+        error={packErr}
+        grabState={packGrab}
+        onGrab={grabPack}
+      />
+
       {scanning && (
         <div className="coll-progress">
           <div
@@ -301,6 +349,111 @@ export default function CollectionMode({
         </ul>
       )}
     </div>
+  );
+}
+
+// PacksSection lists whole-performer pack torrents at the top of the
+// collection view — a one-click alternative to grabbing scenes
+// individually. Hidden entirely when the indexer search turns up
+// nothing (the common case), so it doesn't add noise for performers
+// without packs.
+function PacksSection({
+  packs,
+  error,
+  grabState,
+  onGrab,
+}: {
+  packs: Pack[] | null;
+  error: string | null;
+  grabState: Record<string, GrabState>;
+  onGrab: (p: Pack) => void;
+}) {
+  if (error) {
+    return (
+      <div className="packs-section">
+        <div className="packs-head">Packs</div>
+        <div className="packs-note err">pack search failed: {error}</div>
+      </div>
+    );
+  }
+  if (packs === null) {
+    return (
+      <div className="packs-section">
+        <div className="packs-head">
+          Packs <span className="coll-spinner" />
+        </div>
+        <div className="packs-note muted">scanning indexers for packs…</div>
+      </div>
+    );
+  }
+  if (packs.length === 0) return null;
+
+  return (
+    <div className="packs-section">
+      <div className="packs-head">
+        Packs <span className="packs-count">{packs.length}</span>
+      </div>
+      <div className="packs-note muted">
+        Whole-performer collections — grabbing one downloads every scene,
+        then forage removes any you already own.
+      </div>
+      <ul className="packs-list">
+        {packs.map((p) => (
+          <PackCard
+            key={p.download_url || p.info_url}
+            pack={p}
+            state={grabState[p.download_url] || "idle"}
+            onGrab={() => onGrab(p)}
+          />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// huge: packs above this size get a size-emphasis class so the user
+// doesn't grab 190GB unaware.
+const PACK_HUGE_BYTES = 80 * 1024 * 1024 * 1024;
+
+function PackCard({
+  pack,
+  state,
+  onGrab,
+}: {
+  pack: Pack;
+  state: GrabState;
+  onGrab: () => void;
+}) {
+  const queued = state === "queued";
+  const huge = pack.size >= PACK_HUGE_BYTES;
+  return (
+    <li className={"pack-card" + (queued ? " queued" : "")}>
+      <div className="pack-main">
+        <code className="pack-title">{pack.title}</code>
+        <div className="pack-meta">
+          <span className="pack-indexer">{pack.indexer}</span>
+          <span className="sep">·</span>
+          <span className={"pack-size" + (huge ? " huge" : "")}>
+            {humanSize(pack.size)}
+          </span>
+          <span className="sep">·</span>
+          <span className="pack-vids">
+            {pack.estimated ? "~" : ""}
+            {pack.video_count} videos
+          </span>
+          <span className="sep">·</span>
+          <span>{pack.seeders} seeders</span>
+        </div>
+      </div>
+      <button
+        className="pack-grab"
+        disabled={queued}
+        onClick={onGrab}
+        title={huge ? `Large download — ${humanSize(pack.size)}` : undefined}
+      >
+        {queued ? "queued ✓" : state === "error" ? "retry" : "Grab pack"}
+      </button>
+    </li>
   );
 }
 

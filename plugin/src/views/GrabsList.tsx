@@ -541,6 +541,7 @@ function GrabRow({
     <li className={"grab-row status-" + g.status + (expanded ? " open" : "")}>
       <button className="grab-row-head" onClick={onToggle}>
         <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
+        {g.kind === "pack" && <span className="grab-pack-badge">PACK</span>}
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>
           <div className="grab-meta">
@@ -557,6 +558,15 @@ function GrabRow({
               <>
                 <span className="sep">·</span>
                 <span>{humanSize(g.release_size)}</span>
+              </>
+            )}
+            {g.kind === "pack" && (
+              <>
+                <span className="sep">·</span>
+                <span className="grab-pack-prog">
+                  {g.pack_identified ?? 0}/{g.pack_files || "?"} identified
+                  {(g.pack_deduped ?? 0) > 0 && ` · ${g.pack_deduped} removed`}
+                </span>
               </>
             )}
             <span className="sep">·</span>
