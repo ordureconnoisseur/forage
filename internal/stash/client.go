@@ -869,7 +869,22 @@ func (c *Client) ApplySceneMetadata(ctx context.Context, sceneID string, a Scene
 	}
 	input := map[string]any{"id": sceneID}
 	if a.StashID != "" && a.Endpoint != "" {
-		input["stash_ids"] = []map[string]any{{"endpoint": a.Endpoint, "stash_id": a.StashID}}
+		// sceneUpdate replaces the whole stash_ids list, so merge: keep
+		// any cross-ids from OTHER boxes the scene already has (e.g. a
+		// ThePornDB id from a TPDB scrape) and add/replace only the
+		// StashDB-endpoint entry. Without this, linking to StashDB would
+		// wipe an existing ThePornDB id.
+		merged := []map[string]any{{"endpoint": a.Endpoint, "stash_id": a.StashID}}
+		existing, err := c.sceneStashIDs(ctx, sceneID)
+		if err != nil {
+			return err
+		}
+		for _, e := range existing {
+			if e.Endpoint != a.Endpoint {
+				merged = append(merged, map[string]any{"endpoint": e.Endpoint, "stash_id": e.StashID})
+			}
+		}
+		input["stash_ids"] = merged
 	}
 	if a.Title != "" {
 		input["title"] = a.Title
@@ -901,6 +916,26 @@ func (c *Client) ApplySceneMetadata(ctx context.Context, sceneID string, a Scene
 		return fmt.Errorf("sceneUpdate returned no scene")
 	}
 	return nil
+}
+
+// sceneStashIDs returns the cross-ids currently on a scene, so
+// ApplySceneMetadata can merge rather than clobber them.
+func (c *Client) sceneStashIDs(ctx context.Context, sceneID string) ([]StashID, error) {
+	q := `query ForagerSceneStashIDs($id: ID!) {
+  findScene(id: $id) { stash_ids { endpoint stash_id } }
+}`
+	var resp struct {
+		FindScene *struct {
+			StashIDs []StashID `json:"stash_ids"`
+		} `json:"findScene"`
+	}
+	if err := c.do(ctx, q, map[string]any{"id": sceneID}, &resp); err != nil {
+		return nil, fmt.Errorf("findScene stash_ids: %w", err)
+	}
+	if resp.FindScene == nil {
+		return nil, nil
+	}
+	return resp.FindScene.StashIDs, nil
 }
 
 // FindStudioIDByName returns the local Stash studio id whose name equals
