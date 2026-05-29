@@ -88,6 +88,17 @@ export default function GrabsList() {
     }
   }, []);
 
+  // Clear the add form back to empty — deselects the file, drops the
+  // inspect result, and clears the folder. (Does not close the form.)
+  const resetAddForm = useCallback(() => {
+    setAddFile(null);
+    setAddInspect(null);
+    setAddInspecting(false);
+    setAddName("");
+    setAddErr(null);
+    if (fileRef.current) fileRef.current.value = "";
+  }, []);
+
   // Picking a file inspects it (parse name/size/counts + suggest a
   // performer folder) before any download — confirm-first.
   const onPickTorrent = useCallback(async () => {
@@ -118,12 +129,9 @@ export default function GrabsList() {
     setAddErr(null);
     try {
       const res = await grabTorrentFile(addFile, addName.trim());
-      setAddOpen(false);
-      setAddName("");
-      setAddFile(null);
-      setAddInspect(null);
-      if (fileRef.current) fileRef.current.value = "";
       const label = addInspect?.name ? `"${addInspect.name}"` : "torrent";
+      resetAddForm();
+      setAddOpen(false);
       setNotice(`Added ${label} → grab #${res.grab_id}`);
       void refresh();
     } catch (e) {
@@ -131,7 +139,7 @@ export default function GrabsList() {
     } finally {
       setAddBusy(false);
     }
-  }, [addFile, addName, addInspect, refresh]);
+  }, [addFile, addName, addInspect, refresh, resetAddForm]);
 
   const handleDeleted = useCallback(
     (id: number, res: DeleteGrabResult) => {
@@ -243,7 +251,10 @@ export default function GrabsList() {
         <div className="grab-toolbar-search">
           <button
             className={"grab-add-btn" + (addOpen ? " active" : "")}
-            onClick={() => setAddOpen((o) => !o)}
+            onClick={() => {
+              if (addOpen) resetAddForm();
+              setAddOpen((o) => !o);
+            }}
           >
             + Add torrent
           </button>
@@ -324,6 +335,17 @@ export default function GrabsList() {
           >
             {addBusy ? "Adding…" : "Add"}
           </button>
+          {(addFile || addName) && (
+            <button
+              type="button"
+              className="grab-add-clear"
+              onClick={resetAddForm}
+              disabled={addBusy}
+              title="Clear — deselect the torrent and clear the folder"
+            >
+              ✕ Clear
+            </button>
+          )}
           {addErr && <span className="grab-add-err">{addErr}</span>}
           <span className="grab-add-hint">
             forage downloads it, then places into{" "}

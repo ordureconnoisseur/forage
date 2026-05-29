@@ -1264,6 +1264,24 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+.grab-add-clear {
+  padding: 8px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.grab-add-clear:hover {
+  border-color: var(--danger, #e6794b);
+  color: var(--danger, #e6794b);
+}
+.grab-add-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .grab-add-err {
   color: var(--danger, #e6794b);
   font-size: 12px;
