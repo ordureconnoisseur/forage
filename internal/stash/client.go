@@ -447,24 +447,36 @@ const findAllScenesWithPathsQuery = `
 query ForagerAllScenesWithPaths($page: Int!, $perPage: Int!) {
   findScenes(filter: { page: $page, per_page: $perPage }) {
     scenes {
+      id
       stash_ids { endpoint stash_id }
       files { path }
     }
   }
 }`
 
+// SceneRef is a single (scene, file-path) pairing — a scene with N files
+// yields N refs sharing the same SceneID. Pack dedup uses these to find
+// copies of a scene living outside the pack and, when configured to
+// keep the pack copy, to know which existing scenes to remove.
+type SceneRef struct {
+	SceneID string
+	Path    string
+}
+
 // FindAllSceneStashDBIDs sweeps the library and returns a map from each
-// scene's StashDB cross-id to the file paths carrying it. Pack dedup
-// uses it to answer "does the library already have this scene somewhere
-// outside the pack I just placed?" in a single sweep, rather than a
-// per-scene query. Scenes without a StashDB cross-id are skipped.
-func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]string, error) {
+// scene's StashDB cross-id to the (scene id, file path) refs carrying
+// it. Pack dedup uses it to answer "does the library already have this
+// scene somewhere outside the pack I just placed?" in a single sweep,
+// rather than a per-scene query. Scenes without a StashDB cross-id are
+// skipped.
+func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]SceneRef, error) {
 	const perPage = 1000
-	out := map[string][]string{}
+	out := map[string][]SceneRef{}
 	for page := 1; ; page++ {
 		var resp struct {
 			FindScenes struct {
 				Scenes []struct {
+					ID       string    `json:"id"`
 					StashIDs []StashID `json:"stash_ids"`
 					Files    []struct {
 						Path string `json:"path"`
@@ -485,7 +497,7 @@ func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]strin
 				continue
 			}
 			for _, f := range s.Files {
-				out[id] = append(out[id], f.Path)
+				out[id] = append(out[id], SceneRef{SceneID: s.ID, Path: f.Path})
 			}
 		}
 		if len(resp.FindScenes.Scenes) < perPage {

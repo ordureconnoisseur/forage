@@ -527,6 +527,9 @@ export interface ConfigPatch {
   libraryRoot?: string;
   stashPathMapping?: string;
   sabDeleteAfterPlace?: boolean;
+  // "existing" (keep your copy, drop the pack dup), "pack" (keep the
+  // pack copy, drop yours), or "both" (no dedup).
+  packDedupKeep?: string;
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;

@@ -483,13 +483,19 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	gaveUp := g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan
 	if g.Status == "scanned" && (allIdentified || gaveUp) {
 		// Download-then-dedup: now that the pack's scenes are identified,
-		// drop any whose StashDB id the library already had outside this
-		// pack (keeps the existing copy; the pack copy is the redundant
-		// one). Best-effort — a dedup failure still lets the pack confirm.
-		if deduped, err := p.dedupPack(ctx, sc, g, scenes, needle); err != nil {
-			p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
-		} else if deduped > 0 {
-			g.PackDeduped += deduped
+		// reconcile any whose StashDB id the library already had outside
+		// this pack. Which copy survives is configurable
+		// (PackDedupKeep): keep the existing copy (default, removing the
+		// pack's), keep the pack copy (removing the existing), or keep
+		// both (no dedup). Best-effort — a failure still lets the pack
+		// confirm.
+		keep := p.pool.Settings().PackDedupKeep
+		if keep != "both" {
+			if deduped, err := p.dedupPack(ctx, sc, g, scenes, needle, keep); err != nil {
+				p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
+			} else if deduped > 0 {
+				g.PackDeduped += deduped
+			}
 		}
 		g.Status = "confirmed"
 		g.ConfirmedAt = time.Now().Unix()
@@ -500,42 +506,58 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	return dirty, nil
 }
 
-// dedupPack removes pack scenes the library already has elsewhere. For
-// each identified pack scene it checks whether the same StashDB id sits
-// on a file outside the pack directory; if so, that pack file is a
-// duplicate and is destroyed (file + generated assets). One library
-// sweep backs the whole pass. Returns how many scenes were removed.
+// dedupPack reconciles pack scenes against copies the library already
+// had outside the pack. For each identified pack scene it finds copies
+// of the same StashDB id whose path is outside the pack directory; when
+// any exist, `keep` decides which side survives:
 //
-// Keeps the pre-existing copy by design — swapping in a higher-quality
-// pack copy is a later refinement. The torrent keeps seeding (the
-// download client's copy is a separate hardlink); only the library
-// duplicate is removed.
-func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, packNeedle string) (int, error) {
+//   - "existing" (default): destroy the pack's copy, keep the original.
+//   - "pack": destroy the existing copies, keep the pack's.
+//
+// A single library sweep backs the whole pass. Destroyed scenes are
+// tracked so a scene shared by several pack files isn't destroyed twice.
+// Destroy removes the Stash scene + its file; the torrent keeps seeding
+// from the download client's own (separate) hardlink. Returns the count
+// removed.
+func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, packNeedle, keep string) (int, error) {
 	libByID, err := sc.FindAllSceneStashDBIDs(ctx)
 	if err != nil {
 		return 0, err
 	}
 	deduped := 0
+	destroyed := map[string]bool{}
+	destroy := func(sceneID string) {
+		if sceneID == "" || destroyed[sceneID] {
+			return
+		}
+		if err := sc.SceneDestroy(ctx, sceneID, true, true); err != nil {
+			p.log.Warn("pack dedup destroy", "id", g.ID, "scene", sceneID, "err", err)
+			return
+		}
+		destroyed[sceneID] = true
+		deduped++
+		p.log.Info("pack dedup removed duplicate", "id", g.ID, "scene", sceneID, "keep", keep)
+	}
 	for _, ps := range packScenes {
 		if ps.StashDBID == "" {
 			continue
 		}
-		external := false
-		for _, pth := range libByID[ps.StashDBID] {
-			if !strings.Contains(pth, packNeedle) {
-				external = true
-				break
+		var externalIDs []string
+		for _, ref := range libByID[ps.StashDBID] {
+			if !strings.Contains(ref.Path, packNeedle) {
+				externalIDs = append(externalIDs, ref.SceneID)
 			}
 		}
-		if !external {
+		if len(externalIDs) == 0 {
 			continue // unique to this pack — keep it
 		}
-		if err := sc.SceneDestroy(ctx, ps.ID, true, true); err != nil {
-			p.log.Warn("pack dedup destroy", "id", g.ID, "scene", ps.ID, "err", err)
-			continue
+		if keep == "pack" {
+			for _, eid := range externalIDs {
+				destroy(eid) // keep the pack copy, drop the originals
+			}
+		} else {
+			destroy(ps.ID) // default: keep the original, drop the pack copy
 		}
-		deduped++
-		p.log.Info("pack dedup removed duplicate", "id", g.ID, "scene", ps.ID, "stashdb", ps.StashDBID)
 	}
 	return deduped, nil
 }

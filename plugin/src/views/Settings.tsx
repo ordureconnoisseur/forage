@@ -550,6 +550,29 @@ export default function Settings({ onClose, health }: Props) {
             Leave blank to fall back to a full-library scan after each
             placement (slower but works regardless of mount layout).
           </p>
+          <Field label="Pack duplicates">
+            <select
+              value={
+                displayValue(
+                  "packDedupKeep",
+                  data?.fields["packDedupKeep"],
+                ) || "existing"
+              }
+              onChange={(e) => setField("packDedupKeep", e.target.value)}
+            >
+              <option value="existing">Keep my existing copy</option>
+              <option value="pack">Keep the pack's copy</option>
+              <option value="both">Keep both (no dedup)</option>
+            </select>
+            <SourceBadge field={data?.fields["packDedupKeep"]} />
+          </Field>
+          <p className="settings-tip">
+            When a pack contains a scene you already own, which copy
+            survives. Removing a copy deletes its file; the torrent keeps
+            seeding from the download client's own copy regardless. Pack
+            copies are often re-encodes, so "keep my existing copy" is the
+            safe default.
+          </p>
           <div className="settings-actions inline">
             <button
               className="settings-test"

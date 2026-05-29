@@ -59,7 +59,13 @@ type Config struct {
 	// first, so deleting the SAB source leaves the library file
 	// intact. qBit grabs are never touched (torrents keep seeding).
 	SabDeleteAfterPlace bool
-	PollInterval        time.Duration
+	// PackDedupKeep controls what pack download-then-dedup does when a
+	// pack scene duplicates one already in the library:
+	//   "existing" — keep the existing copy, remove the pack's (default)
+	//   "pack"     — keep the pack's copy, remove the existing
+	//   "both"     — keep both (dedup disabled)
+	PackDedupKeep string
+	PollInterval  time.Duration
 	OrphanAfter        time.Duration
 	CacheRefresh       time.Duration
 	LogLevel           slog.Level
@@ -119,6 +125,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.LibraryRoot = strings.TrimRight(b.envOr("FORAGER_LIBRARY_ROOT", "", "libraryRoot"), "/")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
+	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -207,6 +214,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.LibraryRoot = str("libraryRoot", stored.LibraryRoot, b.LibraryRoot, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
+	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
@@ -281,6 +289,19 @@ func (b *BootstrapConfig) envBool(key string, def bool, field string) bool {
 		return false
 	}
 	return def
+}
+
+// normalizePackKeep clamps the pack dedup preference to a known value,
+// defaulting to "existing" for anything unrecognised (empty, typo).
+func normalizePackKeep(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "pack":
+		return "pack"
+	case "both":
+		return "both"
+	default:
+		return "existing"
+	}
 }
 
 // parseCSVInts converts "6000,6010,6020" to []int{6000,6010,6020}.

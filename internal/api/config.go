@@ -63,6 +63,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
 		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
+		"packDedupKeep":       {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
 		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":        {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":       {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},

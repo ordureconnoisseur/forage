@@ -61,6 +61,9 @@ type Settings struct {
 	// SabDeleteAfterPlace tells the poller to delete a SAB download
 	// (history + files) once it's been placed into the library.
 	SabDeleteAfterPlace bool
+	// PackDedupKeep: "existing" | "pack" | "both" — which copy survives
+	// when a pack scene duplicates one already in the library.
+	PackDedupKeep string
 }
 
 // New returns an empty Pool. Reload it before using.
@@ -117,6 +120,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		ProwlarrCategories:  append([]int(nil), cfg.ProwlarrCategories...),
 		StashPathMapping:    cfg.StashPathMapping,
 		SabDeleteAfterPlace: cfg.SabDeleteAfterPlace,
+		PackDedupKeep:       cfg.PackDedupKeep,
 	})
 }
 

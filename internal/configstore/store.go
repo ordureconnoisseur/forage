@@ -60,6 +60,9 @@ type StoredConfig struct {
 	// *bool so an explicit false round-trips (nil = fall through to
 	// env/default).
 	SabDeleteAfterPlace *bool `json:"sabDeleteAfterPlace,omitempty"`
+	// PackDedupKeep: "existing" | "pack" | "both". Controls which copy
+	// survives when a pack scene duplicates one already in the library.
+	PackDedupKeep *string `json:"packDedupKeep,omitempty"`
 	// Duration fields are stored as strings ("60s", "6h") so the JSON
 	// stays human-readable and round-trips cleanly through the UI.
 	PollInterval  *string `json:"pollInterval,omitempty"`
@@ -282,6 +285,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.SabDeleteAfterPlace != nil {
 		base.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
+	}
+	if patch.PackDedupKeep != nil {
+		base.PackDedupKeep = patch.PackDedupKeep
 	}
 	if patch.PollInterval != nil {
 		base.PollInterval = patch.PollInterval
