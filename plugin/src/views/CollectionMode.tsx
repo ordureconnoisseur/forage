@@ -54,17 +54,22 @@ export default function CollectionMode({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [grabbing, setGrabbing] = useState(false);
 
-  // Packs load independently of the per-scene scan (it's a slow
-  // indexer-search + .torrent-parse, so it shouldn't block the page).
+  // Packs are searched on demand (it hits indexers and takes ~10s+), not
+  // automatically on page open. packsFor holds the performer the user
+  // asked to search; the fetch runs only when it matches the current
+  // performer, so switching performers reverts to the click-to-search
+  // prompt instead of carrying over a stale result.
   const [packs, setPacks] = useState<Pack[] | null>(null);
   const [packErr, setPackErr] = useState<string | null>(null);
   const [packGrab, setPackGrab] = useState<Record<string, GrabState>>({});
+  const [packsFor, setPacksFor] = useState<string | null>(null);
+  const packsRequested = packsFor === performerId;
 
   useEffect(() => {
+    if (packsFor !== performerId) return; // not requested for this performer
     const ctrl = new AbortController();
     setPacks(null);
     setPackErr(null);
-    setPackGrab({});
     fetchPacks(performerId, ctrl.signal)
       .then((r) => setPacks(r.packs))
       .catch((e) => {
@@ -72,7 +77,12 @@ export default function CollectionMode({
         setPackErr((e as Error).message);
       });
     return () => ctrl.abort();
-  }, [performerId]);
+  }, [packsFor, performerId]);
+
+  function startPackSearch() {
+    setPackGrab({});
+    setPacksFor(performerId);
+  }
 
   async function grabPack(p: Pack) {
     if (packGrab[p.download_url] === "queued") return;
@@ -316,6 +326,8 @@ export default function CollectionMode({
       </div>
 
       <PacksSection
+        requested={packsRequested}
+        onSearch={startPackSearch}
         packs={packs}
         error={packErr}
         grabState={packGrab}
@@ -354,25 +366,45 @@ export default function CollectionMode({
 
 // PacksSection lists whole-performer pack torrents at the top of the
 // collection view — a one-click alternative to grabbing scenes
-// individually. Hidden entirely when the indexer search turns up
-// nothing (the common case), so it doesn't add noise for performers
-// without packs.
+// individually. The search is on demand (it hits indexers and takes a
+// while), so it starts as a button; nothing runs until the user clicks.
 function PacksSection({
+  requested,
+  onSearch,
   packs,
   error,
   grabState,
   onGrab,
 }: {
+  requested: boolean;
+  onSearch: () => void;
   packs: Pack[] | null;
   error: string | null;
   grabState: Record<string, GrabState>;
   onGrab: (p: Pack) => void;
 }) {
+  if (!requested) {
+    return (
+      <div className="packs-section">
+        <div className="packs-head">Packs</div>
+        <div className="packs-note muted">
+          Look for whole-performer pack torrents (a one-shot alternative to
+          grabbing scenes one by one).
+        </div>
+        <button className="packs-search-btn" onClick={onSearch}>
+          Search for packs
+        </button>
+      </div>
+    );
+  }
   if (error) {
     return (
       <div className="packs-section">
         <div className="packs-head">Packs</div>
         <div className="packs-note err">pack search failed: {error}</div>
+        <button className="packs-search-btn" onClick={onSearch}>
+          Retry
+        </button>
       </div>
     );
   }
@@ -382,11 +414,21 @@ function PacksSection({
         <div className="packs-head">
           Packs <span className="coll-spinner" />
         </div>
-        <div className="packs-note muted">scanning indexers for packs…</div>
+        <div className="packs-note muted">searching indexers for packs…</div>
       </div>
     );
   }
-  if (packs.length === 0) return null;
+  if (packs.length === 0) {
+    return (
+      <div className="packs-section">
+        <div className="packs-head">Packs</div>
+        <div className="packs-note muted">No packs found for this performer.</div>
+        <button className="packs-search-btn" onClick={onSearch}>
+          Search again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="packs-section">

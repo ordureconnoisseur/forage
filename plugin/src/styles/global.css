@@ -2551,6 +2551,23 @@ code.grab-fact-v,
 .packs-note.err {
   color: var(--danger, #e6794b);
 }
+.packs-search-btn {
+  margin-top: 4px;
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.packs-search-btn:hover {
+  background: var(--accent);
+  color: #0a0a0a;
+}
 .packs-list {
   list-style: none;
   margin: 0;
