@@ -1,6 +1,7 @@
 package torrentmeta
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -34,5 +35,52 @@ func TestParseMultiFile(t *testing.T) {
 	}
 	if m.VideoCount != 1 {
 		t.Errorf("videocount = %d (want 1, .jpg must not count)", m.VideoCount)
+	}
+}
+
+func TestParseRejectsDeepNesting(t *testing.T) {
+	// Nesting deeper than maxDepth must error, not recurse until the
+	// goroutine stack overflows (a fatal, unrecoverable crash).
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Parse panicked on deep nesting: %v", r)
+		}
+	}()
+	raw := []byte(strings.Repeat("l", maxDepth+50))
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("expected error on deeply nested input, got nil")
+	}
+}
+
+func TestParseRejectsBadLengths(t *testing.T) {
+	// Hostile/corrupt length and integer fields must error cleanly, never
+	// panic (overflowed int64, valid-but-oversized string length, etc.).
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Parse panicked: %v", r)
+		}
+	}()
+	for _, raw := range []string{
+		"99999999999999999999:x", // string length overflows int64
+		"9223372036854775807:x",  // valid int64 but far exceeds the buffer
+		"5:ab",                   // length exceeds the bytes that follow
+		"i99999999999999999999e", // integer value overflows int64
+	} {
+		if _, err := Parse([]byte(raw)); err == nil {
+			t.Errorf("expected error for %q, got nil", raw)
+		}
+	}
+}
+
+func TestParseLargeFileSize(t *testing.T) {
+	// A legitimately huge size (50 GB) must still parse — the overflow
+	// guard must not reject normal large packs.
+	raw := []byte("d4:infod6:lengthi53687091200e4:name9:movie.mp4ee")
+	m, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if m.TotalSize != 53687091200 {
+		t.Fatalf("size = %d, want 53687091200", m.TotalSize)
 	}
 }
