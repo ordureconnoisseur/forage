@@ -20,19 +20,6 @@ type sceneReleasesResponse struct {
 	Releases []sceneRelease `json:"releases"`
 }
 
-// rankVerifyMinTitle is the minimum title-overlap (Jaccard, the matcher's
-// TitleOverlap) the viewed scene must have for ranking-based
-// verification. The matcher floors no-overlap at ~0.05, so this sits
-// well above that — a real partial title match scores ~0.2+.
-const rankVerifyMinTitle = 0.15
-
-// titleVerifyMinConf is the minimum matcher confidence the viewed scene
-// must have before a title-containment match counts. A pure title-word
-// coincidence (no performer/date) tops out around 0.25, so this floor
-// requires real performer/date evidence that it's this performer's scene
-// — not just a release that happens to share common title words.
-const titleVerifyMinConf = 0.30
-
 type sceneRelease struct {
 	Title       string  `json:"title"`
 	Indexer     string  `json:"indexer"`
@@ -142,52 +129,17 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		var bestOtherID, bestOtherTitle string
 		var bestOtherConf float64
 		if res.Err == nil && len(res.Candidates) > 0 {
-			top := res.Candidates[0]
-			var viewedOverlap float64
-			for _, c := range res.Candidates {
-				if c.Scene.ID == id {
-					conf = c.Confidence
-					viewedOverlap = c.TitleOverlap
-					break
-				}
-			}
-			// Verified only when the viewed scene is the matcher's best
-			// candidate AND that win is backed by a real title overlap —
-			// not just the shared performer. A release for a DIFFERENT
-			// scene by the same performer scores almost entirely on the
-			// performer (0.4); the weak title signal leaves every
-			// same-performer scene tied ~0.4-0.48, and whichever won the
-			// tie would otherwise verify. Requiring title overlap keeps
-			// those out. Title containment (below) still verifies releases
-			// that name the scene outright even when the ranking is off.
-			switch {
-			case top.Scene.ID == id && viewedOverlap >= rankVerifyMinTitle:
-				verified = true
-			case top.Scene.ID != id:
+			// Single source of truth for the verified badge — shared with
+			// tools/matcher-bench (--verify) so the logic is corpus-tested.
+			vr := matcher.Verify(res.Candidates, id, scene.Title, rel.Title)
+			verified = vr.Verified
+			conf = vr.Confidence
+			// When unverified and the matcher's top pick is a different
+			// scene, surface it so the UI can warn "looks like X".
+			if top := res.Candidates[0]; !verified && top.Scene.ID != id {
 				bestOtherID = top.Scene.ID
 				bestOtherTitle = top.Scene.Title
 				bestOtherConf = top.Confidence
-			}
-		}
-
-		// Direct title-containment override. If the release name contains
-		// the bulk of the viewed scene's title, it IS that scene — even
-		// when the cross-scene ranking put a different same-performer
-		// scene #1 (e.g. a ManyVids file named with the full scene title).
-		//
-		// Guards, learned the hard way: (1) >=4 significant title tokens,
-		// so short generic titles like "Home And Horny" — whose words
-		// appear in hundreds of unrelated releases — don't trivially
-		// verify everything; short titles fall back to the ranking path.
-		// (2) the viewed scene must already be a real matcher candidate
-		// (conf >= titleVerifyMinConf, i.e. performer/date actually
-		// matched), so a "Home And Horny" release by a DIFFERENT performer
-		// can't verify on title words alone.
-		if frac, nTok := matcher.TitleContainment(scene.Title, rel.Title); nTok >= 4 && frac >= 0.8 && conf >= titleVerifyMinConf {
-			verified = true
-			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
-			if conf < frac {
-				conf = frac
 			}
 		}
 		out[res.Index] = sceneRelease{

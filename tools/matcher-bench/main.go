@@ -54,6 +54,7 @@ func main() {
 		outputDir   = flag.String("output-dir", ".", "where to write *.failures.csv")
 		maxFailures = flag.Int("max-failures", 0, "cap rows per CSV (0 = no cap)")
 		corpusPath  = flag.String("corpus", "", "YAML corpus path; when set, runs against the corpus instead of the Stash library")
+		verify      = flag.Bool("verify", false, "verification mode: per entry assert the expected scene verifies (recall) and other candidates do NOT (precision) — exercises matcher.Verify, the release-page badge logic")
 	)
 	flag.Parse()
 
@@ -153,6 +154,19 @@ func main() {
 				return strings.Join(parts, " ")
 			}},
 		}
+	}
+
+	if *verify {
+		log.Info("running verify mode", "entries", len(gt), "concurrency", *concurrency)
+		t0 := time.Now()
+		vr := runVerify(ctx, log, m, gt, *concurrency)
+		vr.Elapsed = time.Since(t0)
+		csvPath := filepath.Join(*outputDir, "verify.failures.csv")
+		if err := writeVerifyFailures(csvPath, vr.Failures, *maxFailures); err != nil {
+			log.Error("write verify csv", "err", err)
+		}
+		printVerify(os.Stdout, vr, csvPath)
+		return
 	}
 
 	results := make([]*modeResult, 0, len(modes))
@@ -406,7 +420,7 @@ type corpusEntry struct {
 
 // loadCorpus parses the YAML format build-corpus emits. The format is
 // a simple list of objects, each on consecutive lines with single-
-// quoted string values (escape: '' for a literal quote). One pass,
+// quoted string values (escape: ” for a literal quote). One pass,
 // state-machine style. Doesn't try to be a general YAML parser —
 // only handles the shape we control.
 func loadCorpus(path string) ([]corpusEntry, error) {
@@ -476,11 +490,168 @@ func parseField(e *corpusEntry, line string) {
 }
 
 // unquoteYAML strips surrounding single quotes from a YAML scalar and
-// unescapes embedded '' → '. Returns plain strings unchanged.
+// unescapes embedded ” → '. Returns plain strings unchanged.
 func unquoteYAML(s string) string {
 	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
 		s = s[1 : len(s)-1]
 		s = strings.ReplaceAll(s, "''", "'")
 	}
 	return s
+}
+
+// ── verification mode ────────────────────────────────────────────────
+//
+// For each entry (release, expected scene) we run the matcher once, then
+// exercise matcher.Verify — the exact logic behind the release page's
+// "verified" badge:
+//   - recall:    does the EXPECTED scene verify for its real release?
+//   - precision: do the OTHER candidate scenes (wrong scenes that share
+//                a performer / title token) wrongly verify? Each one that
+//                does is a false-green — the "Home And Horny (156)" class.
+
+type verifyResult struct {
+	Total            int
+	Recall           int // expected scene verified
+	NoExpectedCand   int // expected scene wasn't even a candidate
+	FalseVerifies    int // total wrong-scene verifications across all entries
+	EntriesWithFalse int // entries with >=1 false verify
+	Failures         []verifyFailure
+	Elapsed          time.Duration
+}
+
+type verifyFailure struct {
+	Release         string
+	Kind            string // "recall_miss" | "false_verify"
+	ExpectedID      string
+	FalseSceneID    string
+	FalseSceneTitle string
+	Conf            float64
+}
+
+func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int) *verifyResult {
+	r := &verifyResult{Total: len(entries)}
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	type res struct {
+		idx   int
+		cands []matcher.Candidate
+		err   error
+	}
+	jobs := make(chan int, concurrency*2)
+	out := make(chan res, concurrency*2)
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for idx := range jobs {
+				c, e := m.Match(ctx, entries[idx].Basename)
+				out <- res{idx: idx, cands: c, err: e}
+			}
+		}()
+	}
+	go func() {
+		for i := range entries {
+			jobs <- i
+		}
+		close(jobs)
+	}()
+	go func() { wg.Wait(); close(out) }()
+
+	var mu sync.Mutex
+	var processed atomic.Int64
+	ticker := time.NewTicker(15 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			log.Info("verify progress", "done", processed.Load(), "total", len(entries))
+		case rr, ok := <-out:
+			if !ok {
+				return r
+			}
+			processed.Add(1)
+			e := entries[rr.idx]
+			if rr.err != nil {
+				log.Warn("match error", "id", e.ID, "err", rr.err)
+				continue
+			}
+			cands := rr.cands
+			var expTitle string
+			expFound := false
+			for _, c := range cands {
+				if c.Scene.ID == e.StashDBID {
+					expTitle = c.Scene.Title
+					expFound = true
+					break
+				}
+			}
+			mu.Lock()
+			if matcher.Verify(cands, e.StashDBID, expTitle, e.Basename).Verified {
+				r.Recall++
+			} else {
+				if !expFound {
+					r.NoExpectedCand++
+				}
+				r.Failures = append(r.Failures, verifyFailure{Release: e.Basename, Kind: "recall_miss", ExpectedID: e.StashDBID})
+			}
+			falseHere := 0
+			for _, c := range cands {
+				if c.Scene.ID == e.StashDBID {
+					continue
+				}
+				if vr := matcher.Verify(cands, c.Scene.ID, c.Scene.Title, e.Basename); vr.Verified {
+					falseHere++
+					r.Failures = append(r.Failures, verifyFailure{
+						Release: e.Basename, Kind: "false_verify", ExpectedID: e.StashDBID,
+						FalseSceneID: c.Scene.ID, FalseSceneTitle: c.Scene.Title, Conf: vr.Confidence,
+					})
+				}
+			}
+			if falseHere > 0 {
+				r.FalseVerifies += falseHere
+				r.EntriesWithFalse++
+			}
+			mu.Unlock()
+		}
+	}
+}
+
+func writeVerifyFailures(path string, rows []verifyFailure, max int) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	w := csv.NewWriter(bufio.NewWriter(f))
+	defer w.Flush()
+	_ = w.Write([]string{"kind", "release", "expected_id", "false_scene_id", "false_scene_title", "conf"})
+	for i, row := range rows {
+		if max > 0 && i >= max {
+			break
+		}
+		_ = w.Write([]string{row.Kind, row.Release, row.ExpectedID, row.FalseSceneID, row.FalseSceneTitle, fmt.Sprintf("%.2f", row.Conf)})
+	}
+	return nil
+}
+
+func printVerify(w *os.File, r *verifyResult, csvPath string) {
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "metric\tvalue")
+	fmt.Fprintf(tw, "entries\t%d\n", r.Total)
+	fmt.Fprintf(tw, "recall (expected verified)\t%d  (%.3f)\n", r.Recall, ratio(r.Recall, r.Total))
+	fmt.Fprintf(tw, "  of which expected not a candidate\t%d\n", r.NoExpectedCand)
+	fmt.Fprintf(tw, "entries with >=1 false verify\t%d  (%.3f)\n", r.EntriesWithFalse, ratio(r.EntriesWithFalse, r.Total))
+	fmt.Fprintf(tw, "total false verifies\t%d\n", r.FalseVerifies)
+	fmt.Fprintf(tw, "elapsed\t%s\n", r.Elapsed.Round(time.Millisecond))
+	fmt.Fprintf(tw, "failures csv\t%s\n", csvPath)
+	tw.Flush()
+}
+
+func ratio(n, d int) float64 {
+	if d == 0 {
+		return 0
+	}
+	return float64(n) / float64(d)
 }
