@@ -219,15 +219,28 @@ func (s *Server) classifyPacks(ctx context.Context, pc *prowlarr.Client, release
 // XXX/Pack 6050 and XXX/Other 6070 alike). Best-effort — returns
 // whatever came back.
 func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, term string) []prowlarr.Release {
-	cats := []int{xxxParentCategory}
+	// Two category passes per indexer:
+	//   6050 (XXX/Pack) — precise: an indexer caps results per query
+	//     (PornoLab returns 50), and for a prolific performer the broad
+	//     pass fills entirely with recent individual scenes, burying old
+	//     packs. Filtering to XXX/Pack leaves only packs in that window,
+	//     so they surface.
+	//   6000 (XXX parent) — broad: catches packs an indexer mis-tagged
+	//     outside XXX/Pack (e.g. XXX/Other). The biggest-first parse
+	//     selection means the huge packs win the budget over the scene
+	//     noise this pass also returns.
+	catSets := [][]int{{xxxPackCategory}, {xxxParentCategory}}
 	indexers, err := pc.Indexers(ctx)
 	if err != nil || len(indexers) == 0 {
-		// Couldn't enumerate indexers — fall back to one aggregate search.
-		rel, err := pc.Search(ctx, term, cats)
-		if err != nil {
-			s.log.Warn("pack aggregate search", "err", err)
+		var all []prowlarr.Release
+		for _, cs := range catSets {
+			if rel, err := pc.Search(ctx, term, cs); err == nil {
+				all = append(all, rel...)
+			} else {
+				s.log.Warn("pack aggregate search", "err", err)
+			}
 		}
-		return rel
+		return dedupReleases(all)
 	}
 	var (
 		mu  sync.Mutex
@@ -238,23 +251,44 @@ func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, te
 		if !ix.Enable {
 			continue
 		}
-		wg.Add(1)
-		go func(id int, name string) {
-			defer wg.Done()
-			ictx, cancel := context.WithTimeout(ctx, packIndexerTimeout)
-			defer cancel()
-			rel, err := pc.SearchScoped(ictx, term, cats, []int{id})
-			if err != nil {
-				s.log.Debug("pack indexer search dropped", "indexer", name, "err", err)
-				return
-			}
-			mu.Lock()
-			all = append(all, rel...)
-			mu.Unlock()
-		}(ix.ID, ix.Name)
+		for _, cs := range catSets {
+			wg.Add(1)
+			go func(id int, name string, cats []int) {
+				defer wg.Done()
+				ictx, cancel := context.WithTimeout(ctx, packIndexerTimeout)
+				defer cancel()
+				rel, err := pc.SearchScoped(ictx, term, cats, []int{id})
+				if err != nil {
+					s.log.Debug("pack indexer search dropped", "indexer", name, "err", err)
+					return
+				}
+				mu.Lock()
+				all = append(all, rel...)
+				mu.Unlock()
+			}(ix.ID, ix.Name, cs)
+		}
 	}
 	wg.Wait()
-	return all
+	return dedupReleases(all)
+}
+
+// dedupReleases collapses results that appear in more than one category
+// pass, keyed by download URL (falling back to info URL + title).
+func dedupReleases(rs []prowlarr.Release) []prowlarr.Release {
+	seen := make(map[string]bool, len(rs))
+	out := make([]prowlarr.Release, 0, len(rs))
+	for _, r := range rs {
+		key := r.DownloadURL
+		if key == "" {
+			key = r.InfoURL + "|" + r.Title
+		}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, r)
+	}
+	return out
 }
 
 func containsInt(xs []int, want int) bool {
