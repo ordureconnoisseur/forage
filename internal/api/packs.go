@@ -6,39 +6,27 @@ import (
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
-	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 // Pack detection tunables. Hardcoded for now; Phase 4 promotes the
 // thresholds to the config store + settings UI.
 const (
-	// packMinVideos: a release is a "pack" at or above this many video
-	// files. 3 avoids mislabelling a single scene that ships with a
-	// trailer/sample as a pack.
+	// packMinVideos: a title-stated video count at or above this marks a
+	// release as a pack (when category/keyword don't already). 3 avoids
+	// mislabelling a single scene that mentions e.g. "2 scenes".
 	packMinVideos = 3
-	// packParseSizeMin: fetch+parse a torrent's metadata when it's at
-	// least this large (OR it has a pack keyword / the XXX/Pack
-	// category). Keeps us from pulling .torrents for the hundreds of
-	// sub-GB single-scene results a performer search returns.
-	packParseSizeMin = int64(2) << 30
-	// packParseMax caps how many candidate .torrents we fetch per
-	// search; packParseWorkers bounds the concurrency; packFetchTimeout
-	// caps each individual fetch so one slow tracker can't stall the
-	// whole confirm phase.
-	packParseMax     = 16
-	packParseWorkers = 10
-	packFetchTimeout = 15 * time.Second
 	// packIndexerTimeout caps each per-indexer search in the fan-out, so
 	// one slow indexer (e.g. a FlareSolverr-backed tracker mid-Cloudflare
 	// -challenge) gets dropped instead of stalling the whole pack search.
 	packIndexerTimeout = 12 * time.Second
 	// xxxPackCategory is Newznab's XXX/Pack — PornoLab tags collection
-	// torrents with it, a strong pre-fetch pack signal.
+	// torrents with it, the strongest pack signal.
 	xxxPackCategory = 6050
 	// xxxParentCategory is the Newznab XXX parent; Prowlarr expands it
 	// to every XXX subcategory on search.
@@ -104,7 +92,7 @@ func (s *Server) getPerformerPacks(w http.ResponseWriter, r *http.Request) {
 
 	releases := s.searchPackIndexers(r.Context(), prowlarrC, name)
 
-	packs := s.classifyPacks(r.Context(), prowlarrC, releases)
+	packs := classifyPacks(releases)
 	// Biggest first — performer megapacks are what the user is after; a
 	// huge pack with few seeders shouldn't sink below a small one.
 	sort.SliceStable(packs, func(i, j int) bool { return packs[i].Size > packs[j].Size })
@@ -115,98 +103,55 @@ func (s *Server) getPerformerPacks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// classifyPacks selects pack candidates from a release set and confirms
-// torrents by parsing their .torrent metadata (bounded concurrency).
-func (s *Server) classifyPacks(ctx context.Context, pc *prowlarr.Client, releases []prowlarr.Release) []packCandidate {
-	type cand struct {
-		rel     prowlarr.Release
-		parse   bool // torrent we'll fetch+parse for an authoritative count
-		keyword bool
-		packCat bool
-	}
-	var cands []cand
+// classifyPacks turns search results into pack candidates using ONLY
+// signals already present in the result — it never downloads .torrent
+// files. Private trackers (PornoLab) cap daily downloads, so browsing
+// for packs must not burn that quota; the only download happens when
+// the user actually grabs one.
+//
+// A release is a pack when it's in the XXX/Pack category, has a pack
+// keyword, or its title states a video count >= packMinVideos. The
+// count is parsed from the title (e.g. "(87 роликов)", "186 videos")
+// and is therefore an estimate — confirmed only once grabbed + scanned.
+func classifyPacks(releases []prowlarr.Release) []packCandidate {
+	out := []packCandidate{}
 	for _, rel := range releases {
 		kw := packKeywordRe.MatchString(rel.Title)
 		pcat := containsInt(rel.Categories, xxxPackCategory)
-		if !kw && !pcat && rel.Size < packParseSizeMin {
-			continue // clearly a single scene — skip
+		count := parsePackCount(rel.Title)
+		if !pcat && !kw && count < packMinVideos {
+			continue // looks like a single scene
 		}
-		parse := rel.Protocol == "torrent" && rel.DownloadURL != ""
-		cands = append(cands, cand{rel: rel, parse: parse, keyword: kw, packCat: pcat})
-	}
-
-	// Parse the most promising torrents first (largest), capped.
-	sort.SliceStable(cands, func(i, j int) bool { return cands[i].rel.Size > cands[j].rel.Size })
-	metas := make([]*torrentmeta.Meta, len(cands))
-	jobs := make(chan int)
-	var wg sync.WaitGroup
-	for w := 0; w < packParseWorkers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := range jobs {
-				fctx, cancel := context.WithTimeout(ctx, packFetchTimeout)
-				raw, err := pc.FetchTorrent(fctx, cands[i].rel.DownloadURL)
-				cancel()
-				if err != nil {
-					s.log.Debug("pack torrent fetch", "title", cands[i].rel.Title, "err", err)
-					continue
-				}
-				m, err := torrentmeta.Parse(raw)
-				if err != nil {
-					s.log.Debug("pack torrent parse", "title", cands[i].rel.Title, "err", err)
-					continue
-				}
-				metas[i] = m
-			}
-		}()
-	}
-	parsed := 0
-	for i := range cands {
-		if cands[i].parse && parsed < packParseMax {
-			jobs <- i
-			parsed++
-		}
-	}
-	close(jobs)
-	wg.Wait()
-
-	out := []packCandidate{}
-	for i, c := range cands {
-		item := packCandidate{
-			Title:       c.rel.Title,
-			Indexer:     c.rel.Indexer,
-			Protocol:    c.rel.Protocol,
-			Size:        c.rel.Size,
-			Seeders:     c.rel.Seeders,
-			Grabs:       c.rel.Grabs,
-			Popularity:  c.rel.Popularity,
-			PublishDate: c.rel.PublishDate,
-			InfoURL:     c.rel.InfoURL,
-			DownloadURL: c.rel.DownloadURL,
-		}
-		if m := metas[i]; m != nil {
-			// Authoritative: we parsed the torrent.
-			if m.VideoCount < packMinVideos {
-				continue
-			}
-			item.VideoCount = m.VideoCount
-			item.FileCount = m.FileCount
-			if m.TotalSize > 0 {
-				item.Size = m.TotalSize
-			}
-		} else {
-			// Couldn't parse (magnet / usenet / fetch failed). Keep it
-			// only on a strong signal, with an estimated count.
-			if !c.packCat && !c.keyword {
-				continue
-			}
-			item.Estimated = true
-			item.VideoCount = c.rel.Files // indexer hint; may be 0
-		}
-		out = append(out, item)
+		out = append(out, packCandidate{
+			Title:       rel.Title,
+			Indexer:     rel.Indexer,
+			Protocol:    rel.Protocol,
+			Size:        rel.Size,
+			VideoCount:  count, // 0 when the title states no count
+			Estimated:   true,  // title-derived, not confirmed from the torrent
+			Seeders:     rel.Seeders,
+			Grabs:       rel.Grabs,
+			Popularity:  rel.Popularity,
+			PublishDate: rel.PublishDate,
+			InfoURL:     rel.InfoURL,
+			DownloadURL: rel.DownloadURL,
+		})
 	}
 	return out
+}
+
+// packCountRe pulls a stated video count out of a pack title across the
+// forms PornoLab/ManyVids/PornHub use: "87 роликов", "133 ролика",
+// "186 videos", "26 vid", "50 clips".
+var packCountRe = regexp.MustCompile(`(?i)(\d{1,5})\s*(?:ролик|клип|videos?|vids?|clips?|scenes?)`)
+
+func parsePackCount(title string) int {
+	m := packCountRe.FindStringSubmatch(title)
+	if m == nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(m[1])
+	return n
 }
 
 // searchPackIndexers runs the performer-name search across every

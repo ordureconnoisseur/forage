@@ -436,11 +436,12 @@ function PackCard({
           <span className={"pack-size" + (huge ? " huge" : "")}>
             {humanSize(pack.size)}
           </span>
-          <span className="sep">·</span>
-          <span className="pack-vids">
-            {pack.estimated ? "~" : ""}
-            {pack.video_count} videos
-          </span>
+          {pack.video_count > 0 && (
+            <>
+              <span className="sep">·</span>
+              <span className="pack-vids">~{pack.video_count} videos</span>
+            </>
+          )}
           <span className="sep">·</span>
           <span>{pack.seeders} seeders</span>
         </div>
