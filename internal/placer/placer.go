@@ -83,14 +83,18 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 	if info.IsDir() {
 		// Multi-file release (a torrent that unpacked into a containing
 		// folder). Mirror the tree as hardlinks; preserves any nested
-		// structure without copying. If the destination folder already
-		// exists this is a re-run — treat as no-op.
-		if _, err := os.Stat(destPath); err == nil {
-			return Result{Path: destPath}, nil
-		}
-		mode, err := p.mirrorTree(srcPath, destPath)
+		// structure without copying. Resume-safe: mirrorTree skips files
+		// already present, so an interrupted run (daemon restart, or a
+		// transient os.Link error on one of a pack's hundreds of files
+		// aborting the walk) COMPLETES on the next call instead of being
+		// mistaken for a finished placement. A re-run where everything is
+		// already linked places nothing and reports idempotent (Mode "").
+		mode, placed, err := p.mirrorTree(srcPath, destPath)
 		if err != nil {
 			return Result{}, err
+		}
+		if placed == 0 {
+			return Result{Path: destPath}, nil
 		}
 		return Result{Path: destPath, Mode: mode}, nil
 	}
@@ -167,8 +171,15 @@ func copyFile(src, dest string) error {
 
 // mirrorTree walks src and hardlinks every file into the matching dest
 // path. On any cross-device fallback the overall mode flips to "copy".
-func (p *Placer) mirrorTree(src, dest string) (string, error) {
+// Returns the count of files it actually placed this pass — files that
+// already exist at the destination are skipped, so the walk is
+// resume-safe: a mirror interrupted partway (restart, transient CIFS
+// link error) is finished by the next call rather than being treated as
+// already-done with a half-populated directory. placed==0 means the tree
+// was already fully present.
+func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 	mode := "hardlink"
+	placed := 0
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -181,6 +192,11 @@ func (p *Placer) mirrorTree(src, dest string) (string, error) {
 		if d.IsDir() {
 			return os.MkdirAll(destPath, 0o755)
 		}
+		// Already linked/copied by a prior pass — skip so an interrupted
+		// mirror resumes instead of erroring on the existing file.
+		if _, err := os.Stat(destPath); err == nil {
+			return nil
+		}
 		m, err := linkOrCopy(path, destPath)
 		if err != nil {
 			return err
@@ -188,12 +204,13 @@ func (p *Placer) mirrorTree(src, dest string) (string, error) {
 		if m == "copy" {
 			mode = "copy"
 		}
+		placed++
 		return nil
 	})
 	if err != nil {
-		return "", fmt.Errorf("mirror tree: %w", err)
+		return "", 0, fmt.Errorf("mirror tree: %w", err)
 	}
-	return mode, nil
+	return mode, placed, nil
 }
 
 // collisionSuffix returns an unused filename by appending " (N)" to
