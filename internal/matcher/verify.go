@@ -35,9 +35,9 @@ const (
 	// instead of the overlap floor for such titles.
 	verifyShortTitleMaxTokens = 2
 	// verifyShortTitleMinConf: the confidence a short-titled #1 needs to
-	// verify without title overlap. Set at the performer+date / performer+
-	// studio level so a bare shared-performer coincidence (conf ~0.4)
-	// doesn't qualify.
+	// verify via the containment fallback (below). Set at the performer+
+	// date / performer+studio level so a bare shared-performer coincidence
+	// (conf ~0.4) doesn't qualify.
 	verifyShortTitleMinConf = 0.50
 )
 
@@ -80,15 +80,19 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	// or a strong title on its own. A very short scene title ("Squirt")
 	// can't reach the overlap floor even on an exact match — its one or two
 	// tokens are a tiny fraction of a release name — so for short titles we
-	// instead accept a strong overall match (high conf = performer AND
-	// date/studio agreed), itself reliable evidence it's the right scene.
+	// fall back to: a strong overall match (high conf = performer AND
+	// date/studio agreed) AND the release actually containing the title
+	// tokens. Requiring containment (not conf alone) is what keeps a
+	// right-performer/wrong-scene release from verifying — corpus-measured:
+	// conf-only added false verifies, conf+containment recovers the real
+	// short-title scenes with no precision cost.
 	if isTop {
 		shortTitle := nTok > 0 && nTok <= verifyShortTitleMaxTokens
 		switch {
 		case overlap >= verifyRankMinTitleOverlap &&
 			(conf >= verifyTitleMinConf || overlap >= verifyStrongTitleOverlap):
 			return VerifyResult{Verified: true, Confidence: conf}
-		case shortTitle && conf >= verifyShortTitleMinConf:
+		case shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
 			return VerifyResult{Verified: true, Confidence: conf}
 		}
 	}
