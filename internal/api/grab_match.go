@@ -46,6 +46,14 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "grab not found")
 		return
 	}
+	if grab.Kind == "pack" {
+		// A pack is many scenes; applying one StashDB scene's metadata to
+		// it would resolve a single arbitrary member and overwrite it.
+		// Pack scenes are identified individually by the confirm path (or
+		// in Stash directly), not via this single-scene match.
+		writeErr(w, http.StatusUnprocessableEntity, "manual match isn't supported for pack grabs — identify the individual scenes in Stash")
+		return
+	}
 
 	var req grabMatchRequest
 	_ = json.NewDecoder(r.Body).Decode(&req) // body optional

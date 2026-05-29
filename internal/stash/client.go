@@ -507,6 +507,59 @@ func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]Scene
 	return out, nil
 }
 
+// findScenesByStashIDQuery returns every local scene carrying a specific
+// StashDB cross-id at a given stash-box endpoint.
+const findScenesByStashIDQuery = `
+query ForagerScenesByStashID($endpoint: String!, $stashId: String!) {
+  findScenes(
+    scene_filter: { stash_id_endpoint: { endpoint: $endpoint, stash_id: $stashId, modifier: EQUALS } }
+    filter: { page: 1, per_page: -1 }
+  ) {
+    scenes {
+      id
+      files { path }
+    }
+  }
+}`
+
+// FindSceneRefsByStashID returns the (scene id, file path) refs of every
+// local scene whose StashDB cross-id equals stashID at the given
+// stash-box endpoint. Pack dedup uses it to locate copies of a pack
+// scene that already live elsewhere in the library, querying only the
+// handful of cross-ids a pack contains instead of sweeping the whole
+// library. FindAllSceneStashDBIDs is the whole-library variant, kept as
+// a fallback for when no stash-box endpoint is available to query by.
+func (c *Client) FindSceneRefsByStashID(ctx context.Context, endpoint, stashID string) ([]SceneRef, error) {
+	if endpoint == "" || stashID == "" {
+		return nil, nil
+	}
+	var resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				ID    string `json:"id"`
+				Files []struct {
+					Path string `json:"path"`
+				} `json:"files"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
+	vars := map[string]any{"endpoint": endpoint, "stashId": stashID}
+	if err := c.do(ctx, findScenesByStashIDQuery, vars, &resp); err != nil {
+		return nil, fmt.Errorf("findScenes by stash_id: %w", err)
+	}
+	var out []SceneRef
+	for _, s := range resp.FindScenes.Scenes {
+		if len(s.Files) == 0 {
+			out = append(out, SceneRef{SceneID: s.ID})
+			continue
+		}
+		for _, f := range s.Files {
+			out = append(out, SceneRef{SceneID: s.ID, Path: f.Path})
+		}
+	}
+	return out, nil
+}
+
 // SceneMatch is the slim shape Phase B uses to confirm a download.
 // FilePath is the first file's path on the Stash side; StashDBID is
 // the cross-id we compare against the matcher's prediction.

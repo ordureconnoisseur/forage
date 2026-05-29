@@ -17,6 +17,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
 	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
 	"github.com/ordureconnoisseur/forager/internal/stash"
@@ -48,12 +49,43 @@ type Poller struct {
 	// indexes the file.
 	scanMu   sync.Mutex
 	lastScan map[int64]time.Time
+
+	// packScan records, per pack grab, how many scenes Stash has indexed
+	// under its directory and when that count last grew. A pack confirms
+	// only once the count stops climbing (scan settled), so a
+	// partially-scanned directory can't confirm + dedup prematurely.
+	// In-memory: lost on restart, which merely re-arms the settle window.
+	packMu   sync.Mutex
+	packScan map[int64]packScanState
+}
+
+// packScanState is the high-water count of indexed pack scenes and the
+// time it was last reached, used to detect when Stash's directory scan
+// has settled.
+type packScanState struct {
+	count int
+	since time.Time
 }
 
 // scanRetryInterval is the minimum gap between metadataScan retries
 // for a single stuck grab. Short enough to recover quickly, long
 // enough not to spam Stash every poll tick.
 const scanRetryInterval = 90 * time.Second
+
+// packScanStableWindow is how long a pack's indexed-scene count must hold
+// steady before we treat Stash's directory scan as finished. Above
+// scanRetryInterval so at least one scan/wait cycle passes with no new
+// scenes — this is what stops a pack confirming mid-scan (when only some
+// files are indexed) and the under-count dedup that would follow.
+const packScanStableWindow = 3 * scanRetryInterval
+
+// packIdentifyGrace bounds how long we keep retrying Identify on a pack
+// whose scan has settled but whose scenes aren't all cross-id'd. Pack
+// scenes legitimately may not be on StashDB (amateur content) or the
+// title may overstate the count, so past this much time since download
+// completion we confirm with whatever identified rather than waiting out
+// the full (hours-long) orphan window.
+const packIdentifyGrace = 20 * time.Minute
 
 func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
 	if interval <= 0 {
@@ -69,6 +101,7 @@ func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, or
 		interval: interval,
 		orphan:   orphanAfter,
 		lastScan: map[int64]time.Time{},
+		packScan: map[int64]packScanState{},
 	}
 }
 
@@ -323,7 +356,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 		if g.PlacedPath != "" {
 			// Prefer the placed-path basename — that's what Stash will
 			// have indexed if the library_root is in Stash's paths.
-			needle = baseName(g.PlacedPath)
+			needle = pathmap.Base(g.PlacedPath)
 		}
 		if needle != "" {
 			scene, err := stashC.FindSceneByPathContains(ctx, needle)
@@ -440,9 +473,9 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// corrupting both the count and the dedup decision. Translate to the
 	// Stash-side path so the substring is specific; fall back to the
 	// basename only when no path mapping is configured.
-	needle := translateStashPath(g.PlacedPath, p.pool.Settings().StashPathMapping)
+	needle := pathmap.Translate(g.PlacedPath, p.pool.Settings().StashPathMapping)
 	if needle == "" {
-		needle = baseName(g.PlacedPath)
+		needle = pathmap.Base(g.PlacedPath)
 	}
 	scenes, err := sc.FindScenesUnderPath(ctx, needle)
 	if err != nil {
@@ -463,25 +496,18 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		g.PackIdentified = identified
 		dirty = true
 	}
-	// Backfill the expected count from what Stash sees when we never got
-	// one at grab time (manual grab, magnet pack). Never lower a real
-	// expected — Stash may report fewer mid-scan.
-	if g.PackFiles == 0 && found > 0 {
-		g.PackFiles = found
-		dirty = true
-	}
-
 	// Nothing indexed yet — the post-placement scan can miss a large new
 	// directory. Re-fire it, throttled, until scenes appear.
 	if found == 0 {
-		if g.Status == "placed" && p.scanThrottleElapsed(g.ID) {
+		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) {
 			p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
 		}
 		return dirty, nil
 	}
 
-	// Stash has at least part of the pack — leave the queued/placed state.
-	if g.Status == "placed" {
+	// Stash has at least part of the pack — leave the pre-scan states
+	// (placed, completed-with-placement-disabled, or a recovered orphan).
+	if g.Status != "scanned" {
 		g.Status = "scanned"
 		dirty = true
 	}
@@ -496,55 +522,111 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		p.markScanAttempt(g.ID)
 	}
 
-	// Completion: everything found is identified and we've reached the
-	// expected count (when known); or the orphan window elapsed and we
-	// confirm with whatever's identified.
-	expected := g.PackFiles
-	allIdentified := len(toIdentify) == 0 && (expected == 0 || found >= expected)
-	gaveUp := g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan
-	if g.Status == "scanned" && (allIdentified || gaveUp) {
-		// Download-then-dedup: now that the pack's scenes are identified,
-		// reconcile any whose StashDB id the library already had outside
-		// this pack. Which copy survives is configurable
-		// (PackDedupKeep): keep the existing copy (default, removing the
-		// pack's), keep the pack copy (removing the existing), or keep
-		// both (no dedup). Best-effort — a failure still lets the pack
-		// confirm.
+	// Completion is gated on the scan having SETTLED — the indexed-scene
+	// count stopped climbing — NOT on hitting a guessed file total. A
+	// half-scanned directory must never confirm: it would dedup against an
+	// incomplete set and strand the rest. Once settled, confirm when either
+	// every indexed scene is identified, or Identify has had a fair chance
+	// (pack scenes legitimately may not be on StashDB, and title counts can
+	// overstate the real file count — neither should hold the pack at
+	// "scanned" for the full orphan window). A long orphan backstop covers
+	// a missing download timestamp.
+	settled := p.packScanSettled(g.ID, found)
+	downloadDone := g.CompletedAt > 0
+	var sinceDone time.Duration
+	if downloadDone {
+		sinceDone = time.Since(time.Unix(g.CompletedAt, 0))
+	}
+	identifyDone := len(toIdentify) == 0
+	ready := settled && (identifyDone || !downloadDone || sinceDone > packIdentifyGrace)
+	gaveUp := downloadDone && sinceDone > p.orphan
+	if g.Status == "scanned" && (ready || gaveUp) {
+		// Download-then-dedup: reconcile pack scenes whose StashDB id the
+		// library already had outside this pack. Which copy survives is
+		// configurable (PackDedupKeep): keep existing (default, removing
+		// the pack's), keep pack (removing the existing), or keep both (no
+		// dedup). Best-effort — a failure still lets the pack confirm.
 		keep := p.pool.Settings().PackDedupKeep
 		if keep != "both" {
-			if deduped, err := p.dedupPack(ctx, sc, g, scenes, needle, keep); err != nil {
+			endpoint, _ := p.identifyEndpoint(ctx, sc)
+			if deduped, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep); err != nil {
 				p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
 			} else if deduped > 0 {
 				g.PackDeduped += deduped
 			}
 		}
+		// Record the final scene total for the UI when we never had a real
+		// count (manual/magnet packs). The scan has settled, so this is the
+		// true total — not the mid-scan partial the old grab-time backfill
+		// could pin.
+		if g.PackFiles == 0 {
+			g.PackFiles = found
+		}
 		g.Status = "confirmed"
 		g.ConfirmedAt = time.Now().Unix()
 		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified, %d dup removed", identified, found, g.PackDeduped)
 		dirty = true
-		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "expected", expected, "deduped", g.PackDeduped)
+		p.forgetPackScan(g.ID)
+		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "deduped", g.PackDeduped)
 	}
 	return dirty, nil
 }
 
-// dedupPack reconciles pack scenes against copies the library already
-// had outside the pack. For each identified pack scene it finds copies
-// of the same StashDB id whose path is outside the pack directory; when
-// any exist, `keep` decides which side survives:
+// dedupPack reconciles pack scenes against copies the library already had
+// outside the pack. For each identified pack scene it finds other scenes
+// carrying the same StashDB cross-id; when any exist, `keep` decides which
+// side survives:
 //
 //   - "existing" (default): destroy the pack's copy, keep the original.
 //   - "pack": destroy the existing copies, keep the pack's.
 //
-// A single library sweep backs the whole pass. Destroyed scenes are
-// tracked so a scene shared by several pack files isn't destroyed twice.
-// Destroy removes the Stash scene + its file; the torrent keeps seeding
-// from the download client's own (separate) hardlink. Returns the count
-// removed.
-func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, packNeedle, keep string) (int, error) {
-	libByID, err := sc.FindAllSceneStashDBIDs(ctx)
-	if err != nil {
-		return 0, err
+// Pack membership is the SET of scene ids Stash indexed under the pack
+// directory (packScenes) — NOT a path-substring test. The old
+// strings.Contains(path, needle) test over-matched any sibling directory
+// sharing the pack's basename (common when no path mapping is configured,
+// e.g. a "comatozze" pack vs the performer's existing "comatozze" folder),
+// silently mis-classifying copies and, with keep="pack", risking a wrong
+// SceneDestroy(deleteFile=true). A scene is an "external" copy iff it
+// carries a pack scene's cross-id but is NOT itself in the pack set.
+//
+// Copies are located per-cross-id via FindSceneRefsByStashID (cheap
+// regardless of library size); when no stash-box endpoint is available to
+// query by, a one-shot whole-library sweep backs it instead. Destroyed
+// scenes are tracked so a cross-id shared by several pack files isn't
+// destroyed twice. Destroy removes the Stash scene + its file; the torrent
+// keeps seeding from the download client's own (separate) hardlink.
+// Returns the count removed.
+func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, endpoint, keep string) (int, error) {
+	packIDs := make(map[string]bool, len(packScenes))
+	for _, ps := range packScenes {
+		packIDs[ps.ID] = true
 	}
+
+	// Whole-library fallback only when we have no endpoint to query by.
+	var sweep map[string][]stash.SceneRef
+	if endpoint == "" {
+		var err error
+		if sweep, err = sc.FindAllSceneStashDBIDs(ctx); err != nil {
+			return 0, err
+		}
+	}
+	cache := map[string][]stash.SceneRef{}
+	copiesOf := func(stashID string) []stash.SceneRef {
+		if sweep != nil {
+			return sweep[stashID]
+		}
+		if refs, ok := cache[stashID]; ok {
+			return refs
+		}
+		refs, err := sc.FindSceneRefsByStashID(ctx, endpoint, stashID)
+		if err != nil {
+			p.log.Warn("pack dedup lookup", "id", g.ID, "stashdb", stashID, "err", err)
+			refs = nil
+		}
+		cache[stashID] = refs
+		return refs
+	}
+
 	deduped := 0
 	destroyed := map[string]bool{}
 	destroy := func(sceneID string) {
@@ -564,8 +646,8 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 			continue
 		}
 		var externalIDs []string
-		for _, ref := range libByID[ps.StashDBID] {
-			if !strings.Contains(ref.Path, packNeedle) {
+		for _, ref := range copiesOf(ps.StashDBID) {
+			if !packIDs[ref.SceneID] {
 				externalIDs = append(externalIDs, ref.SceneID)
 			}
 		}
@@ -581,6 +663,29 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		}
 	}
 	return deduped, nil
+}
+
+// packScanSettled reports whether Stash has stopped indexing new scenes
+// under a pack's directory — i.e. the count `found` has held steady for
+// packScanStableWindow. A still-growing count means the scan is in
+// progress, so the pack isn't ready to confirm/dedup. Updates the
+// high-water record as a side effect.
+func (p *Poller) packScanSettled(grabID int64, found int) bool {
+	p.packMu.Lock()
+	defer p.packMu.Unlock()
+	st, ok := p.packScan[grabID]
+	if !ok || found > st.count {
+		p.packScan[grabID] = packScanState{count: found, since: time.Now()}
+		return false
+	}
+	return time.Since(st.since) >= packScanStableWindow
+}
+
+// forgetPackScan drops the in-memory scan record once a pack confirms.
+func (p *Poller) forgetPackScan(grabID int64) {
+	p.packMu.Lock()
+	delete(p.packScan, grabID)
+	p.packMu.Unlock()
 }
 
 // triggerIdentifyBatch fires Stash's Identify task over a set of scene
@@ -703,7 +808,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		// that's what Stash will see during a scan.
 		name := item.Name
 		if item.Path != "" {
-			name = baseName(item.Path)
+			name = pathmap.Base(item.Path)
 		}
 		if name != "" && name != g.ClientName {
 			g.ClientName = name
@@ -774,56 +879,6 @@ func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {
 	return nil
 }
 
-func baseName(path string) string {
-	for i := len(path) - 1; i >= 0; i-- {
-		if path[i] == '/' || path[i] == '\\' {
-			return path[i+1:]
-		}
-	}
-	return path
-}
-
-// translateStashPath rewrites a forager-side filesystem path into the
-// path Stash uses for the same file, so a scoped metadataScan call
-// hits actual files. Mapping is "<forager-prefix>:<stash-prefix>";
-// e.g. "/data/media/Media:Z:\\Media" turns
-// "/data/media/Media/Hazel Moore/scene.mp4" into
-// "Z:\\Media\\Hazel Moore\\scene.mp4".
-//
-// Returns empty when:
-//   - mapping is unset (caller falls back to full-library scan)
-//   - the prefix doesn't match (path is outside the configured mount)
-//
-// Path separators are normalised — forager's container view uses '/',
-// Stash on Windows uses '\'. We detect Windows-style targets and flip
-// any '/' characters after the prefix to '\'.
-func translateStashPath(foragerPath, mapping string) string {
-	if mapping == "" || foragerPath == "" {
-		return ""
-	}
-	idx := strings.Index(mapping, ":")
-	// Find the LAST colon-pair boundary — Windows targets contain
-	// embedded colons (Z:\Media). We look for the first ":" only when
-	// it's followed by something that doesn't look like a drive letter.
-	// Practically: split on the first colon, accept any prefix on the
-	// left, and treat the rest as the stash-side target verbatim.
-	if idx <= 0 || idx == len(mapping)-1 {
-		return ""
-	}
-	foragerPrefix := mapping[:idx]
-	stashPrefix := mapping[idx+1:]
-	if !strings.HasPrefix(foragerPath, foragerPrefix) {
-		return ""
-	}
-	suffix := foragerPath[len(foragerPrefix):]
-	if strings.ContainsRune(stashPrefix, '\\') {
-		// Windows-style target — flip forward slashes in the suffix
-		// to backslashes so the joined path is well-formed.
-		suffix = strings.ReplaceAll(suffix, "/", `\`)
-	}
-	return stashPrefix + suffix
-}
-
 // triggerPlacementScan asks Stash to scan the directory the placed
 // file lives in, so the placed → confirmed transition takes minutes
 // rather than waiting on Stash's scheduled scan. Records the attempt
@@ -834,7 +889,7 @@ func translateStashPath(foragerPath, mapping string) string {
 // Stash does a full-library scan (slow but always correct since it
 // skips unchanged files).
 func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, grabID int64, placedPath string) {
-	stashSidePath := translateStashPath(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
+	stashSidePath := pathmap.Translate(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
 	var scanPaths []string
 	if stashSidePath != "" {
 		scanPaths = []string{stashSidePath}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 )
 
 // grabDetailResponse enriches a single grab with the StashDB scene it
@@ -141,11 +143,40 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 		out.Errors = append(out.Errors, label+": "+err.Error())
 	}
 
-	// 1. Stash scene (+ file + generated). Resolve the local scene id
-	// from the placed file's basename.
-	stashSceneDestroyed := false
+	// 1. Stash scene(s) + media file(s). A single grab placed one file →
+	// one scene (matched by basename); a pack placed a directory of many
+	// scenes, so enumerate the whole directory. SceneDestroy(delete_file)
+	// unlinks the library-side file(s).
+	stashHandled := false
 	if g.PlacedPath != "" {
-		if sc := s.pool.Stash(); sc != nil {
+		sc := s.pool.Stash()
+		switch {
+		case g.Kind == "pack" && sc != nil:
+			// Resolve the Stash-side directory and destroy every scene
+			// under it. Without a path mapping we can't match Stash scenes
+			// by path safely (a bare basename over-matches unrelated
+			// scenes), so we skip the Stash destroys and let the disk sweep
+			// below remove the files — Stash drops the now-missing scenes
+			// on its next scan.
+			if needle := pathmap.Translate(g.PlacedPath, s.pool.Settings().StashPathMapping); needle != "" {
+				if scenes, ferr := sc.FindScenesUnderPath(r.Context(), needle); ferr != nil {
+					addErr("find pack scenes", ferr)
+				} else {
+					n := 0
+					for _, sm := range scenes {
+						if derr := sc.SceneDestroy(r.Context(), sm.ID, true, true); derr != nil {
+							addErr("stash scene "+sm.ID, derr)
+							continue
+						}
+						n++
+					}
+					if n > 0 {
+						out.Removed = append(out.Removed, fmt.Sprintf("%d pack scenes + files", n))
+					}
+					stashHandled = true
+				}
+			}
+		case sc != nil:
 			scene, ferr := sc.FindSceneByPathContains(r.Context(), filepath.Base(g.PlacedPath))
 			if ferr != nil {
 				addErr("find stash scene", ferr)
@@ -153,17 +184,22 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 				if derr := sc.SceneDestroy(r.Context(), scene.ID, true, true); derr != nil {
 					addErr("stash scene", derr)
 				} else {
-					stashSceneDestroyed = true
+					stashHandled = true
 					out.Removed = append(out.Removed, "stash scene + file")
 				}
 			}
 		}
 	}
 
-	// 2. Fallback: file on disk with no Stash scene to delete it for us.
-	if !stashSceneDestroyed && g.PlacedPath != "" {
+	// 2. Remove leftovers on disk. A single grab reaches here only when no
+	// Stash scene deleted the file for us; a pack ALWAYS sweeps its placed
+	// directory — it may hold files Stash never indexed, plus (with no path
+	// mapping) the scenes we couldn't match above.
+	if g.PlacedPath != "" && (g.Kind == "pack" || !stashHandled) {
 		if rerr := os.RemoveAll(g.PlacedPath); rerr != nil {
 			addErr("placed file", rerr)
+		} else if g.Kind == "pack" {
+			out.Removed = append(out.Removed, "pack directory")
 		} else {
 			out.Removed = append(out.Removed, "placed file")
 		}
