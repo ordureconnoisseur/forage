@@ -111,6 +111,26 @@ func migrateGrabsColumns(db *sql.DB) error {
 		}
 	}
 
+	// 2026-05-29 pack migration: performer-pack grabs (one release →
+	// many scenes) track a kind discriminator + progress counters.
+	packCols := []struct{ col, decl string }{
+		{"kind", `ALTER TABLE grabs ADD COLUMN kind TEXT NOT NULL DEFAULT 'single'`},
+		{"pack_files", `ALTER TABLE grabs ADD COLUMN pack_files INTEGER NOT NULL DEFAULT 0`},
+		{"pack_identified", `ALTER TABLE grabs ADD COLUMN pack_identified INTEGER NOT NULL DEFAULT 0`},
+		{"pack_deduped", `ALTER TABLE grabs ADD COLUMN pack_deduped INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range packCols {
+		exists, err := has(c.col)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := db.Exec(c.decl); err != nil {
+				return fmt.Errorf("add %s column: %w", c.col, err)
+			}
+		}
+	}
+
 	// 2026-05-26 discover migration: per-performer aggregates that
 	// power /performers sort=last_release|missing_count. The new
 	// recent_scene_cache table is created by schema.sql itself

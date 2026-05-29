@@ -8,6 +8,7 @@ package poller
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -306,7 +307,18 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 	// scheduled task) later scans the file in.
 	confirmable := g.Status == "placed" || g.Status == "scanned" || g.Status == "orphaned" || (g.Status == "completed" && !pl.Configured())
 	stashC := p.pool.Stash()
-	if confirmable && g.ActualStashDBID == "" && stashC != nil {
+	if g.Kind == "pack" {
+		// Pack grabs have their own confirm path — enumerate every placed
+		// file's scene, drive identify across all of them, dedup, then
+		// confirm. Distinct from the single-scene match below.
+		if confirmable && stashC != nil {
+			d, err := p.advancePackConfirm(ctx, g, stashC)
+			if err != nil {
+				return err
+			}
+			dirty = dirty || d
+		}
+	} else if confirmable && g.ActualStashDBID == "" && stashC != nil {
 		needle := g.ClientName
 		if g.PlacedPath != "" {
 			// Prefer the placed-path basename — that's what Stash will
@@ -381,6 +393,113 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 		return p.repo.Update(ctx, *g)
 	}
 	return nil
+}
+
+// advancePackConfirm drives a pack grab from placed → confirmed. Unlike
+// a single grab (one file → one scene), a pack is a directory of many
+// of a performer's scenes, so confirmation means: enumerate every scene
+// Stash has indexed under the placed pack dir, drive Identify across the
+// ones still missing a StashDB cross-id, and confirm once they're all
+// identified (or the orphan window elapses — some files may simply not
+// be on StashDB). Dedup against the existing library happens here too
+// (added in the dedup phase).
+//
+// Throttling reuses the per-grab scan throttle: each tick fires at most
+// one Stash-side task (a directory rescan while nothing's indexed yet,
+// then a batched identify once scenes appear).
+func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stash.Client) (bool, error) {
+	if g.PlacedPath == "" {
+		return false, nil
+	}
+	scenes, err := sc.FindScenesUnderPath(ctx, baseName(g.PlacedPath))
+	if err != nil {
+		return false, err
+	}
+	dirty := false
+	found := len(scenes)
+	identified := 0
+	var toIdentify []string
+	for _, s := range scenes {
+		if s.StashDBID != "" {
+			identified++
+		} else {
+			toIdentify = append(toIdentify, s.ID)
+		}
+	}
+	if g.PackIdentified != identified {
+		g.PackIdentified = identified
+		dirty = true
+	}
+	// Backfill the expected count from what Stash sees when we never got
+	// one at grab time (manual grab, magnet pack). Never lower a real
+	// expected — Stash may report fewer mid-scan.
+	if g.PackFiles == 0 && found > 0 {
+		g.PackFiles = found
+		dirty = true
+	}
+
+	// Nothing indexed yet — the post-placement scan can miss a large new
+	// directory. Re-fire it, throttled, until scenes appear.
+	if found == 0 {
+		if g.Status == "placed" && p.scanThrottleElapsed(g.ID) {
+			p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
+		}
+		return dirty, nil
+	}
+
+	// Stash has at least part of the pack — leave the queued/placed state.
+	if g.Status == "placed" {
+		g.Status = "scanned"
+		dirty = true
+	}
+
+	// Drive identify across everything still missing a cross-id.
+	if len(toIdentify) > 0 && p.scanThrottleElapsed(g.ID) {
+		if jobID, err := p.triggerIdentifyBatch(ctx, sc, toIdentify); err != nil {
+			p.log.Warn("pack identify trigger failed", "id", g.ID, "scenes", len(toIdentify), "err", err)
+		} else if jobID != "" {
+			p.log.Info("pack identify triggered", "id", g.ID, "scenes", len(toIdentify), "job_id", jobID)
+		}
+		p.markScanAttempt(g.ID)
+	}
+
+	// Completion: everything found is identified and we've reached the
+	// expected count (when known); or the orphan window elapsed and we
+	// confirm with whatever's identified.
+	expected := g.PackFiles
+	allIdentified := len(toIdentify) == 0 && (expected == 0 || found >= expected)
+	gaveUp := g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan
+	if g.Status == "scanned" && (allIdentified || gaveUp) {
+		g.Status = "confirmed"
+		g.ConfirmedAt = time.Now().Unix()
+		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified", identified, found)
+		dirty = true
+		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "expected", expected)
+	}
+	return dirty, nil
+}
+
+// triggerIdentifyBatch fires Stash's Identify task over a set of scene
+// IDs at once, sourcing from the user's StashDB stash-box. Returns
+// ("", nil) when no stash-box is configured (caller logs + moves on).
+func (p *Poller) triggerIdentifyBatch(ctx context.Context, sc *stash.Client, sceneIDs []string) (string, error) {
+	endpoint, err := p.identifyEndpoint(ctx, sc)
+	if err != nil {
+		return "", err
+	}
+	if endpoint == "" {
+		return "", nil
+	}
+	return sc.MetadataIdentify(ctx, sceneIDs, endpoint)
+}
+
+// markScanAttempt records a throttle timestamp for the grab so the next
+// scan/identify retry waits scanRetryInterval. triggerPlacementScan
+// records its own; this is for the identify path which doesn't.
+func (p *Poller) markScanAttempt(grabID int64) {
+	p.scanMu.Lock()
+	p.lastScan[grabID] = time.Now()
+	p.scanMu.Unlock()
 }
 
 // advanceQbit handles the qBit-specific enrichment + state-refresh

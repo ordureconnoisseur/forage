@@ -45,6 +45,12 @@ type grabOut struct {
 	PlacedAt            int64         `json:"placed_at,omitempty"`
 	ConfirmedAt         int64         `json:"confirmed_at,omitempty"`
 	Progress            *grabProgress `json:"progress,omitempty"`
+	// Pack fields — kind is "pack" for performer-pack grabs, with the
+	// progress counters; "single" / omitted otherwise.
+	Kind           string `json:"kind,omitempty"`
+	PackFiles      int    `json:"pack_files,omitempty"`
+	PackIdentified int    `json:"pack_identified,omitempty"`
+	PackDeduped    int    `json:"pack_deduped,omitempty"`
 }
 
 type grabsResponse struct {
@@ -102,6 +108,10 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			CompletedAt:         g.CompletedAt,
 			PlacedAt:            g.PlacedAt,
 			ConfirmedAt:         g.ConfirmedAt,
+			Kind:                g.Kind,
+			PackFiles:           g.PackFiles,
+			PackIdentified:      g.PackIdentified,
+			PackDeduped:         g.PackDeduped,
 		})
 	}
 	s.enrichProgress(r, out)

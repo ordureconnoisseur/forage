@@ -46,6 +46,19 @@ type Grab struct {
 	CompletedAt int64
 	PlacedAt    int64
 	ConfirmedAt int64
+	// Kind is "single" (the default — one release → one scene) or "pack"
+	// (one release → many of a performer's scenes). Pack grabs follow a
+	// distinct confirm path in the poller: enumerate every placed file's
+	// scene, drive identify across all of them, then dedup against the
+	// existing library.
+	Kind string
+	// Pack progress counters (0 for single grabs):
+	//   PackFiles      expected video count (from the parsed .torrent at grab time)
+	//   PackIdentified scenes Stash has cross-id'd to StashDB so far
+	//   PackDeduped    scenes removed because the library already had them
+	PackFiles      int
+	PackIdentified int
+	PackDeduped    int
 }
 
 // Repo is the persistence boundary. One per *sql.DB.
@@ -71,6 +84,9 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 	if g.GrabbedAt == 0 {
 		g.GrabbedAt = now
 	}
+	if g.Kind == "" {
+		g.Kind = "single"
+	}
 	res, err := r.db.ExecContext(ctx, `
 		INSERT INTO grabs (
 		  predicted_stashdb_id, predicted_confidence, release_title,
@@ -78,8 +94,9 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		  client, client_id, client_name, category, status,
 		  actual_stashdb_id, reason,
 		  performer_name, placed_path, place_error,
-		  grabbed_at, updated_at, completed_at, placed_at, confirmed_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
+		  kind, pack_files, pack_identified, pack_deduped
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullString(g.PredictedStashDBID), nullFloat(g.PredictedConfidence), g.ReleaseTitle,
 		nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer), nullString(g.DownloadURL),
 		g.Client, nullString(g.ClientID), nullString(g.ClientName),
@@ -88,6 +105,7 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
 		g.GrabbedAt, now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
+		g.Kind, g.PackFiles, g.PackIdentified, g.PackDeduped,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("grabs insert: %w", err)
@@ -108,13 +126,15 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  updated_at = ?,
 		  completed_at = COALESCE(?, completed_at),
 		  placed_at = COALESCE(?, placed_at),
-		  confirmed_at = COALESCE(?, confirmed_at)
+		  confirmed_at = COALESCE(?, confirmed_at),
+		  pack_files = ?, pack_identified = ?, pack_deduped = ?
 		WHERE id = ?`,
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
 		now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
+		g.PackFiles, g.PackIdentified, g.PackDeduped,
 		g.ID,
 	)
 	if err != nil {
@@ -217,7 +237,8 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		release_size, release_indexer, download_url,
 		client, client_id, client_name, category, status, actual_stashdb_id,
 		reason, performer_name, placed_path, place_error,
-		grabbed_at, updated_at, completed_at, placed_at, confirmed_at`
+		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
+		kind, pack_files, pack_identified, pack_deduped`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -243,15 +264,21 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		performerName, placedPath, placeError                                                       sql.NullString
 		predictedConfidence                                                                         sql.NullFloat64
 		releaseSize, completedAt, placedAt, confirmedAt                                             sql.NullInt64
+		kind                                                                                        sql.NullString
 	)
 	err := rows.Scan(&g.ID,
 		&predictedID, &predictedConfidence, &g.ReleaseTitle,
 		&releaseSize, &releaseIndexer, &downloadURL,
 		&g.Client, &clientID, &clientName, &category, &g.Status, &actualID,
 		&reason, &performerName, &placedPath, &placeError,
-		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt)
+		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
+		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped)
 	if err != nil {
 		return g, err
+	}
+	g.Kind = kind.String
+	if g.Kind == "" {
+		g.Kind = "single"
 	}
 	g.PredictedStashDBID = predictedID.String
 	g.PredictedConfidence = predictedConfidence.Float64

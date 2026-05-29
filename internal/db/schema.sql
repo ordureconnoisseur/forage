@@ -81,7 +81,14 @@ CREATE TABLE IF NOT EXISTS grabs (
   updated_at            INTEGER NOT NULL,
   completed_at          INTEGER,
   placed_at             INTEGER,
-  confirmed_at          INTEGER
+  confirmed_at          INTEGER,
+  -- 'single' (one release → one scene) or 'pack' (one release → many
+  -- of a performer's scenes; distinct confirm/dedup path in the poller).
+  kind                  TEXT NOT NULL DEFAULT 'single',
+  -- pack progress counters (0 for single grabs)
+  pack_files            INTEGER NOT NULL DEFAULT 0,
+  pack_identified       INTEGER NOT NULL DEFAULT 0,
+  pack_deduped          INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_grabs_status     ON grabs(status);
 CREATE INDEX IF NOT EXISTS idx_grabs_client_id  ON grabs(client_id);

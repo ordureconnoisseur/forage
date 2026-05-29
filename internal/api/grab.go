@@ -22,6 +22,12 @@ type grabRequest struct {
 	// performer page the user grabbed from. Optional — if missing the
 	// placer falls back to "Unsorted" so files don't get stranded.
 	PerformerName string `json:"performer_name"`
+	// Kind is "pack" for a performer pack grab (one torrent → many
+	// scenes), empty/"single" otherwise. VideoCount is the parsed video
+	// count from the pack's .torrent, recorded as the expected total the
+	// pack confirm path drives identify toward.
+	Kind       string `json:"kind"`
+	VideoCount int    `json:"video_count"`
 }
 
 type grabResponse struct {
@@ -101,6 +107,10 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 
 	var grabID int64
 	if s.grabs != nil {
+		kind := req.Kind
+		if kind == "" {
+			kind = "single"
+		}
 		id, err := s.grabs.Insert(r.Context(), grabs.Grab{
 			PredictedStashDBID:  req.SceneID,
 			PredictedConfidence: req.Confidence,
@@ -114,6 +124,8 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 			Status:              "queued",
 			PerformerName:       req.PerformerName,
 			GrabbedAt:           time.Now().Unix(),
+			Kind:                kind,
+			PackFiles:           req.VideoCount,
 		})
 		if err != nil {
 			s.log.Error("grabs insert", "err", err)

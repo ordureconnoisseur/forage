@@ -528,6 +528,74 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 	return out, nil
 }
 
+// findScenesUnderPathQuery is the paginated, return-all variant of
+// findScenesByPathQuery — used by the pack confirm path to enumerate
+// every scene Stash has indexed under a placed pack directory.
+const findScenesUnderPathQuery = `
+query ForagerFindScenesUnderPath($value: String!, $page: Int!, $perPage: Int!) {
+  findScenes(
+    scene_filter: { path: { value: $value, modifier: MATCHES_REGEX } }
+    filter: { page: $page, per_page: $perPage, sort: "path", direction: ASC }
+  ) {
+    count
+    scenes {
+      id
+      title
+      date
+      stash_ids { endpoint stash_id }
+      files { path }
+    }
+  }
+}`
+
+// FindScenesUnderPath returns every scene whose any-file path contains
+// the needle substring (escaped as a literal). Unlike
+// FindSceneByPathContains it paginates and returns the full set — the
+// pack confirm path uses it to count how many of a pack's files Stash
+// has scanned + identified, and (in dedup) to compare each against the
+// existing library.
+func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]SceneMatch, error) {
+	if needle == "" {
+		return nil, nil
+	}
+	pattern := regexp.QuoteMeta(needle)
+	const perPage = 1000
+	var out []SceneMatch
+	for page := 1; ; page++ {
+		var resp struct {
+			FindScenes struct {
+				Scenes []struct {
+					ID       string    `json:"id"`
+					Title    string    `json:"title"`
+					Date     string    `json:"date"`
+					StashIDs []StashID `json:"stash_ids"`
+					Files    []struct {
+						Path string `json:"path"`
+					} `json:"files"`
+				} `json:"scenes"`
+			} `json:"findScenes"`
+		}
+		vars := map[string]any{"value": pattern, "page": page, "perPage": perPage}
+		if err := c.do(ctx, findScenesUnderPathQuery, vars, &resp); err != nil {
+			return nil, fmt.Errorf("findScenes under path (page %d): %w", page, err)
+		}
+		if len(resp.FindScenes.Scenes) == 0 {
+			break
+		}
+		for _, s := range resp.FindScenes.Scenes {
+			m := SceneMatch{ID: s.ID, Title: s.Title, Date: s.Date, StashDBID: PickStashDBID(s.StashIDs)}
+			if len(s.Files) > 0 {
+				m.FilePath = s.Files[0].Path
+			}
+			out = append(out, m)
+		}
+		if len(resp.FindScenes.Scenes) < perPage {
+			break
+		}
+	}
+	return out, nil
+}
+
 // MetadataScan asks Stash to scan + generate phashes for new files.
 // Used by the poller right after a successful placement: shortens
 // the placed → confirmed transition from "whenever Stash's scheduled
