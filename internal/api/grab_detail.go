@@ -26,6 +26,12 @@ type grabDetailResponse struct {
 	Performers    []missingPerformer `json:"performers"`
 	LocalSceneID  string             `json:"local_scene_id,omitempty"`
 	StashSceneURL string             `json:"stash_scene_url,omitempty"`
+	// PerformerImageURL is the grab performer's portrait, served by the
+	// user's own Stash (/performer/{id}/image). Forage is performer-driven
+	// and a pack has no single scene, so the expanded card leads with the
+	// performer's face rather than an empty scene poster. Best-effort:
+	// resolved from performer_cache by the grab's folder name.
+	PerformerImageURL string `json:"performer_image_url,omitempty"`
 }
 
 // getGrabDetail powers the expanded grab card.
@@ -92,6 +98,24 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 				if cfg.StashURL != "" {
 					resp.StashSceneURL = strings.TrimRight(cfg.StashURL, "/") + "/scenes/" + scene.ID
 				}
+			}
+		}
+	}
+
+	// Performer portrait, from the user's own Stash. The grab's folder
+	// name is the performer's display name (from the suggest step or the
+	// matched release), so we map it back to a local stash_id and build
+	// the image URL Stash already serves. Loads with the user's Stash
+	// session since the plugin renders inside Stash.
+	if g.PerformerName != "" {
+		var stashID string
+		err := s.db.QueryRowContext(r.Context(),
+			`SELECT stash_id FROM performer_cache WHERE name = ? COLLATE NOCASE AND stash_id != '' LIMIT 1`,
+			g.PerformerName).Scan(&stashID)
+		if err == nil && stashID != "" {
+			cfg, _ := config.Compose(s.bootstrap, s.store.Get())
+			if cfg.StashURL != "" {
+				resp.PerformerImageURL = strings.TrimRight(cfg.StashURL, "/") + "/performer/" + stashID + "/image"
 			}
 		}
 	}

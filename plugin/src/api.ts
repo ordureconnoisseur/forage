@@ -480,6 +480,7 @@ export interface GrabDetail {
   date?: string;
   studio?: string;
   image_url?: string;
+  performer_image_url?: string;
   performers: { name: string; as?: string }[];
   local_scene_id?: string;
   stash_scene_url?: string;

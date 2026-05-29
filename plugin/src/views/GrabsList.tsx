@@ -635,6 +635,35 @@ function MatchBlock({ g }: { g: Grab }) {
   );
 }
 
+// initials reduces a performer name to a 1–2 letter monogram for the
+// poster fallback when no portrait is available ("Brie Belle" → "BB").
+function initials(name?: string): string {
+  const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+// Stacked-layers glyph marking a multi-scene pack grab.
+function PackGlyph() {
+  return (
+    <svg
+      className="grab-pack-glyph"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M12 2 2 7l10 5 10-5-10-5Z" />
+      <path d="m2 17 10 5 10-5" />
+      <path d="m2 12 10 5 10-5" />
+    </svg>
+  );
+}
+
 function GrabRow({
   g,
   expanded,
@@ -656,6 +685,7 @@ function GrabRow({
   const [matchVal, setMatchVal] = useState("");
   const [matchBusy, setMatchBusy] = useState(false);
   const [matchErr, setMatchErr] = useState<string | null>(null);
+  const [posterFailed, setPosterFailed] = useState(false);
   const confirmTimer = useRef<number | undefined>(undefined);
   const fetchedDetail = useRef(false);
 
@@ -730,7 +760,12 @@ function GrabRow({
       <button className="grab-row-head" onClick={onToggle}>
         <div className="grab-row-badges">
           <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
-          {g.kind === "pack" && <span className="grab-pack-badge">PACK</span>}
+          {g.kind === "pack" && (
+            <span className="grab-pack-badge" title="Multi-scene pack">
+              <PackGlyph />
+              PACK
+            </span>
+          )}
         </div>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>
@@ -771,26 +806,33 @@ function GrabRow({
           {/* Dossier: left aside (poster · progress · actions) +
               identity/pipeline main column. */}
           <div className="grab-dossier">
-            <div className="grab-poster">
-              {detail?.image_url ? (
-                <img
-                  src={detail.image_url}
-                  alt=""
-                  loading="lazy"
-                  onError={(e) => {
-                    (e.currentTarget as HTMLImageElement).style.visibility =
-                      "hidden";
-                  }}
-                />
-              ) : (
-                <div className="grab-poster-empty">
-                  {detailLoading ? "" : "no preview"}
+            {(() => {
+              const heroSrc = posterFailed
+                ? ""
+                : detail?.performer_image_url || detail?.image_url || "";
+              return (
+                <div className={"grab-poster" + (heroSrc ? "" : " is-mono")}>
+                  {heroSrc ? (
+                    <img
+                      src={heroSrc}
+                      alt={g.performer_name || ""}
+                      loading="lazy"
+                      onError={() => setPosterFailed(true)}
+                    />
+                  ) : (
+                    <span className="grab-poster-initials" aria-hidden="true">
+                      {detailLoading ? "" : initials(g.performer_name)}
+                    </span>
+                  )}
+                  <span className={"grab-poster-badge chip-" + g.status}>
+                    {g.status}
+                  </span>
+                  {g.performer_name && (
+                    <span className="grab-poster-name">{g.performer_name}</span>
+                  )}
                 </div>
-              )}
-              <span className={"grab-poster-badge chip-" + g.status}>
-                {g.status}
-              </span>
-            </div>
+              );
+            })()}
 
             <div className="grab-dossier-main">
               <h3 className="grab-ident-title">
