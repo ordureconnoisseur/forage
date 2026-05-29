@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
@@ -26,12 +27,22 @@ const (
 	// sub-GB single-scene results a performer search returns.
 	packParseSizeMin = int64(2) << 30
 	// packParseMax caps how many candidate .torrents we fetch per
-	// search; packParseWorkers bounds the concurrency of those fetches.
-	packParseMax     = 24
-	packParseWorkers = 6
+	// search; packParseWorkers bounds the concurrency; packFetchTimeout
+	// caps each individual fetch so one slow tracker can't stall the
+	// whole confirm phase.
+	packParseMax     = 16
+	packParseWorkers = 10
+	packFetchTimeout = 15 * time.Second
+	// packIndexerTimeout caps each per-indexer search in the fan-out, so
+	// one slow indexer (e.g. a FlareSolverr-backed tracker mid-Cloudflare
+	// -challenge) gets dropped instead of stalling the whole pack search.
+	packIndexerTimeout = 12 * time.Second
 	// xxxPackCategory is Newznab's XXX/Pack — PornoLab tags collection
 	// torrents with it, a strong pre-fetch pack signal.
 	xxxPackCategory = 6050
+	// xxxParentCategory is the Newznab XXX parent; Prowlarr expands it
+	// to every XXX subcategory on search.
+	xxxParentCategory = 6000
 )
 
 // packKeywordRe matches pack-ish title cues across the languages
@@ -91,16 +102,12 @@ func (s *Server) getPerformerPacks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cats := packSearchCategories(s.pool.Settings().ProwlarrCategories)
-	releases, err := prowlarrC.Search(r.Context(), name, cats)
-	if err != nil {
-		s.log.Error("pack search", "err", err, "performer", name)
-		writeErr(w, http.StatusBadGateway, "prowlarr: "+err.Error())
-		return
-	}
+	releases := s.searchPackIndexers(r.Context(), prowlarrC, name)
 
 	packs := s.classifyPacks(r.Context(), prowlarrC, releases)
-	sort.SliceStable(packs, func(i, j int) bool { return packs[i].Popularity > packs[j].Popularity })
+	// Biggest first — performer megapacks are what the user is after; a
+	// huge pack with few seeders shouldn't sink below a small one.
+	sort.SliceStable(packs, func(i, j int) bool { return packs[i].Size > packs[j].Size })
 
 	resp := packsResponse{Packs: packs}
 	resp.Performer.StashID = id
@@ -138,7 +145,9 @@ func (s *Server) classifyPacks(ctx context.Context, pc *prowlarr.Client, release
 		go func() {
 			defer wg.Done()
 			for i := range jobs {
-				raw, err := pc.FetchTorrent(ctx, cands[i].rel.DownloadURL)
+				fctx, cancel := context.WithTimeout(ctx, packFetchTimeout)
+				raw, err := pc.FetchTorrent(fctx, cands[i].rel.DownloadURL)
+				cancel()
 				if err != nil {
 					s.log.Debug("pack torrent fetch", "title", cands[i].rel.Title, "err", err)
 					continue
@@ -200,15 +209,52 @@ func (s *Server) classifyPacks(ctx context.Context, pc *prowlarr.Client, release
 	return out
 }
 
-// packSearchCategories unions the configured XXX categories with the
-// XXX/Pack category so collection torrents tagged 6050 aren't missed
-// when a user's config omits the parent 6000.
-func packSearchCategories(configured []int) []int {
-	cats := append([]int(nil), configured...)
-	if !containsInt(cats, xxxPackCategory) {
-		cats = append(cats, xxxPackCategory)
+// searchPackIndexers runs the performer-name search across every
+// enabled indexer in parallel, each with its own timeout, and merges
+// the results. This is the fix for one slow indexer (e.g. 1337x via
+// FlareSolverr at ~57s) dragging the whole search past forage's client
+// timeout and failing it: a laggard simply gets dropped while the fast
+// ones (PornoLab et al., sub-second) return. Searches the XXX parent
+// category, which Prowlarr expands to every XXX subcategory (covering
+// XXX/Pack 6050 and XXX/Other 6070 alike). Best-effort — returns
+// whatever came back.
+func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, term string) []prowlarr.Release {
+	cats := []int{xxxParentCategory}
+	indexers, err := pc.Indexers(ctx)
+	if err != nil || len(indexers) == 0 {
+		// Couldn't enumerate indexers — fall back to one aggregate search.
+		rel, err := pc.Search(ctx, term, cats)
+		if err != nil {
+			s.log.Warn("pack aggregate search", "err", err)
+		}
+		return rel
 	}
-	return cats
+	var (
+		mu  sync.Mutex
+		all []prowlarr.Release
+		wg  sync.WaitGroup
+	)
+	for _, ix := range indexers {
+		if !ix.Enable {
+			continue
+		}
+		wg.Add(1)
+		go func(id int, name string) {
+			defer wg.Done()
+			ictx, cancel := context.WithTimeout(ctx, packIndexerTimeout)
+			defer cancel()
+			rel, err := pc.SearchScoped(ictx, term, cats, []int{id})
+			if err != nil {
+				s.log.Debug("pack indexer search dropped", "indexer", name, "err", err)
+				return
+			}
+			mu.Lock()
+			all = append(all, rel...)
+			mu.Unlock()
+		}(ix.ID, ix.Name)
+	}
+	wg.Wait()
+	return all
 }
 
 func containsInt(xs []int, want int) bool {

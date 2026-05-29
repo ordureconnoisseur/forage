@@ -110,6 +110,13 @@ func (r rawRelease) toRelease() Release {
 // Newznab-style numeric list (e.g. 6000 = XXX, 6010 = XXX/DVD, ...);
 // when empty no category filter is applied.
 func (c *Client) Search(ctx context.Context, term string, categories []int) ([]Release, error) {
+	return c.SearchScoped(ctx, term, categories, nil)
+}
+
+// SearchScoped is Search restricted to specific indexer ids — used to
+// fan a search out per-indexer (each with its own timeout) so one slow
+// indexer can't stall the whole query. Empty indexerIDs = all indexers.
+func (c *Client) SearchScoped(ctx context.Context, term string, categories, indexerIDs []int) ([]Release, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("prowlarr base URL not configured")
 	}
@@ -117,6 +124,9 @@ func (c *Client) Search(ctx context.Context, term string, categories []int) ([]R
 	q.Set("query", term)
 	for _, id := range categories {
 		q.Add("categories", strconv.Itoa(id))
+	}
+	for _, id := range indexerIDs {
+		q.Add("indexerIds", strconv.Itoa(id))
 	}
 	u := c.baseURL + "/api/v1/search?" + q.Encode()
 
@@ -203,6 +213,41 @@ func (c *Client) FetchTorrent(ctx context.Context, downloadURL string) ([]byte, 
 		return nil, fmt.Errorf("fetch torrent %d", resp.StatusCode)
 	}
 	return body, nil
+}
+
+// Indexer is the slim shape of a configured Prowlarr indexer.
+type Indexer struct {
+	ID       int    `json:"id"`
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"` // "torrent" | "usenet"
+	Enable   bool   `json:"enable"`
+}
+
+// Indexers lists the configured indexers (GET /api/v1/indexer), so
+// callers can fan a search out per-indexer with independent timeouts.
+func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("prowlarr base URL not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/indexer", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("prowlarr indexer list %d: %s", resp.StatusCode, body)
+	}
+	var out []Indexer
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("decode indexer list: %w", err)
+	}
+	return out, nil
 }
 
 // Status hits /api/v1/system/status as a lightweight reachability +
