@@ -322,10 +322,17 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 			case scene != nil && scene.StashDBID != "":
 				g.ActualStashDBID = scene.StashDBID
 				g.ConfirmedAt = time.Now().Unix()
-				if scene.StashDBID == g.PredictedStashDBID {
+				switch {
+				case g.PredictedStashDBID == "":
+					// No prediction to compare against (e.g. a grab
+					// adopted from the download client rather than a
+					// forage search) — can't be a mismatch.
+					g.Status = "confirmed"
+					g.Reason = "stash phash → scene (no prediction)"
+				case scene.StashDBID == g.PredictedStashDBID:
 					g.Status = "confirmed"
 					g.Reason = "stash phash → predicted scene"
-				} else {
+				default:
 					g.Status = "mismatched"
 					g.Reason = "stash phash → different scene than predicted"
 				}
