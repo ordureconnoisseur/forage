@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
+	"database/sql"
+	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
@@ -33,19 +38,9 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)")
 		return
 	}
-	if err := r.ParseMultipartForm(maxUploadTorrent); err != nil {
-		writeErr(w, http.StatusBadRequest, "expected multipart form with a torrent file")
-		return
-	}
-	file, _, err := r.FormFile("torrent")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "torrent file required (field 'torrent')")
-		return
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, maxUploadTorrent))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "read upload: "+err.Error())
+	data, errMsg := readTorrentUpload(r)
+	if errMsg != "" {
+		writeErr(w, http.StatusBadRequest, errMsg)
 		return
 	}
 
@@ -105,4 +100,182 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 		Category: settings.QbitCategory,
 		GrabID:   grabID,
 	})
+}
+
+// readTorrentUpload pulls the raw .torrent bytes from a multipart upload
+// (field "torrent"), capped at maxUploadTorrent. Returns a non-empty
+// message (for a 400) instead of an error so callers stay one-liners.
+func readTorrentUpload(r *http.Request) ([]byte, string) {
+	if err := r.ParseMultipartForm(maxUploadTorrent); err != nil {
+		return nil, "expected multipart form with a torrent file"
+	}
+	file, _, err := r.FormFile("torrent")
+	if err != nil {
+		return nil, "torrent file required (field 'torrent')"
+	}
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, maxUploadTorrent))
+	if err != nil {
+		return nil, "read upload: " + err.Error()
+	}
+	return data, ""
+}
+
+type torrentInspectResponse struct {
+	Name       string               `json:"name"`
+	TotalSize  int64                `json:"total_size"`
+	FileCount  int                  `json:"file_count"`
+	VideoCount int                  `json:"video_count"`
+	Kind       string               `json:"kind"` // "pack" | "single"
+	Suggested  []suggestedPerformer `json:"suggested_performers"`
+}
+
+type suggestedPerformer struct {
+	StashID    string `json:"stash_id"`
+	Name       string `json:"name"`
+	SceneCount int    `json:"scene_count"`
+	Favorite   bool   `json:"favorite"`
+}
+
+// postGrabTorrentInspect parses an uploaded .torrent WITHOUT grabbing it,
+// so the UI can show what's inside (the real info.name — not the opaque
+// download filename — its size, video count, pack/single) and suggest a
+// placement folder by matching that name against the local performer
+// cache. The user confirms, then POSTs to /grab/torrent.
+//
+//	POST /grab/torrent/inspect   multipart/form-data { torrent }
+func (s *Server) postGrabTorrentInspect(w http.ResponseWriter, r *http.Request) {
+	data, errMsg := readTorrentUpload(r)
+	if errMsg != "" {
+		writeErr(w, http.StatusBadRequest, errMsg)
+		return
+	}
+	meta, err := torrentmeta.Parse(data)
+	if err != nil {
+		writeErr(w, http.StatusUnprocessableEntity, "not a valid .torrent: "+err.Error())
+		return
+	}
+	kind := "single"
+	if meta.VideoCount >= packMinVideos {
+		kind = "pack"
+	}
+	writeJSON(w, http.StatusOK, torrentInspectResponse{
+		Name:       meta.Name,
+		TotalSize:  meta.TotalSize,
+		FileCount:  meta.FileCount,
+		VideoCount: meta.VideoCount,
+		Kind:       kind,
+		Suggested:  s.suggestPerformers(r.Context(), meta.Name),
+	})
+}
+
+// suggestPerformers ranks local performers whose name (or an alias) appears
+// as a whole-word phrase in the torrent's name — e.g. "Amouranth" or
+// "<Studio> Hazel Moore SiteRip" → that performer's folder. Matching is
+// word-level (not substring) so "Mom" can't match "momdrips", and a
+// single-word name must be >= 4 chars to skip short common words. Best
+// effort: a query failure just yields no suggestions (manual folder).
+func (s *Server) suggestPerformers(ctx context.Context, torrentName string) []suggestedPerformer {
+	nameWords := matcher.Tokenize(torrentName)
+	if len(nameWords) == 0 {
+		return nil
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT stash_id, name, aliases, scene_count, favorite FROM performer_cache`)
+	if err != nil {
+		s.log.Warn("suggest performers query", "err", err)
+		return nil
+	}
+	defer rows.Close()
+
+	type cand struct {
+		p        suggestedPerformer
+		matchLen int // matched token count — higher is more specific
+	}
+	var cands []cand
+	for rows.Next() {
+		var stashID, name string
+		var aliases sql.NullString
+		var sceneCount, fav int
+		if rows.Scan(&stashID, &name, &aliases, &sceneCount, &fav) != nil {
+			continue
+		}
+		best := 0
+		labels := append([]string{name}, parseAliasList(aliases.String)...)
+		for _, label := range labels {
+			lw := matcher.Tokenize(label)
+			if performerLabelMatches(nameWords, lw) && len(lw) > best {
+				best = len(lw)
+			}
+		}
+		if best > 0 {
+			cands = append(cands, cand{
+				p:        suggestedPerformer{StashID: stashID, Name: name, SceneCount: sceneCount, Favorite: fav != 0},
+				matchLen: best,
+			})
+		}
+	}
+	// Most-specific (longest phrase) first, then favourites, then library
+	// prominence (scene_count), then name for stability.
+	sort.SliceStable(cands, func(i, j int) bool {
+		a, b := cands[i], cands[j]
+		if a.matchLen != b.matchLen {
+			return a.matchLen > b.matchLen
+		}
+		if a.p.Favorite != b.p.Favorite {
+			return a.p.Favorite
+		}
+		if a.p.SceneCount != b.p.SceneCount {
+			return a.p.SceneCount > b.p.SceneCount
+		}
+		return a.p.Name < b.p.Name
+	})
+	out := make([]suggestedPerformer, 0, 6)
+	for _, c := range cands {
+		out = append(out, c.p)
+		if len(out) >= 6 {
+			break
+		}
+	}
+	return out
+}
+
+// performerLabelMatches reports whether labelWords appears as a contiguous
+// run in nameWords. A single-word label must be >= 4 chars so short common
+// words don't match everything.
+func performerLabelMatches(nameWords, labelWords []string) bool {
+	if len(labelWords) == 0 {
+		return false
+	}
+	if len(labelWords) == 1 && len(labelWords[0]) < 4 {
+		return false
+	}
+	if len(labelWords) > len(nameWords) {
+		return false
+	}
+	for i := 0; i+len(labelWords) <= len(nameWords); i++ {
+		match := true
+		for j := range labelWords {
+			if nameWords[i+j] != labelWords[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+// parseAliasList decodes performer_cache.aliases (a JSON string array);
+// returns nil on empty/invalid.
+func parseAliasList(j string) []string {
+	if j == "" {
+		return nil
+	}
+	var out []string
+	if json.Unmarshal([]byte(j), &out) != nil {
+		return nil
+	}
+	return out
 }

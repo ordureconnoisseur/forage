@@ -16,6 +16,8 @@ import {
   Grab,
   GrabDetail,
   grabTorrentFile,
+  inspectTorrentFile,
+  type TorrentInspect,
   matchGrab,
   GrabsResponse,
   GrabStatus,
@@ -66,6 +68,9 @@ export default function GrabsList() {
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [addFile, setAddFile] = useState<File | null>(null);
+  const [addInspect, setAddInspect] = useState<TorrentInspect | null>(null);
+  const [addInspecting, setAddInspecting] = useState(false);
   const [addName, setAddName] = useState("");
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
@@ -83,27 +88,50 @@ export default function GrabsList() {
     }
   }, []);
 
+  // Picking a file inspects it (parse name/size/counts + suggest a
+  // performer folder) before any download — confirm-first.
+  const onPickTorrent = useCallback(async () => {
+    const f = fileRef.current?.files?.[0] ?? null;
+    setAddFile(f);
+    setAddInspect(null);
+    setAddName("");
+    setAddErr(null);
+    if (!f) return;
+    setAddInspecting(true);
+    try {
+      const ins = await inspectTorrentFile(f);
+      setAddInspect(ins);
+      setAddName(ins.suggested_performers[0]?.name ?? "");
+    } catch (e) {
+      setAddErr((e as Error).message);
+    } finally {
+      setAddInspecting(false);
+    }
+  }, []);
+
   const submitTorrent = useCallback(async () => {
-    const f = fileRef.current?.files?.[0];
-    if (!f) {
+    if (!addFile) {
       setAddErr("choose a .torrent file first");
       return;
     }
     setAddBusy(true);
     setAddErr(null);
     try {
-      const res = await grabTorrentFile(f, addName.trim());
+      const res = await grabTorrentFile(addFile, addName.trim());
       setAddOpen(false);
       setAddName("");
+      setAddFile(null);
+      setAddInspect(null);
       if (fileRef.current) fileRef.current.value = "";
-      setNotice(`Added torrent → grab #${res.grab_id}`);
+      const label = addInspect?.name ? `"${addInspect.name}"` : "torrent";
+      setNotice(`Added ${label} → grab #${res.grab_id}`);
       void refresh();
     } catch (e) {
       setAddErr((e as Error).message);
     } finally {
       setAddBusy(false);
     }
-  }, [addName, refresh]);
+  }, [addFile, addName, addInspect, refresh]);
 
   const handleDeleted = useCallback(
     (id: number, res: DeleteGrabResult) => {
@@ -233,7 +261,56 @@ export default function GrabsList() {
 
       {addOpen && (
         <div className="grab-add-form">
-          <input ref={fileRef} type="file" accept=".torrent" />
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".torrent"
+            onChange={onPickTorrent}
+          />
+          {addInspecting && (
+            <span className="grab-add-hint">Reading torrent…</span>
+          )}
+          {addInspect && (
+            <div className="torrent-inspect">
+              <div className="ti-summary">
+                <span className={"ti-kind " + addInspect.kind}>
+                  {addInspect.kind === "pack" ? "PACK" : "SINGLE"}
+                </span>
+                <strong className="ti-name">
+                  {addInspect.name || "(unnamed torrent)"}
+                </strong>
+                <span className="ti-meta">
+                  {addInspect.video_count} video
+                  {addInspect.video_count === 1 ? "" : "s"} ·{" "}
+                  {humanSize(addInspect.total_size, "?")}
+                </span>
+              </div>
+              {addInspect.suggested_performers.length > 0 ? (
+                <div className="ti-suggest">
+                  <span className="muted">Folder:</span>
+                  {addInspect.suggested_performers.map((p) => (
+                    <button
+                      key={p.stash_id}
+                      type="button"
+                      className={
+                        "ti-chip" + (addName === p.name ? " sel" : "")
+                      }
+                      onClick={() => setAddName(p.name)}
+                      title={`${p.scene_count} scenes in library`}
+                    >
+                      {p.favorite ? "★ " : ""}
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <div className="ti-suggest muted">
+                  No library performer detected in the name — set a folder
+                  below.
+                </div>
+              )}
+            </div>
+          )}
           <input
             type="text"
             placeholder="folder — default (manual)"
@@ -243,7 +320,7 @@ export default function GrabsList() {
           <button
             className="grab-add-go"
             onClick={submitTorrent}
-            disabled={addBusy}
+            disabled={addBusy || addInspecting || !addFile}
           >
             {addBusy ? "Adding…" : "Add"}
           </button>

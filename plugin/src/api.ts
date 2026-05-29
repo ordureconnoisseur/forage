@@ -364,6 +364,41 @@ export async function grabTorrentFile(
   return r.json() as Promise<GrabResponse>;
 }
 
+export interface SuggestedPerformer {
+  stash_id: string;
+  name: string;
+  scene_count: number;
+  favorite: boolean;
+}
+
+// TorrentInspect is what /grab/torrent/inspect returns: the torrent's real
+// internal name + size/counts (not the opaque download filename) plus
+// performers matched from that name, so the user can pick a folder before
+// committing the download.
+export interface TorrentInspect {
+  name: string;
+  total_size: number;
+  file_count: number;
+  video_count: number;
+  kind: "pack" | "single";
+  suggested_performers: SuggestedPerformer[];
+}
+
+// inspectTorrentFile parses a .torrent without grabbing it.
+export async function inspectTorrentFile(file: File): Promise<TorrentInspect> {
+  const fd = new FormData();
+  fd.append("torrent", file);
+  const r = await fetch(foragerBase() + "/grab/torrent/inspect", {
+    method: "POST",
+    body: fd,
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(e.error || `HTTP ${r.status}`);
+  }
+  return r.json() as Promise<TorrentInspect>;
+}
+
 // ── Grabs list ────────────────────────────────────────────────────
 //
 // Mirrors internal/api/grabs.go's grabOut shape. Status values follow

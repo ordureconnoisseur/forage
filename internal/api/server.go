@@ -80,6 +80,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/search", s.getSearch)
 	r.Post("/grab", s.postGrab)
 	r.Post("/grab/torrent", s.postGrabTorrent)
+	r.Post("/grab/torrent/inspect", s.postGrabTorrentInspect)
 	r.Get("/grabs", s.getGrabs)
 	r.Get("/grabs/{id}/detail", s.getGrabDetail)
 	r.Post("/grabs/{id}/match", s.postGrabMatch)

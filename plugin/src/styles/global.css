@@ -1274,6 +1274,73 @@ button {
   color: var(--text-muted);
 }
 
+/* Manual torrent-add: parsed-torrent preview + performer suggestions. */
+.torrent-inspect {
+  flex-basis: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-0);
+}
+.ti-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.ti-kind {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+.ti-kind.pack {
+  color: var(--accent-bright);
+  background: var(--accent-tint);
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+.ti-name {
+  font-size: 14px;
+  color: var(--text);
+  word-break: break-word;
+}
+.ti-meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.ti-suggest {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+.ti-chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.ti-chip:hover {
+  border-color: var(--accent);
+}
+.ti-chip.sel {
+  background: var(--accent);
+  color: #0a0a0a;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+
 /* Filter strip — one compact, centre-aligned row. */
 .grab-filter {
   display: flex;
