@@ -82,6 +82,7 @@ func (s *Server) Router() http.Handler {
 	r.Post("/grab/torrent", s.postGrabTorrent)
 	r.Get("/grabs", s.getGrabs)
 	r.Get("/grabs/{id}/detail", s.getGrabDetail)
+	r.Post("/grabs/{id}/match", s.postGrabMatch)
 	r.Delete("/grabs/{id}", s.deleteGrab)
 	r.Get("/missing-scenes", s.getMissingScenes)
 	r.Get("/performers/{id}/packs", s.getPerformerPacks)

@@ -15,6 +15,7 @@ import {
   Grab,
   GrabDetail,
   grabTorrentFile,
+  matchGrab,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -328,6 +329,10 @@ export default function GrabsList() {
                 })
               }
               onDeleted={(res) => handleDeleted(g.id, res)}
+              onMatched={() => {
+                setNotice(`Matched grab #${g.id} to StashDB`);
+                void refresh();
+              }}
             />
           ))}
         </ul>
@@ -535,19 +540,43 @@ function GrabRow({
   expanded,
   onToggle,
   onDeleted,
+  onMatched,
 }: {
   g: Grab;
   expanded: boolean;
   onToggle: () => void;
   onDeleted: (res: DeleteGrabResult) => void;
+  onMatched: () => void;
 }) {
   const [detail, setDetail] = useState<GrabDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  const [matchVal, setMatchVal] = useState("");
+  const [matchBusy, setMatchBusy] = useState(false);
+  const [matchErr, setMatchErr] = useState<string | null>(null);
   const confirmTimer = useRef<number | undefined>(undefined);
   const fetchedDetail = useRef(false);
+
+  async function handleMatch(useId?: string) {
+    setMatchBusy(true);
+    setMatchErr(null);
+    try {
+      await matchGrab(g.id, useId);
+      onMatched(); // parent refreshes; row re-renders as confirmed
+    } catch (e) {
+      setMatchErr((e as Error).message);
+      setMatchBusy(false);
+    }
+  }
+
+  // Offer manual StashDB matching when phash didn't cleanly link the
+  // file: a wrong-scene mismatch, or anything placed that never got a
+  // StashDB cross-id (e.g. "in library (scanned)" — no fingerprint on
+  // StashDB). Needs the file on disk to apply onto.
+  const canMatch =
+    !!g.placed_path && (g.status === "mismatched" || !g.actual_stashdb_id);
 
   // Fetch the rich detail (scene thumbnail/title/performers + local
   // Stash link) the first time the row opens, exactly once. A ref
@@ -738,6 +767,45 @@ function GrabRow({
               </div>
             )}
           </div>
+
+          {/* Manual StashDB match — for files phash couldn't link. */}
+          {canMatch && (
+            <div className="grab-match-tool">
+              <span className="grab-match-tool-label">
+                {g.status === "mismatched"
+                  ? "Wrong scene? Force the right StashDB match:"
+                  : "Not on StashDB by fingerprint — match it manually:"}
+              </span>
+              <div className="grab-match-tool-row">
+                {g.predicted_stashdb_id && (
+                  <button
+                    className="grab-action match"
+                    onClick={() => handleMatch()}
+                    disabled={matchBusy}
+                  >
+                    {matchBusy ? "Applying…" : "Use predicted scene"}
+                  </button>
+                )}
+                <input
+                  type="text"
+                  className="grab-match-input"
+                  placeholder="StashDB scene URL or id"
+                  value={matchVal}
+                  onChange={(e) => setMatchVal(e.target.value)}
+                />
+                <button
+                  className="grab-action match"
+                  disabled={matchBusy || !matchVal.trim()}
+                  onClick={() => handleMatch(matchVal.trim())}
+                >
+                  Apply
+                </button>
+                {matchErr && (
+                  <span className="grab-delete-err">{matchErr}</span>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Action bar */}
           <div className="grab-actions">

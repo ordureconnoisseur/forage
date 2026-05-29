@@ -843,3 +843,91 @@ func PickStashDBID(ids []StashID) string {
 	}
 	return ""
 }
+
+// SceneApply is the set of StashDB-sourced fields to write onto a local
+// scene via ApplySceneMetadata. Empty fields are left untouched (so a
+// blank StashDB title won't wipe an existing one); StashID+Endpoint set
+// the StashDB cross-id; PerformerIDs / StudioID are LOCAL Stash ids the
+// caller resolved (anything it couldn't map is simply omitted).
+type SceneApply struct {
+	StashID      string
+	Endpoint     string
+	Title        string
+	Date         string
+	URLs         []string
+	PerformerIDs []string
+	StudioID     string
+}
+
+// ApplySceneMetadata writes StashDB-sourced metadata onto a local scene
+// (sceneUpdate). Used by the manual "match to StashDB" action when phash
+// identify couldn't link the file itself (e.g. the scene has no
+// fingerprint on StashDB). Only the populated fields are sent.
+func (c *Client) ApplySceneMetadata(ctx context.Context, sceneID string, a SceneApply) error {
+	if sceneID == "" {
+		return fmt.Errorf("scene id is empty")
+	}
+	input := map[string]any{"id": sceneID}
+	if a.StashID != "" && a.Endpoint != "" {
+		input["stash_ids"] = []map[string]any{{"endpoint": a.Endpoint, "stash_id": a.StashID}}
+	}
+	if a.Title != "" {
+		input["title"] = a.Title
+	}
+	if a.Date != "" {
+		input["date"] = a.Date
+	}
+	if len(a.URLs) > 0 {
+		input["urls"] = a.URLs
+	}
+	if len(a.PerformerIDs) > 0 {
+		input["performer_ids"] = a.PerformerIDs
+	}
+	if a.StudioID != "" {
+		input["studio_id"] = a.StudioID
+	}
+	q := `mutation ForagerSceneApply($input: SceneUpdateInput!) {
+  sceneUpdate(input: $input) { id }
+}`
+	var resp struct {
+		SceneUpdate struct {
+			ID string `json:"id"`
+		} `json:"sceneUpdate"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return fmt.Errorf("sceneUpdate: %w", err)
+	}
+	if resp.SceneUpdate.ID == "" {
+		return fmt.Errorf("sceneUpdate returned no scene")
+	}
+	return nil
+}
+
+// FindStudioIDByName returns the local Stash studio id whose name equals
+// the given name (case-insensitive EQUALS), or "" when none. Used to map
+// a StashDB scene's studio to a local studio without creating one.
+func (c *Client) FindStudioIDByName(ctx context.Context, name string) (string, error) {
+	if name == "" {
+		return "", nil
+	}
+	q := `query ForagerFindStudio($name: String!) {
+  findStudios(
+    studio_filter: { name: { value: $name, modifier: EQUALS } }
+    filter: { page: 1, per_page: 1 }
+  ) { studios { id } }
+}`
+	var resp struct {
+		FindStudios struct {
+			Studios []struct {
+				ID string `json:"id"`
+			} `json:"studios"`
+		} `json:"findStudios"`
+	}
+	if err := c.do(ctx, q, map[string]any{"name": name}, &resp); err != nil {
+		return "", fmt.Errorf("findStudios: %w", err)
+	}
+	if len(resp.FindStudios.Studios) == 0 {
+		return "", nil
+	}
+	return resp.FindStudios.Studios[0].ID, nil
+}

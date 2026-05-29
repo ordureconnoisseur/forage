@@ -2082,6 +2082,50 @@ code.grab-fact-v,
   color: #fca5a5;
 }
 
+/* Manual StashDB match tool (mismatched / no-fingerprint grabs). */
+.grab-match-tool {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--accent) 5%, var(--glass-bg));
+}
+.grab-match-tool-label {
+  display: block;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+.grab-match-tool-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.grab-action.match {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+}
+.grab-action.match:hover {
+  background: var(--accent);
+  color: #0a0a0a;
+}
+.grab-match-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 8px 12px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: 13px;
+}
+.grab-match-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
 /* Transient banner after a delete. */
 .grab-notice {
   display: flex;

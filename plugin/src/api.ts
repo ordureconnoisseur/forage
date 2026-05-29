@@ -456,6 +456,26 @@ export function fetchGrabDetail(id: number): Promise<GrabDetail> {
   return get<GrabDetail>(`/grabs/${id}/detail`);
 }
 
+export interface MatchResult {
+  ok: boolean;
+  stashdb_id: string;
+  title?: string;
+  performers_applied?: number;
+  studio_applied?: boolean;
+}
+
+// matchGrab manually links a grab's placed scene to a StashDB scene and
+// applies that scene's metadata (title/date/urls + cross-id + the
+// performers/studio already in your library). Omit stashdbId to apply
+// the grab's own prediction; pass a UUID or stashdb.org/scenes/<id> URL
+// to match an explicit scene.
+export function matchGrab(id: number, stashdbId?: string): Promise<MatchResult> {
+  return postJSON<MatchResult>(
+    `/grabs/${id}/match`,
+    stashdbId ? { stashdb_id: stashdbId } : {},
+  );
+}
+
 export interface DeleteGrabResult {
   ok: boolean;
   removed: string[];
