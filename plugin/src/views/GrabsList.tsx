@@ -14,6 +14,7 @@ import {
   fetchGrabs,
   Grab,
   GrabDetail,
+  grabTorrentFile,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -62,6 +63,11 @@ export default function GrabsList() {
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
+  const [addName, setAddName] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addErr, setAddErr] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const lastFetch = useRef(0);
 
   // Immediate refetch, used after a delete so the row disappears
@@ -74,6 +80,28 @@ export default function GrabsList() {
       /* next poll tick will recover */
     }
   }, []);
+
+  const submitTorrent = useCallback(async () => {
+    const f = fileRef.current?.files?.[0];
+    if (!f) {
+      setAddErr("choose a .torrent file first");
+      return;
+    }
+    setAddBusy(true);
+    setAddErr(null);
+    try {
+      const res = await grabTorrentFile(f, addName.trim());
+      setAddOpen(false);
+      setAddName("");
+      if (fileRef.current) fileRef.current.value = "";
+      setNotice(`Added torrent → grab #${res.grab_id}`);
+      void refresh();
+    } catch (e) {
+      setAddErr((e as Error).message);
+    } finally {
+      setAddBusy(false);
+    }
+  }, [addName, refresh]);
 
   const handleDeleted = useCallback(
     (id: number, res: DeleteGrabResult) => {
@@ -183,6 +211,12 @@ export default function GrabsList() {
           </span>
         </div>
         <div className="grab-toolbar-search">
+          <button
+            className={"grab-add-btn" + (addOpen ? " active" : "")}
+            onClick={() => setAddOpen((o) => !o)}
+          >
+            + Add torrent
+          </button>
           <input
             type="text"
             placeholder="Filter by title, performer, indexer…"
@@ -194,6 +228,31 @@ export default function GrabsList() {
           </span>
         </div>
       </div>
+
+      {addOpen && (
+        <div className="grab-add-form">
+          <input ref={fileRef} type="file" accept=".torrent" />
+          <input
+            type="text"
+            placeholder="folder — default (manual)"
+            value={addName}
+            onChange={(e) => setAddName(e.target.value)}
+          />
+          <button
+            className="grab-add-go"
+            onClick={submitTorrent}
+            disabled={addBusy}
+          >
+            {addBusy ? "Adding…" : "Add"}
+          </button>
+          {addErr && <span className="grab-add-err">{addErr}</span>}
+          <span className="grab-add-hint">
+            forage downloads it, then places into{" "}
+            <code>/Media/&lt;folder&gt;</code>, scans and identifies —
+            auto-detecting pack vs single.
+          </span>
+        </div>
+      )}
 
       {/* Filter strip — one compact row. "all" leads, then the
           in-flight pipeline (arrow-linked), a divider, then the

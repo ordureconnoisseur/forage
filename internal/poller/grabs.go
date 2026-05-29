@@ -350,23 +350,30 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 				}
 				dirty = true
 			case scene != nil:
-				// Stash has the file but no StashDB cross-id yet —
-				// scan completed, identify hasn't run. Distinct from
-				// orphaned (Stash never saw it at all).
+				// Stash has the file but no StashDB cross-id yet (scan done,
+				// identify pending) — distinct from orphaned (never seen).
 				if g.Status != "scanned" {
 					g.Status = "scanned"
 					g.Reason = "in Stash, awaiting identify"
 					dirty = true
-					// Kick Stash's Identify task once on the transition.
-					// Best-effort: if it fails (no stash-box configured,
-					// network blip), the user can still trigger
-					// identify manually from Stash's UI and the next
-					// poll will detect the resulting stash_id.
+				}
+				// Retry Identify on a throttle, then give up to a terminal
+				// "no StashDB match" once the orphan window passes. The first
+				// identify can fire before phashes finish generating, and
+				// firing once would strand the grab at "scanned" forever.
+				switch {
+				case g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan:
+					g.Status = "confirmed"
+					g.Reason = "in library; no StashDB match"
+					g.ConfirmedAt = time.Now().Unix()
+					dirty = true
+				case p.scanThrottleElapsed(g.ID):
 					if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
 						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
 					} else if jobID != "" {
 						p.log.Info("metadataIdentify triggered", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
 					}
+					p.markScanAttempt(g.ID)
 				}
 			case g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan:
 				if g.Status != "orphaned" {

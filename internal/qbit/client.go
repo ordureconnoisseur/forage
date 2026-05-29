@@ -191,6 +191,33 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	return c.postAdd(ctx, &buf, mw.FormDataContentType())
 }
 
+// AddTorrentFile uploads raw .torrent bytes (e.g. a file the user
+// supplied manually) to qBit under the given category. Same upload path
+// as a fetched .torrent, minus the fetch.
+func (c *Client) AddTorrentFile(ctx context.Context, data []byte, category string) error {
+	if len(data) == 0 {
+		return fmt.Errorf("torrent file is empty")
+	}
+	if err := c.Login(ctx); err != nil {
+		return fmt.Errorf("login: %w", err)
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	if category != "" {
+		_ = mw.WriteField("category", category)
+	}
+	_ = mw.WriteField("paused", "false")
+	fileWriter, err := mw.CreateFormFile("torrents", "upload.torrent")
+	if err != nil {
+		return fmt.Errorf("multipart file: %w", err)
+	}
+	if _, err := fileWriter.Write(data); err != nil {
+		return fmt.Errorf("write torrent body: %w", err)
+	}
+	_ = mw.Close()
+	return c.postAdd(ctx, &buf, mw.FormDataContentType())
+}
+
 // ── torrent listing / inspection ─────────────────────────────────────
 
 // Torrent is the slim shape forager's poller needs out of qBit's

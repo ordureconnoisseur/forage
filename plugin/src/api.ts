@@ -343,6 +343,29 @@ export function postGrab(req: GrabRequest): Promise<GrabResponse> {
   return postJSON<GrabResponse>("/grab", req);
 }
 
+// grabTorrentFile uploads a .torrent the user supplied directly (e.g.
+// from a private tracker forage can't search). forage adds it to qBit
+// and runs the normal place→scan→identify pipeline; `name` is the
+// library folder to place into (blank → "(manual)" server-side). Pack
+// vs single is auto-detected from the parsed video count.
+export async function grabTorrentFile(
+  file: File,
+  name: string,
+): Promise<GrabResponse> {
+  const fd = new FormData();
+  fd.append("torrent", file);
+  if (name) fd.append("name", name);
+  const r = await fetch(foragerBase() + "/grab/torrent", {
+    method: "POST",
+    body: fd,
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    throw new Error(e.error || `HTTP ${r.status}`);
+  }
+  return r.json() as Promise<GrabResponse>;
+}
+
 // ── Grabs list ────────────────────────────────────────────────────
 //
 // Mirrors internal/api/grabs.go's grabOut shape. Status values follow

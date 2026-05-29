@@ -1207,6 +1207,73 @@ button {
   white-space: nowrap;
 }
 
+/* Manual "Add torrent" control + inline upload form. */
+.grab-add-btn {
+  flex: none;
+  padding: 9px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.grab-add-btn.active,
+.grab-add-btn:hover {
+  background: var(--accent);
+  color: #0a0a0a;
+}
+.grab-add-form {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+}
+.grab-add-form input[type="text"] {
+  padding: 8px 12px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+}
+.grab-add-form input[type="file"] {
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.grab-add-go {
+  padding: 8px 18px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+}
+.grab-add-go:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.grab-add-err {
+  color: var(--danger, #e6794b);
+  font-size: 12px;
+}
+.grab-add-hint {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 /* Filter strip — one compact, centre-aligned row. */
 .grab-filter {
   display: flex;
