@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -42,9 +43,7 @@ type packCandidate struct {
 	Indexer     string `json:"indexer"`
 	Protocol    string `json:"protocol"`
 	Size        int64  `json:"size"`
-	VideoCount  int    `json:"video_count"` // authoritative when parsed; 0 when unknown
-	FileCount   int    `json:"file_count"`
-	Estimated   bool   `json:"estimated"` // true when we couldn't parse (magnet/usenet) so video_count is a guess
+	VideoCount  int    `json:"video_count"` // parsed from the title; 0 when the title states no count
 	Seeders     int    `json:"seeders"`
 	Grabs       int    `json:"grabs"`
 	Popularity  int    `json:"popularity"`
@@ -67,12 +66,13 @@ type packsResponse struct {
 //
 // Flow:
 //  1. Resolve the performer's name from performer_cache.
-//  2. Prowlarr search on that name (configured XXX categories + the
-//     XXX/Pack category).
-//  3. Select likely-pack candidates by cheap signals (size, XXX/Pack
-//     category, title keyword), then confirm by fetching + parsing each
-//     candidate's .torrent for an authoritative video count.
-//  4. Return releases with >= packMinVideos videos, popularity-desc.
+//  2. Prowlarr search on that name across enabled indexers (XXX parent +
+//     the XXX/Pack category), fanned out per-indexer with a timeout.
+//  3. Classify likely-pack candidates from signals already in each result
+//     — XXX/Pack category, a pack keyword, or a title-stated video count.
+//     No .torrent is downloaded: private trackers cap daily downloads, so
+//     browsing must not burn that quota (the only download is the grab).
+//  4. Return the candidates biggest-first.
 func (s *Server) getPerformerPacks(w http.ResponseWriter, r *http.Request) {
 	prowlarrC := s.pool.Prowlarr()
 	if prowlarrC == nil {
@@ -117,7 +117,7 @@ func classifyPacks(releases []prowlarr.Release) []packCandidate {
 	out := []packCandidate{}
 	for _, rel := range releases {
 		kw := packKeywordRe.MatchString(rel.Title)
-		pcat := containsInt(rel.Categories, xxxPackCategory)
+		pcat := slices.Contains(rel.Categories, xxxPackCategory)
 		count := parsePackCount(rel.Title)
 		if !pcat && !kw && count < packMinVideos {
 			continue // looks like a single scene
@@ -128,7 +128,6 @@ func classifyPacks(releases []prowlarr.Release) []packCandidate {
 			Protocol:    rel.Protocol,
 			Size:        rel.Size,
 			VideoCount:  count, // 0 when the title states no count
-			Estimated:   true,  // title-derived, not confirmed from the torrent
 			Seeders:     rel.Seeders,
 			Grabs:       rel.Grabs,
 			Popularity:  rel.Popularity,
@@ -192,6 +191,10 @@ func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, te
 		all []prowlarr.Release
 		wg  sync.WaitGroup
 	)
+	// Cap concurrent indexer searches so many configured indexers (× two
+	// category passes) can't stampede Prowlarr/FlareSolverr all at once —
+	// the same bound the /search fan-out uses.
+	sem := make(chan struct{}, searchMatcherConcurrency)
 	for _, ix := range indexers {
 		if !ix.Enable {
 			continue
@@ -200,6 +203,8 @@ func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, te
 			wg.Add(1)
 			go func(id int, name string, cats []int) {
 				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
 				ictx, cancel := context.WithTimeout(ctx, packIndexerTimeout)
 				defer cancel()
 				rel, err := pc.SearchScoped(ictx, term, cats, []int{id})
@@ -218,12 +223,13 @@ func (s *Server) searchPackIndexers(ctx context.Context, pc *prowlarr.Client, te
 }
 
 // dedupReleases collapses results that appear in more than one category
-// pass, keyed by download URL (falling back to info URL + title).
+// pass, keyed by grab URL — download URL, else magnet for magnet-only
+// indexers (falling back to info URL + title when neither is present).
 func dedupReleases(rs []prowlarr.Release) []prowlarr.Release {
 	seen := make(map[string]bool, len(rs))
 	out := make([]prowlarr.Release, 0, len(rs))
 	for _, r := range rs {
-		key := r.DownloadURL
+		key := r.GrabURL() // download URL, else magnet — stable for magnet-only indexers
 		if key == "" {
 			key = r.InfoURL + "|" + r.Title
 		}
@@ -234,15 +240,6 @@ func dedupReleases(rs []prowlarr.Release) []prowlarr.Release {
 		out = append(out, r)
 	}
 	return out
-}
-
-func containsInt(xs []int, want int) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
-	}
-	return false
 }
 
 // performerName resolves a local Stash performer id to its name via the

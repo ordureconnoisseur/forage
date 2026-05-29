@@ -6,6 +6,7 @@ import {
   type SceneReleasesResponse,
 } from "../api";
 import { ResBadge } from "../ResBadge";
+import { humanSize } from "../format";
 
 // Map the matcher's 0..1 confidence into one of five outline tiers.
 // Only applied to verified releases — the unverified section already
@@ -16,18 +17,6 @@ function confTier(c: number): string {
   if (c >= 0.40) return "conf-3";
   if (c >= 0.25) return "conf-4";
   return "conf-5";
-}
-
-function humanSize(b: number): string {
-  if (!b) return "";
-  const units = ["B", "K", "M", "G", "T"];
-  let i = 0;
-  let v = b;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return v.toFixed(1) + units[i] + "B";
 }
 
 // Release sort is user-selectable because "best" is genuinely

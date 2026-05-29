@@ -281,12 +281,10 @@ export interface Pack {
   indexer: string;
   protocol: "torrent" | "usenet";
   size: number;
-  // Authoritative video count when the .torrent was parsed; when
-  // `estimated` is true it's a best-effort guess (magnet/usenet) and may
-  // count non-video files.
+  // Video count parsed from the release title; 0 when the title states
+  // none. It's an estimate, confirmed only once the pack is grabbed and
+  // scanned (browsing never downloads .torrents).
   video_count: number;
-  file_count?: number;
-  estimated?: boolean;
   seeders: number;
   grabs: number;
   popularity: number;

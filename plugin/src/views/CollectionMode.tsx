@@ -9,6 +9,7 @@ import {
   type SceneRelease,
 } from "../api";
 import { ResBadge } from "../ResBadge";
+import { humanSize } from "../format";
 
 const SEARCH_CONCURRENCY = 4;
 const GRAB_CONCURRENCY = 3;
@@ -85,7 +86,7 @@ export default function CollectionMode({
   }
 
   async function grabPack(p: Pack) {
-    if (packGrab[p.download_url] === "queued") return;
+    if (packGrab[packKey(p)] === "queued") return;
     try {
       await postGrab({
         download_url: p.download_url,
@@ -97,9 +98,9 @@ export default function CollectionMode({
         kind: "pack",
         video_count: p.video_count,
       });
-      setPackGrab((s) => ({ ...s, [p.download_url]: "queued" }));
+      setPackGrab((s) => ({ ...s, [packKey(p)]: "queued" }));
     } catch {
-      setPackGrab((s) => ({ ...s, [p.download_url]: "error" }));
+      setPackGrab((s) => ({ ...s, [packKey(p)]: "error" }));
     }
   }
 
@@ -442,9 +443,9 @@ function PacksSection({
       <ul className="packs-list">
         {packs.map((p) => (
           <PackCard
-            key={p.download_url || p.info_url}
+            key={packKey(p)}
             pack={p}
-            state={grabState[p.download_url] || "idle"}
+            state={grabState[packKey(p)] || "idle"}
             onGrab={() => onGrab(p)}
           />
         ))}
@@ -476,7 +477,7 @@ function PackCard({
           <span className="pack-indexer">{pack.indexer}</span>
           <span className="sep">·</span>
           <span className={"pack-size" + (huge ? " huge" : "")}>
-            {humanSize(pack.size)}
+            {humanSize(pack.size, "?")}
           </span>
           {pack.video_count > 0 && (
             <>
@@ -492,7 +493,7 @@ function PackCard({
         className="pack-grab"
         disabled={queued}
         onClick={onGrab}
-        title={huge ? `Large download — ${humanSize(pack.size)}` : undefined}
+        title={huge ? `Large download — ${humanSize(pack.size, "?")}` : undefined}
       >
         {queued ? "queued ✓" : state === "error" ? "retry" : "Grab pack"}
       </button>
@@ -650,7 +651,7 @@ function CollectionRow({
               <span className="coll-cand-body">
                 <code className="coll-cand-file">{rel.title}</code>
                 <span className="coll-cand-meta">
-                  {rel.indexer} · {rel.protocol} · {humanSize(rel.size)} ·{" "}
+                  {rel.indexer} · {rel.protocol} · {humanSize(rel.size, "?")} ·{" "}
                   {rel.protocol === "usenet"
                     ? `${rel.grabs} grabs`
                     : `${rel.seeders} seeders`}
@@ -670,14 +671,10 @@ function CollectionRow({
   );
 }
 
-function humanSize(b: number): string {
-  if (!b) return "?";
-  const units = ["B", "K", "M", "G", "T"];
-  let i = 0;
-  let v = b;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return v.toFixed(1) + units[i] + "B";
+// packKey is a stable per-pack identity for grab state. download_url can
+// be empty for an indexer that supplies neither a download URL nor a
+// magnet, so fall back to info_url/title — otherwise such packs would
+// share one state bucket (grabbing one paints them all queued).
+function packKey(p: Pack): string {
+  return p.download_url || p.info_url || p.title;
 }

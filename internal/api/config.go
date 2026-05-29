@@ -232,6 +232,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	if patch.SabDeleteAfterPlace != nil {
 		merged.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
 	}
+	if patch.PackDedupKeep != nil {
+		merged.PackDedupKeep = patch.PackDedupKeep
+	}
 	if patch.PollInterval != nil {
 		merged.PollInterval = patch.PollInterval
 	}

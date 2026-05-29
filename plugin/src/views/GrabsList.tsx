@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { humanSize } from "../format";
 import {
   ACTIVE_STATUSES,
   deleteGrab,
@@ -851,17 +852,6 @@ function humanDuration(secs: number): string {
   return `${h}h ${m % 60}m`;
 }
 
-function humanSize(b: number): string {
-  if (!b) return "";
-  const units = ["B", "K", "M", "G", "T"];
-  let i = 0;
-  let v = b;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return v.toFixed(1) + units[i] + "B";
-}
 
 function relativeTime(unix: number): string {
   if (!unix) return "";
