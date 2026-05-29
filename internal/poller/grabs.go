@@ -350,24 +350,38 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 				}
 				dirty = true
 			case scene != nil:
-				// Stash has the file but no StashDB cross-id yet (scan done,
-				// identify pending) — distinct from orphaned (never seen).
+				// File is in Stash but has no StashDB cross-id.
 				if g.Status != "scanned" {
+					// First sighting: mark scanned and fire one Identify
+					// (best-effort enrichment — picks up a cross-id when
+					// StashDB actually has the scene).
 					g.Status = "scanned"
 					g.Reason = "in Stash, awaiting identify"
 					dirty = true
-				}
-				// Retry Identify on a throttle, then give up to a terminal
-				// "no StashDB match" once the orphan window passes. The first
-				// identify can fire before phashes finish generating, and
-				// firing once would strand the grab at "scanned" forever.
-				switch {
-				case g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan:
+					if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
+						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
+					} else if jobID != "" {
+						p.log.Info("metadataIdentify triggered", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+					}
+					p.markScanAttempt(g.ID)
+				} else if g.PredictedStashDBID == "" {
+					// No prediction to verify against — for a manual/pack/
+					// adopted grab, being scanned into the library IS the
+					// goal. Don't strand it waiting on a StashDB match that
+					// may never exist (amateur content often isn't on
+					// StashDB, or is identified via another scraper).
+					g.Status = "confirmed"
+					g.Reason = "in library (scanned)"
+					g.ConfirmedAt = time.Now().Unix()
+					dirty = true
+				} else if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan {
+					// Predicted grab: gave up on the StashDB match.
 					g.Status = "confirmed"
 					g.Reason = "in library; no StashDB match"
 					g.ConfirmedAt = time.Now().Unix()
 					dirty = true
-				case p.scanThrottleElapsed(g.ID):
+				} else if p.scanThrottleElapsed(g.ID) {
+					// Predicted grab: retry Identify until the cross-id lands.
 					if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
 						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
 					} else if jobID != "" {
