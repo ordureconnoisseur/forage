@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/matcher"
 )
 
 type sceneReleasesResponse struct {
@@ -151,6 +152,22 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 				bestOtherID = top.Scene.ID
 				bestOtherTitle = top.Scene.Title
 				bestOtherConf = top.Confidence
+			}
+		}
+
+		// Direct title-containment override. If the release name contains
+		// the bulk of the viewed scene's title, it IS that scene — even
+		// when the cross-scene ranking put a different same-performer
+		// scene #1. This stops the "looks like X — not the scene you're
+		// viewing" warning from firing on obvious exact-title matches
+		// (e.g. a ManyVids file named with the full scene title). Guarded
+		// by a 3-token minimum so single-word titles can't trivially
+		// verify everything.
+		if frac, nTok := matcher.TitleContainment(scene.Title, rel.Title); nTok >= 3 && frac >= 0.8 {
+			verified = true
+			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
+			if conf < frac {
+				conf = frac
 			}
 		}
 		out[res.Index] = sceneRelease{

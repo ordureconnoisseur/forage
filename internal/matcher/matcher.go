@@ -497,6 +497,33 @@ func titleOverlap(sceneTitle string, releaseTokens map[string]bool) (float64, st
 	return j, fmt.Sprintf("title: %.2f", j)
 }
 
+// TitleContainment returns the fraction of the scene title's
+// significant (stopword-filtered) tokens that appear in the release
+// name, plus how many significant tokens the scene title has. 1.0 means
+// the release name contains the entire scene title.
+//
+// Unlike titleOverlap (Jaccard, which penalises the release for its
+// extra studio/performer/codec tokens), containment asks only "is the
+// scene title ⊆ the release name" — the right question when verifying
+// that a release IS a given scene. The release-verifier uses it as a
+// direct signal independent of the cross-scene ranking, so an obvious
+// exact-title match isn't mislabelled just because some other
+// same-performer scene happened to rank #1.
+func TitleContainment(sceneTitle, releaseName string) (float64, int) {
+	st := tokenSet(filterTitleStopwords(Tokenize(sceneTitle)))
+	if len(st) == 0 {
+		return 0, 0
+	}
+	rel := tokenSet(filterTitleStopwords(Tokenize(releaseName)))
+	hit := 0
+	for t := range st {
+		if rel[t] {
+			hit++
+		}
+	}
+	return float64(hit) / float64(len(st)), len(st)
+}
+
 // ── helpers ──────────────────────────────────────────────────────────
 
 func tokenSet(tokens []string) map[string]bool {
