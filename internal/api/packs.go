@@ -134,7 +134,7 @@ func classifyPacks(releases []prowlarr.Release) []packCandidate {
 			Popularity:  rel.Popularity,
 			PublishDate: rel.PublishDate,
 			InfoURL:     rel.InfoURL,
-			DownloadURL: rel.DownloadURL,
+			DownloadURL: rel.GrabURL(),
 		})
 	}
 	return out

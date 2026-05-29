@@ -152,7 +152,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 			Grabs:          rel.Grabs,
 			PublishDate:    rel.PublishDate,
 			InfoURL:        rel.InfoURL,
-			DownloadURL:    rel.DownloadURL,
+			DownloadURL:    rel.GrabURL(),
 			Verified:       verified,
 			Confidence:     conf,
 			BestMatchID:    bestOtherID,

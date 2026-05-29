@@ -66,6 +66,14 @@ function resolutionRank(title: string): number {
   return 0;
 }
 
+// releaseKey is a stable per-release identity for React keys + grab
+// state. download_url alone isn't safe: magnet-only indexers (TPB) can
+// share an empty download_url, which would collapse unrelated rows into
+// one state bucket (clicking one appears to grab/fail them all).
+function releaseKey(r: SceneRelease): string {
+  return r.download_url || r.info_url || r.title;
+}
+
 function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
   const out = [...rels];
   out.sort((a, b) => {
@@ -108,7 +116,8 @@ export default function SceneReleases({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Per-release grab state, keyed by download_url.
+  // Per-release grab state, keyed by releaseKey (download_url is empty/
+  // shared for some magnet-only indexers, which would group unrelated rows).
   const [grabs, setGrabs] = useState<Record<string, GrabState>>({});
   const [showUnverified, setShowUnverified] = useState(false);
   const [sort, setSort] = useState<ReleaseSort>(loadSort);
@@ -154,7 +163,8 @@ export default function SceneReleases({
   );
 
   const grab = async (rel: SceneRelease) => {
-    setGrabs((g) => ({ ...g, [rel.download_url]: { status: "grabbing" } }));
+    const k = releaseKey(rel);
+    setGrabs((g) => ({ ...g, [k]: { status: "grabbing" } }));
     try {
       const res = await postGrab({
         download_url: rel.download_url,
@@ -168,12 +178,12 @@ export default function SceneReleases({
       });
       setGrabs((g) => ({
         ...g,
-        [rel.download_url]: { status: "queued", client: res.client || "?" },
+        [k]: { status: "queued", client: res.client || "?" },
       }));
     } catch (e) {
       setGrabs((g) => ({
         ...g,
-        [rel.download_url]: {
+        [k]: {
           status: "error",
           message: (e as Error).message,
         },
@@ -275,10 +285,10 @@ function ReleaseList({
   return (
     <ul className="release-list">
       {releases.map((r) => {
-        const state = grabs[r.download_url] || { status: "idle" };
+        const state = grabs[releaseKey(r)] || { status: "idle" };
         const tier = r.verified && r.confidence > 0 ? confTier(r.confidence) : "";
         return (
-          <li key={r.download_url} className={"release" + (tier ? " " + tier : "")}>
+          <li key={releaseKey(r)} className={"release" + (tier ? " " + tier : "")}>
             <div className="release-body">
               <div className="release-title">{r.title}</div>
               <div className="release-meta">

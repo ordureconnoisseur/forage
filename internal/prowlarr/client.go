@@ -47,12 +47,24 @@ type Release struct {
 	PublishDate string // RFC3339
 	InfoURL     string
 	DownloadURL string
-	Categories  []int
+	// Magnet is a magnet: URI when the indexer is magnet-only (e.g. The
+	// Pirate Bay, whose downloadUrl is empty). GrabURL falls back to it.
+	Magnet     string
+	Categories []int
 	// Files is the indexer-reported file count. Often absent (PornoLab
 	// returns null), and when present counts every file (videos + thumbs
 	// + NFOs), so it's only a weak pack hint — the authoritative video
 	// count comes from parsing the .torrent (see internal/torrentmeta).
 	Files int
+}
+
+// GrabURL is what to hand the download client: the .torrent download URL
+// when present, else the magnet. Empty when the indexer gave neither.
+func (r Release) GrabURL() string {
+	if r.DownloadURL != "" {
+		return r.DownloadURL
+	}
+	return r.Magnet
 }
 
 // rawRelease is the wire shape — Prowlarr's response objects include
@@ -69,6 +81,8 @@ type rawRelease struct {
 	PublishDate string `json:"publishDate"`
 	InfoURL     string `json:"infoUrl"`
 	DownloadURL string `json:"downloadUrl"`
+	MagnetURL   string `json:"magnetUrl"`
+	GUID        string `json:"guid"`
 	Files       *int   `json:"files"`
 	Categories  []struct {
 		ID int `json:"id"`
@@ -92,6 +106,15 @@ func (r rawRelease) toRelease() Release {
 	}
 	if r.Files != nil {
 		out.Files = *r.Files
+	}
+	// Magnet-only indexers (TPB) leave downloadUrl empty and put the
+	// magnet in guid (raw magnet:) or magnetUrl. Capture the raw magnet
+	// so GrabURL has something the download client can use directly.
+	switch {
+	case strings.HasPrefix(r.GUID, "magnet:"):
+		out.Magnet = r.GUID
+	case strings.HasPrefix(r.MagnetURL, "magnet:"):
+		out.Magnet = r.MagnetURL
 	}
 	for _, c := range r.Categories {
 		out.Categories = append(out.Categories, c.ID)
