@@ -26,6 +26,13 @@ type sceneReleasesResponse struct {
 // well above that — a real partial title match scores ~0.2+.
 const rankVerifyMinTitle = 0.15
 
+// titleVerifyMinConf is the minimum matcher confidence the viewed scene
+// must have before a title-containment match counts. A pure title-word
+// coincidence (no performer/date) tops out around 0.25, so this floor
+// requires real performer/date evidence that it's this performer's scene
+// — not just a release that happens to share common title words.
+const titleVerifyMinConf = 0.30
+
 type sceneRelease struct {
 	Title       string  `json:"title"`
 	Indexer     string  `json:"indexer"`
@@ -166,12 +173,17 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		// Direct title-containment override. If the release name contains
 		// the bulk of the viewed scene's title, it IS that scene — even
 		// when the cross-scene ranking put a different same-performer
-		// scene #1. This stops the "looks like X — not the scene you're
-		// viewing" warning from firing on obvious exact-title matches
-		// (e.g. a ManyVids file named with the full scene title). Guarded
-		// by a 3-token minimum so single-word titles can't trivially
-		// verify everything.
-		if frac, nTok := matcher.TitleContainment(scene.Title, rel.Title); nTok >= 3 && frac >= 0.8 {
+		// scene #1 (e.g. a ManyVids file named with the full scene title).
+		//
+		// Guards, learned the hard way: (1) >=4 significant title tokens,
+		// so short generic titles like "Home And Horny" — whose words
+		// appear in hundreds of unrelated releases — don't trivially
+		// verify everything; short titles fall back to the ranking path.
+		// (2) the viewed scene must already be a real matcher candidate
+		// (conf >= titleVerifyMinConf, i.e. performer/date actually
+		// matched), so a "Home And Horny" release by a DIFFERENT performer
+		// can't verify on title words alone.
+		if frac, nTok := matcher.TitleContainment(scene.Title, rel.Title); nTok >= 4 && frac >= 0.8 && conf >= titleVerifyMinConf {
 			verified = true
 			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
 			if conf < frac {
