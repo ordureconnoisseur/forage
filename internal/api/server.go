@@ -83,6 +83,7 @@ func (s *Server) Router() http.Handler {
 	r.Get("/grabs/{id}/detail", s.getGrabDetail)
 	r.Delete("/grabs/{id}", s.deleteGrab)
 	r.Get("/missing-scenes", s.getMissingScenes)
+	r.Get("/performers/{id}/packs", s.getPerformerPacks)
 	r.Get("/scenes/{id}/releases", s.getSceneReleases)
 	r.Get("/discover", s.getDiscover)
 
