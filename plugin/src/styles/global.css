@@ -1507,12 +1507,22 @@ button {
   color: var(--text);
   padding: 12px 16px 12px 22px;
   display: grid;
-  grid-template-columns: 96px 1fr 16px;
+  grid-template-columns: minmax(96px, auto) 1fr 16px;
   gap: 12px;
   align-items: center;
   text-align: left;
   cursor: pointer;
   font: inherit;
+}
+/* Status + optional PACK badge share one grid cell so a pack row stays a
+   3-column grid (badge · body · caret). Without this the extra PACK badge
+   lands in the 1fr body column and crushes the title/meta into the caret
+   slot. */
+.grab-row-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 .grab-status-badge {
   display: inline-flex;

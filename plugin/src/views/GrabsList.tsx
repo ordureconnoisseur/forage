@@ -728,8 +728,10 @@ function GrabRow({
   return (
     <li className={"grab-row status-" + g.status + (expanded ? " open" : "")}>
       <button className="grab-row-head" onClick={onToggle}>
-        <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
-        {g.kind === "pack" && <span className="grab-pack-badge">PACK</span>}
+        <div className="grab-row-badges">
+          <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
+          {g.kind === "pack" && <span className="grab-pack-badge">PACK</span>}
+        </div>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>
           <div className="grab-meta">
