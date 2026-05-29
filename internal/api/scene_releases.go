@@ -20,6 +20,12 @@ type sceneReleasesResponse struct {
 	Releases []sceneRelease `json:"releases"`
 }
 
+// rankVerifyMinTitle is the minimum title-overlap (Jaccard, the matcher's
+// TitleOverlap) the viewed scene must have for ranking-based
+// verification. The matcher floors no-overlap at ~0.05, so this sits
+// well above that — a real partial title match scores ~0.2+.
+const rankVerifyMinTitle = 0.15
+
 type sceneRelease struct {
 	Title       string  `json:"title"`
 	Indexer     string  `json:"indexer"`
@@ -130,24 +136,27 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		var bestOtherConf float64
 		if res.Err == nil && len(res.Candidates) > 0 {
 			top := res.Candidates[0]
+			var viewedOverlap float64
 			for _, c := range res.Candidates {
 				if c.Scene.ID == id {
 					conf = c.Confidence
+					viewedOverlap = c.TitleOverlap
 					break
 				}
 			}
-			// Verified only when the viewed scene is the matcher's single
-			// best candidate. The old "within 0.05 of the top" margin
-			// falsely verified much of a performer's catalogue: a release
-			// for a DIFFERENT scene by the same performer scores almost
-			// entirely on the performer (0.4) — the weak title signal
-			// (0.2) leaves every same-performer scene clustered within a
-			// few points, so the viewed scene slipped inside the margin.
-			// Title containment (below) still verifies releases that name
-			// the scene outright even when the ranking is off.
-			if top.Scene.ID == id {
+			// Verified only when the viewed scene is the matcher's best
+			// candidate AND that win is backed by a real title overlap —
+			// not just the shared performer. A release for a DIFFERENT
+			// scene by the same performer scores almost entirely on the
+			// performer (0.4); the weak title signal leaves every
+			// same-performer scene tied ~0.4-0.48, and whichever won the
+			// tie would otherwise verify. Requiring title overlap keeps
+			// those out. Title containment (below) still verifies releases
+			// that name the scene outright even when the ranking is off.
+			switch {
+			case top.Scene.ID == id && viewedOverlap >= rankVerifyMinTitle:
 				verified = true
-			} else {
+			case top.Scene.ID != id:
 				bestOtherID = top.Scene.ID
 				bestOtherTitle = top.Scene.Title
 				bestOtherConf = top.Confidence

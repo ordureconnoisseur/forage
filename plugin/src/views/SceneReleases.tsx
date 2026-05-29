@@ -37,17 +37,20 @@ function humanSize(b: number): string {
 //                 metadata matches the scene (NOT video quality)
 //   - popularity: seeders (torrent) / grabs (usenet) — availability
 const SORT_OPTIONS = [
-  { value: "quality", label: "Quality" },
   { value: "match", label: "Match" },
+  { value: "quality", label: "Quality" },
   { value: "popularity", label: "Popularity" },
 ] as const;
 type ReleaseSort = (typeof SORT_OPTIONS)[number]["value"];
-const SORT_STORAGE_KEY = "forage.releases.sort";
+// v2: default flipped from quality → match (the strongest match for the
+// scene you're viewing should lead). Bumped key so the old default is
+// dropped rather than pinning existing users to quality.
+const SORT_STORAGE_KEY = "forage.releases.sort.v2";
 
 function loadSort(): ReleaseSort {
   const s = localStorage.getItem(SORT_STORAGE_KEY) as ReleaseSort | null;
   if (s && SORT_OPTIONS.some((o) => o.value === s)) return s;
-  return "quality";
+  return "match";
 }
 
 // resolutionRank extracts a sortable height from the release title.
@@ -55,7 +58,8 @@ function loadSort(): ReleaseSort {
 // releases sink below labelled ones.
 function resolutionRank(title: string): number {
   const t = title.toLowerCase();
-  if (/\b(2160p?|4k|uhd)\b/.test(t)) return 2160;
+  // 4K named by height (2160p) or width (3840p).
+  if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return 2160;
   if (/\b1080p?\b/.test(t)) return 1080;
   if (/\b720p?\b/.test(t)) return 720;
   if (/\b480p?\b/.test(t)) return 480;
@@ -72,6 +76,9 @@ function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
     }
     if (sort === "match") {
       if (b.confidence !== a.confidence) return b.confidence - a.confidence;
+      // tie on match → prefer higher quality, then availability
+      const d = resolutionRank(b.title) - resolutionRank(a.title);
+      if (d !== 0) return d;
       return b.popularity - a.popularity;
     }
     // popularity
