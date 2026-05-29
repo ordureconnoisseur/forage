@@ -212,6 +212,16 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 				{PerformerIDs: stashDBPerfIDs, StudioIDs: stashDBStudioIDs, Date: date, PerPage: 50},
 			}, queries...)
 		}
+		// Performer-only broad query. The performer+studio query above is
+		// an exact studio-id AND, which silently drops the right scene
+		// when StashDB files it under a sub-studio (e.g. an "EvilAngel …"
+		// release whose scene sits under a network sub-studio). Without a
+		// broad fallback the correct scene never becomes a candidate at
+		// all — the bug behind standard-format releases scoring 0.00.
+		// The studio still contributes to the score, so ranking is intact.
+		if len(stashDBPerfIDs) > 0 && len(stashDBStudioIDs) > 0 {
+			queries = append(queries, stashdb.SceneQuery{PerformerIDs: stashDBPerfIDs, PerPage: 50})
+		}
 		for _, q := range queries {
 			wg.Add(1)
 			go func(q stashdb.SceneQuery) {
