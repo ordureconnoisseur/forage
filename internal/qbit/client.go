@@ -86,17 +86,55 @@ func (c *Client) Login(ctx context.Context) error {
 	return nil
 }
 
+// relogin clears the cached session and forces a fresh login. Called
+// when qBit answers 403, meaning the SID cookie is no longer valid
+// (qBit's WebUI session expired, or qBit/the VPN container restarted out
+// from under a long-running download).
+func (c *Client) relogin(ctx context.Context) error {
+	c.authMu.Lock()
+	c.authedOnce = false
+	c.authMu.Unlock()
+	return c.Login(ctx)
+}
+
+// authedDo runs an authenticated request against qBit, transparently
+// re-logging-in and replaying it ONCE if qBit rejects the session with
+// 403. Without this, authedOnce latches true for the life of the process
+// and a session that expires mid-pack (or a qBit restart) wedges every
+// subsequent poll — the grab never advances. build is called fresh per
+// attempt so request bodies can be replayed safely.
+func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, error)) (*http.Response, error) {
+	if err := c.Login(ctx); err != nil {
+		return nil, fmt.Errorf("login: %w", err)
+	}
+	req, err := build()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		return resp, nil
+	}
+	resp.Body.Close()
+	if err := c.relogin(ctx); err != nil {
+		return nil, fmt.Errorf("re-login: %w", err)
+	}
+	req, err = build()
+	if err != nil {
+		return nil, err
+	}
+	return c.http.Do(req)
+}
+
 // Version returns qBittorrent's version string ("v5.1.4"). Used as a
 // boot probe + by the manual probe tool. Hits /api/v2/app/version.
 func (c *Client) Version(ctx context.Context) (string, error) {
-	if err := c.Login(ctx); err != nil {
-		return "", fmt.Errorf("login: %w", err)
-	}
-	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/app/version", nil)
-	if err != nil {
-		return "", err
-	}
-	resp, err := c.http.Do(req)
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/app/version", nil)
+	})
 	if err != nil {
 		return "", err
 	}
@@ -250,9 +288,6 @@ type ListOpts struct {
 // with its info_hash (qBit's `/torrents/add` doesn't return the hash),
 // and looking up state for already-tracked grabs.
 func (c *Client) ListTorrents(ctx context.Context, opts ListOpts) ([]Torrent, error) {
-	if err := c.Login(ctx); err != nil {
-		return nil, fmt.Errorf("login: %w", err)
-	}
 	q := url.Values{}
 	if opts.Filter != "" {
 		q.Set("filter", opts.Filter)
@@ -273,11 +308,9 @@ func (c *Client) ListTorrents(ctx context.Context, opts ListOpts) ([]Torrent, er
 	if enc := q.Encode(); enc != "" {
 		u += "?" + enc
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.http.Do(req)
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", u, nil)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -322,9 +355,6 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 	if hash == "" {
 		return fmt.Errorf("hash is empty")
 	}
-	if err := c.Login(ctx); err != nil {
-		return fmt.Errorf("login: %w", err)
-	}
 	form := url.Values{}
 	form.Set("hashes", hash)
 	if deleteFiles {
@@ -332,13 +362,16 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 	} else {
 		form.Set("deleteFiles", "false")
 	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/delete", strings.NewReader(form.Encode()))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Referer", c.baseURL)
-	resp, err := c.http.Do(req)
+	enc := form.Encode()
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/delete", strings.NewReader(enc))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Referer", c.baseURL)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
@@ -351,14 +384,16 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 }
 
 func (c *Client) postAdd(ctx context.Context, body *bytes.Buffer, contentType string) error {
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/add", body)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("Referer", c.baseURL)
-
-	resp, err := c.http.Do(req)
+	raw := body.Bytes()
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/api/v2/torrents/add", bytes.NewReader(raw))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", contentType)
+		req.Header.Set("Referer", c.baseURL)
+		return req, nil
+	})
 	if err != nil {
 		return err
 	}
