@@ -51,6 +51,7 @@ var datePatterns = []datePattern{
 	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yyyy-mm-dd", false, false},
 	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yyyy_mm_dd", false, false},
 	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^0-9]|$)`), "yyyymmdd", false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yyyy mm dd", false, false},
 
 	// DD.MM.YYYY — European/scraper convention, often paren-wrapped.
 	// Unambiguous because the year is 4 digits.
@@ -62,6 +63,10 @@ var datePatterns = []datePattern{
 	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})\.(\d{2})\.(\d{2})(?:[^0-9]|$)`), "yy.mm.dd", true, false},
 	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yy-mm-dd", true, false},
 	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yy_mm_dd", true, false},
+	// Space-separated — the dominant scene-release form ("Studio 25 08 15
+	// Performer Title …"). calendar validation (month 1-12, day 1-31)
+	// keeps stray number triples from matching.
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yy mm dd", true, false},
 	// Intentionally no "yymmdd" pattern: 6 bare digits is too ambiguous.
 }
 
