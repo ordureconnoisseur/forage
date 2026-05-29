@@ -43,30 +43,45 @@ type datePattern struct {
 	label     string
 	twoYY     bool // true → group 1 is 2-digit year that needs disambiguation; emits both YY.MM.DD and DD.MM.YY interpretations
 	yearLast  bool // true → group 3 is the (4-digit) year; group 1 is day. Used by DD.MM.YYYY family.
+	// recentYearOnly rejects matches whose disambiguated year is older than
+	// spaceDateMinYear. Set only for the space-separated form, the most
+	// ambiguous one: bare "NN NN NN" triples collide with volume/part/track
+	// numbering ("Vol 01 02 03" → 2001-02-03), which calendar validation
+	// alone can't filter. Requiring a recent year (space-dating is a recent
+	// scene-release convention) discards that noise.
+	recentYearOnly bool
 }
+
+// spaceDateMinYear floors the year accepted from the space-separated date
+// form. Space-dated scene releases ("EvilAngel 25 08 15 …") are a recent
+// convention, so older "dates" extracted from that form are almost always
+// sequential numbering rather than a shoot date. Revisit if the library
+// gains genuinely older space-dated releases.
+const spaceDateMinYear = 2015
 
 var datePatterns = []datePattern{
 	// 4-digit-year, dotted: 2024.05.15
-	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})\.(\d{2})\.(\d{2})(?:[^0-9]|$)`), "yyyy.mm.dd", false, false},
-	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yyyy-mm-dd", false, false},
-	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yyyy_mm_dd", false, false},
-	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^0-9]|$)`), "yyyymmdd", false, false},
-	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yyyy mm dd", false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})\.(\d{2})\.(\d{2})(?:[^0-9]|$)`), "yyyy.mm.dd", false, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yyyy-mm-dd", false, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yyyy_mm_dd", false, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})(\d{2})(\d{2})(?:[^0-9]|$)`), "yyyymmdd", false, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yyyy mm dd", false, false, false},
 
 	// DD.MM.YYYY — European/scraper convention, often paren-wrapped.
 	// Unambiguous because the year is 4 digits.
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})\.(\d{2})\.((?:19|20)\d{2})(?:[^0-9]|$)`), "dd.mm.yyyy", false, true},
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})-(\d{2})-((?:19|20)\d{2})(?:[^0-9]|$)`), "dd-mm-yyyy", false, true},
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})_(\d{2})_((?:19|20)\d{2})(?:[^0-9]|$)`), "dd_mm_yyyy", false, true},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})\.(\d{2})\.((?:19|20)\d{2})(?:[^0-9]|$)`), "dd.mm.yyyy", false, true, false},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})-(\d{2})-((?:19|20)\d{2})(?:[^0-9]|$)`), "dd-mm-yyyy", false, true, false},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})_(\d{2})_((?:19|20)\d{2})(?:[^0-9]|$)`), "dd_mm_yyyy", false, true, false},
 
 	// 2-digit-year, dotted: 24.05.15  — common P2P scene-release form
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})\.(\d{2})\.(\d{2})(?:[^0-9]|$)`), "yy.mm.dd", true, false},
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yy-mm-dd", true, false},
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yy_mm_dd", true, false},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})\.(\d{2})\.(\d{2})(?:[^0-9]|$)`), "yy.mm.dd", true, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})-(\d{2})-(\d{2})(?:[^0-9]|$)`), "yy-mm-dd", true, false, false},
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2})_(\d{2})_(\d{2})(?:[^0-9]|$)`), "yy_mm_dd", true, false, false},
 	// Space-separated — the dominant scene-release form ("Studio 25 08 15
-	// Performer Title …"). calendar validation (month 1-12, day 1-31)
-	// keeps stray number triples from matching.
-	{regexp.MustCompile(`(?:^|[^0-9])(\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yy mm dd", true, false},
+	// Performer Title …"). The bare "NN NN NN" shape also matches volume/
+	// part/track numbering, which calendar validation can't filter, so this
+	// form additionally requires a recent year (recentYearOnly).
+	{regexp.MustCompile(`(?:^|[^0-9])(\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yy mm dd", true, false, true},
 	// Intentionally no "yymmdd" pattern: 6 bare digits is too ambiguous.
 }
 
@@ -126,7 +141,7 @@ func ExtractDates(s string) []ExtractedDate {
 			// passes calendar validation. TopDate ranks by century +
 			// paren context.
 			inParens := pos > 0 && (s[pos-1] == '(' || s[pos-1] == '[')
-			if y := disambiguateYY(a); validYMD(y, b, c) {
+			if y := disambiguateYY(a); validYMD(y, b, c) && (!dp.recentYearOnly || y >= spaceDateMinYear) {
 				emit(ExtractedDate{
 					Date:     fmt.Sprintf("%04d-%02d-%02d", y, b, c),
 					Match:    match,
@@ -135,7 +150,7 @@ func ExtractDates(s string) []ExtractedDate {
 					InParens: inParens,
 				})
 			}
-			if y := disambiguateYY(c); validYMD(y, b, a) {
+			if y := disambiguateYY(c); validYMD(y, b, a) && (!dp.recentYearOnly || y >= spaceDateMinYear) {
 				emit(ExtractedDate{
 					Date:     fmt.Sprintf("%04d-%02d-%02d", y, b, a),
 					Match:    match,

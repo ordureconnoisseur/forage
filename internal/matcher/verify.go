@@ -28,6 +28,17 @@ const (
 	// names it) — recovers correct title-only matches the conf floor
 	// would otherwise drop.
 	verifyStrongTitleOverlap = 0.40
+	// verifyShortTitleMaxTokens: at or below this many significant title
+	// tokens, Jaccard overlap can't clear verifyRankMinTitleOverlap even on
+	// an exact match — one or two tokens are a tiny fraction of a full
+	// release name — so the ranking path falls back to a confidence check
+	// instead of the overlap floor for such titles.
+	verifyShortTitleMaxTokens = 2
+	// verifyShortTitleMinConf: the confidence a short-titled #1 needs to
+	// verify without title overlap. Set at the performer+date / performer+
+	// studio level so a bare shared-performer coincidence (conf ~0.4)
+	// doesn't qualify.
+	verifyShortTitleMinConf = 0.50
 )
 
 // VerifyResult is the outcome of checking a release against a scene.
@@ -60,20 +71,30 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		}
 	}
 
-	// Ranking path: viewed scene is the single best, by a real title
-	// overlap, AND either a real overall match (conf floor — performer/
-	// date matched) or a strong title on its own. The conf floor keeps a
-	// title-token coincidence with no performer (conf well under 0.3)
-	// from verifying just because it ranked #1 among weak candidates.
-	if found && len(cands) > 0 && cands[0].Scene.ID == sceneID &&
-		overlap >= verifyRankMinTitleOverlap &&
-		(conf >= verifyTitleMinConf || overlap >= verifyStrongTitleOverlap) {
-		return VerifyResult{Verified: true, Confidence: conf}
+	frac, nTok := TitleContainment(sceneTitle, releaseName)
+	isTop := found && len(cands) > 0 && cands[0].Scene.ID == sceneID
+
+	// Ranking path: the viewed scene is the single best pick. Normally we
+	// require a real title overlap (so it's #1 for the title, not merely a
+	// shared performer), backed by either a real overall match (conf floor)
+	// or a strong title on its own. A very short scene title ("Squirt")
+	// can't reach the overlap floor even on an exact match — its one or two
+	// tokens are a tiny fraction of a release name — so for short titles we
+	// instead accept a strong overall match (high conf = performer AND
+	// date/studio agreed), itself reliable evidence it's the right scene.
+	if isTop {
+		shortTitle := nTok > 0 && nTok <= verifyShortTitleMaxTokens
+		switch {
+		case overlap >= verifyRankMinTitleOverlap &&
+			(conf >= verifyTitleMinConf || overlap >= verifyStrongTitleOverlap):
+			return VerifyResult{Verified: true, Confidence: conf}
+		case shortTitle && conf >= verifyShortTitleMinConf:
+			return VerifyResult{Verified: true, Confidence: conf}
+		}
 	}
 
 	// Containment path: the release names the scene outright.
-	if frac, nTok := TitleContainment(sceneTitle, releaseName); nTok >= verifyTitleMinTokens &&
-		frac >= verifyTitleMinContainment && conf >= verifyTitleMinConf {
+	if nTok >= verifyTitleMinTokens && frac >= verifyTitleMinContainment && conf >= verifyTitleMinConf {
 		if conf < frac {
 			conf = frac
 		}

@@ -211,7 +211,7 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) {
 				Grabs:       rel.Grabs,
 				PublishDate: rel.PublishDate,
 				InfoURL:     rel.InfoURL,
-				DownloadURL: rel.DownloadURL,
+				DownloadURL: rel.GrabURL(), // magnet fallback for magnet-only indexers (TPB)
 				Categories:  rel.Categories,
 				Candidates:  candidatesToWire(cands),
 			})
