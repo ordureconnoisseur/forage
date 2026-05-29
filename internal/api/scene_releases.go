@@ -20,15 +20,6 @@ type sceneReleasesResponse struct {
 	Releases []sceneRelease `json:"releases"`
 }
 
-// verifyTopMargin is how far below the matcher's #1 candidate the
-// viewed scene can sit and still earn the Verified badge. Set tight:
-// a release is "verified" for the scene you're viewing only when that
-// scene is the matcher's best pick or in a near-tie for it. Anything
-// looser re-introduces the false-verified bug where a release for a
-// clearly different scene gets badged green just because the viewed
-// scene also appears lower in the candidate list.
-const verifyTopMargin = 0.05
-
 type sceneRelease struct {
 	Title       string  `json:"title"`
 	Indexer     string  `json:"indexer"`
@@ -142,13 +133,21 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 			for _, c := range res.Candidates {
 				if c.Scene.ID == id {
 					conf = c.Confidence
-					if top.Confidence-c.Confidence <= verifyTopMargin {
-						verified = true
-					}
 					break
 				}
 			}
-			if !verified && top.Scene.ID != id {
+			// Verified only when the viewed scene is the matcher's single
+			// best candidate. The old "within 0.05 of the top" margin
+			// falsely verified much of a performer's catalogue: a release
+			// for a DIFFERENT scene by the same performer scores almost
+			// entirely on the performer (0.4) — the weak title signal
+			// (0.2) leaves every same-performer scene clustered within a
+			// few points, so the viewed scene slipped inside the margin.
+			// Title containment (below) still verifies releases that name
+			// the scene outright even when the ranking is off.
+			if top.Scene.ID == id {
+				verified = true
+			} else {
 				bestOtherID = top.Scene.ID
 				bestOtherTitle = top.Scene.Title
 				bestOtherConf = top.Confidence
