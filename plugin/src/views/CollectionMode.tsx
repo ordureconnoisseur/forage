@@ -43,6 +43,11 @@ interface RowState {
   error?: string;
   // For status==="inflight": the existing grab's status (downloading…).
   grabStatus?: string;
+  // True when auto-pick selected a release for this row on search. Lets
+  // the UI distinguish "auto-pick found a confident match that the user
+  // then UNCHECKED" (→ "none selected") from "auto-pick found nothing
+  // confident among the results" (→ offer a deep search).
+  autoPicked?: boolean;
 }
 
 function blankRow(): RowState {
@@ -192,13 +197,13 @@ export default function CollectionMode({
             .slice()
             .sort((a, b) => b.confidence - a.confidence);
           const best = releases.find((x) => x.verified);
+          const autoPick =
+            best && best.confidence >= AUTO_PICK_FLOOR ? best.download_url : null;
           setRow(scene.stashdb_id, {
             status: releases.length === 0 ? "empty" : "done",
             releases,
-            pickedURL:
-              best && best.confidence >= AUTO_PICK_FLOOR
-                ? best.download_url
-                : null,
+            pickedURL: autoPick,
+            autoPicked: autoPick != null,
           });
         } catch (e) {
           if (cancelled || ctrl.signal.aborted) return;
@@ -240,16 +245,16 @@ export default function CollectionMode({
         .slice()
         .sort((a, b) => b.confidence - a.confidence);
       const best = releases.find((x) => x.verified);
+      const autoPick =
+        best && best.confidence >= AUTO_PICK_FLOOR ? best.download_url : null;
       setRows((r) => ({
         ...r,
         [scene.stashdb_id]: {
           ...(r[scene.stashdb_id] || blankRow()),
           status: releases.length === 0 ? "empty" : "done",
           releases,
-          pickedURL:
-            best && best.confidence >= AUTO_PICK_FLOOR
-              ? best.download_url
-              : null,
+          pickedURL: autoPick,
+          autoPicked: autoPick != null,
         },
       }));
     } catch (e) {
@@ -294,7 +299,15 @@ export default function CollectionMode({
     const targets = scenes
       .map((s) => {
         const row = rows[s.stashdb_id];
-        if (!row || row.grab === "queued" || !row.pickedURL) return null;
+        // Never grab an already-in-flight scene (downloading from a prior
+        // session) or one already queued this session.
+        if (
+          !row ||
+          row.status === "inflight" ||
+          row.grab === "queued" ||
+          !row.pickedURL
+        )
+          return null;
         const rel = row.releases.find((r) => r.download_url === row.pickedURL);
         return rel ? { scene: s, rel } : null;
       })
@@ -713,20 +726,25 @@ function CollectionRow({
                   )}
                 </div>
               )}
-              {row.status === "done" && !picked && (
+              {row.status === "done" && !picked && row.autoPicked && (
+                // Auto-pick selected something, then the user unchecked it.
+                <span className="coll-state muted">
+                  none selected
+                  <button className="coll-retry" onClick={onExpand}>
+                    {expanded ? "▾ pick one" : "▸ pick one"}
+                  </button>
+                </span>
+              )}
+              {row.status === "done" && !picked && !row.autoPicked && (
+                // Releases came back but none was a confident match.
                 <span className="coll-state warn">
-                  {row.releases.length > 0
-                    ? `${row.releases.length} found · none selected`
-                    : "nothing selected"}
-                  {row.releases.length > 0 ? (
-                    <button className="coll-retry" onClick={onExpand}>
-                      {expanded ? "▾ pick one" : "▸ pick one"}
-                    </button>
-                  ) : (
-                    <button className="coll-retry" onClick={onRetry}>
-                      ↻ deep search
-                    </button>
-                  )}
+                  no confident match
+                  <button className="coll-retry" onClick={onExpand}>
+                    {expanded ? "▾ pick one" : `▸ ${row.releases.length}`}
+                  </button>
+                  <button className="coll-retry" onClick={onRetry}>
+                    ↻ deep search
+                  </button>
                 </span>
               )}
             </>
