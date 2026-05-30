@@ -63,6 +63,9 @@ type StoredConfig struct {
 	// PackDedupKeep: "existing" | "pack" | "both". Controls which copy
 	// survives when a pack scene duplicates one already in the library.
 	PackDedupKeep *string `json:"packDedupKeep,omitempty"`
+	// ReleaseRules is the release-scoring preference list as a JSON array
+	// string (scoring.Rule[]). Empty = built-in defaults.
+	ReleaseRules *string `json:"releaseRules,omitempty"`
 	// Duration fields are stored as strings ("60s", "6h") so the JSON
 	// stays human-readable and round-trips cleanly through the UI.
 	PollInterval  *string `json:"pollInterval,omitempty"`
@@ -288,6 +291,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.PackDedupKeep != nil {
 		base.PackDedupKeep = patch.PackDedupKeep
+	}
+	if patch.ReleaseRules != nil {
+		base.ReleaseRules = patch.ReleaseRules
 	}
 	if patch.PollInterval != nil {
 		base.PollInterval = patch.PollInterval

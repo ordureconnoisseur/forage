@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
+	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
@@ -50,6 +51,13 @@ type sceneRelease struct {
 	// the same strings the matcher scores on. Drives the "why did this
 	// match?" expander. Empty when the viewed scene wasn't a candidate.
 	Reasons []string `json:"reasons,omitempty"`
+	// Score is the user's release-preference score for this release (sum
+	// of matched rules); Rejected is true when a reject rule matched (the
+	// release is hidden from auto-selection). ScoreHits is the per-rule
+	// breakdown for the "why this score?" display.
+	Score     int           `json:"score"`
+	Rejected  bool          `json:"rejected,omitempty"`
+	ScoreHits []scoring.Hit `json:"score_hits,omitempty"`
 }
 
 // getSceneReleases finds Prowlarr releases for a specific StashDB
@@ -139,10 +147,19 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// Verify which releases are this scene + shape them for the UI.
 	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases)
 
-	// Verified-first, then popularity-desc within each group.
+	// Rank: verified-first, then by the user's preference SCORE (the
+	// quality ranking — x265/1080p/etc.), then popularity as the final
+	// tiebreaker. Rejected releases sort to the bottom of their group so
+	// they're visible but never lead.
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Verified != out[j].Verified {
 			return out[i].Verified
+		}
+		if out[i].Rejected != out[j].Rejected {
+			return !out[i].Rejected // non-rejected first
+		}
+		if out[i].Score != out[j].Score {
+			return out[i].Score > out[j].Score
 		}
 		return out[i].Popularity > out[j].Popularity
 	})
@@ -177,6 +194,7 @@ const maxPerformerNames = 3
 //     canonical/credited spellings (a tracker may use any of them);
 //  3. else (no context performer) fall back to the scene's own
 //     performers, capped.
+//
 // Capped at maxPerformerNames.
 func (s *Server) scenePerformerNames(ctx context.Context, scene *stashdb.Scene, ctxPerformer, aliasOverride string) []string {
 	if aliasOverride != "" {
@@ -204,7 +222,7 @@ func (s *Server) scenePerformerNames(ctx context.Context, scene *stashdb.Scene, 
 			for _, p := range scene.Performers {
 				if p.ID == sid {
 					add(p.Name) // StashDB canonical
-					add(p.As)    // scene-credited spelling
+					add(p.As)   // scene-credited spelling
 				}
 			}
 		}
@@ -296,6 +314,7 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string, lean bool) []str
 // verify/badge logic — and the stored candidate list a job exposes for
 // re-pick — is identical to the interactive view.
 func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID, sceneTitle string, releases []prowlarr.Release) []sceneRelease {
+	scorer := s.releaseScorer()
 	titles := make([]string, len(releases))
 	for i, rel := range releases {
 		titles[i] = rel.Title
@@ -324,6 +343,7 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 				bestOtherConf = top.Confidence
 			}
 		}
+		sc := scorer.Score(rel.Title)
 		out[res.Index] = sceneRelease{
 			Title:          rel.Title,
 			Indexer:        rel.Indexer,
@@ -341,6 +361,9 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 			BestMatchTitle: bestOtherTitle,
 			BestMatchConf:  bestOtherConf,
 			Reasons:        reasons,
+			Score:          sc.Score,
+			Rejected:       sc.Rejected,
+			ScoreHits:      sc.Hits,
 		}
 	}
 	return out
@@ -356,11 +379,11 @@ func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, s
 		return nil, nil
 	}
 	var (
-		mu      sync.Mutex
-		merged  []prowlarr.Release
-		seen    = map[string]bool{}
+		mu       sync.Mutex
+		merged   []prowlarr.Release
+		seen     = map[string]bool{}
 		firstErr error
-		wg      sync.WaitGroup
+		wg       sync.WaitGroup
 	)
 	for _, term := range terms {
 		wg.Add(1)
@@ -396,4 +419,3 @@ func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, s
 	}
 	return merged, nil
 }
-

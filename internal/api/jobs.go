@@ -435,15 +435,29 @@ func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *c
 		return
 	}
 
-	// Shape + verify all candidates (same logic as the interactive view),
-	// ranked confidence-desc so the strongest leads.
+	// Shape + verify all candidates (same logic as the interactive view).
+	// Rank by the user's preference SCORE (verified+non-rejected first,
+	// then score, then popularity) so the suggested pick is the best
+	// QUALITY match, not just the most confident scene-match.
 	cands := s.verifyReleases(ctx, m, sceneID, scene.Title, releases)
-	sort.SliceStable(cands, func(a, b int) bool { return cands[a].Confidence > cands[b].Confidence })
+	sort.SliceStable(cands, func(a, b int) bool {
+		if cands[a].Verified != cands[b].Verified {
+			return cands[a].Verified
+		}
+		if cands[a].Rejected != cands[b].Rejected {
+			return !cands[a].Rejected
+		}
+		if cands[a].Score != cands[b].Score {
+			return cands[a].Score > cands[b].Score
+		}
+		return cands[a].Popularity > cands[b].Popularity
+	})
 
-	// Pre-select the best confident release as a SUGGESTION (not a grab).
+	// Pre-select the best verified, non-rejected release over the floor as
+	// a SUGGESTION (not a grab).
 	pickURL, pickTitle := "", ""
 	for k := range cands {
-		if cands[k].Verified && cands[k].Confidence >= jobSuggestFloor {
+		if cands[k].Verified && !cands[k].Rejected && cands[k].Confidence >= jobSuggestFloor {
 			pickURL, pickTitle = cands[k].DownloadURL, cands[k].Title
 			break
 		}

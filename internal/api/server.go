@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
@@ -68,6 +70,13 @@ type Server struct {
 	// (multi-scene "complete the collection" runs that survive the
 	// browser closing). Lost on daemon restart; queued grabs persist.
 	jobs *jobStore
+
+	// scorer ranks releases by the user's preference rules (config
+	// ReleaseRules). Lazily built from the composed config, rebuilt on a
+	// /config save. Guarded by scorerMu.
+	scorerMu  sync.Mutex
+	scorer    *scoring.Scorer
+	scorerSrc string // the ReleaseRules JSON the cached scorer was built from
 }
 
 type filmoEntry struct {
@@ -227,6 +236,31 @@ func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, 
 	}
 	s.filmoCache[stashDBPerformerID] = filmoEntry{scenes: scenes, fetched: time.Now()}
 	return scenes, nil
+}
+
+// releaseScorer returns the Scorer for the user's current release rules,
+// rebuilding it when the rules (config ReleaseRules JSON) change. An empty
+// or unparseable rules string falls back to scoring.DefaultRules so
+// scoring always works.
+func (s *Server) releaseScorer() *scoring.Scorer {
+	raw := s.composedConfig().ReleaseRules
+	s.scorerMu.Lock()
+	defer s.scorerMu.Unlock()
+	if s.scorer != nil && s.scorerSrc == raw {
+		return s.scorer
+	}
+	rules := scoring.DefaultRules()
+	if strings.TrimSpace(raw) != "" {
+		var parsed []scoring.Rule
+		if err := json.Unmarshal([]byte(raw), &parsed); err == nil && len(parsed) > 0 {
+			rules = parsed
+		} else if err != nil {
+			s.log.Warn("release rules parse failed; using defaults", "err", err)
+		}
+	}
+	s.scorer = scoring.New(rules)
+	s.scorerSrc = raw
+	return s.scorer
 }
 
 func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {

@@ -46,28 +46,29 @@ var sensitiveFields = map[string]bool{
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 	cfg, sources := config.Compose(s.bootstrap, s.store.Get())
 	fields := map[string]configField{
-		"stashUrl":           {Value: cfg.StashURL, Source: sources["stashUrl"]},
-		"stashApiKey":        secretField(cfg.StashAPIKey, sources["stashApiKey"]),
-		"stashdbUrl":         {Value: cfg.StashDBURL, Source: sources["stashdbUrl"]},
-		"stashdbApiKey":      secretField(cfg.StashDBAPIKey, sources["stashdbApiKey"]),
-		"prowlarrUrl":        {Value: cfg.ProwlarrURL, Source: sources["prowlarrUrl"]},
-		"prowlarrApiKey":     secretField(cfg.ProwlarrAPIKey, sources["prowlarrApiKey"]),
-		"prowlarrCategories": {Value: cfg.ProwlarrCategories, Source: sources["prowlarrCategories"]},
-		"qbitUrl":            {Value: cfg.QbitURL, Source: sources["qbitUrl"]},
-		"qbitUsername":       {Value: cfg.QbitUsername, Source: sources["qbitUsername"]},
-		"qbitPassword":       secretField(cfg.QbitPassword, sources["qbitPassword"]),
-		"qbitCategory":       {Value: cfg.QbitCategory, Source: sources["qbitCategory"]},
-		"sabUrl":             {Value: cfg.SabURL, Source: sources["sabUrl"]},
-		"sabApiKey":          secretField(cfg.SabAPIKey, sources["sabApiKey"]),
-		"sabCategory":        {Value: cfg.SabCategory, Source: sources["sabCategory"]},
+		"stashUrl":            {Value: cfg.StashURL, Source: sources["stashUrl"]},
+		"stashApiKey":         secretField(cfg.StashAPIKey, sources["stashApiKey"]),
+		"stashdbUrl":          {Value: cfg.StashDBURL, Source: sources["stashdbUrl"]},
+		"stashdbApiKey":       secretField(cfg.StashDBAPIKey, sources["stashdbApiKey"]),
+		"prowlarrUrl":         {Value: cfg.ProwlarrURL, Source: sources["prowlarrUrl"]},
+		"prowlarrApiKey":      secretField(cfg.ProwlarrAPIKey, sources["prowlarrApiKey"]),
+		"prowlarrCategories":  {Value: cfg.ProwlarrCategories, Source: sources["prowlarrCategories"]},
+		"qbitUrl":             {Value: cfg.QbitURL, Source: sources["qbitUrl"]},
+		"qbitUsername":        {Value: cfg.QbitUsername, Source: sources["qbitUsername"]},
+		"qbitPassword":        secretField(cfg.QbitPassword, sources["qbitPassword"]),
+		"qbitCategory":        {Value: cfg.QbitCategory, Source: sources["qbitCategory"]},
+		"sabUrl":              {Value: cfg.SabURL, Source: sources["sabUrl"]},
+		"sabApiKey":           secretField(cfg.SabAPIKey, sources["sabApiKey"]),
+		"sabCategory":         {Value: cfg.SabCategory, Source: sources["sabCategory"]},
 		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
 		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
 		"packDedupKeep":       {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
+		"releaseRules":        {Value: cfg.ReleaseRules, Source: sources["releaseRules"]},
 		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
-		"orphanAfter":        {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
-		"cacheRefresh":       {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
-		"allowedOrigin":      {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
+		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
+		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
+		"allowedOrigin":       {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
 	}
 	writeJSON(w, http.StatusOK, configFieldsResponse{
 		Fields: fields,
@@ -234,6 +235,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.PackDedupKeep != nil {
 		merged.PackDedupKeep = patch.PackDedupKeep
+	}
+	if patch.ReleaseRules != nil {
+		merged.ReleaseRules = patch.ReleaseRules
 	}
 	if patch.PollInterval != nil {
 		merged.PollInterval = patch.PollInterval

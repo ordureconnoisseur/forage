@@ -50,7 +50,7 @@ type Config struct {
 	// "/data/media/Media:Z:\\Media"). When unset, forager triggers a
 	// full-library scan after each placement — slower but always
 	// works regardless of mount layout differences.
-	StashPathMapping   string
+	StashPathMapping string
 	// SabDeleteAfterPlace removes a SAB download (history entry +
 	// downloaded files) once forage has placed it into the library.
 	// Usenet doesn't seed, so the SAB copy is redundant after
@@ -65,11 +65,16 @@ type Config struct {
 	//   "pack"     — keep the pack's copy, remove the existing
 	//   "both"     — keep both (dedup disabled)
 	PackDedupKeep string
+	// ReleaseRules is the user's release-scoring preference list as a JSON
+	// array of scoring.Rule ({label,pattern,points,reject}). Empty string
+	// = use the built-in defaults. Stored as JSON so the rule-editor UI
+	// round-trips it without a bespoke encoding.
+	ReleaseRules  string
 	PollInterval  time.Duration
-	OrphanAfter        time.Duration
-	CacheRefresh       time.Duration
-	LogLevel           slog.Level
-	AllowedOrigin      string
+	OrphanAfter   time.Duration
+	CacheRefresh  time.Duration
+	LogLevel      slog.Level
+	AllowedOrigin string
 	// AdminToken gates /config* endpoints when set. Boot-only; not
 	// editable via the UI (that would let the UI lock itself out).
 	AdminToken string
@@ -126,6 +131,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
+	b.ReleaseRules = b.envOr("FORAGER_RELEASE_RULES", "", "releaseRules")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -215,6 +221,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
+	out.ReleaseRules = str("releaseRules", stored.ReleaseRules, b.ReleaseRules, "")
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
