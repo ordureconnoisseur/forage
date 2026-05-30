@@ -12,8 +12,12 @@ const SLOW_MS = 15000;
 
 export default function JobsList({
   onPickPerformer,
+  onReview,
 }: {
   onPickPerformer: (id: string) => void;
+  // Re-open a job as the interactive collection view (pick releases for
+  // scenes the auto-pass skipped).
+  onReview: (jobId: string, performerId: string) => void;
 }) {
   const [jobs, setJobs] = useState<CollectionJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +68,12 @@ export default function JobsList({
       </div>
       <ul className="job-list">
         {jobs.map((j) => (
-          <JobCard key={j.id} job={j} onPickPerformer={onPickPerformer} />
+          <JobCard
+            key={j.id}
+            job={j}
+            onPickPerformer={onPickPerformer}
+            onReview={onReview}
+          />
         ))}
       </ul>
     </div>
@@ -74,9 +83,11 @@ export default function JobsList({
 function JobCard({
   job,
   onPickPerformer,
+  onReview,
 }: {
   job: CollectionJob;
   onPickPerformer: (id: string) => void;
+  onReview: (jobId: string, performerId: string) => void;
 }) {
   const [cancelling, setCancelling] = useState(false);
   const pct = job.total > 0 ? (job.done / job.total) * 100 : 0;
@@ -109,13 +120,21 @@ function JobCard({
           {job.state === "running" && <span className="coll-spinner" />}
           {job.state}
         </span>
-        {job.state === "running" && (
+        {job.state === "running" ? (
           <button
             className="job-cancel"
             onClick={cancel}
             disabled={cancelling}
           >
             {cancelling ? "cancelling…" : "Cancel"}
+          </button>
+        ) : (
+          <button
+            className="job-review"
+            onClick={() => onReview(job.id, job.performer_id)}
+            title="Open as the interactive collection view — pick releases for scenes the auto-pass skipped"
+          >
+            Review / pick →
           </button>
         )}
       </div>

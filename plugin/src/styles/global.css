@@ -3619,3 +3619,19 @@ code.grab-fact-v,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.job-review {
+  margin-left: auto;
+  padding: 4px 14px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.job-review:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: var(--accent);
+}

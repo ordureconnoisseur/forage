@@ -723,6 +723,11 @@ export interface JobScene {
   title: string;
   status: JobSceneStatus;
   release?: string;
+  // Present only in the job-DETAIL response (GET /jobs/{id}): the full
+  // verified release list + which is picked, so the job re-opens as the
+  // interactive collection view.
+  candidates?: SceneRelease[];
+  picked_url?: string;
 }
 
 export interface CollectionJob {
@@ -764,4 +769,23 @@ export async function cancelCollectionJob(id: string): Promise<void> {
     const e = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(e.error || `HTTP ${r.status}`);
   }
+}
+
+// fetchCollectionJob returns one job WITH per-scene candidate lists, for
+// re-opening it as the interactive collection view.
+export function fetchCollectionJob(id: string): Promise<CollectionJob> {
+  return get<CollectionJob>(`/jobs/${encodeURIComponent(id)}`);
+}
+
+// grabJobScene grabs a specific stored candidate for one scene of a job
+// (the re-pick path for scenes the auto-pass skipped).
+export function grabJobScene(
+  jobId: string,
+  sceneId: string,
+  downloadUrl: string,
+): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>(`/jobs/${encodeURIComponent(jobId)}/grab`, {
+    scene_id: sceneId,
+    download_url: downloadUrl,
+  });
 }

@@ -27,7 +27,8 @@ type Route =
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "grabs" }
-  | { kind: "jobs" };
+  | { kind: "jobs" }
+  | { kind: "job"; jobId: string; performerId: string };
 
 function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -52,6 +53,11 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "jobs") {
     return { kind: "jobs" };
+  }
+  // #/job/<jobId>/<performerId> — re-open a finished job as the
+  // interactive collection view (performerId carried for folder context).
+  if (parts[0] === "job" && parts[1] && parts[2]) {
+    return { kind: "job", jobId: parts[1], performerId: parts[2] };
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
@@ -129,6 +135,8 @@ export default function App() {
   const goDiscover = () => setHash("#/discover");
   const goGrabs = () => setHash("#/grabs");
   const goJobs = () => setHash("#/jobs");
+  const goJobReview = (jobId: string, performerId: string) =>
+    setHash(`#/job/${jobId}/${performerId}`);
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
   const goCollection = (id: string) => {
     setCollectionScope(null); // full collection
@@ -300,7 +308,15 @@ export default function App() {
         )}
         {!needsSetup && route.kind === "grabs" && <GrabsList />}
         {!needsSetup && route.kind === "jobs" && (
-          <JobsList onPickPerformer={goPerformer} />
+          <JobsList onPickPerformer={goPerformer} onReview={goJobReview} />
+        )}
+        {!needsSetup && route.kind === "job" && (
+          <CollectionMode
+            performerId={route.performerId}
+            jobId={route.jobId}
+            onBack={() => goJobs()}
+            onRunOnServer={runCollectionOnServer}
+          />
         )}
         {needsSetup && (
           <div className="empty">

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  fetchCollectionJob,
   fetchMissing,
   fetchPacks,
   fetchSceneReleases,
+  grabJobScene,
   postGrab,
   type MissingScene,
   type Pack,
@@ -54,6 +56,22 @@ function blankRow(): RowState {
   return { status: "pending", releases: [], pickedURL: null, grab: "idle" };
 }
 
+// sceneStatusFromJob maps a server job's scene status to a row status for
+// the rare hydrated case where a scene has no stored candidates (e.g. it
+// errored or wasn't reached before cancel).
+function sceneStatusFromJob(st: string): RowStatus {
+  switch (st) {
+    case "no_result":
+      return "empty";
+    case "error":
+      return "error";
+    case "skipped":
+      return "inflight";
+    default:
+      return "done";
+  }
+}
+
 // CollectionMode — "complete the collection" for one performer. P2:
 // fans a bounded-concurrency Prowlarr search out over every missing
 // scene, renders each row as it resolves, and auto-picks the top
@@ -63,6 +81,7 @@ export default function CollectionMode({
   onBack,
   onRunOnServer,
   sceneIds,
+  jobId,
 }: {
   performerId: string;
   onBack: (performerId: string) => void;
@@ -73,6 +92,11 @@ export default function CollectionMode({
   // user's multi-select from MissingScenes) instead of every missing
   // scene. undefined = full collection.
   sceneIds?: string[];
+  // When set, HYDRATE from a finished server job instead of crawling:
+  // load /jobs/{id}, build rows from its stored candidate lists, and route
+  // grabs to the job's re-grab endpoint. Turns the Jobs "review" action
+  // into the identical interactive view, backed by server state.
+  jobId?: string;
 }) {
   const [scenes, setScenes] = useState<MissingScene[] | null>(null);
   const [performerName, setPerformerName] = useState("");
@@ -132,12 +156,46 @@ export default function CollectionMode({
     }
   }
 
-  // Load the target set.
+  // Load the target set — either hydrate from a finished server job
+  // (jobId set) or fetch the performer's missing scenes to crawl.
   useEffect(() => {
     let cancelled = false;
     setScenes(null);
     setError(null);
     setRows({});
+
+    if (jobId) {
+      // Hydrate from the job: rows come pre-populated with the server's
+      // stored candidates + picks; no client-side crawl.
+      fetchCollectionJob(jobId)
+        .then((job) => {
+          if (cancelled) return;
+          setPerformerName(job.performer_name);
+          const ms: MissingScene[] = [];
+          const hydrated: Record<string, RowState> = {};
+          for (const sc of job.scenes) {
+            ms.push({ stashdb_id: sc.stashdb_id, title: sc.title, performers: [] });
+            const releases = sc.candidates || [];
+            hydrated[sc.stashdb_id] = {
+              status: releases.length > 0 ? "done" : sceneStatusFromJob(sc.status),
+              releases,
+              pickedURL: sc.picked_url || null,
+              autoPicked: !!sc.picked_url,
+              grab: sc.status === "grabbed" ? "queued" : "idle",
+            };
+          }
+          setScenes(ms);
+          setRows(hydrated);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          setError((e as Error).message);
+        });
+      return () => {
+        cancelled = true;
+      };
+    }
+
     fetchMissing(performerId)
       .then((r) => {
         if (cancelled) return;
@@ -167,12 +225,13 @@ export default function CollectionMode({
     };
     // scopeKey (stable join of the scene-id subset) so re-scoping reloads.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [performerId, (sceneIds || []).join(",")]);
+  }, [performerId, jobId, (sceneIds || []).join(",")]);
 
   // Fan the search out once the target set is known. A shared
   // AbortController cancels every in-flight request when the page
   // unmounts — leaving stops the scan (and stops hitting Prowlarr).
   useEffect(() => {
+    if (jobId) return; // hydrated from the server; no client-side crawl
     if (!scenes || scenes.length === 0) return;
     const ctrl = new AbortController();
     let cancelled = false;
@@ -334,16 +393,22 @@ export default function CollectionMode({
         const t = queue.shift();
         if (!t) return;
         try {
-          await postGrab({
-            download_url: t.rel.download_url,
-            release_title: t.rel.title,
-            release_size: t.rel.size,
-            release_indexer: t.rel.indexer,
-            protocol: t.rel.protocol,
-            scene_id: t.scene.stashdb_id,
-            confidence: t.rel.confidence,
-            performer_name: performerName,
-          });
+          if (jobId) {
+            // Hydrated from a server job: grab through the job's re-grab
+            // endpoint so the daemon updates the job's own state.
+            await grabJobScene(jobId, t.scene.stashdb_id, t.rel.download_url);
+          } else {
+            await postGrab({
+              download_url: t.rel.download_url,
+              release_title: t.rel.title,
+              release_size: t.rel.size,
+              release_indexer: t.rel.indexer,
+              protocol: t.rel.protocol,
+              scene_id: t.scene.stashdb_id,
+              confidence: t.rel.confidence,
+              performer_name: performerName,
+            });
+          }
           setRow(t.scene.stashdb_id, { grab: "queued" });
         } catch {
           setRow(t.scene.stashdb_id, { grab: "error" });
