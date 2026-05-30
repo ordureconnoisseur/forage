@@ -63,6 +63,11 @@ type Server struct {
 	// filmography changes rarely.
 	filmoMu    sync.Mutex
 	filmoCache map[string]filmoEntry
+
+	// jobs is the in-memory registry of server-side collection crawls
+	// (multi-scene "complete the collection" runs that survive the
+	// browser closing). Lost on daemon restart; queued grabs persist.
+	jobs *jobStore
 }
 
 type filmoEntry struct {
@@ -89,6 +94,7 @@ func New(opts Options) *Server {
 		grabs:     opts.Grabs,
 		log:       opts.Log,
 		version:   opts.Version,
+		jobs:      newJobStore(),
 	}
 }
 
@@ -109,6 +115,9 @@ func (s *Server) Router() http.Handler {
 	r.Get("/grabs/{id}/detail", s.getGrabDetail)
 	r.Post("/grabs/{id}/match", s.postGrabMatch)
 	r.Delete("/grabs/{id}", s.deleteGrab)
+	r.Post("/jobs", s.postCollectionJob)
+	r.Get("/jobs", s.getCollectionJobs)
+	r.Delete("/jobs/{id}", s.deleteCollectionJob)
 	r.Get("/missing-scenes", s.getMissingScenes)
 	r.Get("/performers/{id}/packs", s.getPerformerPacks)
 	r.Get("/scenes/{id}/releases", s.getSceneReleases)
