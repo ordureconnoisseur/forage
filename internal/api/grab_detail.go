@@ -32,6 +32,12 @@ type grabDetailResponse struct {
 	// performer's face rather than an empty scene poster. Best-effort:
 	// resolved from performer_cache by the grab's folder name.
 	PerformerImageURL string `json:"performer_image_url,omitempty"`
+	// LocalSceneImageURL is the placed scene's own screenshot from the
+	// user's Stash (/scene/{id}/screenshot). For a single grab this is the
+	// real thumbnail of what was downloaded — preferred over both the
+	// StashDB image and the performer portrait — and crucially it exists
+	// even when the scene has no StashDB cross-id (adopted/manual grabs).
+	LocalSceneImageURL string `json:"local_scene_image_url,omitempty"`
 }
 
 // getGrabDetail powers the expanded grab card.
@@ -96,7 +102,11 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 				resp.LocalSceneID = scene.ID
 				cfg, _ := config.Compose(s.bootstrap, s.store.Get())
 				if cfg.StashURL != "" {
-					resp.StashSceneURL = strings.TrimRight(cfg.StashURL, "/") + "/scenes/" + scene.ID
+					base := strings.TrimRight(cfg.StashURL, "/")
+					resp.StashSceneURL = base + "/scenes/" + scene.ID
+					// The placed scene's own screenshot — a real thumbnail
+					// for the single even when StashDB has no match.
+					resp.LocalSceneImageURL = base + "/scene/" + scene.ID + "/screenshot"
 				}
 			}
 		}

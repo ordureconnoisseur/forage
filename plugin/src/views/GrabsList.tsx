@@ -809,14 +809,22 @@ function GrabRow({
             {(() => {
               // A pack is many of a performer's scenes — no single
               // thumbnail represents it, so lead with the performer
-              // portrait. A single scene has a real StashDB thumbnail;
-              // prefer that and only fall back to the performer image.
+              // portrait. A single is one scene: prefer its real thumbnail
+              // — the placed scene's own Stash screenshot first (exists
+              // even with no StashDB match), then the StashDB image — and
+              // only fall back to the performer portrait.
               const isPack = g.kind === "pack";
               const heroSrc = posterFailed
                 ? ""
                 : isPack
-                  ? detail?.performer_image_url || detail?.image_url || ""
-                  : detail?.image_url || detail?.performer_image_url || "";
+                  ? detail?.performer_image_url ||
+                    detail?.local_scene_image_url ||
+                    detail?.image_url ||
+                    ""
+                  : detail?.local_scene_image_url ||
+                    detail?.image_url ||
+                    detail?.performer_image_url ||
+                    "";
               return (
                 <div className={"grab-poster" + (heroSrc ? "" : " is-mono")}>
                   {heroSrc ? (
