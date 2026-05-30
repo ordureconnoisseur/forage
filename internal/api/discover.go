@@ -16,13 +16,13 @@ func nowUnix() int64 { return time.Now().Unix() }
 // discoverScene is the wire shape of a Discover row. Performers are
 // denormalised so the UI can render chips without a second lookup.
 type discoverScene struct {
-	StashDBID   string                `json:"stashdb_id"`
-	Title       string                `json:"title,omitempty"`
-	ReleaseDate string                `json:"release_date,omitempty"`
-	ReleaseUnix int64                 `json:"release_unix,omitempty"`
-	StudioName  string                `json:"studio_name,omitempty"`
-	ImageURL    string                `json:"image_url,omitempty"`
-	Performers  []discoverPerformer   `json:"performers"`
+	StashDBID   string              `json:"stashdb_id"`
+	Title       string              `json:"title,omitempty"`
+	ReleaseDate string              `json:"release_date,omitempty"`
+	ReleaseUnix int64               `json:"release_unix,omitempty"`
+	StudioName  string              `json:"studio_name,omitempty"`
+	ImageURL    string              `json:"image_url,omitempty"`
+	Performers  []discoverPerformer `json:"performers"`
 }
 
 type discoverPerformer struct {
