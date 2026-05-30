@@ -175,7 +175,10 @@ export default function CollectionMode({
         }
         setRow(scene.stashdb_id, { status: "searching" });
         try {
-          const res = await fetchSceneReleases(scene.stashdb_id, ctrl.signal);
+          const res = await fetchSceneReleases(scene.stashdb_id, {
+            performer: performerName,
+            signal: ctrl.signal,
+          });
           if (cancelled) return;
           // Rank by confidence so the strongest match leads (the
           // endpoint sorts verified-first/popularity, which floats

@@ -110,6 +110,10 @@ export default function SceneReleases({
   const [grabs, setGrabs] = useState<Record<string, GrabState>>({});
   const [showUnverified, setShowUnverified] = useState(false);
   const [sort, setSort] = useState<ReleaseSort>(loadSort);
+  // Manual alias override: when the default (library name + StashDB
+  // spellings) finds nothing, the user can retry under a specific name a
+  // tracker might have used. Null = use the automatic names.
+  const [alias, setAlias] = useState<string | null>(null);
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
@@ -120,7 +124,10 @@ export default function SceneReleases({
     setLoading(true);
     setData(null);
     setError(null);
-    fetchSceneReleases(sceneId)
+    fetchSceneReleases(sceneId, {
+      performer: performerName,
+      alias: alias || undefined,
+    })
       .then((r) => {
         if (cancelled) return;
         setData(r);
@@ -136,7 +143,7 @@ export default function SceneReleases({
     return () => {
       cancelled = true;
     };
-  }, [sceneId]);
+  }, [sceneId, performerName, alias]);
 
   if (loading) return <div className="empty">Searching for releases…</div>;
   if (error) return <div className="empty error">Failed to load: {error}</div>;
@@ -217,9 +224,21 @@ export default function SceneReleases({
         </div>
       </div>
 
+      <AliasRetry
+        active={alias}
+        performers={data.scene.performers.map((p) => p.name)}
+        onSearch={(a) => setAlias(a || null)}
+      />
+
       {verified.length === 0 && unverified.length === 0 ? (
         <div className="empty">
-          No releases found for this scene.
+          No releases found{alias ? ` for "${alias}"` : " for this scene"}.
+          {!alias && (
+            <div className="empty-hint">
+              Trackers sometimes list a different name spelling — try
+              searching another alias above.
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -258,6 +277,71 @@ export default function SceneReleases({
           )}
         </>
       )}
+    </div>
+  );
+}
+
+// AliasRetry lets the user re-run the release search under a specific
+// name spelling — for when a tracker indexed the release under an alias
+// the automatic names (library name + StashDB spellings) didn't cover.
+// Offers the scene's own performer names as one-click chips, plus a free
+// text field.
+function AliasRetry({
+  active,
+  performers,
+  onSearch,
+}: {
+  active: string | null;
+  performers: string[];
+  onSearch: (alias: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [text, setText] = useState("");
+
+  if (!open && !active) {
+    return (
+      <div className="alias-retry">
+        <button className="alias-toggle" onClick={() => setOpen(true)}>
+          Search a different name…
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="alias-retry open">
+      <div className="alias-row">
+        <span className="alias-label">Search as:</span>
+        {performers.map((p) => (
+          <button
+            key={p}
+            className={"alias-chip" + (active === p ? " sel" : "")}
+            onClick={() => onSearch(p)}
+          >
+            {p}
+          </button>
+        ))}
+        <input
+          className="alias-input"
+          placeholder="other spelling…"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && text.trim()) onSearch(text.trim());
+          }}
+        />
+        {active && (
+          <button
+            className="alias-chip clear"
+            onClick={() => {
+              setText("");
+              onSearch("");
+            }}
+          >
+            ✕ auto
+          </button>
+        )}
+      </div>
     </div>
   );
 }

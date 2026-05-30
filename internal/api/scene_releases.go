@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"sort"
 	"strings"
@@ -78,6 +79,10 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "scene id required")
 		return
 	}
+	// Optional context: the performer whose page the user came from, and
+	// an explicit alias override to retry under a specific spelling.
+	ctxPerformer := strings.TrimSpace(r.URL.Query().Get("performer"))
+	aliasOverride := strings.TrimSpace(r.URL.Query().Get("alias"))
 
 	scene, err := stashDBC.FindScene(r.Context(), id)
 	if err != nil {
@@ -101,17 +106,23 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Build the performer query names, scoped to the ONE performer the
+	// user is browsing (not every performer on the scene — that dragged in
+	// the male lead and missed the female-named release). We try that
+	// performer's library name AND their StashDB spellings (canonical +
+	// scene-credited "as"), because a tracker may index under any of them
+	// — e.g. owned as "Summer Cline" but released as "Summer Kline". An
+	// explicit alias override (manual retry) takes precedence. Falls back
+	// to the scene's own performers when there's no context performer.
+	perfNames := s.scenePerformerNames(r.Context(), scene, ctxPerformer, aliasOverride)
+
 	// Fan out several scene-derived Prowlarr queries, not just the title.
-	// Many trackers (esp. PornoLab) name a release by studio + performer,
-	// NOT the StashDB marketing title — e.g. StashDB "Summer's No Condom
-	// Plan: It Won't be a One-Night Stand if He Breeds Me" ships as
-	// "[BreedingMaterial.com] Summer Kline (It Won't be a One-Night
-	// Stand...)". A title-only query returns nothing for those; performer
-	// + studio finds them. The matcher then verifies which hits are this
-	// scene, so over-broad queries are harmless (they just add candidates
-	// to filter). Queries run concurrently; results merge + dedup by grab
-	// URL.
-	releases, err := s.searchSceneReleases(r.Context(), prowlarrC, scene, prowlarrCats)
+	// Trackers (esp. PornoLab) name a release by studio + performer, NOT
+	// the StashDB marketing title, so a title-only query returns nothing
+	// for those. The matcher then verifies which hits are this scene, so
+	// over-broad queries are harmless. Queries run concurrently; results
+	// merge + dedup by grab URL.
+	releases, err := s.searchSceneReleases(r.Context(), prowlarrC, scene, perfNames, prowlarrCats)
 	if err != nil {
 		s.log.Error("prowlarr search", "err", err, "scene", scene.Title)
 		writeErr(w, http.StatusBadGateway, "prowlarr: "+err.Error())
@@ -217,19 +228,77 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// maxScenePerformerQueries caps how many performers we build per-performer
-// queries for, so a large-cast scene doesn't explode the Prowlarr fan-out.
-const maxScenePerformerQueries = 3
+// maxPerformerNames caps how many spellings of the browsed performer we
+// query, so we don't explode the fan-out chasing every alias.
+const maxPerformerNames = 3
 
-// sceneSearchTerms derives the Prowlarr query strings to try for a scene.
-// Trackers name releases inconsistently — the StashDB title, or studio +
-// performer, or performer + date — so we try several and let the matcher
-// sort out which hits are real. Crucially it queries by EACH performer,
-// not just the first: StashDB often lists the male performer first (e.g.
-// "Donnie Rock, Summer Kline") but trackers name the release after the
-// female lead, so a performers[0]-only query misses it. Most-likely-
-// productive first; deduped, blanks dropped.
-func sceneSearchTerms(scene *stashdb.Scene) []string {
+// scenePerformerNames returns the spellings to query for, scoped to the
+// performer the user is browsing. Priority:
+//  1. an explicit alias override (manual retry) — used alone;
+//  2. else the browsed performer's library name + their StashDB
+//     canonical/credited spellings (a tracker may use any of them);
+//  3. else (no context performer) fall back to the scene's own
+//     performers, capped.
+// Capped at maxPerformerNames.
+func (s *Server) scenePerformerNames(ctx context.Context, scene *stashdb.Scene, ctxPerformer, aliasOverride string) []string {
+	if aliasOverride != "" {
+		return []string{aliasOverride}
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	add := func(n string) {
+		n = strings.TrimSpace(n)
+		if n == "" || seen[strings.ToLower(n)] || len(out) >= maxPerformerNames {
+			return
+		}
+		seen[strings.ToLower(n)] = true
+		out = append(out, n)
+	}
+
+	if ctxPerformer != "" {
+		// The library name first (what the user calls them).
+		add(ctxPerformer)
+		// Then this performer's StashDB spellings on THIS scene — match by
+		// the owned performer's cross-id so we pick the right person, not
+		// every performer on the scene.
+		if sid, _ := s.performerStashDBIDByName(ctx, ctxPerformer); sid != "" {
+			for _, p := range scene.Performers {
+				if p.ID == sid {
+					add(p.Name) // StashDB canonical
+					add(p.As)    // scene-credited spelling
+				}
+			}
+		}
+		return out
+	}
+
+	// No context performer (e.g. opened from Discover without one): fall
+	// back to the scene's listed performers.
+	for _, p := range scene.Performers {
+		add(p.Name)
+	}
+	return out
+}
+
+// performerStashDBIDByName resolves a local performer's StashDB cross-id
+// from performer_cache by display name (case-insensitive). "" if unknown.
+func (s *Server) performerStashDBIDByName(ctx context.Context, name string) (string, error) {
+	var sid sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT stashdb_id FROM performer_cache WHERE name = ? COLLATE NOCASE AND stashdb_id != '' LIMIT 1`,
+		name).Scan(&sid)
+	if err != nil {
+		return "", err
+	}
+	return sid.String, nil
+}
+
+// sceneSearchTerms derives the Prowlarr query strings from a scene plus
+// the chosen performer name spellings. Per (performer × studio) and
+// (performer × year), plus the title and each bare performer name.
+// Deduped, blanks dropped.
+func sceneSearchTerms(scene *stashdb.Scene, perfNames []string) []string {
 	studio := ""
 	if scene.Studio != nil {
 		studio = scene.Studio.Name
@@ -239,20 +308,8 @@ func sceneSearchTerms(scene *stashdb.Scene) []string {
 		year = scene.Date[:4]
 	}
 
-	perfs := make([]string, 0, len(scene.Performers))
-	for _, p := range scene.Performers {
-		if n := strings.TrimSpace(p.Name); n != "" {
-			perfs = append(perfs, n)
-		}
-		if len(perfs) >= maxScenePerformerQueries {
-			break
-		}
-	}
-
 	var candidates []string
-	// Per-performer queries first — the most productive on performer-named
-	// trackers, and we don't know which performer the release is named for.
-	for _, p := range perfs {
+	for _, p := range perfNames {
 		if studio != "" {
 			candidates = append(candidates, p+" "+studio)
 		}
@@ -261,8 +318,8 @@ func sceneSearchTerms(scene *stashdb.Scene) []string {
 		}
 	}
 	candidates = append(candidates, scene.Title) // English-named trackers
-	if len(perfs) > 0 {
-		candidates = append(candidates, perfs[0]) // broadest net
+	for _, p := range perfNames {
+		candidates = append(candidates, p) // bare performer — broadest net
 	}
 
 	seen := map[string]bool{}
@@ -282,8 +339,8 @@ func sceneSearchTerms(scene *stashdb.Scene) []string {
 // concurrently and returns the merged, deduped release set. A single
 // query failing doesn't fail the whole search — we return whatever the
 // others found.
-func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, cats []int) ([]prowlarr.Release, error) {
-	terms := sceneSearchTerms(scene)
+func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, perfNames []string, cats []int) ([]prowlarr.Release, error) {
+	terms := sceneSearchTerms(scene, perfNames)
 	if len(terms) == 0 {
 		return nil, nil
 	}
