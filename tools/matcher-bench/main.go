@@ -673,7 +673,7 @@ func printVerify(w *os.File, r *verifyResult, csvPath string) {
 	fmt.Fprintf(tw, "failures csv\t%s\n", csvPath)
 	tw.Flush()
 
-	if len(r.PerSource) > 1 || (len(r.PerSource) == 1 && r.PerSource["(unlabeled)"] == nil) {
+	if len(r.PerSource) > 0 {
 		srcs := make([]string, 0, len(r.PerSource))
 		for s := range r.PerSource {
 			srcs = append(srcs, s)
