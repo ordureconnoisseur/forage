@@ -76,6 +76,8 @@ export default function CollectionMode({
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [grabbing, setGrabbing] = useState(false);
+  // Count of missing scenes hidden because they're already being grabbed.
+  const [inflightHidden, setInflightHidden] = useState(0);
 
   // Packs are searched on demand (it hits indexers and takes ~10s+), not
   // automatically on page open. packsFor holds the performer the user
@@ -138,12 +140,19 @@ export default function CollectionMode({
         setPerformerName(r.performer.name);
         // Scope to the hand-picked subset when one was passed; otherwise
         // the full missing set.
-        if (sceneIds && sceneIds.length > 0) {
-          const want = new Set(sceneIds);
-          setScenes(r.missing.filter((s) => want.has(s.stashdb_id)));
-        } else {
-          setScenes(r.missing);
-        }
+        let target =
+          sceneIds && sceneIds.length > 0
+            ? r.missing.filter((s) => new Set(sceneIds).has(s.stashdb_id))
+            : r.missing;
+        // Hide scenes already being grabbed (downloading from an earlier
+        // session). They aren't actionable here, and leaving them in made
+        // them look re-grabbable until the search worker reached them and
+        // flipped them to "already grabbing". Count the hidden ones so the
+        // header can note them.
+        const before = target.length;
+        target = target.filter((s) => !s.grab_status);
+        setInflightHidden(before - target.length);
+        setScenes(target);
       })
       .catch((e) => {
         if (cancelled) return;
@@ -286,9 +295,6 @@ export default function CollectionMode({
   const queuedCount = scenes.filter(
     (s) => rows[s.stashdb_id]?.grab === "queued",
   ).length;
-  const inflightCount = scenes.filter(
-    (s) => rows[s.stashdb_id]?.status === "inflight",
-  ).length;
   const scanning = searched < total;
 
   // Fire a grab for every picked-but-not-yet-queued scene, bounded.
@@ -411,7 +417,7 @@ export default function CollectionMode({
             {scanning
               ? `searching ${searched}/${total}…`
               : `${total} scenes · ${selectedCount} selected`}
-            {inflightCount > 0 && ` · ${inflightCount} already grabbing`}
+            {inflightHidden > 0 && ` · ${inflightHidden} already grabbing (hidden)`}
             {queuedCount > 0 && ` · ${queuedCount} queued`}
           </span>
           {!scanning && total > 0 && (
