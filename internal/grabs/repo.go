@@ -229,6 +229,25 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// KnownClientIDs returns the set of download-client ids (qBit info_hashes
+// / SAB nzo_ids) that already back a grab. The poller's adoption path
+// uses it to skip torrents forage is already tracking.
+func (r *Repo) KnownClientIDs(ctx context.Context) (map[string]bool, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT client_id FROM grabs WHERE client_id IS NOT NULL AND client_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil && id != "" {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
+}
+
 // query is the shared SELECT path. The column order MUST match the
 // scanRow helper.
 func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, error) {

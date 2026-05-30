@@ -80,7 +80,7 @@ func main() {
 	grabsRepo := grabs.NewRepo(database)
 	// Phase B grabs poller — always start; the poller itself short-circuits
 	// when no download clients are configured (pool.Qbit() / Sab() = nil).
-	p := poller.New(grabsRepo, pool, log.With("component", "poller"),
+	p := poller.New(grabsRepo, database, pool, log.With("component", "poller"),
 		cfg.PollInterval, cfg.OrphanAfter)
 	go p.Run(ctx)
 

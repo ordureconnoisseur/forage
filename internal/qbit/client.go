@@ -346,6 +346,39 @@ func (c *Client) TorrentInfo(ctx context.Context, hash string) (*Torrent, error)
 	return nil, nil
 }
 
+// TorrentFile is one entry from /api/v2/torrents/files.
+type TorrentFile struct {
+	Name string `json:"name"`
+	Size int64  `json:"size"`
+}
+
+// TorrentFiles returns a torrent's file list by hash. qBit knows this
+// from the metainfo, so it's available regardless of download progress —
+// the adoption path uses it to classify pack-vs-single before a download
+// completes. Returns nil for an empty hash.
+func (c *Client) TorrentFiles(ctx context.Context, hash string) ([]TorrentFile, error) {
+	if hash == "" {
+		return nil, nil
+	}
+	u := c.baseURL + "/api/v2/torrents/files?hash=" + url.QueryEscape(hash)
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", u, nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("qbit files %d: %s", resp.StatusCode, body)
+	}
+	var out []TorrentFile
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode files: %w", err)
+	}
+	return out, nil
+}
+
 // DeleteTorrent removes a torrent from qBit. When deleteFiles is true
 // qBit also deletes the downloaded data from disk. Used by the grab
 // purge ("delete, no traces"): for torrents we stop seeding and wipe

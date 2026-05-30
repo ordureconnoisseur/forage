@@ -8,6 +8,7 @@ package poller
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"path/filepath"
@@ -21,6 +22,8 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/qbit"
 	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
 	"github.com/ordureconnoisseur/forager/internal/stash"
+	"github.com/ordureconnoisseur/forager/internal/suggest"
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 // Poller advances grab state machines on a fixed interval. Holds a
@@ -29,6 +32,7 @@ import (
 // through the pool's atomic accessor.
 type Poller struct {
 	repo     *grabs.Repo
+	db       *sql.DB // performer_cache lookups for adoption folder suggestions
 	pool     *clientpool.Pool
 	log      *slog.Logger
 	interval time.Duration
@@ -87,7 +91,7 @@ const packScanStableWindow = 3 * scanRetryInterval
 // the full (hours-long) orphan window.
 const packIdentifyGrace = 20 * time.Minute
 
-func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
+func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
 	if interval <= 0 {
 		interval = 60 * time.Second
 	}
@@ -96,6 +100,7 @@ func New(repo *grabs.Repo, pool *clientpool.Pool, log *slog.Logger, interval, or
 	}
 	return &Poller{
 		repo:     repo,
+		db:       db,
 		pool:     pool,
 		log:      log,
 		interval: interval,
@@ -144,6 +149,10 @@ func (p *Poller) Run(ctx context.Context) {
 // not in Stash after `orphan_after`, mark orphaned.
 func (p *Poller) tickOnce(ctx context.Context) error {
 	t0 := time.Now()
+	// Adopt any forager-category qBit torrents we aren't tracking yet,
+	// before loading active grabs so a freshly-adopted one is processed
+	// this same tick.
+	p.adoptOrphans(ctx)
 	active, err := p.repo.Active(ctx)
 	if err != nil {
 		return err
@@ -776,6 +785,103 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 // "queued" grab is far less harmful than a false "failed" on a
 // download that's actually in flight.
 const sabRegisterGrace = 5 * time.Minute
+
+// adoptionGrace delays adopting a freshly-added qBit torrent, so a
+// torrent added through the forage UI gets linked to its existing grab
+// (via pickRecent's ±120s window) before adoption could create a
+// duplicate row for the same hash.
+const adoptionGrace = 5 * time.Minute
+
+// adoptMinVideos mirrors api.packMinVideos: at/above this video count an
+// adopted torrent is treated as a pack. Keep in sync with that const.
+const adoptMinVideos = 3
+
+// adoptOrphans creates grab rows for torrents the user added directly to
+// qBit under the configured forager category that forage isn't tracking
+// yet, so they flow through the normal place → scan → identify → dedup
+// pipeline exactly like a UI add. Scoped strictly to that category;
+// other categories (the *arr stack, ad-hoc qBit use) are never touched.
+// qBit *tags* are ignored — only the category matches.
+func (p *Poller) adoptOrphans(ctx context.Context) {
+	qb := p.pool.Qbit()
+	if qb == nil {
+		return
+	}
+	cat := p.pool.Settings().QbitCategory
+	if cat == "" {
+		return // never adopt uncategorised torrents
+	}
+	ts, err := qb.ListTorrents(ctx, qbit.ListOpts{Category: cat, Filter: "all"})
+	if err != nil {
+		p.log.Warn("adopt: list torrents", "err", err)
+		return
+	}
+	if len(ts) == 0 {
+		return
+	}
+	known, err := p.repo.KnownClientIDs(ctx)
+	if err != nil {
+		p.log.Warn("adopt: known client ids", "err", err)
+		return
+	}
+	now := time.Now().Unix()
+	graceSecs := int64(adoptionGrace / time.Second)
+	for i := range ts {
+		t := &ts[i]
+		if t.Hash == "" || known[t.Hash] {
+			continue
+		}
+		// Give a UI-added torrent time to claim its own grab first.
+		if now-t.AddedOn < graceSecs {
+			continue
+		}
+		kind, videos := p.classifyTorrent(ctx, qb, t.Hash)
+		packFiles := 0
+		if kind == "pack" {
+			packFiles = videos
+		}
+		folder := suggest.TopFolder(ctx, p.db, t.Name)
+		id, err := p.repo.Insert(ctx, grabs.Grab{
+			ReleaseTitle:  t.Name,
+			Client:        "qbit",
+			ClientID:      t.Hash,
+			ClientName:    t.Name,
+			Category:      cat,
+			Status:        "queued",
+			PerformerName: folder,
+			Kind:          kind,
+			PackFiles:     packFiles,
+			GrabbedAt:     t.AddedOn,
+			Reason:        "adopted from qbit",
+		})
+		if err != nil {
+			p.log.Warn("adopt: insert", "hash", t.Hash, "name", t.Name, "err", err)
+			continue
+		}
+		p.log.Info("adopted qbit torrent", "id", id, "name", t.Name,
+			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder)
+	}
+}
+
+// classifyTorrent counts a torrent's video files via qBit's metainfo file
+// list (available regardless of download progress) to decide pack vs
+// single. Defaults to "single" when the file list isn't available yet.
+func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash string) (string, int) {
+	files, err := qb.TorrentFiles(ctx, hash)
+	if err != nil || len(files) == 0 {
+		return "single", 0
+	}
+	videos := 0
+	for _, f := range files {
+		if torrentmeta.IsVideo(f.Name) {
+			videos++
+		}
+	}
+	if videos >= adoptMinVideos {
+		return "pack", videos
+	}
+	return "single", videos
+}
 
 // advanceSab handles SAB tracking. SAB grabs already have client_id
 // set at /grab time (mode=addurl returns the nzo_id synchronously),

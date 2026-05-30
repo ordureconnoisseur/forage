@@ -42,6 +42,13 @@ func isVideo(name string) bool {
 	return videoExts[strings.ToLower(name[i:])]
 }
 
+// IsVideo reports whether a filename has a known video-container
+// extension. Exported so the poller's qBit-adoption path classifies a
+// torrent's files the same way the .torrent parser does.
+func IsVideo(name string) bool {
+	return isVideo(name)
+}
+
 // maxDepth caps bencode container nesting. Real torrents nest only a
 // few levels (top dict → info → files → file → path → string); a hostile
 // or corrupt file with deeply nested containers would otherwise recurse
