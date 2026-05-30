@@ -1,11 +1,16 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"sort"
+	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/prowlarr"
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
 type sceneReleasesResponse struct {
@@ -96,8 +101,17 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Targeted Prowlarr query — scene title is the signal.
-	releases, err := prowlarrC.Search(r.Context(), scene.Title, prowlarrCats)
+	// Fan out several scene-derived Prowlarr queries, not just the title.
+	// Many trackers (esp. PornoLab) name a release by studio + performer,
+	// NOT the StashDB marketing title — e.g. StashDB "Summer's No Condom
+	// Plan: It Won't be a One-Night Stand if He Breeds Me" ships as
+	// "[BreedingMaterial.com] Summer Kline (It Won't be a One-Night
+	// Stand...)". A title-only query returns nothing for those; performer
+	// + studio finds them. The matcher then verifies which hits are this
+	// scene, so over-broad queries are harmless (they just add candidates
+	// to filter). Queries run concurrently; results merge + dedup by grab
+	// URL.
+	releases, err := s.searchSceneReleases(r.Context(), prowlarrC, scene, prowlarrCats)
 	if err != nil {
 		s.log.Error("prowlarr search", "err", err, "scene", scene.Title)
 		writeErr(w, http.StatusBadGateway, "prowlarr: "+err.Error())
@@ -201,5 +215,117 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// maxScenePerformerQueries caps how many performers we build per-performer
+// queries for, so a large-cast scene doesn't explode the Prowlarr fan-out.
+const maxScenePerformerQueries = 3
+
+// sceneSearchTerms derives the Prowlarr query strings to try for a scene.
+// Trackers name releases inconsistently — the StashDB title, or studio +
+// performer, or performer + date — so we try several and let the matcher
+// sort out which hits are real. Crucially it queries by EACH performer,
+// not just the first: StashDB often lists the male performer first (e.g.
+// "Donnie Rock, Summer Kline") but trackers name the release after the
+// female lead, so a performers[0]-only query misses it. Most-likely-
+// productive first; deduped, blanks dropped.
+func sceneSearchTerms(scene *stashdb.Scene) []string {
+	studio := ""
+	if scene.Studio != nil {
+		studio = scene.Studio.Name
+	}
+	year := ""
+	if len(scene.Date) >= 4 {
+		year = scene.Date[:4]
+	}
+
+	perfs := make([]string, 0, len(scene.Performers))
+	for _, p := range scene.Performers {
+		if n := strings.TrimSpace(p.Name); n != "" {
+			perfs = append(perfs, n)
+		}
+		if len(perfs) >= maxScenePerformerQueries {
+			break
+		}
+	}
+
+	var candidates []string
+	// Per-performer queries first — the most productive on performer-named
+	// trackers, and we don't know which performer the release is named for.
+	for _, p := range perfs {
+		if studio != "" {
+			candidates = append(candidates, p+" "+studio)
+		}
+		if year != "" {
+			candidates = append(candidates, p+" "+year)
+		}
+	}
+	candidates = append(candidates, scene.Title) // English-named trackers
+	if len(perfs) > 0 {
+		candidates = append(candidates, perfs[0]) // broadest net
+	}
+
+	seen := map[string]bool{}
+	var out []string
+	for _, c := range candidates {
+		c = strings.TrimSpace(c)
+		if c == "" || seen[strings.ToLower(c)] {
+			continue
+		}
+		seen[strings.ToLower(c)] = true
+		out = append(out, c)
+	}
+	return out
+}
+
+// searchSceneReleases runs the scene's derived queries against Prowlarr
+// concurrently and returns the merged, deduped release set. A single
+// query failing doesn't fail the whole search — we return whatever the
+// others found.
+func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, cats []int) ([]prowlarr.Release, error) {
+	terms := sceneSearchTerms(scene)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	var (
+		mu      sync.Mutex
+		merged  []prowlarr.Release
+		seen    = map[string]bool{}
+		firstErr error
+		wg      sync.WaitGroup
+	)
+	for _, term := range terms {
+		wg.Add(1)
+		go func(term string) {
+			defer wg.Done()
+			rels, err := pc.Search(ctx, term, cats)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				if firstErr == nil {
+					firstErr = err
+				}
+				s.log.Warn("scene release query", "term", term, "err", err)
+				return
+			}
+			for _, rel := range rels {
+				key := rel.GrabURL()
+				if key == "" {
+					key = rel.Title
+				}
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				merged = append(merged, rel)
+			}
+		}(term)
+	}
+	wg.Wait()
+	// Only surface an error when every query failed (nothing to show).
+	if len(merged) == 0 && firstErr != nil {
+		return nil, firstErr
+	}
+	return merged, nil
 }
 
