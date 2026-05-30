@@ -18,6 +18,12 @@ type missingScene struct {
 	Performers []missingPerformer `json:"performers"`
 	URL        string             `json:"url,omitempty"`
 	ImageURL   string             `json:"image_url,omitempty"`
+	// GrabStatus is the in-flight grab status for this scene (queued /
+	// downloading / completed / placed / scanned), set when a grab for it
+	// exists but hasn't yet landed in the library. Empty for scenes with
+	// no active grab. Lets the UI show "downloading…" so you don't re-grab
+	// something already on the way.
+	GrabStatus string `json:"grab_status,omitempty"`
 }
 
 type missingPerformer struct {
@@ -109,13 +115,31 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		ownedSet[id] = true
 	}
 
-	// 4. Diff. Anything in `scenes` whose ID isn't in `ownedSet`.
+	// 4. In-flight grabs by scene id, so missing scenes already being
+	// grabbed show their status instead of looking un-actioned. Best
+	// effort — a lookup failure just omits the annotation.
+	var grabStatus map[string]string
+	if s.grabs != nil {
+		if gs, gerr := s.grabs.StatusByStashDBID(r.Context()); gerr == nil {
+			grabStatus = gs
+		} else {
+			s.log.Warn("grab status lookup", "err", gerr)
+		}
+	}
+
+	// 5. Diff. Anything in `scenes` whose ID isn't in `ownedSet`. A scene
+	// with an in-flight grab is still "missing" (not in the library yet)
+	// but carries its grab status so the UI can flag it.
 	missing := make([]missingScene, 0, len(scenes))
 	for _, sc := range scenes {
 		if ownedSet[sc.ID] {
 			continue
 		}
-		missing = append(missing, toMissingScene(sc))
+		ms := toMissingScene(sc)
+		if st, ok := grabStatus[sc.ID]; ok {
+			ms.GrabStatus = st
+		}
+		missing = append(missing, ms)
 	}
 
 	out := missingResponse{

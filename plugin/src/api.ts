@@ -181,6 +181,10 @@ export interface MissingScene {
   performers: MissingPerformer[];
   url?: string;
   image_url?: string;
+  // In-flight grab status (queued/downloading/completed/placed/scanned)
+  // when this scene has been grabbed but isn't in the library yet. Empty
+  // when nothing is in flight for it.
+  grab_status?: string;
 }
 
 export interface MissingResponse {

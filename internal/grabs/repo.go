@@ -162,6 +162,57 @@ func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 		ORDER BY grabbed_at ASC`)
 }
 
+// StatusByStashDBID returns a map of StashDB scene id → grab status for
+// every grab that resolves to a StashDB id, so the missing-scenes view
+// can mark scenes already grabbed/in-flight. Keyed by the actual cross-id
+// when known (confirmed), else the predicted one. When several grabs map
+// to the same scene id, the most advanced status wins (so a confirmed
+// grab isn't masked by a later failed retry of the same scene).
+func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) AS sid, status
+		FROM grabs
+		WHERE COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) IS NOT NULL
+		  AND COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var sid, status string
+		if rows.Scan(&sid, &status) != nil {
+			continue
+		}
+		if cur, ok := out[sid]; !ok || statusRank(status) > statusRank(cur) {
+			out[sid] = status
+		}
+	}
+	return out, rows.Err()
+}
+
+// statusRank orders grab statuses by pipeline progress so the most
+// advanced grab for a scene wins in StatusByStashDBID. failed/orphaned
+// rank below everything so a dead retry never masks a live/confirmed grab.
+func statusRank(s string) int {
+	switch s {
+	case "confirmed":
+		return 6
+	case "scanned":
+		return 5
+	case "placed":
+		return 4
+	case "completed":
+		return 3
+	case "downloading":
+		return 2
+	case "queued":
+		return 1
+	default: // failed, orphaned, mismatched, unknown
+		return 0
+	}
+}
+
 // List returns the most recent grabs first, filtered by status if
 // nonempty. Used by the GET /grabs endpoint.
 func (r *Repo) List(ctx context.Context, status string, limit, offset int) ([]Grab, error) {

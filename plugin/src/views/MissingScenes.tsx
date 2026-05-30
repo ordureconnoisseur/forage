@@ -1,6 +1,23 @@
 import { useEffect, useState } from "react";
 import { fetchMissing, type MissingResponse, type MissingScene } from "../api";
 
+// grabStatusLabel maps a raw grab status to a short card badge label.
+function grabStatusLabel(status: string): string {
+  switch (status) {
+    case "queued":
+      return "⏳ Queued";
+    case "downloading":
+      return "↓ Downloading";
+    case "completed":
+    case "placed":
+      return "↓ Downloaded";
+    case "scanned":
+      return "⟳ Scanning";
+    default:
+      return "↓ In progress";
+  }
+}
+
 export default function MissingScenes({
   performerId,
   onPickScene,
@@ -191,6 +208,14 @@ function SceneCard({
             }}
           />
         ) : null}
+        {s.grab_status && (
+          <span
+            className={"scene-grab-badge gs-" + s.grab_status}
+            title={`Grab in progress — ${s.grab_status}`}
+          >
+            {grabStatusLabel(s.grab_status)}
+          </span>
+        )}
       </div>
       <div className="scene-info">
         <div className="title">{s.title || "(untitled)"}</div>

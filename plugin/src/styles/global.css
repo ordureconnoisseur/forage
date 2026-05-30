@@ -579,6 +579,34 @@ button {
   object-fit: cover;
   display: block;
 }
+/* In-flight grab badge — top-right of a missing scene's thumb, so a
+   scene already being grabbed reads as "on the way" not un-actioned. */
+.scene-grab-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #0a0a0a;
+  background: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+/* Pre-download (queued) is quieter amber; scanning leans bright accent. */
+.scene-grab-badge.gs-queued {
+  background: var(--status-queued, #d4a017);
+}
+.scene-grab-badge.gs-scanned {
+  background: var(--accent-bright, #22c55e);
+}
+/* A card whose scene is in flight gets a subtle accent ring so it stands
+   out in the grid even before you read the badge. */
+.scene-card:has(.scene-grab-badge) {
+  border-color: rgba(var(--accent-rgb), 0.5);
+}
 /* When scene-thumb is the primary "find releases" click target, it
    renders as a <button> — reset the default button styling so it
    visually matches the <a>/div variants. */
