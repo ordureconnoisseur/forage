@@ -84,26 +84,29 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 	scenes, err := stashDBC.QueryAllScenes(r.Context(), stashdb.SceneQuery{
 		PerformerIDs: []string{stashDBPerformerID},
 		PerPage:      50,
-	}, 2000) // hardCap — a single performer with 2000+ scenes is pathological
+	}, 5000) // hardCap — match the scene-cache's cap so the page's count
+	// agrees with the performer-card missing count for prolific performers.
 	if err != nil {
 		s.log.Error("stashdb scenes by performer", "err", err)
 		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
 		return
 	}
 
-	// 3. Pull the scenes the user already has for this performer,
-	// extract their StashDB cross-ids. Build a set for O(1) lookup.
-	owned, err := stashC.FindScenesByPerformer(r.Context(), localID)
+	// 3. Build the set of StashDB scene ids the user owns ANYWHERE in
+	// their library (not just scenes locally tagged with this performer).
+	// A scene you have but never tagged with this performer still counts
+	// as owned — otherwise it falsely shows as "missing". This is the
+	// same library-wide cross-id sweep the scene cache uses for the
+	// performer-card missing count, so the card and this page now agree.
+	ownedIDs, err := stashC.FindAllOwnedStashDBSceneIDs(r.Context())
 	if err != nil {
-		s.log.Error("stash scenes by performer", "err", err)
+		s.log.Error("stash owned scene sweep", "err", err)
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
 		return
 	}
-	ownedSet := make(map[string]bool, len(owned))
-	for _, o := range owned {
-		if o.StashDBID != "" {
-			ownedSet[o.StashDBID] = true
-		}
+	ownedSet := make(map[string]bool, len(ownedIDs))
+	for _, id := range ownedIDs {
+		ownedSet[id] = true
 	}
 
 	// 4. Diff. Anything in `scenes` whose ID isn't in `ownedSet`.
