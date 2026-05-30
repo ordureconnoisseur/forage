@@ -5,6 +5,7 @@ export default function MissingScenes({
   performerId,
   onPickScene,
   onCollection,
+  onGrabSelected,
 }: {
   performerId: string;
   // Receives the performer name too so the scene-releases page can
@@ -13,16 +14,25 @@ export default function MissingScenes({
   onPickScene: (stashDBID: string, performerName: string) => void;
   // Launches "complete the collection" mode for this performer.
   onCollection: (performerId: string) => void;
+  // Launches the collection flow scoped to a hand-picked scene subset.
+  onGrabSelected: (performerId: string, sceneIds: string[]) => void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Multi-select mode: when on, cards toggle selection instead of
+  // navigating. selected holds the chosen StashDB ids.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setData(null);
     setError(null);
+    // Reset selection when switching performers.
+    setSelecting(false);
+    setSelected(new Set());
     fetchMissing(performerId)
       .then((r) => {
         if (cancelled) return;
@@ -45,6 +55,22 @@ export default function MissingScenes({
   if (error) return <div className="empty error">Failed to load: {error}</div>;
   if (!data) return null;
 
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+  };
+
+  const allIds = data.missing.map((s) => s.stashdb_id);
+  const allSelected = selected.size === allIds.length && allIds.length > 0;
+
   return (
     <div>
       <div className="page-header page-header-row">
@@ -55,14 +81,37 @@ export default function MissingScenes({
             <strong>{data.missing.length} missing</strong>
           </div>
         </div>
-        {data.missing.length > 0 && (
-          <button
-            className="collection-cta"
-            onClick={() => onCollection(performerId)}
-          >
-            Complete collection →
-          </button>
-        )}
+        {data.missing.length > 0 &&
+          (selecting ? (
+            <div className="ms-select-actions">
+              <button
+                className="ms-select-toggle"
+                onClick={() =>
+                  setSelected(allSelected ? new Set() : new Set(allIds))
+                }
+              >
+                {allSelected ? "Clear all" : "Select all"}
+              </button>
+              <button className="ms-select-cancel" onClick={exitSelect}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="ms-select-actions">
+              <button
+                className="ms-select-toggle"
+                onClick={() => setSelecting(true)}
+              >
+                Select
+              </button>
+              <button
+                className="collection-cta"
+                onClick={() => onCollection(performerId)}
+              >
+                Complete collection →
+              </button>
+            </div>
+          ))}
       </div>
       {data.missing.length === 0 ? (
         <div className="empty">
@@ -74,18 +123,63 @@ export default function MissingScenes({
             <SceneCard
               key={s.stashdb_id}
               s={s}
-              onPick={() => onPickScene(s.stashdb_id, data.performer.name)}
+              selecting={selecting}
+              selected={selected.has(s.stashdb_id)}
+              onPick={() =>
+                selecting
+                  ? toggleSelected(s.stashdb_id)
+                  : onPickScene(s.stashdb_id, data.performer.name)
+              }
             />
           ))}
+        </div>
+      )}
+      {selecting && (
+        <div className="ms-select-bar">
+          <span className="ms-select-count">
+            {selected.size} selected
+          </span>
+          <button
+            className="ms-select-grab"
+            disabled={selected.size === 0}
+            onClick={() =>
+              onGrabSelected(performerId, Array.from(selected))
+            }
+          >
+            Grab {selected.size} selected →
+          </button>
         </div>
       )}
     </div>
   );
 }
 
-function SceneCard({ s, onPick }: { s: MissingScene; onPick: () => void }) {
+function SceneCard({
+  s,
+  selecting,
+  selected,
+  onPick,
+}: {
+  s: MissingScene;
+  selecting: boolean;
+  selected: boolean;
+  onPick: () => void;
+}) {
   return (
-    <button className="scene-card" onClick={onPick}>
+    <button
+      className={
+        "scene-card" +
+        (selecting ? " selectable" : "") +
+        (selected ? " selected" : "")
+      }
+      onClick={onPick}
+      aria-pressed={selecting ? selected : undefined}
+    >
+      {selecting && (
+        <span className="scene-check" aria-hidden="true">
+          {selected ? "✓" : ""}
+        </span>
+      )}
       <div className="scene-thumb">
         {s.image_url ? (
           <img

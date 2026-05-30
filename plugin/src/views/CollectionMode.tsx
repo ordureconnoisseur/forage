@@ -44,9 +44,14 @@ function blankRow(): RowState {
 export default function CollectionMode({
   performerId,
   onBack,
+  sceneIds,
 }: {
   performerId: string;
   onBack: (performerId: string) => void;
+  // When set, scope the collection to only these StashDB scene ids (the
+  // user's multi-select from MissingScenes) instead of every missing
+  // scene. undefined = full collection.
+  sceneIds?: string[];
 }) {
   const [scenes, setScenes] = useState<MissingScene[] | null>(null);
   const [performerName, setPerformerName] = useState("");
@@ -114,7 +119,14 @@ export default function CollectionMode({
       .then((r) => {
         if (cancelled) return;
         setPerformerName(r.performer.name);
-        setScenes(r.missing);
+        // Scope to the hand-picked subset when one was passed; otherwise
+        // the full missing set.
+        if (sceneIds && sceneIds.length > 0) {
+          const want = new Set(sceneIds);
+          setScenes(r.missing.filter((s) => want.has(s.stashdb_id)));
+        } else {
+          setScenes(r.missing);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
@@ -123,7 +135,9 @@ export default function CollectionMode({
     return () => {
       cancelled = true;
     };
-  }, [performerId]);
+    // scopeKey (stable join of the scene-id subset) so re-scoping reloads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [performerId, (sceneIds || []).join(",")]);
 
   // Fan the search out once the target set is known. A shared
   // AbortController cancels every in-flight request when the page
@@ -302,7 +316,7 @@ export default function CollectionMode({
           >
             ← {performerName || "performer"}
           </a>
-          <h2>Complete collection</h2>
+          <h2>{sceneIds && sceneIds.length > 0 ? "Grab selected scenes" : "Complete collection"}</h2>
           <span className="coll-sub">
             {scanning
               ? `searching ${searched}/${total}…`

@@ -55,6 +55,14 @@ function setHash(h: string) {
 export default function App() {
   const [route, setRoute] = useState<Route>(parseRoute(location.hash));
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Optional scene-id subset for the next collection view, set when the
+  // user launches "grab selected" from MissingScenes. In-memory (not in
+  // the hash) since it's a transient list; cleared when it no longer
+  // matches the active performer so a plain collection link is unscoped.
+  const [collectionScope, setCollectionScope] = useState<{
+    performerId: string;
+    sceneIds: string[];
+  } | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   // Non-null when /healthz failed to load — daemon URL set but
   // unreachable, or returning HTML (wrong host, plugin pointed at
@@ -110,7 +118,15 @@ export default function App() {
   const goDiscover = () => setHash("#/discover");
   const goGrabs = () => setHash("#/grabs");
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
-  const goCollection = (id: string) => setHash(`#/performer/${id}/collection`);
+  const goCollection = (id: string) => {
+    setCollectionScope(null); // full collection
+    setHash(`#/performer/${id}/collection`);
+  };
+  // Launch the collection view scoped to a hand-picked subset of scenes.
+  const goCollectionSelected = (id: string, sceneIds: string[]) => {
+    setCollectionScope({ performerId: id, sceneIds });
+    setHash(`#/performer/${id}/collection`);
+  };
   const goScene = (id: string, performerName?: string) => {
     const suffix = performerName
       ? `?p=${encodeURIComponent(performerName)}`
@@ -224,12 +240,19 @@ export default function App() {
             performerId={route.performerId}
             onPickScene={goScene}
             onCollection={goCollection}
+            onGrabSelected={goCollectionSelected}
           />
         )}
         {!needsSetup && route.kind === "collection" && (
           <CollectionMode
             performerId={route.performerId}
             onBack={goPerformer}
+            sceneIds={
+              collectionScope &&
+              collectionScope.performerId === route.performerId
+                ? collectionScope.sceneIds
+                : undefined
+            }
           />
         )}
         {!needsSetup && route.kind === "scene" && (

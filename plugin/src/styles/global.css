@@ -477,6 +477,95 @@ button {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lg);
 }
+/* Multi-select mode: cards toggle instead of navigating. */
+.scene-card.selectable {
+  position: relative;
+}
+.scene-card.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-lg);
+}
+.scene-check {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 2;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0a0a0a;
+  background: rgba(10, 10, 10, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+.scene-card.selected .scene-check {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Select-mode header actions + sticky bottom action bar. */
+.ms-select-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.ms-select-toggle,
+.ms-select-cancel {
+  padding: 8px 14px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+.ms-select-toggle:hover,
+.ms-select-cancel:hover {
+  border-color: var(--glass-border-bright);
+}
+.ms-select-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border-bright);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  box-shadow: var(--shadow-lg);
+}
+.ms-select-count {
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ms-select-grab {
+  padding: 10px 18px;
+  border-radius: var(--radius-pill, 999px);
+  border: 0;
+  background: var(--accent);
+  color: #0a0a0a;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.ms-select-grab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.ms-select-grab:not(:disabled):hover {
+  background: var(--accent-bright);
+}
 .scene-thumb {
   aspect-ratio: 16 / 9;
   background:
