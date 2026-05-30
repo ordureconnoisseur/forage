@@ -309,12 +309,48 @@ function ReleaseList({
                   — not the scene you're viewing.
                 </div>
               )}
+              {r.reasons && r.reasons.length > 0 && (
+                <MatchBreakdown reasons={r.reasons} />
+              )}
             </div>
             <GrabButton state={state} onClick={() => onGrab(r)} />
           </li>
         );
       })}
     </ul>
+  );
+}
+
+// MatchBreakdown is the "why did this match?" expander. The matcher
+// emits one reason string per scoring component ("performers: 2/2",
+// "studio: match", "date: exact", "title: 0.43", "tracks: A+B"); we split
+// each into a label + value chip and tint it by whether the component
+// actually contributed (a hit) or not, so a glance shows what carried the
+// match vs. what was missing.
+const REASON_MISS = /\b(none|no-match|n\/a|missing|parse-error|off)\b/i;
+
+function MatchBreakdown({ reasons }: { reasons: string[] }) {
+  return (
+    <details className="match-why">
+      <summary>Why this match?</summary>
+      <ul className="match-why-list">
+        {reasons.map((reason, i) => {
+          const sep = reason.indexOf(":");
+          const label = sep >= 0 ? reason.slice(0, sep).trim() : reason;
+          const value = sep >= 0 ? reason.slice(sep + 1).trim() : "";
+          const miss = REASON_MISS.test(value);
+          return (
+            <li
+              key={i}
+              className={"match-why-row " + (miss ? "is-miss" : "is-hit")}
+            >
+              <span className="match-why-label">{label}</span>
+              {value && <span className="match-why-value">{value}</span>}
+            </li>
+          );
+        })}
+      </ul>
+    </details>
   );
 }
 

@@ -219,6 +219,10 @@ export interface SceneRelease {
   best_match_id?: string;
   best_match_title?: string;
   best_match_conf?: number;
+  // Matcher's per-component breakdown for the viewed scene against this
+  // release (e.g. "performers: 2/2", "title: 0.43"). Drives the "why?"
+  // expander. Absent when the viewed scene wasn't a candidate.
+  reasons?: string[];
 }
 
 export interface SceneReleasesResponse {

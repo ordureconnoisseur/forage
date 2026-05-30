@@ -39,6 +39,11 @@ type sceneRelease struct {
 	BestMatchID    string  `json:"best_match_id,omitempty"`
 	BestMatchTitle string  `json:"best_match_title,omitempty"`
 	BestMatchConf  float64 `json:"best_match_conf,omitempty"`
+	// Reasons is the matcher's per-component breakdown for the viewed
+	// scene against this release (performers/studio/date/title/tracks) —
+	// the same strings the matcher scores on. Drives the "why did this
+	// match?" expander. Empty when the viewed scene wasn't a candidate.
+	Reasons []string `json:"reasons,omitempty"`
 }
 
 // getSceneReleases finds Prowlarr releases for a specific StashDB
@@ -128,12 +133,21 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		// like when we withhold the Verified badge.
 		var bestOtherID, bestOtherTitle string
 		var bestOtherConf float64
+		var reasons []string
 		if res.Err == nil && len(res.Candidates) > 0 {
 			// Single source of truth for the verified badge — shared with
 			// tools/matcher-bench (--verify) so the logic is corpus-tested.
 			vr := matcher.Verify(res.Candidates, id, scene.Title, rel.Title)
 			verified = vr.Verified
 			conf = vr.Confidence
+			// Per-component breakdown for the viewed scene, for the "why
+			// did this match?" expander.
+			for _, c := range res.Candidates {
+				if c.Scene.ID == id {
+					reasons = c.Reasons
+					break
+				}
+			}
 			// When unverified and the matcher's top pick is a different
 			// scene, surface it so the UI can warn "looks like X".
 			if top := res.Candidates[0]; !verified && top.Scene.ID != id {
@@ -158,6 +172,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 			BestMatchID:    bestOtherID,
 			BestMatchTitle: bestOtherTitle,
 			BestMatchConf:  bestOtherConf,
+			Reasons:        reasons,
 		}
 	}
 
