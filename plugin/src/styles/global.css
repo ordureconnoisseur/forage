@@ -1870,6 +1870,12 @@ button {
   gap: 24px;
   align-items: start;
 }
+/* When the poster is a 16:9 scene thumbnail (not a 3:4 portrait), widen
+   the poster column so the thumbnail renders at a comparable height to a
+   portrait instead of a thin ~117px sliver. 370px × 16:9 ≈ 208px tall. */
+.grab-dossier:has(.grab-poster.is-scene) {
+  grid-template-columns: 370px 1fr;
+}
 @media (max-width: 680px) {
   .grab-dossier {
     grid-template-columns: 1fr;
@@ -1898,8 +1904,9 @@ button {
   border: 1px solid var(--glass-border);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.4);
 }
-/* Scene thumbnails are 16:9 — frame the poster to match so the image
-   isn't cropped into the performer-portrait 3:4. */
+/* Scene thumbnails are 16:9 — frame the poster to match (the dossier grid
+   widens its column to 370px when showing a scene, so this renders at a
+   comparable height to a 3:4 portrait rather than a thin sliver). */
 .grab-poster.is-scene {
   aspect-ratio: 16 / 9;
 }
