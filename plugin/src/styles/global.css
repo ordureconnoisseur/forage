@@ -3207,6 +3207,24 @@ code.grab-fact-v,
   gap: 7px;
   color: var(--text-muted);
 }
+/* Inline per-row action (deep-search retry / pick one) on a settled row
+   that found nothing usable. */
+.coll-retry {
+  padding: 2px 9px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.coll-retry:hover {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+}
 .coll-state.muted {
   opacity: 0.7;
 }

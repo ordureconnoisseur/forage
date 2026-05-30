@@ -217,7 +217,52 @@ export default function CollectionMode({
       cancelled = true;
       ctrl.abort();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scenes]);
+
+  // Re-run one scene's release search, deep (lean=false → full
+   // multi-spelling query set) — for a row that came up empty / no
+   // confident match / failed under the lean collection search.
+  const retryScene = async (scene: MissingScene) => {
+    setRows((r) => ({
+      ...r,
+      [scene.stashdb_id]: {
+        ...(r[scene.stashdb_id] || blankRow()),
+        status: "searching",
+      },
+    }));
+    try {
+      const res = await fetchSceneReleases(scene.stashdb_id, {
+        performer: performerName,
+        lean: false, // deep: every performer spelling × studio/year + title
+      });
+      const releases = (res.releases || [])
+        .slice()
+        .sort((a, b) => b.confidence - a.confidence);
+      const best = releases.find((x) => x.verified);
+      setRows((r) => ({
+        ...r,
+        [scene.stashdb_id]: {
+          ...(r[scene.stashdb_id] || blankRow()),
+          status: releases.length === 0 ? "empty" : "done",
+          releases,
+          pickedURL:
+            best && best.confidence >= AUTO_PICK_FLOOR
+              ? best.download_url
+              : null,
+        },
+      }));
+    } catch (e) {
+      setRows((r) => ({
+        ...r,
+        [scene.stashdb_id]: {
+          ...(r[scene.stashdb_id] || blankRow()),
+          status: "error",
+          error: (e as Error).message,
+        },
+      }));
+    }
+  };
 
   if (error) return <div className="empty error">Failed to load: {error}</div>;
   if (!scenes) return <div className="empty">Loading missing scenes…</div>;
@@ -404,6 +449,7 @@ export default function CollectionMode({
               onToggle={() => toggle(s)}
               onExpand={() => toggleExpand(s.stashdb_id)}
               onPick={(url) => pick(s.stashdb_id, url)}
+              onRetry={() => retryScene(s)}
             />
           ))}
         </ul>
@@ -555,6 +601,7 @@ function CollectionRow({
   onToggle,
   onExpand,
   onPick,
+  onRetry,
 }: {
   scene: MissingScene;
   row: RowState;
@@ -562,6 +609,7 @@ function CollectionRow({
   onToggle: () => void;
   onExpand: () => void;
   onPick: (downloadURL: string) => void;
+  onRetry: () => void;
 }) {
   const picked = row.releases.find((r) => r.download_url === row.pickedURL);
   const selectable = row.status === "done";
@@ -627,7 +675,12 @@ function CollectionRow({
                 </span>
               )}
               {row.status === "error" && (
-                <span className="coll-state err">search failed</span>
+                <span className="coll-state err">
+                  search failed
+                  <button className="coll-retry" onClick={onRetry}>
+                    ↻ retry
+                  </button>
+                </span>
               )}
               {row.status === "inflight" && (
                 <span className="coll-state inflight">
@@ -635,7 +688,12 @@ function CollectionRow({
                 </span>
               )}
               {row.status === "empty" && (
-                <span className="coll-state muted">no releases found</span>
+                <span className="coll-state muted">
+                  no releases found
+                  <button className="coll-retry" onClick={onRetry}>
+                    ↻ deep search
+                  </button>
+                </span>
               )}
               {row.status === "done" && picked && (
                 <div className="coll-pick">
@@ -656,7 +714,20 @@ function CollectionRow({
                 </div>
               )}
               {row.status === "done" && !picked && (
-                <span className="coll-state warn">no confident match</span>
+                <span className="coll-state warn">
+                  {row.releases.length > 0
+                    ? `${row.releases.length} found · none selected`
+                    : "nothing selected"}
+                  {row.releases.length > 0 ? (
+                    <button className="coll-retry" onClick={onExpand}>
+                      {expanded ? "▾ pick one" : "▸ pick one"}
+                    </button>
+                  ) : (
+                    <button className="coll-retry" onClick={onRetry}>
+                      ↻ deep search
+                    </button>
+                  )}
+                </span>
               )}
             </>
           )}
