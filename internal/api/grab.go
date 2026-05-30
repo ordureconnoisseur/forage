@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -62,13 +63,12 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 		protocol = inferProtocol(req.DownloadURL)
 	}
 
-	var (
-		client     string
-		clientID   string
-		category   string
-		clientErr  error
-	)
 	settings := s.pool.Settings()
+	kind := req.Kind
+	if kind == "" {
+		kind = "single"
+	}
+
 	switch protocol {
 	case "torrent":
 		qb := s.pool.Qbit()
@@ -76,79 +76,115 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)")
 			return
 		}
-		clientErr = qb.AddTorrent(r.Context(), req.DownloadURL, settings.QbitCategory)
-		client = "qbit"
-		category = settings.QbitCategory
-		// clientID populated asynchronously by the poller (qBit's add
-		// endpoint doesn't return the info_hash).
+		// Torrent add is ASYNC: fetching the .torrent from Prowlarr (which
+		// fronts the real tracker — slow/Cloudflare-gated ones take many
+		// seconds) used to block the grab request, draining a bulk grab
+		// painfully. Insert the row as queued, return immediately, and do
+		// the fetch + qBit add in the background. The poller links the
+		// info_hash via pickRecent once the torrent appears in qBit; a
+		// failed add marks the grab failed.
+		grabID := s.insertGrab(r.Context(), req, "qbit", "", settings.QbitCategory, kind)
+		go s.addTorrentAsync(req.DownloadURL, settings.QbitCategory, req.ReleaseTitle, grabID)
+		s.log.Info("grab queued (async torrent add)",
+			"release", req.ReleaseTitle, "scene_id", req.SceneID,
+			"category", settings.QbitCategory, "grab_id", grabID)
+		writeJSON(w, http.StatusOK, grabResponse{
+			OK: true, Client: "qbit", Category: settings.QbitCategory, GrabID: grabID,
+		})
+
 	case "usenet":
 		sb := s.pool.Sab()
 		if sb == nil {
 			writeErr(w, http.StatusServiceUnavailable, "sab not configured (set sabUrl + sabApiKey in Settings)")
 			return
 		}
-		clientID, clientErr = sb.AddURL(r.Context(), req.DownloadURL, settings.SabCategory)
-		client = "sabnzbd"
-		category = settings.SabCategory
+		// SAB fetches the URL itself and returns the nzo_id synchronously
+		// (fast), so this path stays inline.
+		clientID, err := sb.AddURL(r.Context(), req.DownloadURL, settings.SabCategory)
+		if err != nil {
+			s.log.Error("grab failed", "protocol", "usenet",
+				"release", req.ReleaseTitle, "scene_id", req.SceneID, "err", err)
+			writeErr(w, http.StatusBadGateway, "sabnzbd: "+err.Error())
+			return
+		}
+		grabID := s.insertGrab(r.Context(), req, "sabnzbd", clientID, settings.SabCategory, kind)
+		s.log.Info("grab queued",
+			"protocol", "usenet", "client", "sabnzbd", "release", req.ReleaseTitle,
+			"scene_id", req.SceneID, "category", settings.SabCategory,
+			"client_id", clientID, "grab_id", grabID)
+		writeJSON(w, http.StatusOK, grabResponse{
+			OK: true, Client: "sabnzbd", Category: settings.SabCategory,
+			GrabID: grabID, ClientID: clientID,
+		})
+
 	default:
 		writeErr(w, http.StatusBadRequest, "unknown protocol; expected torrent or usenet")
-		return
 	}
+}
 
-	if clientErr != nil {
-		s.log.Error("grab failed",
-			"protocol", protocol,
-			"release", req.ReleaseTitle,
-			"scene_id", req.SceneID,
-			"err", clientErr)
-		writeErr(w, http.StatusBadGateway, client+": "+clientErr.Error())
-		return
+// insertGrab persists a queued grab row, returning its id (0 on failure,
+// logged). Shared by both protocol paths.
+func (s *Server) insertGrab(ctx context.Context, req grabRequest, client, clientID, category, kind string) int64 {
+	if s.grabs == nil {
+		return 0
 	}
-
-	var grabID int64
-	if s.grabs != nil {
-		kind := req.Kind
-		if kind == "" {
-			kind = "single"
-		}
-		id, err := s.grabs.Insert(r.Context(), grabs.Grab{
-			PredictedStashDBID:  req.SceneID,
-			PredictedConfidence: req.Confidence,
-			ReleaseTitle:        req.ReleaseTitle,
-			ReleaseSize:         req.ReleaseSize,
-			ReleaseIndexer:      req.ReleaseIndexer,
-			DownloadURL:         req.DownloadURL,
-			Client:              client,
-			ClientID:            clientID,
-			Category:            category,
-			Status:              "queued",
-			PerformerName:       req.PerformerName,
-			GrabbedAt:           time.Now().Unix(),
-			Kind:                kind,
-			PackFiles:           req.VideoCount,
-		})
-		if err != nil {
-			s.log.Error("grabs insert", "err", err)
-		} else {
-			grabID = id
-		}
-	}
-
-	s.log.Info("grab queued",
-		"protocol", protocol,
-		"client", client,
-		"release", req.ReleaseTitle,
-		"scene_id", req.SceneID,
-		"category", category,
-		"client_id", clientID,
-		"grab_id", grabID)
-	writeJSON(w, http.StatusOK, grabResponse{
-		OK:       true,
-		Client:   client,
-		Category: category,
-		GrabID:   grabID,
-		ClientID: clientID,
+	id, err := s.grabs.Insert(ctx, grabs.Grab{
+		PredictedStashDBID:  req.SceneID,
+		PredictedConfidence: req.Confidence,
+		ReleaseTitle:        req.ReleaseTitle,
+		ReleaseSize:         req.ReleaseSize,
+		ReleaseIndexer:      req.ReleaseIndexer,
+		DownloadURL:         req.DownloadURL,
+		Client:              client,
+		ClientID:            clientID,
+		Category:            category,
+		Status:              "queued",
+		PerformerName:       req.PerformerName,
+		GrabbedAt:           time.Now().Unix(),
+		Kind:                kind,
+		PackFiles:           req.VideoCount,
 	})
+	if err != nil {
+		s.log.Error("grabs insert", "err", err)
+		return 0
+	}
+	return id
+}
+
+// addTorrentAsync fetches the .torrent and hands it to qBit off the
+// request path. On failure it marks the grab failed so the row doesn't
+// sit "queued" forever. Uses a fresh background context with a generous
+// timeout (the request's ctx is already gone — the response returned).
+func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	qb := s.pool.Qbit()
+	if qb == nil {
+		s.failGrab(ctx, grabID, "qbit not configured")
+		return
+	}
+	if err := qb.AddTorrent(ctx, downloadURL, category); err != nil {
+		s.log.Error("async torrent add", "release", releaseTitle, "grab_id", grabID, "err", err)
+		s.failGrab(ctx, grabID, "torrent add: "+err.Error())
+		return
+	}
+	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID)
+}
+
+// failGrab transitions a grab to failed with a reason. Best-effort.
+func (s *Server) failGrab(ctx context.Context, grabID int64, reason string) {
+	if s.grabs == nil || grabID == 0 {
+		return
+	}
+	g, err := s.grabs.Get(ctx, grabID)
+	if err != nil || g == nil {
+		return
+	}
+	g.Status = "failed"
+	g.Reason = reason
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		s.log.Warn("mark grab failed", "grab_id", grabID, "err", err)
+	}
 }
 
 // inferProtocol falls back when the request lacks a Protocol field
