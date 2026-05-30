@@ -21,6 +21,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/poller"
+	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
 // Version is set at build time via -ldflags "-X main.Version=v0.1.0".
@@ -84,12 +85,15 @@ func main() {
 		cfg.PollInterval, cfg.OrphanAfter)
 	go p.Run(ctx)
 
+	watchesRepo := watches.NewRepo(database)
+
 	server := api.New(api.Options{
 		DB:        database,
 		Pool:      pool,
 		Bootstrap: bootstrap,
 		Store:     store,
 		Grabs:     grabsRepo,
+		Watches:   watchesRepo,
 		Log:       log.With("component", "api"),
 		Version:   Version,
 	})

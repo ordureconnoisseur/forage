@@ -21,6 +21,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
+	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
 //go:embed ui/index.html
@@ -35,7 +36,8 @@ type Server struct {
 	pool      *clientpool.Pool
 	bootstrap config.BootstrapConfig
 	store     *configstore.Store
-	grabs     *grabs.Repo // never nil
+	grabs     *grabs.Repo   // never nil
+	watches   *watches.Repo // never nil
 	log       *slog.Logger
 	version   string
 
@@ -90,6 +92,7 @@ type Options struct {
 	Bootstrap config.BootstrapConfig
 	Store     *configstore.Store
 	Grabs     *grabs.Repo
+	Watches   *watches.Repo
 	Log       *slog.Logger
 	Version   string
 }
@@ -101,6 +104,7 @@ func New(opts Options) *Server {
 		bootstrap: opts.Bootstrap,
 		store:     opts.Store,
 		grabs:     opts.Grabs,
+		watches:   opts.Watches,
 		log:       opts.Log,
 		version:   opts.Version,
 		jobs:      newJobStore(),

@@ -124,3 +124,35 @@ CREATE INDEX IF NOT EXISTS idx_recent_release  ON recent_scene_cache(release_uni
 CREATE INDEX IF NOT EXISTS idx_recent_owned    ON recent_scene_cache(owned);
 CREATE INDEX IF NOT EXISTS idx_recent_trending ON recent_scene_cache(trending_rank);
 
+-- watches: user-tracked StashDB scenes. A watch says "tell me when this
+-- scene has a release at quality `target`". A background loop re-searches
+-- watching rows on a spread-over-24h cadence; on a verified release that
+-- matches the target resolution it flips status watching → available and
+-- records the found release. It never grabs — the user grabs from the
+-- Watching tab. Denormalised scene display fields so the tab renders
+-- without a StashDB round-trip.
+CREATE TABLE IF NOT EXISTS watches (
+  stashdb_id     TEXT PRIMARY KEY,
+  title          TEXT,
+  date           TEXT,
+  studio_name    TEXT,
+  image_url      TEXT,
+  performer_name TEXT,              -- the performer the user tracked from (folder + search scope)
+  performer_id   TEXT,              -- local stash_id of that performer
+  -- target resolution to wait for: "any" | "720p" | "1080p" | "4k".
+  -- Exact match (4k does NOT satisfy a 1080p watch) per the chosen design.
+  target         TEXT NOT NULL DEFAULT 'any',
+  status         TEXT NOT NULL DEFAULT 'watching', -- watching | available
+  -- When available, the release that satisfied it (for one-click grab).
+  found_title    TEXT,
+  found_url      TEXT,
+  found_indexer  TEXT,
+  found_protocol TEXT,
+  found_size     INTEGER NOT NULL DEFAULT 0,
+  created_at     INTEGER NOT NULL,
+  last_checked   INTEGER NOT NULL DEFAULT 0, -- unix; 0 = never. The loop claims oldest first.
+  found_at       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
+CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
+
