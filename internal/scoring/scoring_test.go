@@ -101,3 +101,21 @@ func TestDefaultsResolution(t *testing.T) {
 		}
 	}
 }
+
+func TestResolution(t *testing.T) {
+	cases := map[string]string{
+		"Scene 1080p x":            Res1080,
+		"Scene 2160p":              Res4K,
+		"Scene 3840p wide":         Res4K,
+		"UHD release":              Res4K,
+		"Old 720p":                 Res720,
+		"SD 480p":                  Res480,
+		"Performer SiteRip":        ResNone,
+		"Both 1080p and 2160p cut": Res4K, // 4K wins when both present
+	}
+	for title, want := range cases {
+		if got := Resolution(title); got != want {
+			t.Errorf("Resolution(%q) = %q, want %q", title, got, want)
+		}
+	}
+}

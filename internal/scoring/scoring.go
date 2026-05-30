@@ -15,6 +15,40 @@ import (
 	"strings"
 )
 
+// Resolution tiers — normalized labels matching the watch targets.
+const (
+	Res4K   = "4k"
+	Res1080 = "1080p"
+	Res720  = "720p"
+	Res480  = "480p"
+	ResNone = "" // no resolution token in the title
+)
+
+var (
+	re4k   = regexp.MustCompile(`(?i)\b(2160p?|3840p?|4k|uhd)\b`)
+	re1080 = regexp.MustCompile(`(?i)\b1080p?\b`)
+	re720  = regexp.MustCompile(`(?i)\b720p?\b`)
+	re480  = regexp.MustCompile(`(?i)\b(480p?|360p?)\b`)
+)
+
+// Resolution classifies a release title into its highest resolution tier
+// (4K wins over 1080 if both appear, which happens in dual-version
+// releases). Returns ResNone when no resolution token is present — the
+// common bare-SiteRip case. Used by the watch loop's exact-match target.
+func Resolution(title string) string {
+	switch {
+	case re4k.MatchString(title):
+		return Res4K
+	case re1080.MatchString(title):
+		return Res1080
+	case re720.MatchString(title):
+		return Res720
+	case re480.MatchString(title):
+		return Res480
+	}
+	return ResNone
+}
+
 // On selects which release field a rule's Pattern matches against.
 // Resolution etc. live in the title; the indexer/source is a separate
 // structured field (Prowlarr's indexer name), not present in the title —

@@ -98,6 +98,10 @@ func main() {
 		Version:   Version,
 	})
 
+	// Watchlist re-search loop — re-checks tracked scenes on a spread-
+	// over-24h cadence and flips them to "available" (never grabs).
+	go server.RunWatchLoop(ctx)
+
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,
 		Handler:           server.Router(),
