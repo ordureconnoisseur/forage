@@ -50,6 +50,15 @@ type jobScene struct {
 	Title     string         `json:"title"`
 	Status    jobSceneStatus `json:"status"`
 	Release   string         `json:"release,omitempty"` // chosen release title when grabbed
+	// Candidates is the full verified release list for this scene — stored
+	// so a finished job re-opens as the identical interactive collection
+	// view (expand candidates, re-pick the ones auto-pick skipped). Empty
+	// until the scene is searched; omitted from the list endpoint to keep
+	// it light (see jobDetail).
+	Candidates []sceneRelease `json:"candidates,omitempty"`
+	// PickedURL is the grab URL of the chosen release (auto-pick's choice,
+	// or the user's later re-pick), "" when nothing is selected.
+	PickedURL string `json:"picked_url,omitempty"`
 }
 
 type collectionJob struct {
@@ -75,11 +84,20 @@ type jobStore struct {
 
 func newJobStore() *jobStore { return &jobStore{jobs: map[string]*collectionJob{}} }
 
-// snapshot returns a deep-ish copy safe to marshal without holding the
-// lock during JSON encoding.
-func (j *collectionJob) snapshot() collectionJob {
+// snapshot returns a copy safe to marshal without holding the lock during
+// JSON encoding. When light, per-scene Candidates are dropped (the list
+// endpoint doesn't need the full release sets — only the detail does).
+func (j *collectionJob) snapshot(light bool) collectionJob {
 	cp := *j
-	cp.Scenes = append([]jobScene(nil), j.Scenes...)
+	cp.Scenes = make([]jobScene, len(j.Scenes))
+	for i, sc := range j.Scenes {
+		if light {
+			sc.Candidates = nil
+		} else {
+			sc.Candidates = append([]sceneRelease(nil), sc.Candidates...)
+		}
+		cp.Scenes[i] = sc
+	}
 	cp.cancel = nil
 	return cp
 }
@@ -116,15 +134,15 @@ func (s *Server) postCollectionJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, status, msg)
 		return
 	}
-	writeJSON(w, http.StatusOK, job.snapshot())
+	writeJSON(w, http.StatusOK, job.snapshot(true))
 }
 
-// getCollectionJobs lists jobs, newest first.
+// getCollectionJobs lists jobs, newest first (light — no candidate lists).
 func (s *Server) getCollectionJobs(w http.ResponseWriter, r *http.Request) {
 	s.jobs.mu.Lock()
 	out := make([]collectionJob, 0, len(s.jobs.jobs))
 	for _, j := range s.jobs.jobs {
-		out = append(out, j.snapshot())
+		out = append(out, j.snapshot(true))
 	}
 	s.jobs.mu.Unlock()
 	sort.Slice(out, func(i, k int) bool { return out[i].StartedAt > out[k].StartedAt })
@@ -150,6 +168,109 @@ func (s *Server) deleteCollectionJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "job not found")
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// getCollectionJobDetail returns one job WITH per-scene candidate lists,
+// so the plugin can re-open it as the full interactive collection view.
+func (s *Server) getCollectionJobDetail(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	s.jobs.mu.Lock()
+	j := s.jobs.jobs[id]
+	var snap collectionJob
+	if j != nil {
+		snap = j.snapshot(false)
+	}
+	s.jobs.mu.Unlock()
+	if j == nil {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, snap)
+}
+
+type jobGrabRequest struct {
+	SceneID     string `json:"scene_id"`
+	DownloadURL string `json:"download_url"` // which candidate to grab
+}
+
+// postCollectionJobGrab grabs a specific candidate for one scene of a job
+// — the re-pick path: the user opened a finished job and chose a release
+// for a scene the auto-pass skipped (or wants to override). Looks the
+// candidate up in the stored list, grabs it, and flips the scene to
+// grabbed.
+func (s *Server) postCollectionJobGrab(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req jobGrabRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	s.jobs.mu.Lock()
+	j := s.jobs.jobs[id]
+	var (
+		perfName string
+		sceneIdx = -1
+		cand     *sceneRelease
+	)
+	if j != nil {
+		perfName = j.PerformerName
+		for i := range j.Scenes {
+			if j.Scenes[i].StashDBID == req.SceneID {
+				sceneIdx = i
+				for k := range j.Scenes[i].Candidates {
+					if j.Scenes[i].Candidates[k].DownloadURL == req.DownloadURL {
+						c := j.Scenes[i].Candidates[k]
+						cand = &c
+					}
+				}
+				break
+			}
+		}
+	}
+	s.jobs.mu.Unlock()
+	if j == nil {
+		writeErr(w, http.StatusNotFound, "job not found")
+		return
+	}
+	if sceneIdx < 0 || cand == nil {
+		writeErr(w, http.StatusNotFound, "scene/candidate not found in job")
+		return
+	}
+
+	_, err := s.doGrab(r.Context(), grabRequest{
+		DownloadURL:    cand.DownloadURL,
+		ReleaseTitle:   cand.Title,
+		ReleaseSize:    cand.Size,
+		ReleaseIndexer: cand.Indexer,
+		Protocol:       cand.Protocol,
+		SceneID:        req.SceneID,
+		Confidence:     cand.Confidence,
+		PerformerName:  perfName,
+	})
+	if err != nil {
+		var ge grabError
+		if errors.As(err, &ge) {
+			writeErr(w, ge.status, ge.msg)
+			return
+		}
+		writeErr(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	// Flip the scene to grabbed in place.
+	s.jobs.mu.Lock()
+	if sceneIdx < len(j.Scenes) {
+		sc := &j.Scenes[sceneIdx]
+		wasGrabbed := sc.Status == jobSceneGrabbed
+		sc.Status = jobSceneGrabbed
+		sc.Release = cand.Title
+		sc.PickedURL = cand.DownloadURL
+		if !wasGrabbed {
+			j.Grabbed++
+		}
+	}
+	s.jobs.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -282,87 +403,78 @@ func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, perfo
 	go s.cleanupJobLater(job.ID)
 }
 
-// processJobScene searches one scene, picks its best verified release
-// over the auto-pick floor, and grabs it — recording the outcome.
+// processJobScene searches one scene, stores its full verified candidate
+// list (so the job re-opens as the interactive view), auto-picks the best
+// release over the floor, and grabs it.
 func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *collectionJob, i int, performerName string) {
 	pc := s.pool.Prowlarr()
 	stashDBC := s.pool.StashDB()
 	if pc == nil || stashDBC == nil {
-		s.setJobScene(job, i, jobSceneError, "")
+		s.setJobScene(job, i, jobSceneError, "", nil, "")
 		return
 	}
 	sceneID := job.Scenes[i].StashDBID
 	scene, err := stashDBC.FindScene(ctx, sceneID)
 	if err != nil || scene == nil {
-		s.setJobScene(job, i, jobSceneError, "")
+		s.setJobScene(job, i, jobSceneError, "", nil, "")
 		return
 	}
 
 	perfNames := s.scenePerformerNames(ctx, scene, performerName, "")
 	releases, err := s.searchSceneReleases(ctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, true /*lean*/)
 	if err != nil {
-		s.setJobScene(job, i, jobSceneError, "")
+		s.setJobScene(job, i, jobSceneError, "", nil, "")
 		return
 	}
 	if len(releases) == 0 {
-		s.setJobScene(job, i, jobSceneNoResult, "")
+		s.setJobScene(job, i, jobSceneNoResult, "", nil, "")
 		return
 	}
 
-	// Verify each release against this scene; keep the best one whose
-	// confidence clears the auto-pick floor.
-	var best *jobCandidate
-	for _, rel := range releases {
-		if ctx.Err() != nil {
-			return
-		}
-		cands, mErr := m.Match(ctx, rel.Title)
-		if mErr != nil {
-			continue
-		}
-		vr := matcher.Verify(cands, sceneID, scene.Title, rel.Title)
-		if !vr.Verified || vr.Confidence < jobAutoPickFloor {
-			continue
-		}
-		if best == nil || vr.Confidence > best.conf {
-			best = &jobCandidate{rel: rel.Title, url: rel.GrabURL(),
-				size: rel.Size, indexer: rel.Indexer, protocol: rel.Protocol, conf: vr.Confidence}
+	// Shape + verify all candidates (same logic as the interactive view),
+	// ranked confidence-desc so the strongest leads.
+	cands := s.verifyReleases(ctx, m, sceneID, scene.Title, releases)
+	sort.SliceStable(cands, func(a, b int) bool { return cands[a].Confidence > cands[b].Confidence })
+
+	// Auto-pick the best verified candidate over the floor.
+	var best *sceneRelease
+	for k := range cands {
+		if cands[k].Verified && cands[k].Confidence >= jobAutoPickFloor {
+			best = &cands[k]
+			break
 		}
 	}
 	if best == nil {
-		s.setJobScene(job, i, jobSceneNoMatch, "")
+		s.setJobScene(job, i, jobSceneNoMatch, "", cands, "")
 		return
 	}
 
 	_, gErr := s.doGrab(ctx, grabRequest{
-		DownloadURL:    best.url,
-		ReleaseTitle:   best.rel,
-		ReleaseSize:    best.size,
-		ReleaseIndexer: best.indexer,
-		Protocol:       best.protocol,
+		DownloadURL:    best.DownloadURL,
+		ReleaseTitle:   best.Title,
+		ReleaseSize:    best.Size,
+		ReleaseIndexer: best.Indexer,
+		Protocol:       best.Protocol,
 		SceneID:        sceneID,
-		Confidence:     best.conf,
+		Confidence:     best.Confidence,
 		PerformerName:  performerName,
 	})
 	if gErr != nil {
-		s.setJobScene(job, i, jobSceneError, best.rel)
+		s.setJobScene(job, i, jobSceneError, best.Title, cands, best.DownloadURL)
 		return
 	}
-	s.setJobScene(job, i, jobSceneGrabbed, best.rel)
+	s.setJobScene(job, i, jobSceneGrabbed, best.Title, cands, best.DownloadURL)
 }
 
-type jobCandidate struct {
-	rel, url, indexer, protocol string
-	size                        int64
-	conf                        float64
-}
-
-// setJobScene records a scene's terminal status + bumps the counters.
-func (s *Server) setJobScene(job *collectionJob, i int, st jobSceneStatus, release string) {
+// setJobScene records a scene's terminal status + candidates + bumps the
+// counters.
+func (s *Server) setJobScene(job *collectionJob, i int, st jobSceneStatus, release string, cands []sceneRelease, pickedURL string) {
 	s.jobs.mu.Lock()
 	defer s.jobs.mu.Unlock()
 	job.Scenes[i].Status = st
 	job.Scenes[i].Release = release
+	job.Scenes[i].Candidates = cands
+	job.Scenes[i].PickedURL = pickedURL
 	job.Done++
 	if st == jobSceneGrabbed {
 		job.Grabbed++

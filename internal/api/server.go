@@ -117,6 +117,8 @@ func (s *Server) Router() http.Handler {
 	r.Delete("/grabs/{id}", s.deleteGrab)
 	r.Post("/jobs", s.postCollectionJob)
 	r.Get("/jobs", s.getCollectionJobs)
+	r.Get("/jobs/{id}", s.getCollectionJobDetail)
+	r.Post("/jobs/{id}/grab", s.postCollectionJobGrab)
 	r.Delete("/jobs/{id}", s.deleteCollectionJob)
 	r.Get("/missing-scenes", s.getMissingScenes)
 	r.Get("/performers/{id}/packs", s.getPerformerPacks)

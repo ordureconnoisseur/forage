@@ -136,77 +136,8 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run matcher across all results to verify which are this scene.
-	// Use the same concurrency/streaming infrastructure as /search
-	// but consume the channel synchronously (small result set + we
-	// only return after all done).
-	titles := make([]string, len(releases))
-	for i, rel := range releases {
-		titles[i] = rel.Title
-	}
-
-	out := make([]sceneRelease, len(releases))
-	for res := range m.MatchStream(r.Context(), titles, searchMatcherConcurrency) {
-		rel := releases[res.Index]
-		var conf float64
-		verified := false
-		// Verification: the viewed scene counts as verified only when
-		// it's the matcher's best pick for this release, or within a
-		// hair of it. Accepting the scene *anywhere* in the top-N (the
-		// old behaviour) badged releases green even when a clearly
-		// different scene outscored the viewed one — e.g. a "Gooey Anal
-		// Stuffing" release (0.62) showing Verified on the "Gooey Anal
-		// Toe Sucking" page just because that scene also appeared at
-		// rank 3 (0.41). The user then grabs the wrong scene trusting
-		// the badge.
-		//
-		// bestOther is the top candidate whose scene ISN'T the viewed
-		// one — used to tell the UI what the release actually looks
-		// like when we withhold the Verified badge.
-		var bestOtherID, bestOtherTitle string
-		var bestOtherConf float64
-		var reasons []string
-		if res.Err == nil && len(res.Candidates) > 0 {
-			// Single source of truth for the verified badge — shared with
-			// tools/matcher-bench (--verify) so the logic is corpus-tested.
-			vr := matcher.Verify(res.Candidates, id, scene.Title, rel.Title)
-			verified = vr.Verified
-			conf = vr.Confidence
-			// Per-component breakdown for the viewed scene, for the "why
-			// did this match?" expander.
-			for _, c := range res.Candidates {
-				if c.Scene.ID == id {
-					reasons = c.Reasons
-					break
-				}
-			}
-			// When unverified and the matcher's top pick is a different
-			// scene, surface it so the UI can warn "looks like X".
-			if top := res.Candidates[0]; !verified && top.Scene.ID != id {
-				bestOtherID = top.Scene.ID
-				bestOtherTitle = top.Scene.Title
-				bestOtherConf = top.Confidence
-			}
-		}
-		out[res.Index] = sceneRelease{
-			Title:          rel.Title,
-			Indexer:        rel.Indexer,
-			Protocol:       rel.Protocol,
-			Size:           rel.Size,
-			Popularity:     rel.Popularity,
-			Seeders:        rel.Seeders,
-			Grabs:          rel.Grabs,
-			PublishDate:    rel.PublishDate,
-			InfoURL:        rel.InfoURL,
-			DownloadURL:    rel.GrabURL(),
-			Verified:       verified,
-			Confidence:     conf,
-			BestMatchID:    bestOtherID,
-			BestMatchTitle: bestOtherTitle,
-			BestMatchConf:  bestOtherConf,
-			Reasons:        reasons,
-		}
-	}
+	// Verify which releases are this scene + shape them for the UI.
+	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases)
 
 	// Verified-first, then popularity-desc within each group.
 	sort.SliceStable(out, func(i, j int) bool {
@@ -354,6 +285,63 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string, lean bool) []str
 		}
 		seen[strings.ToLower(c)] = true
 		out = append(out, c)
+	}
+	return out
+}
+
+// verifyReleases runs the matcher over a set of Prowlarr releases and
+// shapes each into a sceneRelease (verified flag, confidence, best-other
+// scene, reason breakdown) for the target scene. Shared by the
+// /scenes/{id}/releases endpoint and the collection-job worker so the
+// verify/badge logic — and the stored candidate list a job exposes for
+// re-pick — is identical to the interactive view.
+func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID, sceneTitle string, releases []prowlarr.Release) []sceneRelease {
+	titles := make([]string, len(releases))
+	for i, rel := range releases {
+		titles[i] = rel.Title
+	}
+	out := make([]sceneRelease, len(releases))
+	for res := range m.MatchStream(ctx, titles, searchMatcherConcurrency) {
+		rel := releases[res.Index]
+		var conf float64
+		verified := false
+		var bestOtherID, bestOtherTitle string
+		var bestOtherConf float64
+		var reasons []string
+		if res.Err == nil && len(res.Candidates) > 0 {
+			vr := matcher.Verify(res.Candidates, sceneID, sceneTitle, rel.Title)
+			verified = vr.Verified
+			conf = vr.Confidence
+			for _, c := range res.Candidates {
+				if c.Scene.ID == sceneID {
+					reasons = c.Reasons
+					break
+				}
+			}
+			if top := res.Candidates[0]; !verified && top.Scene.ID != sceneID {
+				bestOtherID = top.Scene.ID
+				bestOtherTitle = top.Scene.Title
+				bestOtherConf = top.Confidence
+			}
+		}
+		out[res.Index] = sceneRelease{
+			Title:          rel.Title,
+			Indexer:        rel.Indexer,
+			Protocol:       rel.Protocol,
+			Size:           rel.Size,
+			Popularity:     rel.Popularity,
+			Seeders:        rel.Seeders,
+			Grabs:          rel.Grabs,
+			PublishDate:    rel.PublishDate,
+			InfoURL:        rel.InfoURL,
+			DownloadURL:    rel.GrabURL(),
+			Verified:       verified,
+			Confidence:     conf,
+			BestMatchID:    bestOtherID,
+			BestMatchTitle: bestOtherTitle,
+			BestMatchConf:  bestOtherConf,
+			Reasons:        reasons,
+		}
 	}
 	return out
 }
