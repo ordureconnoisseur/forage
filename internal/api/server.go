@@ -18,6 +18,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
 //go:embed ui/index.html
@@ -54,6 +55,19 @@ type Server struct {
 	ownedMu      sync.Mutex
 	ownedSet     map[string]bool
 	ownedFetched time.Time
+
+	// filmoCache memoises each performer's full StashDB filmography
+	// (QueryAllScenes), keyed by StashDB performer id. The query paginates
+	// a prolific performer's entire catalogue — seconds — and dominates a
+	// cold /missing-scenes load. Per-entry TTL; a performer's StashDB
+	// filmography changes rarely.
+	filmoMu    sync.Mutex
+	filmoCache map[string]filmoEntry
+}
+
+type filmoEntry struct {
+	scenes  []stashdb.Scene
+	fetched time.Time
 }
 
 type Options struct {
@@ -171,6 +185,37 @@ func (s *Server) ownedStashDBSet(ctx context.Context) (map[string]bool, error) {
 	s.ownedSet = set
 	s.ownedFetched = time.Now()
 	return set, nil
+}
+
+// filmoTTL is how long a performer's cached StashDB filmography is reused.
+// Longer than ownedTTL: a performer's StashDB catalogue is very stable
+// (new scenes arrive over days, not seconds), and there are hundreds of
+// performers, so a short window would re-fetch on every revisit.
+const filmoTTL = 10 * time.Minute
+
+// performerFilmography returns a performer's full StashDB filmography,
+// memoised per performer for filmoTTL. The QueryAllScenes pagination
+// dominates a cold /missing-scenes load; caching it makes revisiting (or
+// re-opening for the scoped multi-select grab) instant. The lock is held
+// across the fetch so concurrent loads of the same performer coalesce.
+func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, stashDBPerformerID string) ([]stashdb.Scene, error) {
+	s.filmoMu.Lock()
+	defer s.filmoMu.Unlock()
+	if s.filmoCache == nil {
+		s.filmoCache = map[string]filmoEntry{}
+	}
+	if e, ok := s.filmoCache[stashDBPerformerID]; ok && time.Since(e.fetched) < filmoTTL {
+		return e.scenes, nil
+	}
+	scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
+		PerformerIDs: []string{stashDBPerformerID},
+		PerPage:      50,
+	}, 5000) // hardCap matches the scene-cache cap so card/page counts agree
+	if err != nil {
+		return nil, err
+	}
+	s.filmoCache[stashDBPerformerID] = filmoEntry{scenes: scenes, fetched: time.Now()}
+	return scenes, nil
 }
 
 func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {

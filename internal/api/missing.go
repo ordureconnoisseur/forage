@@ -86,12 +86,9 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Pull every StashDB scene featuring this performer.
-	scenes, err := stashDBC.QueryAllScenes(r.Context(), stashdb.SceneQuery{
-		PerformerIDs: []string{stashDBPerformerID},
-		PerPage:      50,
-	}, 5000) // hardCap — match the scene-cache's cap so the page's count
-	// agrees with the performer-card missing count for prolific performers.
+	// 2. Pull every StashDB scene featuring this performer (memoised per
+	// performer — this pagination dominates a cold load).
+	scenes, err := s.performerFilmography(r.Context(), stashDBC, stashDBPerformerID)
 	if err != nil {
 		s.log.Error("stashdb scenes by performer", "err", err)
 		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
