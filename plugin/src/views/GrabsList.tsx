@@ -807,9 +807,16 @@ function GrabRow({
               identity/pipeline main column. */}
           <div className="grab-dossier">
             {(() => {
+              // A pack is many of a performer's scenes — no single
+              // thumbnail represents it, so lead with the performer
+              // portrait. A single scene has a real StashDB thumbnail;
+              // prefer that and only fall back to the performer image.
+              const isPack = g.kind === "pack";
               const heroSrc = posterFailed
                 ? ""
-                : detail?.performer_image_url || detail?.image_url || "";
+                : isPack
+                  ? detail?.performer_image_url || detail?.image_url || ""
+                  : detail?.image_url || detail?.performer_image_url || "";
               return (
                 <div className={"grab-poster" + (heroSrc ? "" : " is-mono")}>
                   {heroSrc ? (
@@ -827,7 +834,10 @@ function GrabRow({
                   <span className={"grab-poster-badge chip-" + g.status}>
                     {g.status}
                   </span>
-                  {g.performer_name && (
+                  {/* Name caption only on the performer-portrait (pack /
+                      monogram) view — a scene thumbnail names itself via
+                      the title beside it. */}
+                  {g.performer_name && (isPack || !heroSrc) && (
                     <span className="grab-poster-name">{g.performer_name}</span>
                   )}
                 </div>
