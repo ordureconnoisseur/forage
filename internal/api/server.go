@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -44,6 +45,15 @@ type Server struct {
 	// StashDB credentials change.
 	matcherMu sync.Mutex
 	matcher   *matcher.Matcher
+
+	// ownedCache memoises the full-library owned StashDB-id set. The sweep
+	// (FindAllOwnedStashDBSceneIDs) paginates the entire Stash library —
+	// seconds for a big library — and /missing-scenes needs it on every
+	// load. A short TTL keeps loads instant without going stale in any way
+	// that matters (you don't un-own scenes mid-session).
+	ownedMu      sync.Mutex
+	ownedSet     map[string]bool
+	ownedFetched time.Time
 }
 
 type Options struct {
@@ -129,6 +139,38 @@ func (s *Server) invalidateMatcher() {
 	s.matcherMu.Lock()
 	s.matcher = nil
 	s.matcherMu.Unlock()
+}
+
+// ownedTTL is how long a fetched owned-set is reused before re-sweeping.
+const ownedTTL = 60 * time.Second
+
+// ownedStashDBSet returns the set of StashDB scene ids the user owns
+// anywhere in their library, memoised for ownedTTL. The underlying sweep
+// paginates the whole Stash library, so without this every
+// /missing-scenes load paid seconds for data that barely changes. The
+// lock is held across the (slow) sweep so concurrent loads coalesce onto
+// one fetch rather than each launching their own.
+func (s *Server) ownedStashDBSet(ctx context.Context) (map[string]bool, error) {
+	s.ownedMu.Lock()
+	defer s.ownedMu.Unlock()
+	if s.ownedSet != nil && time.Since(s.ownedFetched) < ownedTTL {
+		return s.ownedSet, nil
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		return nil, errNotConfigured("stash")
+	}
+	ids, err := sc.FindAllOwnedStashDBSceneIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	s.ownedSet = set
+	s.ownedFetched = time.Now()
+	return set, nil
 }
 
 func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {

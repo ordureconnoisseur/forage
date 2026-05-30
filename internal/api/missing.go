@@ -98,21 +98,17 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Build the set of StashDB scene ids the user owns ANYWHERE in
-	// their library (not just scenes locally tagged with this performer).
-	// A scene you have but never tagged with this performer still counts
-	// as owned — otherwise it falsely shows as "missing". This is the
-	// same library-wide cross-id sweep the scene cache uses for the
-	// performer-card missing count, so the card and this page now agree.
-	ownedIDs, err := stashC.FindAllOwnedStashDBSceneIDs(r.Context())
+	// 3. Set of StashDB scene ids the user owns ANYWHERE in their library
+	// (not just scenes locally tagged with this performer). A scene you
+	// have but never tagged with this performer still counts as owned —
+	// otherwise it falsely shows as "missing". Same library-wide cross-id
+	// basis as the scene cache's card count, so card and page agree.
+	// Memoised (ownedTTL) so this load doesn't re-sweep the whole library.
+	ownedSet, err := s.ownedStashDBSet(r.Context())
 	if err != nil {
 		s.log.Error("stash owned scene sweep", "err", err)
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
 		return
-	}
-	ownedSet := make(map[string]bool, len(ownedIDs))
-	for _, id := range ownedIDs {
-		ownedSet[id] = true
 	}
 
 	// 4. In-flight grabs by scene id, so missing scenes already being
