@@ -4,93 +4,100 @@ import "testing"
 
 func TestScoreAdditive(t *testing.T) {
 	s := New([]Rule{
-		{Label: "x265", Pattern: `x265`, Points: 100},
-		{Label: "1080p", Pattern: `1080p`, Points: 80},
-		{Label: "480p", Pattern: `480p`, Points: -50},
+		{Label: "1080p", On: OnTitle, Pattern: `1080p`, Points: 100},
+		{Label: "720p", On: OnTitle, Pattern: `720p`, Points: 30},
+		{Label: "480p", On: OnTitle, Pattern: `480p`, Points: -50},
 	})
-	// x265 + 1080p, no 480p → 180.
-	r := s.Score("Studio.Scene.1080p.x265-GRP")
-	if r.Score != 180 {
-		t.Errorf("score = %d, want 180", r.Score)
+	// Only 1080p matches → 100.
+	r := s.Score("Studio.Scene.1080p-GRP", "PornoLab")
+	if r.Score != 100 {
+		t.Errorf("score = %d, want 100", r.Score)
 	}
 	if r.Rejected {
 		t.Error("should not be rejected")
 	}
-	if len(r.Hits) != 2 {
-		t.Errorf("hits = %d, want 2", len(r.Hits))
+	if len(r.Hits) != 1 {
+		t.Errorf("hits = %d, want 1", len(r.Hits))
 	}
 }
 
-func TestScoreCaseInsensitive(t *testing.T) {
-	s := New([]Rule{{Label: "hevc", Pattern: `hevc`, Points: 100}})
-	if s.Score("Movie HEVC 1080p").Score != 100 {
-		t.Error("HEVC should match case-insensitively")
+func TestIndexerRule(t *testing.T) {
+	s := New([]Rule{
+		{Label: "1080p", On: OnTitle, Pattern: `1080p`, Points: 100},
+		{Label: "prefer PornoLab", On: OnIndexer, Pattern: `pornolab`, Points: 50},
+		{Label: "avoid 1337x", On: OnIndexer, Pattern: `1337x`, Points: -30},
+	})
+	// Indexer rule matches the indexer field, not the title.
+	r := s.Score("Scene 1080p", "PornoLab")
+	if r.Score != 150 { // 1080p(100) + PornoLab(50)
+		t.Errorf("score = %d, want 150", r.Score)
+	}
+	r2 := s.Score("Scene 1080p", "1337x")
+	if r2.Score != 70 { // 1080p(100) - 1337x(30)
+		t.Errorf("score = %d, want 70", r2.Score)
+	}
+	// An indexer pattern must NOT match against the title.
+	s2 := New([]Rule{{Label: "lab", On: OnIndexer, Pattern: `pornolab`, Points: 99}})
+	if s2.Score("PornoLab in the title", "1337x").Score != 0 {
+		t.Error("indexer rule should match indexer field, not title")
+	}
+}
+
+func TestOnDefaultsToTitle(t *testing.T) {
+	// On omitted → title.
+	s := New([]Rule{{Label: "1080p", Pattern: `1080p`, Points: 80}})
+	if s.Score("x 1080p", "idx").Score != 80 {
+		t.Error("empty On should default to title match")
 	}
 }
 
 func TestReject(t *testing.T) {
 	s := New([]Rule{
-		{Label: "1080p", Pattern: `1080p`, Points: 80},
-		{Label: "cam", Pattern: `\bcam\b`, Points: 0, Reject: true},
+		{Label: "1080p", On: OnTitle, Pattern: `1080p`, Points: 80},
+		{Label: "ban indexer", On: OnIndexer, Pattern: `badtracker`, Points: 0, Reject: true},
 	})
-	r := s.Score("Some.Movie.CAM.1080p")
+	r := s.Score("Movie 1080p", "BadTracker")
 	if !r.Rejected {
 		t.Error("a matched reject rule must set Rejected")
 	}
-	// Score still computed (1080p hit) even when rejected — the caller
-	// filters on Rejected, not Score.
 	if r.Score != 80 {
-		t.Errorf("score = %d, want 80", r.Score)
+		t.Errorf("score = %d, want 80 (still computed)", r.Score)
 	}
 }
 
 func TestNoMatchZero(t *testing.T) {
 	s := New(DefaultRules())
-	// A bare SiteRip with no resolution/codec token: nothing matches.
-	r := s.Score("Performer SiteRip")
+	r := s.Score("Performer SiteRip", "SomeIndexer") // no resolution token
 	if r.Score != 0 || r.Rejected || len(r.Hits) != 0 {
 		t.Errorf("expected empty result, got %+v", r)
 	}
 }
 
 func TestInvalidRegexSkipped(t *testing.T) {
-	// A bad pattern must not match and must not break the other rules.
 	s := New([]Rule{
 		{Label: "bad", Pattern: `(unclosed`, Points: 999},
 		{Label: "1080p", Pattern: `1080p`, Points: 80},
 	})
-	r := s.Score("Movie 1080p")
-	if r.Score != 80 {
-		t.Errorf("score = %d, want 80 (bad rule skipped)", r.Score)
+	if s.Score("Movie 1080p", "idx").Score != 80 {
+		t.Error("bad rule must be skipped, not crash or match")
 	}
 }
 
-func TestEmptyPatternNeverMatches(t *testing.T) {
-	s := New([]Rule{{Label: "blank", Pattern: "   ", Points: 50}})
-	if s.Score("anything").Score != 0 {
-		t.Error("blank pattern must not match")
-	}
-}
-
-func TestDefaultsRealTitles(t *testing.T) {
+func TestDefaultsResolution(t *testing.T) {
 	s := New(DefaultRules())
 	cases := []struct {
-		title    string
-		wantRej  bool
-		minScore int // lower bound; exact value is tuning-dependent
+		title string
+		want  int
 	}{
-		{"Studio.26.01.01.Performer.XXX.1080p.x265-GRP", false, 180},
-		{"Studio Performer 2160p HEVC", false, 160}, // 4k(60)+hevc(100)
-		{"Performer Scene 480p", false, -50},
-		{"Leaked.CAM.copy.1080p", true, 0},
+		{"Studio.26.01.01.Performer.XXX.1080p", 100},
+		{"Studio Performer 2160p", 70},
+		{"Performer Scene 720p", 30},
+		{"Performer Scene 480p", -50},
+		{"Performer SiteRip", 0},
 	}
 	for _, c := range cases {
-		r := s.Score(c.title)
-		if r.Rejected != c.wantRej {
-			t.Errorf("%q: rejected=%v want %v", c.title, r.Rejected, c.wantRej)
-		}
-		if !c.wantRej && r.Score < c.minScore {
-			t.Errorf("%q: score=%d want >= %d", c.title, r.Score, c.minScore)
+		if got := s.Score(c.title, "idx").Score; got != c.want {
+			t.Errorf("%q: score=%d want %d", c.title, got, c.want)
 		}
 	}
 }

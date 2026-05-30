@@ -5,19 +5,10 @@ import type { ReleaseRule } from "../api";
 // them as the starting point and offer a "reset to defaults" action.
 // Keep in sync with scoring.DefaultRules() on the server.
 const DEFAULT_RULES: ReleaseRule[] = [
-  { label: "x265 / HEVC", pattern: "\\b(x265|hevc|h\\.?265)\\b", points: 100 },
-  { label: "AV1", pattern: "\\bav1\\b", points: 90 },
-  { label: "1080p", pattern: "\\b1080p?\\b", points: 80 },
-  { label: "4K / 2160p", pattern: "\\b(2160p?|4k|uhd)\\b", points: 60 },
-  { label: "720p", pattern: "\\b720p?\\b", points: 20 },
-  { label: "x264 / H.264", pattern: "\\b(x264|h\\.?264|avc)\\b", points: 10 },
-  { label: "480p / SD", pattern: "\\b(480p?|360p?|sd)\\b", points: -50 },
-  {
-    label: "CAM / TS / screener",
-    pattern: "\\b(cam|ts|telesync|telecine|screener|scr)\\b",
-    points: 0,
-    reject: true,
-  },
+  { label: "1080p", on: "title", pattern: "\\b1080p?\\b", points: 100 },
+  { label: "4K / 2160p", on: "title", pattern: "\\b(2160p?|3840p?|4k|uhd)\\b", points: 70 },
+  { label: "720p", on: "title", pattern: "\\b720p?\\b", points: 30 },
+  { label: "480p / SD", on: "title", pattern: "\\b(480p?|360p?|\\bsd\\b)\\b", points: -50 },
 ];
 
 function parseRules(json: string): ReleaseRule[] {
@@ -62,21 +53,23 @@ export default function ReleaseRulesEditor({
     emit(next);
   };
   const add = () =>
-    emit([...rules, { label: "New rule", pattern: "", points: 0 }]);
+    emit([...rules, { label: "New rule", on: "title", pattern: "", points: 0 }]);
   const resetDefaults = () => emit(DEFAULT_RULES);
 
   return (
     <div className="rules-editor">
       <p className="settings-tip">
-        Releases are ranked by SCORE: each rule that matches a release title
-        adds its points (negative to penalise). The highest-scoring verified
-        release is preferred; ties break by seeders/grabs. A <b>reject</b> rule
-        hard-excludes any release it matches (e.g. CAM). Order is cosmetic —
-        scoring is additive, not tiered.
+        Releases are ranked by SCORE: each matching rule adds its points
+        (negative to penalise). Highest-scoring verified release wins; ties
+        break by seeders/grabs. A <b>reject</b> rule hard-excludes any release
+        it matches. Match against the release <b>title</b> (where resolution
+        lives) or the <b>indexer</b>/source name. Scoring is additive, not
+        tiered — order is cosmetic.
       </p>
       <div className="rules-list">
         <div className="rule-row rule-head">
           <span>Label</span>
+          <span>On</span>
           <span>Pattern (regex)</span>
           <span>Points</span>
           <span>Reject</span>
@@ -90,6 +83,16 @@ export default function ReleaseRulesEditor({
               onChange={(e) => update(i, { label: e.target.value })}
               placeholder="name"
             />
+            <select
+              className="rule-on"
+              value={r.on ?? "title"}
+              onChange={(e) =>
+                update(i, { on: e.target.value as "title" | "indexer" })
+              }
+            >
+              <option value="title">title</option>
+              <option value="indexer">indexer</option>
+            </select>
             <input
               className="rule-pattern"
               value={r.pattern}

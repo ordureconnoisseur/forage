@@ -612,8 +612,11 @@ export interface ConfigFieldsResponse {
 // clears the field, falling back to env or default.
 // ReleaseRule mirrors the daemon's scoring.Rule. A release's score is the
 // sum of matched rules' points; a matched reject rule disqualifies it.
+// `on` selects the field the pattern matches: the release title (where
+// resolution lives) or the indexer/source name.
 export interface ReleaseRule {
   label: string;
+  on?: "title" | "indexer";
   pattern: string;
   points: number;
   reject?: boolean;

@@ -3645,7 +3645,7 @@ code.grab-fact-v,
 }
 .rule-row {
   display: grid;
-  grid-template-columns: 1.2fr 2fr 64px 44px 90px;
+  grid-template-columns: 1.1fr 84px 1.8fr 60px 44px 90px;
   gap: 8px;
   align-items: center;
 }
@@ -3671,6 +3671,15 @@ code.grab-fact-v,
 }
 .rule-pattern {
   font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.rule-on {
+  padding: 5px 6px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-0);
+  color: var(--text);
+  font: inherit;
   font-size: 12px;
 }
 .rule-actions {

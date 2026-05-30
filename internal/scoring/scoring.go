@@ -15,16 +15,29 @@ import (
 	"strings"
 )
 
+// On selects which release field a rule's Pattern matches against.
+// Resolution etc. live in the title; the indexer/source is a separate
+// structured field (Prowlarr's indexer name), not present in the title —
+// so it gets its own target rather than a title regex that'd never hit.
+type On string
+
+const (
+	OnTitle   On = "title"   // default; matches the release title (resolution lives here)
+	OnIndexer On = "indexer" // matches the indexer/source name (PornoLab, 1337x, …)
+)
+
 // Rule is one user preference. Pattern is matched (case-insensitive) as a
-// regular expression against the release title. Points are added to the
-// release's score on a match (may be negative). Reject, when true and the
-// rule matches, hard-disqualifies the release no matter its score.
+// regexp against the field named by On. Points are added to the release's
+// score on a match (may be negative). Reject, when true and the rule
+// matches, hard-disqualifies the release no matter its score.
 type Rule struct {
 	// Label is a human name for the rule, shown in the score breakdown.
 	Label string `json:"label"`
-	// Pattern is a (case-insensitive) regexp matched against the release
-	// title. Invalid patterns are skipped (never match) — a bad rule
-	// can't crash scoring.
+	// On is the field to match: "title" (default) or "indexer".
+	On On `json:"on,omitempty"`
+	// Pattern is a (case-insensitive) regexp matched against the On field.
+	// Invalid patterns are skipped (never match) — a bad rule can't crash
+	// scoring.
 	Pattern string `json:"pattern"`
 	Points  int    `json:"points"`
 	Reject  bool   `json:"reject,omitempty"`
@@ -70,12 +83,21 @@ func New(rules []Rule) *Scorer {
 	return &Scorer{rules: cs}
 }
 
-// Score evaluates one release title against the rules. Score is the sum
-// of matched points; Rejected is true if any matched rule has Reject.
-func (s *Scorer) Score(title string) Result {
+// Score evaluates one release against the rules. title is the release
+// title (resolution etc.); indexer is the structured source name. Score
+// is the sum of matched points; Rejected is true if any matched rule has
+// Reject.
+func (s *Scorer) Score(title, indexer string) Result {
 	var res Result
 	for _, c := range s.rules {
-		if c.re == nil || !c.re.MatchString(title) {
+		if c.re == nil {
+			continue
+		}
+		subject := title
+		if c.rule.On == OnIndexer {
+			subject = indexer
+		}
+		if !c.re.MatchString(subject) {
 			continue
 		}
 		res.Score += c.rule.Points
@@ -88,19 +110,16 @@ func (s *Scorer) Score(title string) Result {
 }
 
 // DefaultRules is the opinionated out-of-the-box preference list, so
-// scoring is useful with zero configuration (no TRaSH-guides treadmill).
-// Prefer modern efficient encodes at 1080p, mildly prefer 4K, penalise
-// low-res, and hard-reject cam/screener junk. Users reorder/retune these
-// in Settings.
+// scoring is useful with zero configuration. Porn release titles reliably
+// state RESOLUTION but rarely codec or release group, and the indexer is
+// a structured field — so the defaults score on resolution (title) +
+// leave indexer rules for the user to add their own source preferences.
+// Users reorder/retune in Settings.
 func DefaultRules() []Rule {
 	return []Rule{
-		{Label: "x265 / HEVC", Pattern: `\b(x265|hevc|h\.?265)\b`, Points: 100},
-		{Label: "AV1", Pattern: `\bav1\b`, Points: 90},
-		{Label: "1080p", Pattern: `\b1080p?\b`, Points: 80},
-		{Label: "4K / 2160p", Pattern: `\b(2160p?|4k|uhd)\b`, Points: 60},
-		{Label: "720p", Pattern: `\b720p?\b`, Points: 20},
-		{Label: "x264 / H.264", Pattern: `\b(x264|h\.?264|avc)\b`, Points: 10},
-		{Label: "480p / SD", Pattern: `\b(480p?|360p?|sd)\b`, Points: -50},
-		{Label: "CAM / TS / screener", Pattern: `\b(cam|ts|telesync|telecine|screener|scr)\b`, Points: 0, Reject: true},
+		{Label: "1080p", On: OnTitle, Pattern: `\b1080p?\b`, Points: 100},
+		{Label: "4K / 2160p", On: OnTitle, Pattern: `\b(2160p?|3840p?|4k|uhd)\b`, Points: 70},
+		{Label: "720p", On: OnTitle, Pattern: `\b720p?\b`, Points: 30},
+		{Label: "480p / SD", On: OnTitle, Pattern: `\b(480p?|360p?|\bsd\b)\b`, Points: -50},
 	}
 }

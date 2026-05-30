@@ -343,7 +343,7 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 				bestOtherConf = top.Confidence
 			}
 		}
-		sc := scorer.Score(rel.Title)
+		sc := scorer.Score(rel.Title, rel.Indexer)
 		out[res.Index] = sceneRelease{
 			Title:          rel.Title,
 			Indexer:        rel.Indexer,
