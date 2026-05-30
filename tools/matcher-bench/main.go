@@ -34,6 +34,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -116,6 +117,7 @@ func main() {
 				ID:        e.ID,
 				Basename:  e.Release,
 				StashDBID: e.ExpectedScene,
+				Source:    e.Source,
 			})
 		}
 		// Corpus releases are already the full release-name string —
@@ -517,6 +519,15 @@ type verifyResult struct {
 	EntriesWithFalse int // entries with >=1 false verify
 	Failures         []verifyFailure
 	Elapsed          time.Duration
+	// PerSource breaks recall out by corpus source so the search-input
+	// distribution (grabs-search) is visible separately from download-name
+	// sources (qbit/sab/torrent), which the matcher never sees in prod.
+	PerSource map[string]*sourceStats
+}
+
+type sourceStats struct {
+	Total  int
+	Recall int
 }
 
 type verifyFailure struct {
@@ -529,7 +540,18 @@ type verifyFailure struct {
 }
 
 func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int) *verifyResult {
-	r := &verifyResult{Total: len(entries)}
+	r := &verifyResult{Total: len(entries), PerSource: map[string]*sourceStats{}}
+	srcStat := func(src string) *sourceStats {
+		if src == "" {
+			src = "(unlabeled)"
+		}
+		st := r.PerSource[src]
+		if st == nil {
+			st = &sourceStats{}
+			r.PerSource[src] = st
+		}
+		return st
+	}
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -588,8 +610,11 @@ func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entrie
 				}
 			}
 			mu.Lock()
+			st := srcStat(e.Source)
+			st.Total++
 			if matcher.Verify(cands, e.StashDBID, expTitle, e.Basename).Verified {
 				r.Recall++
+				st.Recall++
 			} else {
 				if !expFound {
 					r.NoExpectedCand++
@@ -647,6 +672,22 @@ func printVerify(w *os.File, r *verifyResult, csvPath string) {
 	fmt.Fprintf(tw, "elapsed\t%s\n", r.Elapsed.Round(time.Millisecond))
 	fmt.Fprintf(tw, "failures csv\t%s\n", csvPath)
 	tw.Flush()
+
+	if len(r.PerSource) > 1 || (len(r.PerSource) == 1 && r.PerSource["(unlabeled)"] == nil) {
+		srcs := make([]string, 0, len(r.PerSource))
+		for s := range r.PerSource {
+			srcs = append(srcs, s)
+		}
+		sort.Strings(srcs)
+		fmt.Fprintln(w, "\nrecall by source (grabs-search = real matcher input):")
+		st2 := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+		fmt.Fprintln(st2, "source\trecall\tn")
+		for _, s := range srcs {
+			ss := r.PerSource[s]
+			fmt.Fprintf(st2, "%s\t%.3f\t%d\n", s, ratio(ss.Recall, ss.Total), ss.Total)
+		}
+		st2.Flush()
+	}
 }
 
 func ratio(n, d int) float64 {

@@ -194,6 +194,10 @@ type LabeledScene struct {
 	StashDBID       string
 	StudioStashDBID string
 	PerformerIDs    []string
+	// Source labels where a corpus entry came from ("grabs-search",
+	// "qbit", "sab", "torrent"); empty for live-library benchmarking. Used
+	// only by matcher-bench to report recall per input distribution.
+	Source string
 }
 
 const labeledScenesQuery = `
