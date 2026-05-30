@@ -914,6 +914,11 @@ type SceneApply struct {
 	URLs         []string
 	PerformerIDs []string
 	StudioID     string
+	// CoverURL is the StashDB scene's cover image URL. Set as the local
+	// scene's cover so a manually-matched scene (no phash → Stash never
+	// pulled a cover) gets the right thumbnail. Stash's sceneUpdate
+	// accepts a fetchable URL for cover_image.
+	CoverURL string
 }
 
 // ApplySceneMetadata writes StashDB-sourced metadata onto a local scene
@@ -957,6 +962,11 @@ func (c *Client) ApplySceneMetadata(ctx context.Context, sceneID string, a Scene
 	}
 	if a.StudioID != "" {
 		input["studio_id"] = a.StudioID
+	}
+	if a.CoverURL != "" {
+		// Stash fetches cover_image when given a URL string — the scene
+		// had no cover because phash never matched it on StashDB.
+		input["cover_image"] = a.CoverURL
 	}
 	q := `mutation ForagerSceneApply($input: SceneUpdateInput!) {
   sceneUpdate(input: $input) { id }

@@ -96,6 +96,9 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 		Title:    scene.Title,
 		Date:     scene.Date,
 	}
+	if len(scene.Images) > 0 {
+		apply.CoverURL = scene.Images[0].URL
+	}
 	for _, u := range scene.URLs {
 		if u.URL != "" {
 			apply.URLs = append(apply.URLs, u.URL)
