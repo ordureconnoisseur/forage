@@ -826,8 +826,18 @@ function GrabRow({
                     detail?.local_scene_image_url ||
                     detail?.performer_image_url ||
                     "";
+              // A scene image is 16:9; a performer portrait is 3:4. Frame
+              // the poster to match whichever the hero actually is so a
+              // scene thumbnail isn't cropped into a portrait (and vice
+              // versa). The performer portrait is the only non-scene
+              // source, so anything else is a scene image.
+              const isScene =
+                !!heroSrc && heroSrc !== detail?.performer_image_url;
+              const posterClass =
+                "grab-poster" +
+                (heroSrc ? (isScene ? " is-scene" : "") : " is-mono");
               return (
-                <div className={"grab-poster" + (heroSrc ? "" : " is-mono")}>
+                <div className={posterClass}>
                   {heroSrc ? (
                     <img
                       src={heroSrc}

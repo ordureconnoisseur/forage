@@ -1650,6 +1650,11 @@ button {
   border: 1px solid var(--glass-border);
   box-shadow: 0 8px 26px rgba(0, 0, 0, 0.4);
 }
+/* Scene thumbnails are 16:9 — frame the poster to match so the image
+   isn't cropped into the performer-portrait 3:4. */
+.grab-poster.is-scene {
+  aspect-ratio: 16 / 9;
+}
 .grab-poster img {
   width: 100%;
   height: 100%;
@@ -1657,9 +1662,15 @@ button {
   object-position: center 22%;
   display: block;
 }
-/* Bottom scrim so the name + status read over any portrait. Skipped on
-   the monogram fallback, which has no busy backdrop to fight. */
-.grab-poster:not(.is-mono)::after {
+/* A scene thumbnail fills its matched 16:9 box — centre it, no headshot
+   bias. */
+.grab-poster.is-scene img {
+  object-position: center;
+}
+/* Bottom scrim so the name + status read over a portrait. Skipped on the
+   monogram fallback (no busy backdrop) and on scene thumbnails (no name
+   caption, and the portrait-height gradient is wrong for 16:9). */
+.grab-poster:not(.is-mono):not(.is-scene)::after {
   content: "";
   position: absolute;
   inset: 40% 0 0;
