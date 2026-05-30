@@ -724,6 +724,13 @@ function CollectionRow({
                   {row.grab === "error" && (
                     <span className="coll-grab-err">grab failed</span>
                   )}
+                  <button
+                    className="coll-retry"
+                    onClick={onRetry}
+                    title="Re-search this scene with the full (deep) query set"
+                  >
+                    ↻ deep
+                  </button>
                 </div>
               )}
               {row.status === "done" && !picked && row.autoPicked && (
@@ -732,6 +739,9 @@ function CollectionRow({
                   none selected
                   <button className="coll-retry" onClick={onExpand}>
                     {expanded ? "▾ pick one" : "▸ pick one"}
+                  </button>
+                  <button className="coll-retry" onClick={onRetry}>
+                    ↻ deep search
                   </button>
                 </span>
               )}
