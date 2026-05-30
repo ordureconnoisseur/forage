@@ -267,7 +267,10 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 	stashDBStudioSet := stringSet(stashDBStudioIDs)
 	releaseJAVCodes := stringSet(ExtractJAVCodes(releaseName))
 	for _, c := range candidates {
-		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, stashDBPerfSet, stashDBStudioSet, date, releaseJAVCodes)
+		// Ordered, UNfiltered tokens for cast-name phrase matching — a
+		// performer name must match as adjacent tokens, and stopword
+		// filtering would both drop name tokens and create false adjacency.
+		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, tokens, stashDBPerfSet, stashDBStudioSet, date, releaseJAVCodes)
 	}
 
 	out := make([]Candidate, 0, len(candidates))
@@ -367,7 +370,15 @@ const (
 	weightDate      = 0.20
 	weightTitle     = 0.20
 	bothTracksBonus = 0.05
-	minTitleScore   = 0.05
+	// castBonusMax is the most the cast-in-title signal can add to a
+	// candidate's confidence, scaled by the fraction of the scene's
+	// StashDB cast named in the release title. Additive (not a reweight)
+	// so it can only lift a candidate that names the actual cast — the
+	// multi-performer case raw title Jaccard underscores — without
+	// disturbing the 1.0-normalised four-component base. Tuned on the
+	// corpus (matcher-bench --verify).
+	castBonusMax  = 0.10
+	minTitleScore = 0.05
 	// javCodeFloor: when release and scene title share a JAV studio
 	// code (e.g. both contain `SNOS-233`), force confidence to at
 	// least this value. JAV codes are uniquely allocated per studio,
@@ -377,16 +388,18 @@ const (
 	javCodeFloor = 0.85
 )
 
-func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[string]bool, releaseDate string, releaseJAVCodes map[string]bool) (float64, []string, float64) {
+func score(c *Candidate, releaseTokens map[string]bool, orderedTokens []string, perfSet, studioSet map[string]bool, releaseDate string, releaseJAVCodes map[string]bool) (float64, []string, float64) {
 	pScore, pReason := performerOverlap(c.Scene, perfSet)
 	sScore, sReason := studioMatch(c.Scene, studioSet)
 	dScore, dReason := dateProximity(c.Scene.Date, releaseDate)
 	tScore, tReason := titleOverlap(c.Scene.Title, releaseTokens)
+	castScore, castReason := castInTitle(c.Scene, orderedTokens)
 
 	total := weightPerformer*pScore + weightStudio*sScore + weightDate*dScore + weightTitle*tScore
 	if len(c.Tracks) >= 2 {
 		total += bothTracksBonus
 	}
+	total += castBonusMax * castScore
 
 	javReason := ""
 	if len(releaseJAVCodes) > 0 {
@@ -409,10 +422,72 @@ func score(c *Candidate, releaseTokens map[string]bool, perfSet, studioSet map[s
 	}
 
 	reasons := []string{pReason, sReason, dReason, tReason, "tracks: " + strings.Join(c.Tracks, "+")}
+	if castReason != "" {
+		reasons = append(reasons, castReason)
+	}
 	if javReason != "" {
 		reasons = append(reasons, javReason)
 	}
 	return total, reasons, tScore
+}
+
+// castInTitle counts how many of the candidate scene's StashDB cast
+// members (their performer name or scene alias) appear as a contiguous
+// token phrase in the release title — independent of the local performer
+// cache. This is the signal performerOverlap can't see: performerOverlap's
+// denominator is only performers the user already owns (so a release
+// naming three performers, two of them not in the library, scores a
+// misleading 1/1), whereas the candidate scene from StashDB knows its
+// full cast. A release that names most of a scene's actual cast is very
+// likely that scene, which is exactly the multi-performer case raw title
+// Jaccard dilutes. Returns the matched fraction (0..1) and a reason like
+// "cast: 3/4 named". Empty cast → 0 with no signal.
+func castInTitle(scene stashdb.Scene, releaseTokens []string) (float64, string) {
+	if len(scene.Performers) == 0 || len(releaseTokens) == 0 {
+		return 0, ""
+	}
+	hit := 0
+	for _, p := range scene.Performers {
+		// Try the canonical name first, then the scene-credited alias.
+		if nameInTokens(p.Name, releaseTokens) || nameInTokens(p.As, releaseTokens) {
+			hit++
+		}
+	}
+	if hit == 0 {
+		return 0, fmt.Sprintf("cast: 0/%d named", len(scene.Performers))
+	}
+	return float64(hit) / float64(len(scene.Performers)),
+		fmt.Sprintf("cast: %d/%d named", hit, len(scene.Performers))
+}
+
+// nameInTokens reports whether a performer name appears as a contiguous
+// run of tokens within releaseTokens (so "Lucia Rossi" matches adjacent
+// "lucia","rossi", not a stray "lucia" plus a distant "rossi"). A single-
+// token name must be >= 4 chars to avoid matching short common words.
+func nameInTokens(name string, releaseTokens []string) bool {
+	nameTokens := Tokenize(name)
+	if len(nameTokens) == 0 {
+		return false
+	}
+	if len(nameTokens) == 1 && len(nameTokens[0]) < 4 {
+		return false
+	}
+	if len(nameTokens) > len(releaseTokens) {
+		return false
+	}
+	for i := 0; i+len(nameTokens) <= len(releaseTokens); i++ {
+		ok := true
+		for j := range nameTokens {
+			if releaseTokens[i+j] != nameTokens[j] {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return true
+		}
+	}
+	return false
 }
 
 func performerOverlap(scene stashdb.Scene, detected map[string]bool) (float64, string) {
