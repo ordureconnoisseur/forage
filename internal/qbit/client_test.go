@@ -9,6 +9,64 @@ import (
 	"testing"
 )
 
+// TestFetchTorrentBytesRetries proves a transient fetch failure (a 503,
+// as Prowlarr returns mid-Cloudflare-challenge) is retried and recovers,
+// rather than failing the grab on the first stall.
+func TestFetchTorrentBytesRetries(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		n := hits
+		mu.Unlock()
+		if n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable) // transient
+			return
+		}
+		_, _ = io.WriteString(w, "d4:infod...e") // pretend torrent bytes
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
+	body, err := c.fetchTorrentBytes(context.Background(), srv.URL+"/dl")
+	if err != nil {
+		t.Fatalf("expected success after retries, got %v", err)
+	}
+	if len(body) == 0 {
+		t.Errorf("expected body, got empty")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 3 {
+		t.Errorf("expected 3 attempts (2 transient + 1 success), got %d", hits)
+	}
+}
+
+// TestFetchTorrentBytesNoRetryOn4xx confirms a 4xx (e.g. bad link) fails
+// immediately without burning retries — only 5xx/timeouts are transient.
+func TestFetchTorrentBytesNoRetryOn4xx(t *testing.T) {
+	var mu sync.Mutex
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		hits++
+		mu.Unlock()
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
+	if _, err := c.fetchTorrentBytes(context.Background(), srv.URL+"/dl"); err == nil {
+		t.Fatal("expected error on 404")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if hits != 1 {
+		t.Errorf("4xx must not retry, expected 1 attempt, got %d", hits)
+	}
+}
+
 // TestAuthedDoReloginsOn403 is the regression guard for the bug where
 // authedOnce latched true for the life of the process: once qBit expired
 // the SID cookie (or restarted) mid-pack, every subsequent poll got 403

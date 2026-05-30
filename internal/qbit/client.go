@@ -25,10 +25,31 @@ type Client struct {
 	username string
 	password string
 	http     *http.Client
+	// fetchHTTP downloads .torrent files from Prowlarr's /download proxy,
+	// which in turn proxies the real tracker — slow/Cloudflare-gated
+	// indexers (e.g. 1337x on a cold challenge) can take well past the
+	// 30s the qBit *API* client uses. A separate, longer-timeout client
+	// keeps qBit API calls snappy while giving the torrent fetch room.
+	fetchHTTP *http.Client
 
 	authMu     sync.Mutex
 	authedOnce bool
 }
+
+// torrentFetchTimeout bounds a single .torrent download attempt from
+// Prowlarr. Measured: a warm 1337x fetch is ~15s; a cold Cloudflare
+// challenge runs longer, so allow generous headroom per attempt.
+const torrentFetchTimeout = 90 * time.Second
+
+// torrentFetchBudget bounds ALL attempts together, so a dead URL can't
+// hang a grab (and, during a bulk grab, the queue) for retries × 90s.
+// One slow-but-successful fetch fits; a hopeless one fails within this.
+const torrentFetchBudget = 100 * time.Second
+
+// fetchRetries is how many EXTRA attempts a timed-out/failed torrent
+// fetch gets (so total attempts = fetchRetries + 1), subject to the
+// overall budget above.
+const fetchRetries = 2
 
 func New(baseURL, username, password string) *Client {
 	jar, _ := cookiejar.New(nil)
@@ -38,6 +59,10 @@ func New(baseURL, username, password string) *Client {
 		password: password,
 		http: &http.Client{
 			Timeout: 30 * time.Second,
+			Jar:     jar,
+		},
+		fetchHTTP: &http.Client{
+			Timeout: torrentFetchTimeout,
 			Jar:     jar,
 		},
 	}
@@ -184,25 +209,62 @@ func (c *Client) addByURLs(ctx context.Context, urlOrMagnet, category string) er
 	return c.postAdd(ctx, &buf, mw.FormDataContentType())
 }
 
+// fetchTorrentBytes downloads a .torrent (or a magnet body) from a
+// Prowlarr /download URL using the longer-timeout fetchHTTP client, with
+// retries on a failed/timed-out attempt. Returns the raw body. The
+// caller's ctx still bounds the whole operation — if it's cancelled, we
+// stop retrying.
+func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]byte, error) {
+	// Cap the whole retry loop so a hopeless URL fails fast instead of
+	// blocking the grab (and the bulk queue) for retries × per-attempt.
+	ctx, cancel := context.WithTimeout(ctx, torrentFetchBudget)
+	defer cancel()
+	var lastErr error
+	for attempt := 0; attempt <= fetchRetries; attempt++ {
+		if ctx.Err() != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, ctx.Err()
+		}
+		req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+		if err != nil {
+			return nil, fmt.Errorf("build fetch: %w", err)
+		}
+		resp, err := c.fetchHTTP.Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("fetch torrent: %w", err)
+			continue // transient (timeout / reset) — retry
+		}
+		if resp.StatusCode >= 400 {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			// 5xx is worth a retry (Prowlarr/tracker hiccup); 4xx isn't.
+			lastErr = fmt.Errorf("fetch torrent %d: %s", resp.StatusCode, b)
+			if resp.StatusCode < 500 {
+				return nil, lastErr
+			}
+			continue
+		}
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil {
+			lastErr = fmt.Errorf("read torrent body: %w", err)
+			continue
+		}
+		return body, nil
+	}
+	return nil, lastErr
+}
+
 func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category string) error {
 	// 1. Fetch the .torrent file (or in some cases a redirect to a
-	// magnet URI; we handle both).
-	req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
+	// magnet URI; we handle both). Retries on a transient stall — the
+	// Prowlarr /download proxy fronts the real tracker, and a cold
+	// Cloudflare challenge / slow indexer often succeeds on a second try.
+	body, err := c.fetchTorrentBytes(ctx, downloadURL)
 	if err != nil {
-		return fmt.Errorf("build fetch: %w", err)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return fmt.Errorf("fetch torrent: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("fetch torrent %d: %s", resp.StatusCode, body)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read torrent body: %w", err)
+		return err
 	}
 
 	// Some indexers reply with a magnet URI in the body rather than a
