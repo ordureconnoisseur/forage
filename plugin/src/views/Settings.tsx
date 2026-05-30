@@ -14,6 +14,7 @@ import {
   setForagerBase,
   testSection,
 } from "../api";
+import ReleaseRulesEditor from "./ReleaseRulesEditor";
 
 // Forage Settings — connection details (browser-side, localStorage)
 // plus daemon configuration (POSTed to forage /config and persisted
@@ -27,6 +28,7 @@ type SectionKey =
   | "indexer"
   | "downloads"
   | "library"
+  | "releases"
   | "advanced";
 
 const sensitiveFields = new Set([
@@ -61,6 +63,7 @@ export default function Settings({ onClose, health }: Props) {
     indexer: false,
     downloads: false,
     library: false,
+    releases: false,
     advanced: false,
   });
 
@@ -581,6 +584,17 @@ export default function Settings({ onClose, health }: Props) {
               Test library
             </button>
           </div>
+        </Section>
+
+        <Section
+          title="Release preferences"
+          isOpen={open.releases}
+          onToggle={() => setOpen((o) => ({ ...o, releases: !o.releases }))}
+        >
+          <ReleaseRulesEditor
+            value={displayValue("releaseRules", data?.fields["releaseRules"])}
+            onChange={(json) => setField("releaseRules", json)}
+          />
         </Section>
 
         <Section

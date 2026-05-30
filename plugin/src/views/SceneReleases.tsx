@@ -393,6 +393,28 @@ function ReleaseList({
                     <span>match {r.confidence.toFixed(2)}</span>
                   </>
                 )}
+                {(r.score_hits?.length || r.rejected) && (
+                  <>
+                    <span>·</span>
+                    <span
+                      className={
+                        "release-score " +
+                        (r.rejected
+                          ? "is-reject"
+                          : (r.score ?? 0) >= 0
+                            ? "pos"
+                            : "neg")
+                      }
+                      title={(r.score_hits || [])
+                        .map((h) => `${h.label}: ${h.points > 0 ? "+" : ""}${h.points}${h.reject ? " (reject)" : ""}`)
+                        .join("\n")}
+                    >
+                      {r.rejected
+                        ? "⛔ rejected"
+                        : `score ${(r.score ?? 0) > 0 ? "+" : ""}${r.score ?? 0}`}
+                    </span>
+                  </>
+                )}
               </div>
               {!r.verified && r.best_match_title && (
                 <div className="release-warn">

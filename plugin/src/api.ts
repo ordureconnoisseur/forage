@@ -227,6 +227,11 @@ export interface SceneRelease {
   // release (e.g. "performers: 2/2", "title: 0.43"). Drives the "why?"
   // expander. Absent when the viewed scene wasn't a candidate.
   reasons?: string[];
+  // Release-preference score (sum of matched rules), reject flag, and the
+  // per-rule breakdown. Drives ranking + the score chip.
+  score?: number;
+  rejected?: boolean;
+  score_hits?: { label: string; points: number; reject?: boolean }[];
 }
 
 export interface SceneReleasesResponse {
@@ -605,6 +610,15 @@ export interface ConfigFieldsResponse {
 // ConfigPatch matches the Go configstore.Patch shape. Every field is
 // optional — undefined means "leave unchanged"; explicit empty-string
 // clears the field, falling back to env or default.
+// ReleaseRule mirrors the daemon's scoring.Rule. A release's score is the
+// sum of matched rules' points; a matched reject rule disqualifies it.
+export interface ReleaseRule {
+  label: string;
+  pattern: string;
+  points: number;
+  reject?: boolean;
+}
+
 export interface ConfigPatch {
   stashUrl?: string;
   stashApiKey?: string;
@@ -626,6 +640,9 @@ export interface ConfigPatch {
   // "existing" (keep your copy, drop the pack dup), "pack" (keep the
   // pack copy, drop yours), or "both" (no dedup).
   packDedupKeep?: string;
+  // Release-scoring rules as a JSON array string (ReleaseRule[]). Empty =
+  // built-in defaults.
+  releaseRules?: string;
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;

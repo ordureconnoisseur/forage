@@ -3635,3 +3635,107 @@ code.grab-fact-v,
   background: rgba(var(--accent-rgb), 0.12);
   border-color: var(--accent);
 }
+
+/* ── Release-rules editor (Settings) ───────────────────────────────── */
+.rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+.rule-row {
+  display: grid;
+  grid-template-columns: 1.2fr 2fr 64px 44px 90px;
+  gap: 8px;
+  align-items: center;
+}
+.rule-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 0 2px;
+}
+.rule-row input[type="text"],
+.rule-label,
+.rule-pattern,
+.rule-points {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-0);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  min-width: 0;
+}
+.rule-pattern {
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+}
+.rule-actions {
+  display: flex;
+  gap: 3px;
+}
+.rule-actions button {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.rule-actions button:hover:not(:disabled) {
+  border-color: var(--glass-border-bright);
+  color: var(--text);
+}
+.rule-actions button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.rule-actions .rule-del:hover {
+  border-color: var(--danger, #f87171);
+  color: var(--danger, #f87171);
+}
+.rules-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+}
+.rules-add,
+.rules-reset {
+  padding: 6px 14px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rules-add:hover {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.rules-reset:hover {
+  border-color: var(--glass-border-bright);
+}
+
+/* Release score breakdown — the "why this score" chips on a release. */
+.release-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-weight: 600;
+}
+.release-score.is-reject {
+  color: var(--danger, #f87171);
+}
+.release-score.pos {
+  color: var(--accent-bright);
+}
+.release-score.neg {
+  color: #d4a017;
+}
