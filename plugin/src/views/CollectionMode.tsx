@@ -20,7 +20,13 @@ const GRAB_CONCURRENCY = 3;
 // Below the floor the scene waits for manual review.
 const AUTO_PICK_FLOOR = 0.5;
 
-type RowStatus = "pending" | "searching" | "done" | "empty" | "error";
+type RowStatus =
+  | "pending"
+  | "searching"
+  | "done"
+  | "empty"
+  | "error"
+  | "inflight"; // already grabbed/downloading — not re-grabbable
 type GrabState = "idle" | "queued" | "error";
 
 interface RowState {
@@ -31,6 +37,8 @@ interface RowState {
   // grab lifecycle for the picked release, once the user fires it.
   grab: GrabState;
   error?: string;
+  // For status==="inflight": the existing grab's status (downloading…).
+  grabStatus?: string;
 }
 
 function blankRow(): RowState {
@@ -155,6 +163,16 @@ export default function CollectionMode({
       while (!cancelled) {
         const scene = queue.shift();
         if (!scene) return;
+        // Already grabbed / downloading: don't re-search or auto-select
+        // it — skip straight to an "in flight" row so it can't be
+        // re-grabbed (and we don't waste an indexer search on it).
+        if (scene.grab_status) {
+          setRow(scene.stashdb_id, {
+            status: "inflight",
+            grabStatus: scene.grab_status,
+          });
+          continue;
+        }
         setRow(scene.stashdb_id, { status: "searching" });
         try {
           const res = await fetchSceneReleases(scene.stashdb_id, ctrl.signal);
@@ -198,7 +216,9 @@ export default function CollectionMode({
 
   const searched = scenes.filter((s) => {
     const st = rows[s.stashdb_id]?.status;
-    return st === "done" || st === "empty" || st === "error";
+    // inflight is a settled state (we skipped its search) — count it so
+    // the progress bar can complete.
+    return st === "done" || st === "empty" || st === "error" || st === "inflight";
   }).length;
   const total = scenes.length;
   const selectedCount = scenes.filter((s) => {
@@ -207,6 +227,9 @@ export default function CollectionMode({
   }).length;
   const queuedCount = scenes.filter(
     (s) => rows[s.stashdb_id]?.grab === "queued",
+  ).length;
+  const inflightCount = scenes.filter(
+    (s) => rows[s.stashdb_id]?.status === "inflight",
   ).length;
   const scanning = searched < total;
 
@@ -261,6 +284,7 @@ export default function CollectionMode({
   const toggle = (s: MissingScene) =>
     setRows((r) => {
       const row = r[s.stashdb_id] || blankRow();
+      if (row.status === "inflight") return r; // already grabbing — not selectable
       const next =
         row.pickedURL != null
           ? null
@@ -321,6 +345,7 @@ export default function CollectionMode({
             {scanning
               ? `searching ${searched}/${total}…`
               : `${total} scenes · ${selectedCount} selected`}
+            {inflightCount > 0 && ` · ${inflightCount} already grabbing`}
             {queuedCount > 0 && ` · ${queuedCount} queued`}
           </span>
           {!scanning && total > 0 && (
@@ -595,6 +620,11 @@ function CollectionRow({
               )}
               {row.status === "error" && (
                 <span className="coll-state err">search failed</span>
+              )}
+              {row.status === "inflight" && (
+                <span className="coll-state inflight">
+                  ↓ already grabbing ({row.grabStatus || "in flight"})
+                </span>
               )}
               {row.status === "empty" && (
                 <span className="coll-state muted">no releases found</span>
