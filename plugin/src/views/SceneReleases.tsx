@@ -158,7 +158,16 @@ export default function SceneReleases({
     sort,
   );
 
-  const grab = async (rel: SceneRelease) => {
+  // grab queues a release. sceneIdOverride lets the user grab an
+  // unverified release AS the scene the matcher actually thinks it is
+  // (the "Looks like X" pick) — so forage predicts/identifies against the
+  // right StashDB scene, not the one being viewed. confOverride carries
+  // that pick's confidence for the grab record.
+  const grab = async (
+    rel: SceneRelease,
+    sceneIdOverride?: string,
+    confOverride?: number,
+  ) => {
     const k = releaseKey(rel);
     setGrabs((g) => ({ ...g, [k]: { status: "grabbing" } }));
     try {
@@ -168,8 +177,8 @@ export default function SceneReleases({
         release_size: rel.size,
         release_indexer: rel.indexer,
         protocol: rel.protocol,
-        scene_id: data.scene.stashdb_id,
-        confidence: rel.confidence,
+        scene_id: sceneIdOverride ?? data.scene.stashdb_id,
+        confidence: confOverride ?? rel.confidence,
         performer_name: performerName,
       });
       setGrabs((g) => ({
@@ -353,12 +362,13 @@ function ReleaseList({
 }: {
   releases: SceneRelease[];
   grabs: Record<string, GrabState>;
-  onGrab: (r: SceneRelease) => void;
+  onGrab: (r: SceneRelease, sceneIdOverride?: string, confOverride?: number) => void;
 }) {
   return (
     <ul className="release-list">
       {releases.map((r) => {
         const state = grabs[releaseKey(r)] || { status: "idle" };
+        const queued = state.status === "queued" || state.status === "grabbing";
         const tier = r.verified && r.confidence > 0 ? confTier(r.confidence) : "";
         return (
           <li key={releaseKey(r)} className={"release" + (tier ? " " + tier : "")}>
@@ -391,6 +401,17 @@ function ReleaseList({
                     ? ` (${(r.best_match_conf * 100).toFixed(0)}%)`
                     : ""}{" "}
                   — not the scene you're viewing.
+                  {r.best_match_id && !queued && (
+                    <button
+                      className="grab-as-btn"
+                      onClick={() =>
+                        onGrab(r, r.best_match_id, r.best_match_conf)
+                      }
+                      title={`Grab this release as "${r.best_match_title}"`}
+                    >
+                      Grab as this ↓
+                    </button>
+                  )}
                 </div>
               )}
               {r.reasons && r.reasons.length > 0 && (

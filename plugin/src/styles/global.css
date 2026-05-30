@@ -906,6 +906,25 @@ button {
   color: #fbbf24;
   font-weight: 600;
 }
+/* Inline "grab this release as the scene it actually looks like" action,
+   sitting in the amber mismatch warning. */
+.grab-as-btn {
+  margin-left: 8px;
+  padding: 2px 10px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid #f59e0b;
+  background: transparent;
+  color: #fbbf24;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.grab-as-btn:hover {
+  background: #f59e0b;
+  color: #0a0a0a;
+}
 
 /* "Why this match?" breakdown — a quiet expander under the release meta
    showing the matcher's per-component score reasons. */
