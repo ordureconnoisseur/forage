@@ -67,6 +67,9 @@ function sceneStatusFromJob(st: string): RowStatus {
       return "error";
     case "skipped":
       return "inflight";
+    case "found":
+    case "grabbed":
+    case "no_match":
     default:
       return "done";
   }
@@ -501,9 +504,9 @@ export default function CollectionMode({
           <button
             className="coll-run-server"
             onClick={() => onRunOnServer(performerId, sceneIds)}
-            title="Hand the whole crawl to the server — searches + grabs every missing scene in the background, keeps going even if you close this page."
+            title="Search every missing scene on the server in the background (keeps going if you close this page). Nothing is grabbed — you Review and pick from the Jobs tab."
           >
-            Run on server →
+            Search on server →
           </button>
           <button
             className="coll-grab"

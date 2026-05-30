@@ -21,10 +21,10 @@ import (
 // table regardless, so the worst case is the remaining queue stops — no
 // lost downloads. The browser polls /jobs for progress.
 
-// jobAutoPickFloor mirrors the plugin's AUTO_PICK_FLOOR: only auto-grab a
+// jobSuggestFloor mirrors the plugin's AUTO_PICK_FLOOR: only auto-grab a
 // scene whose best verified release clears this confidence. Below it the
 // scene is skipped (left for manual review in the collection view).
-const jobAutoPickFloor = 0.5
+const jobSuggestFloor = 0.5
 
 // jobSearchConcurrency bounds how many scenes a job searches at once —
 // kept low for the same reason the plugin's collection search is (more
@@ -38,7 +38,8 @@ type jobSceneStatus string
 
 const (
 	jobScenePending  jobSceneStatus = "pending"
-	jobSceneGrabbed  jobSceneStatus = "grabbed"
+	jobSceneFound    jobSceneStatus = "found"     // searched, has a suggested pick — awaiting your grab
+	jobSceneGrabbed  jobSceneStatus = "grabbed"   // you grabbed it (from Review)
 	jobSceneNoMatch  jobSceneStatus = "no_match"  // searched, nothing confident
 	jobSceneNoResult jobSceneStatus = "no_result" // searched, zero releases
 	jobSceneError    jobSceneStatus = "error"
@@ -68,7 +69,8 @@ type collectionJob struct {
 	State         string     `json:"state"` // running | done | cancelled
 	Total         int        `json:"total"`
 	Done          int        `json:"done"`    // scenes processed
-	Grabbed       int        `json:"grabbed"` // scenes that produced a grab
+	Found         int        `json:"found"`   // scenes with a suggested pick (ready to grab)
+	Grabbed       int        `json:"grabbed"` // scenes you actually grabbed (from Review)
 	StartedAt     int64      `json:"started_at"`
 	FinishedAt    int64      `json:"finished_at,omitempty"`
 	Scenes        []jobScene `json:"scenes"`
@@ -403,9 +405,11 @@ func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, perfo
 	go s.cleanupJobLater(job.ID)
 }
 
-// processJobScene searches one scene, stores its full verified candidate
-// list (so the job re-opens as the interactive view), auto-picks the best
-// release over the floor, and grabs it.
+// processJobScene SEARCHES one scene and stores its full verified
+// candidate list, with the best confident release PRE-SELECTED (picked)
+// as a suggestion. It never grabs — grabbing happens only when the user
+// opens Review and hits "Grab selected". This makes a job a background
+// search that survives leaving the page; the human always decides.
 func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *collectionJob, i int, performerName string) {
 	pc := s.pool.Prowlarr()
 	stashDBC := s.pool.StashDB()
@@ -436,34 +440,19 @@ func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *c
 	cands := s.verifyReleases(ctx, m, sceneID, scene.Title, releases)
 	sort.SliceStable(cands, func(a, b int) bool { return cands[a].Confidence > cands[b].Confidence })
 
-	// Auto-pick the best verified candidate over the floor.
-	var best *sceneRelease
+	// Pre-select the best confident release as a SUGGESTION (not a grab).
+	pickURL, pickTitle := "", ""
 	for k := range cands {
-		if cands[k].Verified && cands[k].Confidence >= jobAutoPickFloor {
-			best = &cands[k]
+		if cands[k].Verified && cands[k].Confidence >= jobSuggestFloor {
+			pickURL, pickTitle = cands[k].DownloadURL, cands[k].Title
 			break
 		}
 	}
-	if best == nil {
+	if pickURL == "" {
 		s.setJobScene(job, i, jobSceneNoMatch, "", cands, "")
 		return
 	}
-
-	_, gErr := s.doGrab(ctx, grabRequest{
-		DownloadURL:    best.DownloadURL,
-		ReleaseTitle:   best.Title,
-		ReleaseSize:    best.Size,
-		ReleaseIndexer: best.Indexer,
-		Protocol:       best.Protocol,
-		SceneID:        sceneID,
-		Confidence:     best.Confidence,
-		PerformerName:  performerName,
-	})
-	if gErr != nil {
-		s.setJobScene(job, i, jobSceneError, best.Title, cands, best.DownloadURL)
-		return
-	}
-	s.setJobScene(job, i, jobSceneGrabbed, best.Title, cands, best.DownloadURL)
+	s.setJobScene(job, i, jobSceneFound, pickTitle, cands, pickURL)
 }
 
 // setJobScene records a scene's terminal status + candidates + bumps the
@@ -476,7 +465,10 @@ func (s *Server) setJobScene(job *collectionJob, i int, st jobSceneStatus, relea
 	job.Scenes[i].Candidates = cands
 	job.Scenes[i].PickedURL = pickedURL
 	job.Done++
-	if st == jobSceneGrabbed {
+	switch st {
+	case jobSceneFound:
+		job.Found++
+	case jobSceneGrabbed:
 		job.Grabbed++
 	}
 }

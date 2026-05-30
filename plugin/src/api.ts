@@ -712,6 +712,7 @@ export async function testSection(
 
 export type JobSceneStatus =
   | "pending"
+  | "found"
   | "grabbed"
   | "no_match"
   | "no_result"
@@ -737,6 +738,7 @@ export interface CollectionJob {
   state: "running" | "done" | "cancelled";
   total: number;
   done: number;
+  found: number;
   grabbed: number;
   started_at: number;
   finished_at?: number;

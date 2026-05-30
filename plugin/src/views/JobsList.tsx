@@ -53,8 +53,9 @@ export default function JobsList({
     return (
       <div className="empty">
         No collection jobs. Start one from a performer's “Complete collection”
-        or “Grab selected” — it runs on the server, so you can close this tab
-        and it keeps going.
+        with “Search on server” — it searches every scene in the background
+        (you can close this tab), then you Review and pick what to grab.
+        Nothing is grabbed automatically.
       </div>
     );
 
@@ -63,7 +64,8 @@ export default function JobsList({
       <div className="page-header">
         <h2>Jobs</h2>
         <div className="meta">
-          Server-side collection crawls — they keep running if you leave.
+          Server-side scene searches — they keep running if you leave. Open one
+          to Review and grab what you want; nothing grabs on its own.
         </div>
       </div>
       <ul className="job-list">
@@ -132,9 +134,9 @@ function JobCard({
           <button
             className="job-review"
             onClick={() => onReview(job.id, job.performer_id)}
-            title="Open as the interactive collection view — pick releases for scenes the auto-pass skipped"
+            title="Open the found releases — review, adjust picks, and grab what you want"
           >
-            Review / pick →
+            Review &amp; grab →
           </button>
         )}
       </div>
@@ -148,10 +150,16 @@ function JobCard({
 
       <div className="job-summary">
         <span>
-          {job.done}/{job.total} processed
+          {job.done}/{job.total} searched
         </span>
         <span className="sep">·</span>
-        <span className="job-grabbed">{job.grabbed} grabbed</span>
+        <span className="job-grabbed">{job.found} ready to grab</span>
+        {job.grabbed ? (
+          <>
+            <span className="sep">·</span>
+            <span>{job.grabbed} grabbed</span>
+          </>
+        ) : null}
         {counts.skipped ? (
           <>
             <span className="sep">·</span>
