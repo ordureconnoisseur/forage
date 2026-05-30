@@ -17,6 +17,16 @@ func Open(path string) (*sql.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
+	// Serialize to a single connection. WAL permits one writer at a time;
+	// the default unbounded pool lets the poller's grab updates, two cache
+	// refreshes, and HTTP handlers open concurrent write connections that
+	// then race the WAL writer lock. A loser that exceeds busy_timeout(5s)
+	// returns "database is locked", which the poller only logs at Warn —
+	// silently dropping a grab's status transition. One connection makes
+	// writes queue in-process instead, trading a little concurrency for
+	// correctness. Reads are cheap and brief, so the serialization cost is
+	// negligible at forage's request volume.
+	db.SetMaxOpenConns(1)
 	if err := db.Ping(); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("ping: %w", err)
