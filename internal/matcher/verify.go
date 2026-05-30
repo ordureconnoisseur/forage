@@ -39,6 +39,27 @@ const (
 	// date / performer+studio level so a bare shared-performer coincidence
 	// (conf ~0.4) doesn't qualify.
 	verifyShortTitleMinConf = 0.50
+	// verifyStrongMatchConf: a #1 candidate this confident is the scene
+	// even with negligible title overlap. Title Jaccard collapses when a
+	// release pads its name with a long tag list (Brunette, Big Ass, POV,
+	// SiteRip, …) or when the scene title carries an episode tag the
+	// release omits (e.g. "… For Pussy – S13:E6" vs a release without
+	// "S13:E6") — the title is right but drowned. Confidence this high is
+	// unreachable by a shared-performer coincidence (performer alone caps
+	// at ~0.46); it requires performer + date + studio/cast to all agree,
+	// which is identity-level corroboration. Set above that 0.46 ceiling
+	// with margin.
+	verifyStrongMatchConf = 0.70
+	// verifyStrongMatchRivalTitleMargin: the strong-match path is blocked
+	// when some OTHER candidate's title overlap exceeds the viewed scene's
+	// by this margin. A higher-title-overlap rival means the title IS
+	// discriminating between siblings (multi-scene rips where the same
+	// cast+date maps to several StashDB scenes — a compilation episode vs
+	// its BTS vs a TS-on-TS cut), so we must not let raw confidence
+	// override it. When the viewed scene's title is merely drowned by a
+	// release's tag-soup, NO rival has meaningfully higher overlap, so the
+	// guard doesn't trip and the real match still verifies.
+	verifyStrongMatchRivalTitleMargin = 0.15
 )
 
 // VerifyResult is the outcome of checking a release against a scene.
@@ -62,12 +83,16 @@ type VerifyResult struct {
 func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
 	var conf, overlap float64
 	found := false
+	var rivalMaxOverlap float64 // highest title overlap among OTHER candidates
 	for i := range cands {
 		if cands[i].Scene.ID == sceneID {
 			conf = cands[i].Confidence
 			overlap = cands[i].TitleOverlap
 			found = true
-			break
+			continue
+		}
+		if cands[i].TitleOverlap > rivalMaxOverlap {
+			rivalMaxOverlap = cands[i].TitleOverlap
 		}
 	}
 
@@ -93,6 +118,15 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			(conf >= verifyTitleMinConf || overlap >= verifyStrongTitleOverlap):
 			return VerifyResult{Verified: true, Confidence: conf}
 		case shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
+			return VerifyResult{Verified: true, Confidence: conf}
+		case conf >= verifyStrongMatchConf &&
+			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
+			// Title overlap is negligible (tag-soup release name, or an
+			// episode tag the release omits) but performer+date+studio/cast
+			// corroborate at identity level. Trust the strong overall match —
+			// unless a sibling candidate matches the title clearly better,
+			// which means the title is discriminating between same-cast
+			// scenes and must not be overridden.
 			return VerifyResult{Verified: true, Confidence: conf}
 		}
 	}
