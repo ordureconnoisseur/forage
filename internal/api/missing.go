@@ -24,6 +24,10 @@ type missingScene struct {
 	// no active grab. Lets the UI show "downloading…" so you don't re-grab
 	// something already on the way.
 	GrabStatus string `json:"grab_status,omitempty"`
+	// WatchStatus is the watch state for this scene ("watching" /
+	// "available") when the user is tracking it, empty otherwise. Lets the
+	// card show the Track control's current state.
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 type missingPerformer struct {
@@ -120,6 +124,10 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Watch status by scene id, so the card's Track control reflects an
+	// existing watch.
+	watchStatus := s.watchStatusByScene(r.Context())
+
 	// 5. Diff. Anything in `scenes` whose ID isn't in `ownedSet`. A scene
 	// with an in-flight grab is still "missing" (not in the library yet)
 	// but carries its grab status so the UI can flag it.
@@ -131,6 +139,9 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		ms := toMissingScene(sc)
 		if st, ok := grabStatus[sc.ID]; ok {
 			ms.GrabStatus = st
+		}
+		if st, ok := watchStatus[sc.ID]; ok {
+			ms.WatchStatus = st
 		}
 		missing = append(missing, ms)
 	}
@@ -191,4 +202,3 @@ func toMissingScene(s stashdb.Scene) missingScene {
 	}
 	return out
 }
-
