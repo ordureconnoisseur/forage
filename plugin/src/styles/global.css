@@ -3748,3 +3748,208 @@ code.grab-fact-v,
 .release-score.neg {
   color: #d4a017;
 }
+
+/* ─── Watchlist ──────────────────────────────────────────────────────
+   Track control overlays the bottom-left of a missing scene's thumb,
+   mirroring the top-right grab badge. It's a separate interactive
+   region inside the role=button card, so the React layer stops click
+   propagation; these styles just give it presence. */
+.scene-track {
+  position: absolute;
+  bottom: 8px;
+  left: 8px;
+  z-index: 3;
+}
+.track-btn {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill, 999px);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.6);
+  color: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(4px);
+  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+}
+.track-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.8);
+  border-color: rgba(var(--accent-rgb), 0.6);
+  color: #fff;
+}
+.track-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* Tracking-active variants: watching is amber, available is bright accent. */
+.track-btn.is-watching {
+  background: var(--status-queued, #d4a017);
+  border-color: transparent;
+  color: #0a0a0a;
+}
+.track-btn.is-available {
+  background: var(--accent-bright, #22c55e);
+  border-color: transparent;
+  color: #0a0a0a;
+}
+/* Quality picker — pops up above the Track button. */
+.track-menu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 120px;
+  padding: 4px;
+  border-radius: var(--radius-md, 10px);
+  border: 1px solid var(--glass-border);
+  background: var(--surface-2, #1a1a1a);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+.track-menu button {
+  text-align: left;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.track-menu button:hover {
+  background: rgba(var(--accent-rgb), 0.18);
+}
+
+/* Watching tab list. */
+.watch-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.watch-list section + section {
+  margin-top: 24px;
+}
+.watch-card {
+  display: flex;
+  align-items: stretch;
+  gap: 14px;
+  padding: 10px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md, 12px);
+  background: var(--surface, rgba(255, 255, 255, 0.02));
+}
+.watch-card.is-available {
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.05);
+}
+.watch-thumb {
+  flex: none;
+  width: 132px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm, 8px);
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
+  cursor: pointer;
+}
+.watch-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.watch-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 4px;
+}
+.watch-title {
+  font-weight: 600;
+  font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.watch-meta .sep {
+  opacity: 0.5;
+}
+.watch-target {
+  color: var(--accent-bright, #22c55e);
+  font-weight: 600;
+}
+.watch-found {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.watch-found code {
+  font-size: 12px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-found-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.watch-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.watch-grab {
+  padding: 7px 14px;
+  border-radius: var(--radius-pill, 999px);
+  border: 0;
+  background: var(--accent-bright, #22c55e);
+  color: #0a0a0a;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+.watch-grab:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.watch-spinner-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.watch-remove {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.watch-remove:hover:not(:disabled) {
+  color: var(--danger, #f87171);
+  border-color: var(--danger, #f87171);
+}

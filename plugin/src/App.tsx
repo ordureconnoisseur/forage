@@ -5,6 +5,7 @@ import CollectionMode from "./views/CollectionMode";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
 import JobsList from "./views/JobsList";
+import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
 import Settings from "./views/Settings";
 import {
@@ -26,6 +27,7 @@ type Route =
   | { kind: "collection"; performerId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
+  | { kind: "watching" }
   | { kind: "grabs" }
   | { kind: "jobs" }
   | { kind: "job"; jobId: string; performerId: string };
@@ -61,6 +63,9 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
+  }
+  if (parts[0] === "watching") {
+    return { kind: "watching" };
   }
   return { kind: "performers" };
 }
@@ -133,6 +138,7 @@ export default function App() {
 
   const goPerformers = () => setHash("#/");
   const goDiscover = () => setHash("#/discover");
+  const goWatching = () => setHash("#/watching");
   const goGrabs = () => setHash("#/grabs");
   const goJobs = () => setHash("#/jobs");
   const goJobReview = (jobId: string, performerId: string) =>
@@ -208,6 +214,16 @@ export default function App() {
             className={route.kind === "discover" ? "active" : ""}
           >
             Discover
+          </a>
+          <a
+            href="#/watching"
+            onClick={(e) => {
+              e.preventDefault();
+              goWatching();
+            }}
+            className={route.kind === "watching" ? "active" : ""}
+          >
+            Watching
           </a>
           <a
             href="#/grabs"
@@ -305,6 +321,9 @@ export default function App() {
         )}
         {!needsSetup && route.kind === "discover" && (
           <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
+        )}
+        {!needsSetup && route.kind === "watching" && (
+          <WatchingList onPickScene={goScene} />
         )}
         {!needsSetup && route.kind === "grabs" && <GrabsList />}
         {!needsSetup && route.kind === "jobs" && (

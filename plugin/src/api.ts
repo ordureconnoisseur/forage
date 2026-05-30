@@ -185,6 +185,9 @@ export interface MissingScene {
   // when this scene has been grabbed but isn't in the library yet. Empty
   // when nothing is in flight for it.
   grab_status?: string;
+  // Watch state ("watching" | "available") when the user is tracking this
+  // scene; empty otherwise.
+  watch_status?: string;
 }
 
 export interface MissingResponse {
@@ -810,4 +813,58 @@ export function grabJobScene(
     scene_id: sceneId,
     download_url: downloadUrl,
   });
+}
+
+// ── Watches (track a scene → notified when a release at the target
+//    quality appears; the server never grabs, you do) ─────────────────
+
+export type WatchTarget = "any" | "720p" | "1080p" | "4k";
+export type WatchStatus = "watching" | "available";
+
+export interface Watch {
+  stashdb_id: string;
+  title: string;
+  date?: string;
+  studio_name?: string;
+  image_url?: string;
+  performer_name?: string;
+  performer_id?: string;
+  target: WatchTarget;
+  status: WatchStatus;
+  found_title?: string;
+  found_url?: string;
+  found_indexer?: string;
+  found_protocol?: string;
+  found_size?: number;
+  created_at: number;
+  last_checked: number;
+  found_at?: number;
+}
+
+export function addWatch(req: {
+  stashdb_id: string;
+  title: string;
+  date?: string;
+  studio?: string;
+  image_url?: string;
+  performer_name?: string;
+  performer_id?: string;
+  target: WatchTarget;
+}): Promise<{ ok: boolean; target: WatchTarget }> {
+  return postJSON("/watches", req);
+}
+
+export function fetchWatches(signal?: AbortSignal): Promise<{ watches: Watch[] }> {
+  return get<{ watches: Watch[] }>("/watches", signal);
+}
+
+export async function deleteWatch(stashDBID: string): Promise<void> {
+  const r = await fetch(foragerBase() + `/watches/${encodeURIComponent(stashDBID)}`, {
+    method: "DELETE",
+  });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+}
+
+export function grabWatch(stashDBID: string): Promise<{ ok: boolean }> {
+  return postJSON(`/watches/${encodeURIComponent(stashDBID)}/grab`, {});
 }

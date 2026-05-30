@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { fetchMissing, type MissingResponse, type MissingScene } from "../api";
+import {
+  addWatch,
+  deleteWatch,
+  fetchMissing,
+  type MissingResponse,
+  type MissingScene,
+  type WatchTarget,
+} from "../api";
 
 // grabStatusLabel maps a raw grab status to a short card badge label.
 function grabStatusLabel(status: string): string {
@@ -140,6 +147,8 @@ export default function MissingScenes({
             <SceneCard
               key={s.stashdb_id}
               s={s}
+              performerName={data.performer.name}
+              performerId={data.performer.local_id}
               selecting={selecting}
               selected={selected.has(s.stashdb_id)}
               onPick={() =>
@@ -173,23 +182,72 @@ export default function MissingScenes({
 
 function SceneCard({
   s,
+  performerName,
+  performerId,
   selecting,
   selected,
   onPick,
 }: {
   s: MissingScene;
+  performerName: string;
+  performerId: string;
   selecting: boolean;
   selected: boolean;
   onPick: () => void;
 }) {
+  // Local watch state so the Track control updates immediately without a
+  // full reload. Seeded from the server's watch_status.
+  const [watch, setWatch] = useState<string>(s.watch_status || "");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const track = async (target: WatchTarget) => {
+    setMenuOpen(false);
+    setBusy(true);
+    try {
+      await addWatch({
+        stashdb_id: s.stashdb_id,
+        title: s.title,
+        date: s.date,
+        studio: s.studio,
+        image_url: s.image_url,
+        performer_name: performerName,
+        performer_id: performerId,
+        target,
+      });
+      setWatch("watching");
+    } catch {
+      /* leave state as-is */
+    } finally {
+      setBusy(false);
+    }
+  };
+  const untrack = async () => {
+    setMenuOpen(false);
+    setBusy(true);
+    try {
+      await deleteWatch(s.stashdb_id);
+      setWatch("");
+    } catch {
+      /* noop */
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
-    <button
+    <div
       className={
         "scene-card" +
         (selecting ? " selectable" : "") +
         (selected ? " selected" : "")
       }
+      role="button"
+      tabIndex={0}
       onClick={onPick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") onPick();
+      }}
       aria-pressed={selecting ? selected : undefined}
     >
       {selecting && (
@@ -216,6 +274,44 @@ function SceneCard({
             {grabStatusLabel(s.grab_status)}
           </span>
         )}
+        {/* Track control — stops propagation so it doesn't trigger the
+            card's navigate/select click. Hidden in select mode. */}
+        {!selecting && (
+          <div
+            className="scene-track"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {watch ? (
+              <button
+                className={"track-btn is-" + watch}
+                disabled={busy}
+                onClick={untrack}
+                title="Click to stop watching"
+              >
+                {watch === "available" ? "✓ available" : "👁 watching"}
+              </button>
+            ) : (
+              <>
+                <button
+                  className="track-btn"
+                  disabled={busy}
+                  onClick={() => setMenuOpen((o) => !o)}
+                >
+                  Track ▾
+                </button>
+                {menuOpen && (
+                  <div className="track-menu" role="menu">
+                    {(["any", "1080p", "4k", "720p"] as WatchTarget[]).map((t) => (
+                      <button key={t} onClick={() => track(t)}>
+                        {t === "any" ? "Any quality" : t}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div className="scene-info">
         <div className="title">{s.title || "(untitled)"}</div>
@@ -232,6 +328,6 @@ function SceneCard({
           </div>
         ) : null}
       </div>
-    </button>
+    </div>
   );
 }
