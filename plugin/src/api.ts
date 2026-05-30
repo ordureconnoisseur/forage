@@ -1,4 +1,4 @@
-// Forager API client. All endpoints live at a single base URL — set
+// Forage API client. All endpoints live at a single base URL — set
 // via the plugin's Settings panel (persisted to localStorage), or
 // overridden at build time via the `VITE_FORAGER_URL` env var, or via
 // `window.foragerURL` before the SPA bootstraps. Empty default — the
@@ -36,7 +36,7 @@ export function setForagerBase(url: string) {
 
 // Detect the mixed-content trap so we can surface a useful error
 // message rather than just "NetworkError." If the SPA was loaded
-// over HTTPS and the configured forager URL is HTTP, the browser
+// over HTTPS and the configured forage URL is HTTP, the browser
 // will block every fetch silently — no amount of CORS config helps.
 export function mixedContentBlocked(): boolean {
   return (

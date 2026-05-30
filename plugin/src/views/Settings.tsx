@@ -16,7 +16,7 @@ import {
 } from "../api";
 
 // Forage Settings — connection details (browser-side, localStorage)
-// plus daemon configuration (POSTed to forager /config and persisted
+// plus daemon configuration (POSTed to forage /config and persisted
 // to ./data/config.json). Daemon fields are sectioned to mirror the
 // internal/config/config.go layout: Stash+StashDB, Indexer, Download
 // clients, Library/placement, Advanced.
@@ -207,7 +207,7 @@ export default function Settings({ onClose, health }: Props) {
 
         {blocked && (
           <div className="settings-warn">
-            ⚠ You're on HTTPS and the forager URL is HTTP. Browser will block all
+            ⚠ You're on HTTPS and the forage URL is HTTP. Browser will block all
             requests until you set an HTTPS URL or open Stash via HTTP.
           </div>
         )}
@@ -220,13 +220,13 @@ export default function Settings({ onClose, health }: Props) {
             setOpen((o) => ({ ...o, connection: !o.connection }))
           }
         >
-          <Field label="Forager API URL">
+          <Field label="Forage API URL">
             <input
               type="url"
               value={apiURL}
               onChange={(e) => setApiURL(e.target.value)}
               spellCheck={false}
-              placeholder="https://forager.example.com"
+              placeholder="https://forage.example.com"
             />
           </Field>
           {health?.adminAuthRequired && (
@@ -523,7 +523,7 @@ export default function Settings({ onClose, health }: Props) {
             <SourceBadge field={data?.fields["libraryRoot"]} />
           </Field>
           <p className="settings-tip">
-            Path inside the forager container. Must be on the same
+            Path inside the forage container. Must be on the same
             filesystem as the qBit + SAB complete dirs for hardlinks to
             work — otherwise the placer falls back to copy. Leave blank
             to disable placement (files stay where the client put them).
@@ -542,10 +542,10 @@ export default function Settings({ onClose, health }: Props) {
             <SourceBadge field={data?.fields["stashPathMapping"]} />
           </Field>
           <p className="settings-tip">
-            Optional. Translates a forager-container path to the path
-            Stash sees for the same file when forager triggers a scan
-            after placement. Format <code>forager-prefix:stash-prefix</code>
-            — e.g. forager mounts the NAS at <code>/data/media/Media</code>
+            Optional. Translates a forage-container path to the path
+            Stash sees for the same file when forage triggers a scan
+            after placement. Format <code>forage-prefix:stash-prefix</code>
+            — e.g. forage mounts the NAS at <code>/data/media/Media</code>
             but Stash on Windows sees it as <code>Z:\Media</code>.
             Leave blank to fall back to a full-library scan after each
             placement (slower but works regardless of mount layout).

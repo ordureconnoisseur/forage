@@ -200,7 +200,7 @@ export default function App() {
       </header>
       {blocked && (
         <div className="banner banner-warn">
-          ⚠ Mixed content: this page is HTTPS but the forager URL is HTTP. The
+          ⚠ Mixed content: this page is HTTPS but the forage URL is HTTP. The
           browser will block all API requests. Click the gear to set an HTTPS
           URL, or open Stash via a non-HTTPS URL.
         </div>
@@ -209,12 +209,12 @@ export default function App() {
         <div className="banner banner-setup">
           {!apiURL ? (
             <>
-              🌱 Forager API URL isn't set. Point the plugin at your daemon to
+              🌱 Forage API URL isn't set. Point the plugin at your daemon to
               get started.{" "}
             </>
           ) : healthError ? (
             <>
-              ⚠ Can't reach the forager daemon at <code>{apiURL}</code> —{" "}
+              ⚠ Can't reach the forage daemon at <code>{apiURL}</code> —{" "}
               {healthError}.{" "}
             </>
           ) : (
@@ -268,9 +268,9 @@ export default function App() {
         {needsSetup && (
           <div className="empty">
             {!apiURL
-              ? "Set the Forager API URL in Settings to get started."
+              ? "Set the Forage API URL in Settings to get started."
               : healthError
-                ? "Check your Forager API URL and that the daemon is running."
+                ? "Check your Forage API URL and that the daemon is running."
                 : "Forage can't load any data until Stash + StashDB credentials are configured. Use the Settings button above to get started."}
           </div>
         )}
