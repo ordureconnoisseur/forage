@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -54,15 +55,41 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	if req.DownloadURL == "" {
-		writeErr(w, http.StatusBadRequest, "download_url required")
+	res, err := s.doGrab(r.Context(), req)
+	if err != nil {
+		var ge grabError
+		if errors.As(err, &ge) {
+			writeErr(w, ge.status, ge.msg)
+			return
+		}
+		writeErr(w, http.StatusBadGateway, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+// grabError carries an HTTP status for the API wrapper while letting the
+// job worker treat the failure generically.
+type grabError struct {
+	status int
+	msg    string
+}
+
+func (e grabError) Error() string { return e.msg }
+
+// doGrab queues a single release: routes to qBit (async torrent add) or
+// SAB (sync), persists the grab row, returns the response shape. Shared
+// by the /grab endpoint and the collection-job worker so both go through
+// exactly one grab path. The torrent add still happens in the background
+// — doGrab returns as soon as the row is inserted.
+func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, error) {
+	if req.DownloadURL == "" {
+		return grabResponse{}, grabError{http.StatusBadRequest, "download_url required"}
 	}
 	protocol := req.Protocol
 	if protocol == "" {
 		protocol = inferProtocol(req.DownloadURL)
 	}
-
 	settings := s.pool.Settings()
 	kind := req.Kind
 	if kind == "" {
@@ -71,54 +98,38 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 
 	switch protocol {
 	case "torrent":
-		qb := s.pool.Qbit()
-		if qb == nil {
-			writeErr(w, http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)")
-			return
+		if s.pool.Qbit() == nil {
+			return grabResponse{}, grabError{http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)"}
 		}
-		// Torrent add is ASYNC: fetching the .torrent from Prowlarr (which
-		// fronts the real tracker — slow/Cloudflare-gated ones take many
-		// seconds) used to block the grab request, draining a bulk grab
-		// painfully. Insert the row as queued, return immediately, and do
-		// the fetch + qBit add in the background. The poller links the
-		// info_hash via pickRecent once the torrent appears in qBit; a
-		// failed add marks the grab failed.
-		grabID := s.insertGrab(r.Context(), req, "qbit", "", settings.QbitCategory, kind)
+		// Async: insert the queued row, return, fetch + add in background
+		// (Prowlarr-fronted trackers can be slow). Poller links the hash.
+		grabID := s.insertGrab(ctx, req, "qbit", "", settings.QbitCategory, kind)
 		go s.addTorrentAsync(req.DownloadURL, settings.QbitCategory, req.ReleaseTitle, grabID)
 		s.log.Info("grab queued (async torrent add)",
 			"release", req.ReleaseTitle, "scene_id", req.SceneID,
 			"category", settings.QbitCategory, "grab_id", grabID)
-		writeJSON(w, http.StatusOK, grabResponse{
-			OK: true, Client: "qbit", Category: settings.QbitCategory, GrabID: grabID,
-		})
+		return grabResponse{OK: true, Client: "qbit", Category: settings.QbitCategory, GrabID: grabID}, nil
 
 	case "usenet":
 		sb := s.pool.Sab()
 		if sb == nil {
-			writeErr(w, http.StatusServiceUnavailable, "sab not configured (set sabUrl + sabApiKey in Settings)")
-			return
+			return grabResponse{}, grabError{http.StatusServiceUnavailable, "sab not configured (set sabUrl + sabApiKey in Settings)"}
 		}
-		// SAB fetches the URL itself and returns the nzo_id synchronously
-		// (fast), so this path stays inline.
-		clientID, err := sb.AddURL(r.Context(), req.DownloadURL, settings.SabCategory)
+		clientID, err := sb.AddURL(ctx, req.DownloadURL, settings.SabCategory)
 		if err != nil {
 			s.log.Error("grab failed", "protocol", "usenet",
 				"release", req.ReleaseTitle, "scene_id", req.SceneID, "err", err)
-			writeErr(w, http.StatusBadGateway, "sabnzbd: "+err.Error())
-			return
+			return grabResponse{}, grabError{http.StatusBadGateway, "sabnzbd: " + err.Error()}
 		}
-		grabID := s.insertGrab(r.Context(), req, "sabnzbd", clientID, settings.SabCategory, kind)
+		grabID := s.insertGrab(ctx, req, "sabnzbd", clientID, settings.SabCategory, kind)
 		s.log.Info("grab queued",
 			"protocol", "usenet", "client", "sabnzbd", "release", req.ReleaseTitle,
 			"scene_id", req.SceneID, "category", settings.SabCategory,
 			"client_id", clientID, "grab_id", grabID)
-		writeJSON(w, http.StatusOK, grabResponse{
-			OK: true, Client: "sabnzbd", Category: settings.SabCategory,
-			GrabID: grabID, ClientID: clientID,
-		})
+		return grabResponse{OK: true, Client: "sabnzbd", Category: settings.SabCategory, GrabID: grabID, ClientID: clientID}, nil
 
 	default:
-		writeErr(w, http.StatusBadRequest, "unknown protocol; expected torrent or usenet")
+		return grabResponse{}, grabError{http.StatusBadRequest, "unknown protocol; expected torrent or usenet"}
 	}
 }
 
