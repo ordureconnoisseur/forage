@@ -83,6 +83,15 @@ const scanRetryInterval = 90 * time.Second
 // files are indexed) and the under-count dedup that would follow.
 const packScanStableWindow = 3 * scanRetryInterval
 
+// packIndexedFloorPct is the minimum percentage of a pack's expected
+// video count (PackFiles) that must be indexed by Stash before a settled
+// scan is allowed to confirm. Guards against a restart re-seeding the
+// in-memory settle window at a partial count and confirming a half-
+// scanned pack. Not 100%: torrents carry sample/extra video files and
+// title counts can overstate, so demanding every file risks never
+// settling; the orphan backstop covers the genuinely-missing remainder.
+const packIndexedFloorPct = 80
+
 // packIdentifyGrace bounds how long we keep retrying Identify on a pack
 // whose scan has settled but whose scenes aren't all cross-id'd. Pack
 // scenes legitimately may not be on StashDB (amateur content) or the
@@ -547,7 +556,18 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		sinceDone = time.Since(time.Unix(g.CompletedAt, 0))
 	}
 	identifyDone := len(toIdentify) == 0
-	ready := settled && (identifyDone || !downloadDone || sinceDone > packIdentifyGrace)
+	// Floor against confirming a half-scanned pack. The settle window
+	// (packScanSettled) is the primary "scan stopped growing" signal, but
+	// it lives in an in-memory map that's lost on restart — so a daemon
+	// restart mid-scan re-seeds the high-water at whatever's indexed right
+	// now and, if Stash's scan is genuinely stalled there (backlog, or
+	// Stash itself restarted), the window elapses and the pack confirms +
+	// dedups against a partial set. When we know the expected file count
+	// (PackFiles, persisted at grab/adopt time), additionally require most
+	// of it to be indexed before a settle can complete. The gaveUp orphan
+	// backstop below still forces eventual confirmation if some files
+	// legitimately never scan, so this can't hang a pack forever.
+	ready := settled && packScanCoverageOK(found, g.PackFiles) && (identifyDone || !downloadDone || sinceDone > packIdentifyGrace)
 	gaveUp := downloadDone && sinceDone > p.orphan
 	if g.Status == "scanned" && (ready || gaveUp) {
 		// Download-then-dedup: reconcile pack scenes whose StashDB id the
@@ -688,6 +708,18 @@ func (p *Poller) packScanSettled(grabID int64, found int) bool {
 		return false
 	}
 	return time.Since(st.since) >= packScanStableWindow
+}
+
+// packScanCoverageOK reports whether enough of a pack's expected video
+// count (expected) has been indexed (found) to permit confirmation.
+// Returns true when the expected count is unknown (0) — there's nothing
+// to floor against, so the settle window alone governs. Otherwise
+// requires found to reach packIndexedFloorPct of expected.
+func packScanCoverageOK(found, expected int) bool {
+	if expected <= 0 {
+		return true
+	}
+	return found*100 >= expected*packIndexedFloorPct
 }
 
 // forgetPackScan drops the in-memory scan record once a pack confirms.
