@@ -83,6 +83,13 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// an explicit alias override to retry under a specific spelling.
 	ctxPerformer := strings.TrimSpace(r.URL.Query().Get("performer"))
 	aliasOverride := strings.TrimSpace(r.URL.Query().Get("alias"))
+	// lean mode: the collection fan-out runs this endpoint for EVERY
+	// missing scene concurrently, so the full multi-spelling × studio/year
+	// query set (6+ per scene) overwhelms Prowlarr/the trackers — context
+	// deadlines, mass "search failed". In lean mode we emit far fewer
+	// queries per scene (the collection already covers the performer
+	// broadly across all their scenes, so per-scene breadth is wasteful).
+	lean := r.URL.Query().Get("lean") == "1"
 
 	scene, err := stashDBC.FindScene(r.Context(), id)
 	if err != nil {
@@ -122,7 +129,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// for those. The matcher then verifies which hits are this scene, so
 	// over-broad queries are harmless. Queries run concurrently; results
 	// merge + dedup by grab URL.
-	releases, err := s.searchSceneReleases(r.Context(), prowlarrC, scene, perfNames, prowlarrCats)
+	releases, err := s.searchSceneReleases(r.Context(), prowlarrC, scene, perfNames, prowlarrCats, lean)
 	if err != nil {
 		s.log.Error("prowlarr search", "err", err, "scene", scene.Title)
 		writeErr(w, http.StatusBadGateway, "prowlarr: "+err.Error())
@@ -298,7 +305,11 @@ func (s *Server) performerStashDBIDByName(ctx context.Context, name string) (str
 // the chosen performer name spellings. Per (performer × studio) and
 // (performer × year), plus the title and each bare performer name.
 // Deduped, blanks dropped.
-func sceneSearchTerms(scene *stashdb.Scene, perfNames []string) []string {
+//
+// lean trims to the two most-productive terms (primary performer × studio,
+// and the title) — for the collection fan-out, which runs this for every
+// missing scene concurrently and can't afford 6 queries each.
+func sceneSearchTerms(scene *stashdb.Scene, perfNames []string, lean bool) []string {
 	studio := ""
 	if scene.Studio != nil {
 		studio = scene.Studio.Name
@@ -309,17 +320,29 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string) []string {
 	}
 
 	var candidates []string
-	for _, p := range perfNames {
-		if studio != "" {
-			candidates = append(candidates, p+" "+studio)
+	if lean {
+		// Just enough to find the scene without flooding Prowlarr: the
+		// primary performer + studio (the most productive single query),
+		// and the title.
+		if len(perfNames) > 0 && studio != "" {
+			candidates = append(candidates, perfNames[0]+" "+studio)
+		} else if len(perfNames) > 0 {
+			candidates = append(candidates, perfNames[0])
 		}
-		if year != "" {
-			candidates = append(candidates, p+" "+year)
+		candidates = append(candidates, scene.Title)
+	} else {
+		for _, p := range perfNames {
+			if studio != "" {
+				candidates = append(candidates, p+" "+studio)
+			}
+			if year != "" {
+				candidates = append(candidates, p+" "+year)
+			}
 		}
-	}
-	candidates = append(candidates, scene.Title) // English-named trackers
-	for _, p := range perfNames {
-		candidates = append(candidates, p) // bare performer — broadest net
+		candidates = append(candidates, scene.Title) // English-named trackers
+		for _, p := range perfNames {
+			candidates = append(candidates, p) // bare performer — broadest net
+		}
 	}
 
 	seen := map[string]bool{}
@@ -339,8 +362,8 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string) []string {
 // concurrently and returns the merged, deduped release set. A single
 // query failing doesn't fail the whole search — we return whatever the
 // others found.
-func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, perfNames []string, cats []int) ([]prowlarr.Release, error) {
-	terms := sceneSearchTerms(scene, perfNames)
+func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, perfNames []string, cats []int, lean bool) ([]prowlarr.Release, error) {
+	terms := sceneSearchTerms(scene, perfNames, lean)
 	if len(terms) == 0 {
 		return nil, nil
 	}

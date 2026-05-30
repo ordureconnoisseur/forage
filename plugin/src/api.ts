@@ -267,11 +267,17 @@ export function performerImageURL(localStashID: string): string | null {
 
 export function fetchSceneReleases(
   stashDBID: string,
-  opts?: { performer?: string; alias?: string; signal?: AbortSignal },
+  opts?: {
+    performer?: string;
+    alias?: string;
+    lean?: boolean;
+    signal?: AbortSignal;
+  },
 ): Promise<SceneReleasesResponse> {
   const q = new URLSearchParams();
   if (opts?.performer) q.set("performer", opts.performer);
   if (opts?.alias) q.set("alias", opts.alias);
+  if (opts?.lean) q.set("lean", "1");
   const qs = q.toString();
   return get<SceneReleasesResponse>(
     `/scenes/${encodeURIComponent(stashDBID)}/releases${qs ? "?" + qs : ""}`,

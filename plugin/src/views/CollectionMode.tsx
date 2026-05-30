@@ -11,7 +11,11 @@ import {
 import { ResBadge } from "../ResBadge";
 import { humanSize } from "../format";
 
-const SEARCH_CONCURRENCY = 4;
+// Keep this low: each scene's release search fans out a couple of
+// Prowlarr queries, and Prowlarr (→ the trackers, esp. PornoLab) chokes
+// on too many concurrent searches — context-deadline "search failed"
+// across the board. 2 scenes × ~2 lean queries is a sane ceiling.
+const SEARCH_CONCURRENCY = 2;
 const GRAB_CONCURRENCY = 3;
 // Only pre-tick a scene when its best verified release clears this
 // confidence. The verifier flags any release whose top candidate is
@@ -177,6 +181,7 @@ export default function CollectionMode({
         try {
           const res = await fetchSceneReleases(scene.stashdb_id, {
             performer: performerName,
+            lean: true, // collection fan-out: few queries/scene, don't flood Prowlarr
             signal: ctrl.signal,
           });
           if (cancelled) return;
