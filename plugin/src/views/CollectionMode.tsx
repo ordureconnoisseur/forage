@@ -61,10 +61,14 @@ function blankRow(): RowState {
 export default function CollectionMode({
   performerId,
   onBack,
+  onRunOnServer,
   sceneIds,
 }: {
   performerId: string;
   onBack: (performerId: string) => void;
+  // Hand the crawl to the daemon (survives leaving the page) and jump to
+  // the Jobs tab. Passed the optional scene subset.
+  onRunOnServer: (performerId: string, sceneIds?: string[]) => void;
   // When set, scope the collection to only these StashDB scene ids (the
   // user's multi-select from MissingScenes) instead of every missing
   // scene. undefined = full collection.
@@ -428,13 +432,22 @@ export default function CollectionMode({
             </div>
           )}
         </div>
-        <button
-          className="coll-grab"
-          disabled={selectedCount === 0 || grabbing}
-          onClick={bulkGrab}
-        >
-          {grabbing ? "Grabbing…" : `Grab ${selectedCount} selected`}
-        </button>
+        <div className="coll-head-actions">
+          <button
+            className="coll-run-server"
+            onClick={() => onRunOnServer(performerId, sceneIds)}
+            title="Hand the whole crawl to the server — searches + grabs every missing scene in the background, keeps going even if you close this page."
+          >
+            Run on server →
+          </button>
+          <button
+            className="coll-grab"
+            disabled={selectedCount === 0 || grabbing}
+            onClick={bulkGrab}
+          >
+            {grabbing ? "Grabbing…" : `Grab ${selectedCount} selected`}
+          </button>
+        </div>
       </div>
 
       <PacksSection

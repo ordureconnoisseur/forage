@@ -3438,3 +3438,184 @@ code.grab-fact-v,
 .coll-cand .res-badge {
   align-self: center;
 }
+
+/* ── Collection jobs (Jobs tab) ────────────────────────────────────── */
+.coll-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.coll-run-server {
+  padding: 9px 16px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  background: transparent;
+  color: var(--accent-bright);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.coll-run-server:hover {
+  background: rgba(var(--accent-rgb), 0.12);
+  border-color: var(--accent);
+}
+
+.job-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.job-card {
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+}
+.job-card.state-running {
+  border-color: rgba(var(--accent-rgb), 0.4);
+}
+.job-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.job-performer {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0;
+}
+.job-performer:hover {
+  color: var(--accent-bright);
+}
+.job-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.job-state.running {
+  color: var(--accent-bright);
+}
+.job-state.cancelled {
+  color: var(--status-orphaned, #d4a017);
+}
+.job-cancel {
+  margin-left: auto;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.job-cancel:hover {
+  border-color: var(--danger, #f87171);
+  color: var(--danger, #f87171);
+}
+.job-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+  margin: 10px 0 8px;
+}
+.job-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
+  transition: width 0.4s ease;
+}
+.job-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.job-summary .sep {
+  opacity: 0.5;
+}
+.job-grabbed {
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+.job-err {
+  color: #fca5a5;
+}
+.job-scenes {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.job-scenes > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  list-style: none;
+  width: fit-content;
+}
+.job-scenes > summary::before {
+  content: "▸ ";
+  font-size: 9px;
+}
+.job-scenes[open] > summary::before {
+  content: "▾ ";
+}
+.job-scene-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.job-scene {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.job-scene-status {
+  flex: none;
+  width: 80px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+.job-scene.st-grabbed .job-scene-status {
+  color: var(--accent-bright);
+}
+.job-scene.st-error .job-scene-status {
+  color: #fca5a5;
+}
+.job-scene-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.job-scene-release {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

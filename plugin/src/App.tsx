@@ -4,9 +4,16 @@ import MissingScenes from "./views/MissingScenes";
 import CollectionMode from "./views/CollectionMode";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
+import JobsList from "./views/JobsList";
 import DiscoverList from "./views/DiscoverList";
 import Settings from "./views/Settings";
-import { fetchHealth, foragerBase, Health, mixedContentBlocked } from "./api";
+import {
+  fetchHealth,
+  foragerBase,
+  Health,
+  mixedContentBlocked,
+  startCollectionJob,
+} from "./api";
 
 // URL-hash routes, parsed by parseRoute. The scene route carries the
 // performer name in a query string so /grab can tell the placer which
@@ -19,7 +26,8 @@ type Route =
   | { kind: "collection"; performerId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
-  | { kind: "grabs" };
+  | { kind: "grabs" }
+  | { kind: "jobs" };
 
 function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -41,6 +49,9 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "grabs") {
     return { kind: "grabs" };
+  }
+  if (parts[0] === "jobs") {
+    return { kind: "jobs" };
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
@@ -117,6 +128,7 @@ export default function App() {
   const goPerformers = () => setHash("#/");
   const goDiscover = () => setHash("#/discover");
   const goGrabs = () => setHash("#/grabs");
+  const goJobs = () => setHash("#/jobs");
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
   const goCollection = (id: string) => {
     setCollectionScope(null); // full collection
@@ -132,6 +144,17 @@ export default function App() {
       ? `?p=${encodeURIComponent(performerName)}`
       : "";
     setHash(`#/scene/${id}${suffix}`);
+  };
+  // Hand a collection crawl to the daemon, then jump to the Jobs tab.
+  const runCollectionOnServer = async (id: string, sceneIds?: string[]) => {
+    try {
+      await startCollectionJob(id, sceneIds);
+    } catch (e) {
+      // Surface minimally; the Jobs tab will show nothing if it failed.
+      alert("Couldn't start server job: " + (e as Error).message);
+      return;
+    }
+    goJobs();
   };
 
   const blocked = mixedContentBlocked();
@@ -187,6 +210,16 @@ export default function App() {
             className={route.kind === "grabs" ? "active" : ""}
           >
             Grabs
+          </a>
+          <a
+            href="#/jobs"
+            onClick={(e) => {
+              e.preventDefault();
+              goJobs();
+            }}
+            className={route.kind === "jobs" ? "active" : ""}
+          >
+            Jobs
           </a>
         </nav>
         <button
@@ -247,6 +280,7 @@ export default function App() {
           <CollectionMode
             performerId={route.performerId}
             onBack={goPerformer}
+            onRunOnServer={runCollectionOnServer}
             sceneIds={
               collectionScope &&
               collectionScope.performerId === route.performerId
@@ -265,6 +299,9 @@ export default function App() {
           <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
         )}
         {!needsSetup && route.kind === "grabs" && <GrabsList />}
+        {!needsSetup && route.kind === "jobs" && (
+          <JobsList onPickPerformer={goPerformer} />
+        )}
         {needsSetup && (
           <div className="empty">
             {!apiURL

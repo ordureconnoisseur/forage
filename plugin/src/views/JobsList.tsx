@@ -1,0 +1,182 @@
+import { useEffect, useRef, useState } from "react";
+import {
+  cancelCollectionJob,
+  fetchCollectionJobs,
+  type CollectionJob,
+  type JobScene,
+} from "../api";
+
+// Poll cadence: brisk while a job runs, slow when everything's settled.
+const FAST_MS = 3000;
+const SLOW_MS = 15000;
+
+export default function JobsList({
+  onPickPerformer,
+}: {
+  onPickPerformer: (id: string) => void;
+}) {
+  const [jobs, setJobs] = useState<CollectionJob[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await fetchCollectionJobs();
+        if (cancelled) return;
+        setJobs(r.jobs);
+        setError(null);
+        const anyRunning = r.jobs.some((j) => j.state === "running");
+        timer.current = window.setTimeout(tick, anyRunning ? FAST_MS : SLOW_MS);
+      } catch (e) {
+        if (cancelled) return;
+        setError((e as Error).message);
+        timer.current = window.setTimeout(tick, SLOW_MS);
+      }
+    };
+    void tick();
+    return () => {
+      cancelled = true;
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, []);
+
+  if (error && !jobs)
+    return <div className="empty error">Failed to load jobs: {error}</div>;
+  if (!jobs) return <div className="empty">Loading jobs…</div>;
+  if (jobs.length === 0)
+    return (
+      <div className="empty">
+        No collection jobs. Start one from a performer's “Complete collection”
+        or “Grab selected” — it runs on the server, so you can close this tab
+        and it keeps going.
+      </div>
+    );
+
+  return (
+    <div>
+      <div className="page-header">
+        <h2>Jobs</h2>
+        <div className="meta">
+          Server-side collection crawls — they keep running if you leave.
+        </div>
+      </div>
+      <ul className="job-list">
+        {jobs.map((j) => (
+          <JobCard key={j.id} job={j} onPickPerformer={onPickPerformer} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function JobCard({
+  job,
+  onPickPerformer,
+}: {
+  job: CollectionJob;
+  onPickPerformer: (id: string) => void;
+}) {
+  const [cancelling, setCancelling] = useState(false);
+  const pct = job.total > 0 ? (job.done / job.total) * 100 : 0;
+
+  const cancel = async () => {
+    setCancelling(true);
+    try {
+      await cancelCollectionJob(job.id);
+    } catch {
+      setCancelling(false);
+    }
+  };
+
+  // Tally outcomes for the summary line.
+  const counts = job.scenes.reduce<Record<string, number>>((acc, s) => {
+    acc[s.status] = (acc[s.status] || 0) + 1;
+    return acc;
+  }, {});
+
+  return (
+    <li className={"job-card state-" + job.state}>
+      <div className="job-head">
+        <button
+          className="job-performer"
+          onClick={() => onPickPerformer(job.performer_id)}
+        >
+          {job.performer_name}
+        </button>
+        <span className={"job-state " + job.state}>
+          {job.state === "running" && <span className="coll-spinner" />}
+          {job.state}
+        </span>
+        {job.state === "running" && (
+          <button
+            className="job-cancel"
+            onClick={cancel}
+            disabled={cancelling}
+          >
+            {cancelling ? "cancelling…" : "Cancel"}
+          </button>
+        )}
+      </div>
+
+      <div className="job-progress-track">
+        <div
+          className="job-progress-fill"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      <div className="job-summary">
+        <span>
+          {job.done}/{job.total} processed
+        </span>
+        <span className="sep">·</span>
+        <span className="job-grabbed">{job.grabbed} grabbed</span>
+        {counts.skipped ? (
+          <>
+            <span className="sep">·</span>
+            <span>{counts.skipped} already grabbing</span>
+          </>
+        ) : null}
+        {counts.no_match || counts.no_result ? (
+          <>
+            <span className="sep">·</span>
+            <span>
+              {(counts.no_match || 0) + (counts.no_result || 0)} no match
+            </span>
+          </>
+        ) : null}
+        {counts.error ? (
+          <>
+            <span className="sep">·</span>
+            <span className="job-err">{counts.error} error</span>
+          </>
+        ) : null}
+      </div>
+
+      <JobScenes scenes={job.scenes} />
+    </li>
+  );
+}
+
+// JobScenes is a collapsible per-scene breakdown — collapsed by default
+// (the summary line is usually enough), expandable to see each outcome.
+function JobScenes({ scenes }: { scenes: JobScene[] }) {
+  return (
+    <details className="job-scenes">
+      <summary>{scenes.length} scenes</summary>
+      <ul className="job-scene-list">
+        {scenes.map((s) => (
+          <li key={s.stashdb_id} className={"job-scene st-" + s.status}>
+            <span className="job-scene-status">{s.status}</span>
+            <span className="job-scene-title">{s.title || "(untitled)"}</span>
+            {s.release && (
+              <code className="job-scene-release">{s.release}</code>
+            )}
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
