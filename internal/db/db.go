@@ -56,6 +56,23 @@ func Open(path string) (*sql.DB, error) {
 // All ALTER steps are guarded by `pragma_table_info` so the function
 // is idempotent — running on an already-migrated DB is a no-op.
 func migrateGrabsColumns(db *sql.DB) error {
+	// Fresh database: no tables exist yet, so there's nothing to migrate —
+	// schema.sql (run right after this) creates grabs, performer_cache and
+	// recent_scene_cache with every current column already in place. Bail
+	// out early; otherwise the column-presence guards below (which read 0
+	// from pragma_table_info on a missing table) sail past the renames and
+	// run `ALTER TABLE grabs ADD COLUMN ...` against a table that doesn't
+	// exist — breaking first boot for every new install.
+	var grabsExists int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='grabs'`,
+	).Scan(&grabsExists); err != nil {
+		return err
+	}
+	if grabsExists == 0 {
+		return nil
+	}
+
 	has := func(col string) (bool, error) {
 		var n int
 		err := db.QueryRow(
