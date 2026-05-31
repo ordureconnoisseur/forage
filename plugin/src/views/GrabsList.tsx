@@ -804,6 +804,14 @@ function GrabRow({
               PACK
             </span>
           )}
+          {g.adopted && (
+            <span
+              className="grab-adopt-badge"
+              title="Adopted — you added this to qBit directly (forager category); forage picked it up"
+            >
+              ADOPTED
+            </span>
+          )}
         </div>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>

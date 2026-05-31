@@ -46,7 +46,12 @@ type grabOut struct {
 	// Stalled flags a torrent grab still "downloading" that's made no
 	// progress for stalledAfter — the UI badges it so the user can
 	// abandon it and pick another release.
-	Stalled bool   `json:"stalled,omitempty"`
+	Stalled bool `json:"stalled,omitempty"`
+	// Adopted marks a grab forage picked up from a torrent the user added
+	// to qBit directly (under the forager category), rather than grabbed
+	// through forage. Derived: such grabs carry an info-hash but no
+	// download URL (there was no Prowlarr fetch).
+	Adopted bool   `json:"adopted,omitempty"`
 	Reason  string `json:"reason,omitempty"`
 	PerformerName       string        `json:"performer_name,omitempty"`
 	PlacedPath          string        `json:"placed_path,omitempty"`
@@ -128,6 +133,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			Category:            g.Category,
 			Status:              g.Status,
 			Stalled:             isStalled(g),
+			Adopted:             g.DownloadURL == "" && g.ClientID != "",
 			Reason:              g.Reason,
 			PerformerName:       g.PerformerName,
 			PlacedPath:          g.PlacedPath,

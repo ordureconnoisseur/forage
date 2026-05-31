@@ -4628,3 +4628,21 @@ code.grab-fact-v,
     font-size: 10px;
   }
 }
+
+/* Adopted badge — grab forage picked up from a torrent added to qBit
+   directly (forager category). Cool slate tone to read as "external
+   origin", distinct from the accent PACK badge. */
+.grab-adopt-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(120, 145, 175, 0.13);
+  border: 1px solid rgba(120, 145, 175, 0.4);
+  color: #aebfd4;
+}

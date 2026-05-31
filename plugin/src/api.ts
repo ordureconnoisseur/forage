@@ -469,6 +469,9 @@ export interface Grab {
   // True when a torrent grab has been "downloading" with no progress
   // for a while — the UI badges it so you can abandon + pick another.
   stalled?: boolean;
+  // True when forage adopted this from a torrent added to qBit directly
+  // (forager category), rather than grabbing it through forage.
+  adopted?: boolean;
   reason?: string;
   performer_name?: string;
   placed_path?: string;
