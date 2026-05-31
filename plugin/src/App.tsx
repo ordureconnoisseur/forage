@@ -102,6 +102,10 @@ export default function App() {
   // Stash itself, etc.). Distinguished from "unconfigured daemon"
   // which still returns valid JSON with `unconfigured: true`.
   const [healthError, setHealthError] = useState<string | null>(null);
+  // False until the first /healthz probe resolves, so we show a brief
+  // loading splash instead of flashing the setup wizard before we know
+  // whether the daemon is reachable.
+  const [healthProbed, setHealthProbed] = useState(false);
   // foragerBase() is read once per render; useEffect below re-runs
   // when settings open/close so a Save updates the URL → triggers a
   // fresh health probe.
@@ -121,16 +125,13 @@ export default function App() {
     establishSession();
   }, [apiURL, healthNonce]);
 
-  // Probe /healthz on mount + after Settings closes. When the URL
-  // isn't set yet, skip the fetch (it'd hit Stash's origin and
-  // JSON.parse-fail on Stash's HTML index — that's the bug this
-  // guard fixes). Setup banner picks up the empty state instead.
+  // Probe /healthz on mount + after Settings closes. We always probe —
+  // an empty base means "same origin", which is correct when the daemon
+  // serves the standalone app at /. The probe hits <origin>/healthz; if a
+  // forage daemon answers we're good (standalone or a configured URL), and
+  // if it fails (e.g. the Vite dev server, or an unreachable configured
+  // URL) we fall through to the setup wizard's connect step.
   useEffect(() => {
-    if (!apiURL) {
-      setHealth(null);
-      setHealthError(null);
-      return;
-    }
     let cancelled = false;
     fetchHealth()
       .then((h) => {
@@ -142,18 +143,28 @@ export default function App() {
         if (cancelled) return;
         setHealthError((e as Error).message);
         setHealth(null);
+      })
+      .finally(() => {
+        if (!cancelled) setHealthProbed(true);
       });
     return () => {
       cancelled = true;
     };
   }, [settingsOpen, apiURL, healthNonce]);
 
-  // Three distinct "needs setup" states, each with its own banner copy:
-  //   - no URL → user has never configured (or localStorage was cleared)
-  //   - URL set but unreachable → daemon down, wrong URL, mixed-content
-  //   - URL set, healthz OK, but Stash creds missing → unconfigured daemon
+  // Drive the top-level phase off the probe result, not URL presence:
+  //   - loading  → first probe hasn't resolved yet
+  //   - setup    → daemon unreachable at this origin / no configured URL,
+  //                or reachable but missing Stash creds (unconfigured)
+  //   - ready    → daemon reachable + configured
+  const loading = !healthProbed;
   const needsSetup =
-    !apiURL || !!healthError || health?.unconfigured === true;
+    healthProbed && (!!healthError || health?.unconfigured === true);
+  const ready = healthProbed && !needsSetup;
+  // Same-origin: an empty base reached a live daemon → the daemon is
+  // serving us standalone, so the setup wizard can skip its "connect to
+  // your daemon" step entirely.
+  const sameOrigin = apiURL === "" && !healthError && health != null;
 
   // Poll the actionable-notification counts for the header bell + the
   // Watching-tab badge. Light (cheap counts), every 45s, only once the
@@ -161,7 +172,7 @@ export default function App() {
   // on something (grabbing a ready watch) reflects promptly.
   const [notif, setNotif] = useState<NotificationCounts | null>(null);
   useEffect(() => {
-    if (!apiURL || needsSetup) {
+    if (!ready) {
       setNotif(null);
       return;
     }
@@ -178,7 +189,7 @@ export default function App() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [apiURL, needsSetup, healthNonce, route]);
+  }, [ready, healthNonce, route]);
 
   const goPerformers = () => setHash("#/");
   const goDiscover = () => setHash("#/discover");
@@ -301,7 +312,7 @@ export default function App() {
           </a>
         </nav>
         <div className="header-right">
-          {!needsSetup && (
+          {ready && (
             <NotificationsBell
               counts={notif}
               onGoWatching={goWatching}
@@ -326,10 +337,10 @@ export default function App() {
         </div>
       )}
       <main className="app-main">
-        {!needsSetup && route.kind === "performers" && (
+        {ready && route.kind === "performers" && (
           <PerformersList onPick={goPerformer} />
         )}
-        {!needsSetup && route.kind === "missing" && (
+        {ready && route.kind === "missing" && (
           <MissingScenes
             performerId={route.performerId}
             onPickScene={goScene}
@@ -337,7 +348,7 @@ export default function App() {
             onGrabSelected={goCollectionSelected}
           />
         )}
-        {!needsSetup && route.kind === "collection" && (
+        {ready && route.kind === "collection" && (
           <CollectionMode
             performerId={route.performerId}
             onBack={goPerformer}
@@ -350,26 +361,26 @@ export default function App() {
             }
           />
         )}
-        {!needsSetup && route.kind === "scene" && (
+        {ready && route.kind === "scene" && (
           <SceneReleases
             key={route.sceneId}
             sceneId={route.sceneId}
             performerName={route.performerName}
           />
         )}
-        {!needsSetup && route.kind === "discover" && (
+        {ready && route.kind === "discover" && (
           <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
         )}
-        {!needsSetup && route.kind === "watching" && (
+        {ready && route.kind === "watching" && (
           <WatchingList onPickScene={goScene} />
         )}
-        {!needsSetup && route.kind === "grabs" && (
+        {ready && route.kind === "grabs" && (
           <GrabsList onPickScene={goScene} />
         )}
-        {!needsSetup && route.kind === "jobs" && (
+        {ready && route.kind === "jobs" && (
           <JobsList onPickPerformer={goPerformer} onReview={goJobReview} />
         )}
-        {!needsSetup && route.kind === "job" && (
+        {ready && route.kind === "job" && (
           <CollectionMode
             performerId={route.performerId}
             jobId={route.jobId}
@@ -377,10 +388,16 @@ export default function App() {
             onRunOnServer={runCollectionOnServer}
           />
         )}
+        {loading && (
+          <div className="app-loading" role="status" aria-live="polite">
+            <span className="coll-spinner" />
+          </div>
+        )}
         {needsSetup && (
           <Setup
             health={health}
             healthError={healthError}
+            sameOrigin={sameOrigin}
             onDone={() => setHealthNonce((n) => n + 1)}
             onAdvanced={() => setSettingsOpen(true)}
           />

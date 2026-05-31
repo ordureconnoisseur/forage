@@ -197,6 +197,18 @@ button {
   padding: 28px 24px 64px 24px;
 }
 
+/* Brief splash while the first /healthz probe resolves — keeps the setup
+   wizard from flashing before we know whether the daemon is reachable. */
+.app-loading {
+  display: flex;
+  justify-content: center;
+  padding: 96px 0;
+}
+.app-loading .coll-spinner {
+  width: 28px;
+  height: 28px;
+}
+
 .empty {
   padding: 32px 0;
   color: var(--text-muted);

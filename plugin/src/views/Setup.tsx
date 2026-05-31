@@ -43,11 +43,15 @@ function normalizeUrl(raw: string): string {
 export default function Setup({
   health,
   healthError,
+  sameOrigin,
   onDone,
   onAdvanced,
 }: {
   health: Health | null;
   healthError: string | null;
+  // True when the daemon serves this app at the same origin — there's
+  // nothing to "connect" to, so the wizard skips that step entirely.
+  sameOrigin: boolean;
   // Bump App's health probe so it re-evaluates needsSetup and unmounts
   // the wizard once everything's configured.
   onDone: () => void;
@@ -56,15 +60,18 @@ export default function Setup({
   onAdvanced: () => void;
 }) {
   // Jump straight to the relevant step when there's already partial
-  // setup: unreachable URL → reconnect; reachable but unconfigured →
-  // credentials; otherwise start from the welcome screen.
-  const initialStep: Step = !foragerBase()
+  // setup: same-origin daemon → welcome → credentials (no connect step);
+  // unreachable URL → reconnect; reachable but unconfigured → credentials;
+  // otherwise start from the welcome screen.
+  const initialStep: Step = sameOrigin
     ? "welcome"
-    : healthError
-      ? "connect"
-      : health?.unconfigured
-        ? "credentials"
-        : "welcome";
+    : !foragerBase()
+      ? "welcome"
+      : healthError
+        ? "connect"
+        : health?.unconfigured
+          ? "credentials"
+          : "welcome";
 
   const [step, setStep] = useState<Step>(initialStep);
 
@@ -218,7 +225,11 @@ export default function Setup({
     <div className="setup">
       <div className="setup-card">
         {step !== "welcome" && (
-          <Stepper step={step} needsCreds={!!connHealth?.unconfigured} />
+          <Stepper
+            step={step}
+            needsCreds={!!connHealth?.unconfigured}
+            sameOrigin={sameOrigin}
+          />
         )}
 
         {step === "welcome" && (
@@ -231,7 +242,7 @@ export default function Setup({
             </p>
             <button
               className="setup-primary"
-              onClick={() => setStep("connect")}
+              onClick={() => setStep(sameOrigin ? "credentials" : "connect")}
             >
               Get started
             </button>
@@ -418,11 +429,22 @@ export default function Setup({
   );
 }
 
-function Stepper({ step, needsCreds }: { step: Step; needsCreds: boolean }) {
-  // welcome isn't a dot; show connect → (credentials) → done.
-  const steps: Step[] = needsCreds
-    ? ["connect", "credentials", "done"]
-    : ["connect", "done"];
+function Stepper({
+  step,
+  needsCreds,
+  sameOrigin,
+}: {
+  step: Step;
+  needsCreds: boolean;
+  sameOrigin: boolean;
+}) {
+  // welcome isn't a dot; show connect → (credentials) → done. Same-origin
+  // drops the connect step (the daemon is serving us).
+  const steps: Step[] = sameOrigin
+    ? ["credentials", "done"]
+    : needsCreds
+      ? ["connect", "credentials", "done"]
+      : ["connect", "done"];
   return (
     <div className="setup-stepper" aria-hidden="true">
       {steps.map((s) => (
