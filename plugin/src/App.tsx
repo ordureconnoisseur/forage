@@ -10,6 +10,7 @@ import DiscoverList from "./views/DiscoverList";
 import Setup from "./views/Setup";
 import Settings from "./views/Settings";
 import AcornIcon from "./AcornIcon";
+import NavIcon from "./NavIcons";
 import {
   fetchHealth,
   foragerBase,
@@ -209,6 +210,7 @@ export default function App() {
                 : ""
             }
           >
+            <NavIcon name="performers" />
             Performers
           </a>
           <a
@@ -219,6 +221,7 @@ export default function App() {
             }}
             className={route.kind === "discover" ? "active" : ""}
           >
+            <NavIcon name="discover" />
             Discover
           </a>
           <a
@@ -229,6 +232,7 @@ export default function App() {
             }}
             className={route.kind === "watching" ? "active" : ""}
           >
+            <NavIcon name="watching" />
             Watching
           </a>
           <a
@@ -239,6 +243,7 @@ export default function App() {
             }}
             className={route.kind === "grabs" ? "active" : ""}
           >
+            <NavIcon name="grabs" />
             Grabs
           </a>
           <a
@@ -249,6 +254,7 @@ export default function App() {
             }}
             className={route.kind === "jobs" ? "active" : ""}
           >
+            <NavIcon name="jobs" />
             Jobs
           </a>
         </nav>

@@ -149,12 +149,35 @@ button {
   margin-left: 8px;
 }
 .top-nav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   color: var(--text-muted);
   font-size: 14px;
   font-weight: 500;
   padding: 6px 12px;
   border-radius: var(--radius-sm);
   transition: color 0.15s ease, background 0.15s ease;
+}
+.top-nav .nav-icon {
+  flex: none;
+  opacity: 0.85;
+}
+.top-nav a.active .nav-icon {
+  opacity: 1;
+}
+/* Tight headers (the plugin shares the Stash top bar): drop the labels
+   and keep the icons so the nav never crowds the brand + gear. */
+@media (max-width: 720px) {
+  .top-nav a {
+    gap: 0;
+    padding: 6px 9px;
+    font-size: 0;
+  }
+  .top-nav .nav-icon {
+    width: 18px;
+    height: 18px;
+  }
 }
 .top-nav a:hover {
   color: var(--text);
