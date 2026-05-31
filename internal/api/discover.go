@@ -142,6 +142,15 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// hot globally", regardless of which performers we have.
 	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
 
+	// Hide scenes forage already has in flight or in the library. The
+	// cached `owned` flag covers externally-owned scenes but lags a fresh
+	// grab until the next scene-cache refresh; this drops a just-confirmed
+	// (or actively-downloading) scene from Discover immediately.
+	if grabbed := s.grabbedSceneSet(r.Context()); len(grabbed) > 0 {
+		scenes = dropGrabbed(scenes, grabbed)
+		trending = dropGrabbed(trending, grabbed)
+	}
+
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
 	trendingRefreshedAt, _ := cache.TrendingRefreshedAt(r.Context(), s.db)
 	writeJSON(w, http.StatusOK, discoverResponse{
@@ -195,6 +204,41 @@ func collectPerformerIDs(idsJSON string, into map[string]struct{}) {
 	for _, id := range ids {
 		into[id] = struct{}{}
 	}
+}
+
+// grabbedSceneSet returns StashDB scene ids forage already has a grab for
+// that's in flight or in the library — so Discover doesn't suggest what
+// you're already getting or own. failed/orphaned/mismatched are excluded
+// (you don't own those). Keyed by the grab's actual cross-id when known,
+// else the predicted one, so a confirmed grab maps to the scene it landed.
+func (s *Server) grabbedSceneSet(ctx context.Context) map[string]bool {
+	if s.grabs == nil {
+		return nil
+	}
+	byScene, err := s.grabs.StatusByStashDBID(ctx)
+	if err != nil {
+		return nil
+	}
+	out := make(map[string]bool, len(byScene))
+	for sid, st := range byScene {
+		switch st {
+		case "queued", "downloading", "completed", "placed", "scanned", "confirmed":
+			out[sid] = true
+		}
+	}
+	return out
+}
+
+// dropGrabbed removes scenes the user is already getting/owns. Filters in
+// place — materializeScenes returns a freshly-allocated slice.
+func dropGrabbed(scenes []discoverScene, grabbed map[string]bool) []discoverScene {
+	kept := scenes[:0]
+	for _, sc := range scenes {
+		if !grabbed[sc.StashDBID] {
+			kept = append(kept, sc)
+		}
+	}
+	return kept
 }
 
 func materializeScenes(raw []discoverRawRow, perfMap map[string]discoverPerformer, watchStatus map[string]string, favoriteOnly bool) []discoverScene {
