@@ -453,9 +453,6 @@ function ReleaseList({
                     {pct}
                     <i>%</i>
                   </span>
-                  <span className="rm-meter">
-                    <i style={{ width: `${pct}%` }} />
-                  </span>
                   <span className="rm-label">match</span>
                 </>
               ) : (
@@ -507,13 +504,19 @@ function ReleaseList({
             </div>
 
             {/* Quality score — the user's release-preference total, the
-                differentiator among same-scene releases. */}
-            <div className={"release-score-stat " + scoreClass} title={scoreTitle}>
-              <span className="rs-val">
-                {r.rejected ? "⛔" : `${score > 0 ? "+" : ""}${score}`}
-              </span>
-              <span className="rs-label">{r.rejected ? "reject" : "score"}</span>
-            </div>
+                differentiator among same-scene releases. A neutral 0 is
+                left blank so a real +/- score (or a reject) stands out
+                instead of drowning in a column of zeros. */}
+            {r.rejected || score !== 0 ? (
+              <div className={"release-score-stat " + scoreClass} title={scoreTitle}>
+                <span className="rs-val">
+                  {r.rejected ? "⛔" : `${score > 0 ? "+" : ""}${score}`}
+                </span>
+                <span className="rs-label">{r.rejected ? "reject" : "score"}</span>
+              </div>
+            ) : (
+              <div className="release-score-stat is-empty" aria-hidden="true" />
+            )}
 
             <GrabButton state={state} onClick={() => onGrab(r)} />
           </li>
@@ -534,7 +537,7 @@ const REASON_MISS = /\b(none|no-match|n\/a|missing|parse-error|off)\b/i;
 function MatchBreakdown({ reasons }: { reasons: string[] }) {
   return (
     <details className="match-why">
-      <summary>Why this match?</summary>
+      <summary>Match breakdown</summary>
       <ul className="match-why-list">
         {reasons.map((reason, i) => {
           const sep = reason.indexOf(":");
