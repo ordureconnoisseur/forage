@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>forage</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --border: #242938;
+    --text: #d6dae3;
+    --dim: #8b93a6;
+    --accent: #d4a14a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%;
+    background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  }
+  .wrap {
+    min-height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px;
+  }
+  .card {
+    width: 100%; max-width: 420px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 14px; padding: 32px 28px; text-align: center;
+  }
+  h1 { margin: 12px 0 4px; font-size: 1.5rem; letter-spacing: -0.01em; }
+  p { margin: 0 0 20px; color: var(--dim); font-size: 0.92rem; line-height: 1.5; }
+  svg { width: 44px; height: 44px; color: var(--accent); }
+  label { display: block; text-align: left; font-size: 0.82rem; color: var(--dim); margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 10px 12px; border-radius: 8px;
+    border: 1px solid var(--border); background: #0d0f14; color: var(--text);
+    font-size: 0.95rem; margin-bottom: 14px;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+  button {
+    width: 100%; padding: 11px; border: none; border-radius: 8px;
+    background: var(--accent); color: #14110a; font-weight: 600;
+    font-size: 0.95rem; cursor: pointer;
+  }
+  button:hover { filter: brightness(1.06); }
+  .hint { margin-top: 14px; font-size: 0.78rem; color: var(--dim); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card" id="card">
+    <svg viewBox="0 0 512 512" aria-hidden="true">
+      <path fill="currentColor" d="M68.173,182.354c-98.206,98.221-73.314,248.837-30.337,291.827c43.005,43.006,193.634,67.898,291.84-30.323c51.09-51.075,90.54-90.525,90.54-90.525L158.711,91.83C158.711,91.83,119.263,131.279,68.173,182.354z"/>
+      <path fill="currentColor" d="M456.595,96.803l22.837-22.851c10.194-10.196,10.194-26.697,0-36.878c-10.169-10.183-26.698-10.196-36.866,0l-22.35,22.336C336.065-12.697,235.721-15.1,190.27,30.35c-20.057,20.044-22.835,22.837-23.141,23.142l291.41,291.41c0.306-0.306,3.084-3.084,23.142-23.142C526.242,277.2,524.631,179.909,456.595,96.803z"/>
+    </svg>
+    <h1>forage</h1>
+    <div id="body"></div>
+  </div>
+</div>
+<script>
+  // forage runs as a standalone app served by the forager daemon. This page
+  // is the Stash plugin launcher: it sends you to your daemon. The daemon URL
+  // is the same one forage stores when you connect (localStorage on this
+  // origin) — so once it's known, this is an instant redirect.
+  (function () {
+    var KEY = "forage.foragerURL";
+    var body = document.getElementById("body");
+
+    function go(url) {
+      var clean = String(url || "").trim().replace(/\/+$/, "");
+      if (!clean) return;
+      if (!/^https?:\/\//i.test(clean)) clean = "https://" + clean;
+      try { localStorage.setItem(KEY, clean); } catch (e) {}
+      location.replace(clean + "/");
+    }
+
+    var saved = "";
+    try { saved = localStorage.getItem(KEY) || ""; } catch (e) {}
+
+    if (saved) {
+      body.innerHTML = '<p>Opening forage…</p>';
+      go(saved);
+      return;
+    }
+
+    body.innerHTML =
+      '<p>Open forage at your daemon’s address — your Tailscale Serve URL or reverse-proxy URL.</p>' +
+      '<label for="u">Daemon URL</label>' +
+      '<input id="u" type="url" placeholder="https://forage.example.ts.net" autocomplete="off" spellcheck="false" />' +
+      '<button id="b">Open forage</button>' +
+      '<div class="hint">Saved in this browser so the button goes straight there next time.</div>';
+
+    var input = document.getElementById("u");
+    var btn = document.getElementById("b");
+    input.focus();
+    btn.addEventListener("click", function () { go(input.value); });
+    input.addEventListener("keydown", function (e) { if (e.key === "Enter") go(input.value); });
+  })();
+</script>
+</body>
+</html>

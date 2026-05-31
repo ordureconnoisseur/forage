@@ -67,10 +67,10 @@ jobs:
           npm ci
           npm run build
 
-      - name: Package plugin
+      - name: Package plugin (launcher only — the daemon serves the app)
         run: |
           mkdir -p bundle/forage
-          cp plugin/forage.yml plugin/dist/forage.entry.js plugin/dist/index.html bundle/forage/
+          cp plugin/forage.yml plugin/dist/forage.entry.js plugin/dist/launch.html bundle/forage/
           (cd bundle && zip -r "../forage-plugin-${GITHUB_REF_NAME}.zip" forage)
 
       - name: Create release
@@ -84,10 +84,11 @@ jobs:
             **Daemon image:** `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
             (also tagged `:latest`)
 
-            **Plugin:** download `forage-plugin-${{ github.ref_name }}.zip`, unzip,
-            and copy the `forage/` folder into your Stash `plugins/` directory.
-            Reload plugins in Stash and open the **forage** tab — the first-run
-            wizard walks you through pointing it at your daemon.
+            **Plugin (optional launcher):** download
+            `forage-plugin-${{ github.ref_name }}.zip`, unzip, and copy the
+            `forage/` folder into your Stash `plugins/` directory. Reload
+            plugins → the **Forage** nav button opens your daemon. (forage
+            runs standalone; the plugin is just a convenient launcher.)
 
             See the [README](https://github.com/${{ github.repository }}#install--daemon)
             for daemon setup (compose, env, download-client categories).

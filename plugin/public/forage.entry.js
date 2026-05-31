@@ -1,5 +1,7 @@
 // forage.entry.js — runs inside Stash's main SPA. Adds a "Forage" nav
-// button that opens the SPA fullscreen at /plugin/forage/assets/index.html.
+// button that opens the launcher (launch.html), which redirects to the
+// standalone forage app served by the forager daemon. forage no longer
+// ships its full UI inside Stash — the daemon serves it at /.
 //
 // Same DOM-injection pattern as binge (a real <a href> rather than
 // PluginApi.patch.instead so other plugins' nav scanners can discover it).
@@ -9,7 +11,7 @@
     if (window.forageNavLoaded) return;
     window.forageNavLoaded = true;
 
-    var FORAGE_PATH = '/plugin/forage/assets/index.html';
+    var FORAGE_PATH = '/plugin/forage/assets/launch.html';
     // Acorn glyph — two-path composite (cap + nut), same SVG the
     // in-app header uses (App.tsx AcornIcon). currentColor lets Stash's
     // nav inherit text colour for the icon.
