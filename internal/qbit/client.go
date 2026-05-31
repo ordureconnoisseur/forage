@@ -305,7 +305,14 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		return fmt.Errorf("write torrent body: %w", err)
 	}
 	_ = mw.Close()
-	return c.postAdd(ctx, &buf, mw.FormDataContentType())
+	if err := c.postAdd(ctx, &buf, mw.FormDataContentType()); err != nil {
+		// We already confirmed the bytes are a bencoded .torrent above, so
+		// a refusal here isn't "couldn't parse" — qBit/libtorrent declined
+		// an otherwise-valid file (often a private-tracker encoding quirk,
+		// e.g. PornoLab's cp1251 names). Say so, and point at the fix.
+		return fmt.Errorf("qbit declined this torrent — it's a valid .torrent but qbit/libtorrent wouldn't add it (often a tracker encoding quirk); try another release")
+	}
+	return nil
 }
 
 // AddTorrentFile uploads raw .torrent bytes (e.g. a file the user
