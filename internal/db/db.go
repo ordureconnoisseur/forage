@@ -141,6 +141,24 @@ func migrateGrabsColumns(db *sql.DB) error {
 		}
 	}
 
+	// 2026-05-31 stalled-detection migration: track download progress so
+	// the poller can flag a grab that's made no progress for a while.
+	progressCols := []struct{ col, decl string }{
+		{"progress", `ALTER TABLE grabs ADD COLUMN progress REAL NOT NULL DEFAULT 0`},
+		{"progress_at", `ALTER TABLE grabs ADD COLUMN progress_at INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range progressCols {
+		exists, err := has(c.col)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := db.Exec(c.decl); err != nil {
+				return fmt.Errorf("add %s column: %w", c.col, err)
+			}
+		}
+	}
+
 	// 2026-05-26 discover migration: per-performer aggregates that
 	// power /performers sort=last_release|missing_count. The new
 	// recent_scene_cache table is created by schema.sql itself

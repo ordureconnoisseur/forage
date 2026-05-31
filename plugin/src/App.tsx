@@ -306,7 +306,9 @@ export default function App() {
         {!needsSetup && route.kind === "watching" && (
           <WatchingList onPickScene={goScene} />
         )}
-        {!needsSetup && route.kind === "grabs" && <GrabsList />}
+        {!needsSetup && route.kind === "grabs" && (
+          <GrabsList onPickScene={goScene} />
+        )}
         {!needsSetup && route.kind === "jobs" && (
           <JobsList onPickPerformer={goPerformer} onReview={goJobReview} />
         )}

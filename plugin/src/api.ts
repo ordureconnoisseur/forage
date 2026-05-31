@@ -465,6 +465,9 @@ export interface Grab {
   client_name?: string;
   category?: string;
   status: GrabStatus;
+  // True when a torrent grab has been "downloading" with no progress
+  // for a while — the UI badges it so you can abandon + pick another.
+  stalled?: boolean;
   reason?: string;
   performer_name?: string;
   placed_path?: string;

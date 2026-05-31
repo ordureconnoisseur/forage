@@ -4294,3 +4294,21 @@ code.grab-fact-v,
   color: var(--accent-bright, #22c55e);
   border-color: rgba(var(--accent-rgb), 0.6);
 }
+
+/* Stalled badge — a torrent stuck with no progress. Amber, distinct from
+   the status chips since "stalled" is an annotation on a downloading grab,
+   not a pipeline state. */
+.grab-status-badge.chip-stalled {
+  background: #d4a017;
+  color: #0a0a0a;
+}
+/* "Pick another release" — primary action on a stalled/failed/mismatched
+   /orphaned grab, leading the action bar. */
+.grab-action.pick-another {
+  background: rgba(var(--accent-rgb), 0.18);
+  border: 1px solid rgba(var(--accent-rgb), 0.5);
+  color: var(--accent-bright, #22c55e);
+}
+.grab-action.pick-another:hover {
+  background: rgba(var(--accent-rgb), 0.28);
+}

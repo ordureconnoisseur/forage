@@ -59,6 +59,12 @@ type Grab struct {
 	PackFiles      int
 	PackIdentified int
 	PackDeduped    int
+	// Progress is the download's 0..1 completion as last seen from the
+	// client; ProgressAt is the unix time it last increased. The poller
+	// maintains both so stalled grabs (no progress for a while) can be
+	// surfaced. Torrent-only; SAB grabs leave these at 0.
+	Progress   float64
+	ProgressAt int64
 }
 
 // Repo is the persistence boundary. One per *sql.DB.
@@ -95,8 +101,9 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		  actual_stashdb_id, reason,
 		  performer_name, placed_path, place_error,
 		  grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
-		  kind, pack_files, pack_identified, pack_deduped
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  kind, pack_files, pack_identified, pack_deduped,
+		  progress, progress_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullString(g.PredictedStashDBID), nullFloat(g.PredictedConfidence), g.ReleaseTitle,
 		nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer), nullString(g.DownloadURL),
 		g.Client, nullString(g.ClientID), nullString(g.ClientName),
@@ -106,6 +113,7 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		g.GrabbedAt, now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.Kind, g.PackFiles, g.PackIdentified, g.PackDeduped,
+		g.Progress, g.ProgressAt,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("grabs insert: %w", err)
@@ -127,7 +135,8 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  completed_at = COALESCE(?, completed_at),
 		  placed_at = COALESCE(?, placed_at),
 		  confirmed_at = COALESCE(?, confirmed_at),
-		  pack_files = ?, pack_identified = ?, pack_deduped = ?
+		  pack_files = ?, pack_identified = ?, pack_deduped = ?,
+		  progress = ?, progress_at = ?
 		WHERE id = ?`,
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
@@ -135,6 +144,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.PackFiles, g.PackIdentified, g.PackDeduped,
+		g.Progress, g.ProgressAt,
 		g.ID,
 	)
 	if err != nil {
@@ -308,7 +318,8 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		client, client_id, client_name, category, status, actual_stashdb_id,
 		reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
-		kind, pack_files, pack_identified, pack_deduped`
+		kind, pack_files, pack_identified, pack_deduped,
+		progress, progress_at`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -342,7 +353,8 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&g.Client, &clientID, &clientName, &category, &g.Status, &actualID,
 		&reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
-		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped)
+		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
+		&g.Progress, &g.ProgressAt)
 	if err != nil {
 		return g, err
 	}

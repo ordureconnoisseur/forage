@@ -59,7 +59,14 @@ const OUTCOME: GrabStatus[] = [
   "failed",
 ];
 
-export default function GrabsList() {
+export default function GrabsList({
+  onPickScene,
+}: {
+  // Jump to a scene's releases view (to pick a different release when a
+  // grab stalled or failed). Receives the scene's StashDB id + the
+  // performer to place under.
+  onPickScene: (stashDBID: string, performerName?: string) => void;
+}) {
   const [data, setData] = useState<GrabsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -433,6 +440,7 @@ export default function GrabsList() {
                 setNotice(`Matched grab #${g.id} to StashDB`);
                 void refresh();
               }}
+              onPickScene={onPickScene}
             />
           ))}
         </ul>
@@ -670,12 +678,14 @@ function GrabRow({
   onToggle,
   onDeleted,
   onMatched,
+  onPickScene,
 }: {
   g: Grab;
   expanded: boolean;
   onToggle: () => void;
   onDeleted: (res: DeleteGrabResult) => void;
   onMatched: () => void;
+  onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [detail, setDetail] = useState<GrabDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
@@ -760,6 +770,14 @@ function GrabRow({
       <button className="grab-row-head" onClick={onToggle}>
         <div className="grab-row-badges">
           <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
+          {g.stalled && (
+            <span
+              className="grab-status-badge chip-stalled"
+              title="No download progress for a while — try abandoning it and picking another release"
+            >
+              stalled
+            </span>
+          )}
           {g.kind === "pack" && (
             <span className="grab-pack-badge" title="Multi-scene pack">
               <PackGlyph />
@@ -982,6 +1000,23 @@ function GrabRow({
 
           {/* Action bar */}
           <div className="grab-actions">
+            {/* When a grab stalled or didn't land cleanly, jump back to the
+                scene's releases to pick a different one — forage never
+                auto-retries. */}
+            {g.predicted_stashdb_id &&
+              (g.stalled ||
+                g.status === "failed" ||
+                g.status === "mismatched" ||
+                g.status === "orphaned") && (
+                <button
+                  className="grab-action pick-another"
+                  onClick={() =>
+                    onPickScene(g.predicted_stashdb_id!, g.performer_name)
+                  }
+                >
+                  Pick another release →
+                </button>
+              )}
             {detail?.stash_scene_url && (
               <a
                 className="grab-action open-stash"

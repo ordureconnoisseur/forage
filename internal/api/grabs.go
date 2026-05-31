@@ -4,10 +4,18 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
 	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
 )
+
+// stalledAfter is how long a torrent grab can sit in a download state
+// with no forward progress before /grabs flags it stalled. Surface-only
+// — the poller never auto-acts on it; the user decides (abandon + pick
+// another release).
+const stalledAfter = 30 * time.Minute
 
 // grabProgress is live download state for an in-flight grab, pulled
 // fresh from the download client on each /grabs poll.
@@ -35,7 +43,11 @@ type grabOut struct {
 	ClientName          string        `json:"client_name,omitempty"`
 	Category            string        `json:"category,omitempty"`
 	Status              string        `json:"status"`
-	Reason              string        `json:"reason,omitempty"`
+	// Stalled flags a torrent grab still "downloading" that's made no
+	// progress for stalledAfter — the UI badges it so the user can
+	// abandon it and pick another release.
+	Stalled bool   `json:"stalled,omitempty"`
+	Reason  string `json:"reason,omitempty"`
 	PerformerName       string        `json:"performer_name,omitempty"`
 	PlacedPath          string        `json:"placed_path,omitempty"`
 	PlaceError          string        `json:"place_error,omitempty"`
@@ -56,6 +68,22 @@ type grabOut struct {
 type grabsResponse struct {
 	Grabs  []grabOut      `json:"grabs"`
 	Totals map[string]int `json:"totals"`
+}
+
+// isStalled reports whether a torrent grab still "downloading" has made
+// no progress for stalledAfter. progress_at is stamped when progress last
+// increased; before any progress is seen it's 0, so we fall back to the
+// grab time (a download that never started counts from when it was added).
+// Torrent-only — SAB grabs don't carry progress here.
+func isStalled(g grabs.Grab) bool {
+	if g.Status != "downloading" || g.Client != "qbit" || g.Progress >= 1 {
+		return false
+	}
+	base := g.ProgressAt
+	if base == 0 {
+		base = g.GrabbedAt
+	}
+	return base > 0 && time.Since(time.Unix(base, 0)) > stalledAfter
 }
 
 // getGrabs returns the most-recent grabs with status totals for the
@@ -99,6 +127,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			ClientName:          g.ClientName,
 			Category:            g.Category,
 			Status:              g.Status,
+			Stalled:             isStalled(g),
 			Reason:              g.Reason,
 			PerformerName:       g.PerformerName,
 			PlacedPath:          g.PlacedPath,

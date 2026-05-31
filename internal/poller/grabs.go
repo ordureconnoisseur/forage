@@ -792,6 +792,15 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		g.ClientName = t.Name
 		dirty = true
 	}
+	// Track download progress so the API can flag a stalled grab (no
+	// progress for a while). Stamp the time only when progress actually
+	// advances; a download stuck at the same fraction keeps its old
+	// progress_at, which is what the stalled check measures against.
+	if t.Progress > g.Progress {
+		g.Progress = t.Progress
+		g.ProgressAt = time.Now().Unix()
+		dirty = true
+	}
 	newStatus := classifyQbitState(t.State)
 	// Don't downgrade post-completed states (placed/scanned/etc.)
 	// back to "completed" just because qBit still reports the torrent
