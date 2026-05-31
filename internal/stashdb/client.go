@@ -104,6 +104,10 @@ type Scene struct {
 	Performers []ScenePerformer
 	URLs       []SceneURL
 	Images     []SceneImage
+	// Tags are the StashDB tag names on the scene (lowercased on the
+	// wire side is not done — callers match case-insensitively). Used to
+	// filter out noise like compilations / PMVs from the gap analysis.
+	Tags []string
 }
 
 // SceneImage is a single image associated with a scene. StashDB
@@ -158,6 +162,9 @@ type sceneWire struct {
 	Performers []scenePerformerWire `json:"performers"`
 	URLs       []sceneURLWire       `json:"urls"`
 	Images     []SceneImage         `json:"images"`
+	Tags       []struct {
+		Name string `json:"name"`
+	} `json:"tags"`
 }
 
 func (w sceneWire) toScene() Scene {
@@ -178,6 +185,11 @@ func (w sceneWire) toScene() Scene {
 	for _, u := range w.URLs {
 		s.URLs = append(s.URLs, SceneURL{URL: u.URL, Type: u.Site.Name})
 	}
+	for _, t := range w.Tags {
+		if t.Name != "" {
+			s.Tags = append(s.Tags, t.Name)
+		}
+	}
 	return s
 }
 
@@ -189,6 +201,7 @@ const sceneFields = `
   performers { performer { id name } as }
   urls { url site { name } }
   images { url width height }
+  tags { name }
 `
 
 // ── searchScenes ─────────────────────────────────────────────────────

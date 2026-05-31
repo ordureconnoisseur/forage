@@ -29,6 +29,7 @@ type SectionKey =
   | "downloads"
   | "library"
   | "releases"
+  | "filtering"
   | "security"
   | "advanced";
 
@@ -75,6 +76,7 @@ export default function Settings({ onClose, health }: Props) {
     downloads: false,
     library: false,
     releases: false,
+    filtering: false,
     security: false,
     advanced: false,
   });
@@ -621,6 +623,33 @@ export default function Settings({ onClose, health }: Props) {
         </Section>
 
         <Section
+          title="Scene filtering"
+          isOpen={open.filtering}
+          onToggle={() => setOpen((o) => ({ ...o, filtering: !o.filtering }))}
+        >
+          <Field label="Exclude StashDB tags">
+            <ExcludedTagsEditor
+              value={
+                (patch.excludedSceneTags !== undefined
+                  ? patch.excludedSceneTags
+                  : (data?.fields["excludedSceneTags"]?.value as
+                      | string[]
+                      | undefined)) ?? []
+              }
+              onChange={(tags) => setField("excludedSceneTags", tags)}
+            />
+            <SourceBadge field={data?.fields["excludedSceneTags"]} />
+          </Field>
+          <p className="settings-tip">
+            Scenes carrying any of these StashDB tags are dropped from the
+            missing-scenes view and from the owned/missing counts — so
+            compilations, PMVs and the like don't clutter the gap analysis or
+            skew your completion stats. Matched case-insensitively; names must
+            match StashDB's tag names.
+          </p>
+        </Section>
+
+        <Section
           title="Security"
           isOpen={open.security}
           onToggle={() => setOpen((o) => ({ ...o, security: !o.security }))}
@@ -780,6 +809,84 @@ function Field({
       <span>{label}</span>
       <div className="settings-row-input">{children}</div>
     </label>
+  );
+}
+
+// Common StashDB noise tags, offered as one-click suggestions so the user
+// doesn't have to know exact names. Matching on the backend is
+// case-insensitive, so close spellings still work.
+const TAG_SUGGESTIONS = [
+  "Compilation",
+  "Porn Music Video",
+  "PMV",
+  "Music Video",
+];
+
+function ExcludedTagsEditor({
+  value,
+  onChange,
+}: {
+  value: string[];
+  onChange: (tags: string[]) => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const has = (t: string) =>
+    value.some((v) => v.toLowerCase() === t.toLowerCase());
+  const add = (t: string) => {
+    const trimmed = t.trim();
+    if (trimmed && !has(trimmed)) onChange([...value, trimmed]);
+    setDraft("");
+  };
+  const remove = (t: string) => onChange(value.filter((v) => v !== t));
+  const suggestions = TAG_SUGGESTIONS.filter((t) => !has(t));
+
+  return (
+    <div className="tags-editor">
+      <div className="tags-chips">
+        {value.map((t) => (
+          <span key={t} className="tag-chip">
+            {t}
+            <button
+              type="button"
+              onClick={() => remove(t)}
+              aria-label={`Remove ${t}`}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          className="tags-input"
+          value={draft}
+          placeholder={value.length ? "add a tag…" : "e.g. Compilation"}
+          spellCheck={false}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add(draft);
+            } else if (e.key === "Backspace" && !draft && value.length) {
+              remove(value[value.length - 1]);
+            }
+          }}
+        />
+      </div>
+      {suggestions.length > 0 && (
+        <div className="tags-suggest">
+          <span className="tags-suggest-label">Suggested:</span>
+          {suggestions.map((t) => (
+            <button
+              key={t}
+              type="button"
+              className="tag-suggest-chip"
+              onClick={() => add(t)}
+            >
+              + {t}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

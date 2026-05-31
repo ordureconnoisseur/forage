@@ -69,14 +69,19 @@ type Config struct {
 	// array of scoring.Rule ({label,pattern,points,reject}). Empty string
 	// = use the built-in defaults. Stored as JSON so the rule-editor UI
 	// round-trips it without a bespoke encoding.
-	ReleaseRules  string
-	PollInterval  time.Duration
-	OrphanAfter   time.Duration
-	CacheRefresh  time.Duration
-	LogLevel      slog.Level
-	AllowedOrigin string
-	// AdminToken gates /config* endpoints when set. Boot-only; not
-	// editable via the UI (that would let the UI lock itself out).
+	ReleaseRules string
+	// ExcludedSceneTags is a list of StashDB tag names whose scenes are
+	// dropped from the missing-scenes gap analysis (and its counts) —
+	// e.g. "Compilation", "Music Video". Matched case-insensitively.
+	// Empty = no filtering.
+	ExcludedSceneTags []string
+	PollInterval      time.Duration
+	OrphanAfter       time.Duration
+	CacheRefresh      time.Duration
+	LogLevel          slog.Level
+	AllowedOrigin     string
+	// AdminToken gates every API route except / and /healthz when set
+	// (UI-managed via config.json, or FORAGER_ADMIN_TOKEN). Empty = open.
 	AdminToken string
 }
 
@@ -132,6 +137,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
 	b.ReleaseRules = b.envOr("FORAGER_RELEASE_RULES", "", "releaseRules")
+	b.ExcludedSceneTags = parseCSVStrings(b.envOr("FORAGER_EXCLUDED_SCENE_TAGS", "", "excludedSceneTags"))
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -222,6 +228,14 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
 	out.ReleaseRules = str("releaseRules", stored.ReleaseRules, b.ReleaseRules, "")
+	if stored.ExcludedSceneTags != nil {
+		out.ExcludedSceneTags = append([]string(nil), (*stored.ExcludedSceneTags)...)
+		src["excludedSceneTags"] = SourceJSON
+	} else if b.set["excludedSceneTags"] {
+		src["excludedSceneTags"] = SourceEnv
+	} else {
+		src["excludedSceneTags"] = SourceDefault
+	}
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
@@ -330,6 +344,21 @@ func parseCSVInts(s string) []int {
 			continue
 		}
 		out = append(out, n)
+	}
+	return out
+}
+
+// parseCSVStrings converts "Compilation, Music Video" to a trimmed,
+// empty-dropped []string. Used for the excluded-scene-tags env var.
+func parseCSVStrings(s string) []string {
+	if s == "" {
+		return nil
+	}
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

@@ -657,6 +657,9 @@ export interface ConfigPatch {
   // Release-scoring rules as a JSON array string (ReleaseRule[]). Empty =
   // built-in defaults.
   releaseRules?: string;
+  // StashDB tag names whose scenes are dropped from the missing-scenes
+  // gap analysis (case-insensitive). Empty = no filtering.
+  excludedSceneTags?: string[];
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;

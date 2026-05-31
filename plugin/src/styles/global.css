@@ -4217,3 +4217,80 @@ code.grab-fact-v,
 .setup-link:hover {
   color: var(--accent-bright, #22c55e);
 }
+
+/* ─── Excluded-tags editor (Settings → Scene filtering) ───────────── */
+.tags-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  min-height: 38px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm, 8px);
+  background: rgba(0, 0, 0, 0.25);
+}
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px 3px 10px;
+  border-radius: var(--radius-pill, 999px);
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--text);
+  font-size: 13px;
+}
+.tag-chip button {
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 3px;
+}
+.tag-chip button:hover {
+  color: var(--danger, #f87171);
+}
+.tags-input {
+  flex: 1;
+  min-width: 120px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  padding: 4px 2px;
+}
+.tags-input:focus {
+  outline: none;
+}
+.tags-suggest {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.tags-suggest-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.tag-suggest-chip {
+  padding: 3px 10px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px dashed var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.tag-suggest-chip:hover {
+  color: var(--accent-bright, #22c55e);
+  border-color: rgba(var(--accent-rgb), 0.6);
+}

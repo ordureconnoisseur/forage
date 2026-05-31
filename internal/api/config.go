@@ -66,6 +66,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
 		"packDedupKeep":       {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
 		"releaseRules":        {Value: cfg.ReleaseRules, Source: sources["releaseRules"]},
+		"excludedSceneTags":   {Value: cfg.ExcludedSceneTags, Source: sources["excludedSceneTags"]},
 		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
@@ -240,6 +241,10 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.ReleaseRules != nil {
 		merged.ReleaseRules = patch.ReleaseRules
+	}
+	if patch.ExcludedSceneTags != nil {
+		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)
+		merged.ExcludedSceneTags = &tags
 	}
 	if patch.PollInterval != nil {
 		merged.PollInterval = patch.PollInterval

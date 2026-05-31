@@ -128,6 +128,21 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 	// existing watch.
 	watchStatus := s.watchStatusByScene(r.Context())
 
+	// 4b. Drop scenes carrying a user-excluded StashDB tag (compilations,
+	// PMVs, …) from the gap analysis entirely — they shouldn't clutter the
+	// grid or inflate the owned/missing counts. Build a fresh slice;
+	// `scenes` comes from the memoised filmography cache and must not be
+	// mutated in place.
+	if excluded := excludedTagSet(s.pool.Settings().ExcludedSceneTags); len(excluded) > 0 {
+		kept := make([]stashdb.Scene, 0, len(scenes))
+		for _, sc := range scenes {
+			if !sceneHasExcludedTag(sc, excluded) {
+				kept = append(kept, sc)
+			}
+		}
+		scenes = kept
+	}
+
 	// 5. Diff. Anything in `scenes` whose ID isn't in `ownedSet`. A scene
 	// with an in-flight grab is still "missing" (not in the library yet)
 	// but carries its grab status so the UI can flag it.
@@ -176,6 +191,31 @@ func lookupStashDBPerformerID(ctx context.Context, db *sql.DB, localID string) (
 		return "", nil
 	}
 	return strings.TrimSpace(sid.String), nil
+}
+
+// excludedTagSet lowercases the configured exclude-tag list into a set for
+// case-insensitive membership tests. Returns nil when nothing's excluded.
+func excludedTagSet(tags []string) map[string]bool {
+	if len(tags) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(tags))
+	for _, t := range tags {
+		if t = strings.ToLower(strings.TrimSpace(t)); t != "" {
+			m[t] = true
+		}
+	}
+	return m
+}
+
+// sceneHasExcludedTag reports whether the scene carries any excluded tag.
+func sceneHasExcludedTag(sc stashdb.Scene, excluded map[string]bool) bool {
+	for _, t := range sc.Tags {
+		if excluded[strings.ToLower(t)] {
+			return true
+		}
+	}
+	return false
 }
 
 func toMissingScene(s stashdb.Scene) missingScene {

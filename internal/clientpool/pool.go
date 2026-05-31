@@ -64,6 +64,9 @@ type Settings struct {
 	// PackDedupKeep: "existing" | "pack" | "both" — which copy survives
 	// when a pack scene duplicates one already in the library.
 	PackDedupKeep string
+	// ExcludedSceneTags: StashDB tag names whose scenes are dropped from
+	// the missing-scenes gap analysis (case-insensitive).
+	ExcludedSceneTags []string
 }
 
 // New returns an empty Pool. Reload it before using.
@@ -121,6 +124,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		StashPathMapping:    cfg.StashPathMapping,
 		SabDeleteAfterPlace: cfg.SabDeleteAfterPlace,
 		PackDedupKeep:       cfg.PackDedupKeep,
+		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 	})
 }
 

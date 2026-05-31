@@ -66,6 +66,9 @@ type StoredConfig struct {
 	// ReleaseRules is the release-scoring preference list as a JSON array
 	// string (scoring.Rule[]). Empty = built-in defaults.
 	ReleaseRules *string `json:"releaseRules,omitempty"`
+	// ExcludedSceneTags drops scenes carrying any of these StashDB tag
+	// names from the gap analysis (case-insensitive). nil = no change.
+	ExcludedSceneTags *[]string `json:"excludedSceneTags,omitempty"`
 	// Duration fields are stored as strings ("60s", "6h") so the JSON
 	// stays human-readable and round-trips cleanly through the UI.
 	PollInterval  *string `json:"pollInterval,omitempty"`
@@ -299,6 +302,10 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	if patch.ReleaseRules != nil {
 		base.ReleaseRules = patch.ReleaseRules
 	}
+	if patch.ExcludedSceneTags != nil {
+		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)
+		base.ExcludedSceneTags = &tags
+	}
 	if patch.PollInterval != nil {
 		base.PollInterval = patch.PollInterval
 	}
@@ -322,6 +329,11 @@ func cloneConfig(in StoredConfig) StoredConfig {
 		cats := make([]int, len(*in.ProwlarrCategories))
 		copy(cats, *in.ProwlarrCategories)
 		out.ProwlarrCategories = &cats
+	}
+	if in.ExcludedSceneTags != nil {
+		tags := make([]string, len(*in.ExcludedSceneTags))
+		copy(tags, *in.ExcludedSceneTags)
+		out.ExcludedSceneTags = &tags
 	}
 	return out
 }
