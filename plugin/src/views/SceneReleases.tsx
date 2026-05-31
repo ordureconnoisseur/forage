@@ -114,6 +114,12 @@ export default function SceneReleases({
   // spellings) finds nothing, the user can retry under a specific name a
   // tracker might have used. Null = use the automatic names.
   const [alias, setAlias] = useState<string | null>(null);
+  // Deep search: the default search is LEAN (primary performer × studio +
+  // title — ~2 Prowlarr queries, fast). Deep flips to the full fan-out
+  // (every spelling × studio/year + bare performer). Far more thorough but
+  // many more queries, so it's opt-in for when lean comes up short. The
+  // component is keyed by sceneId in App, so this resets per scene.
+  const [deep, setDeep] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
@@ -127,6 +133,7 @@ export default function SceneReleases({
     fetchSceneReleases(sceneId, {
       performer: performerName,
       alias: alias || undefined,
+      lean: !deep,
     })
       .then((r) => {
         if (cancelled) return;
@@ -143,9 +150,16 @@ export default function SceneReleases({
     return () => {
       cancelled = true;
     };
-  }, [sceneId, performerName, alias]);
+  }, [sceneId, performerName, alias, deep]);
 
-  if (loading) return <div className="empty">Searching for releases…</div>;
+  if (loading)
+    return (
+      <div className="empty">
+        {deep
+          ? "Deep searching all trackers… (this casts a wide net, give it a moment)"
+          : "Searching for releases…"}
+      </div>
+    );
   if (error) return <div className="empty error">Failed to load: {error}</div>;
   if (!data) return null;
 
@@ -236,17 +250,32 @@ export default function SceneReleases({
       <AliasRetry
         active={alias}
         performers={data.scene.performers.map((p) => p.name)}
-        onSearch={(a) => setAlias(a || null)}
+        onSearch={(a) => {
+          setAlias(a || null);
+          // An explicit alias retry means the user is digging — go deep so
+          // the alias is searched across every term, not just the lean pair.
+          if (a) setDeep(true);
+        }}
       />
 
       {verified.length === 0 && unverified.length === 0 ? (
         <div className="empty">
           No releases found{alias ? ` for "${alias}"` : " for this scene"}.
-          {!alias && (
+          {!deep ? (
             <div className="empty-hint">
-              Trackers sometimes list a different name spelling — try
-              searching another alias above.
+              That was a quick search.{" "}
+              <button className="deep-search-btn" onClick={() => setDeep(true)}>
+                Deep search all trackers ↻
+              </button>{" "}
+              to cast a wider net, or try another alias above.
             </div>
+          ) : (
+            !alias && (
+              <div className="empty-hint">
+                Trackers sometimes list a different name spelling — try
+                searching another alias above.
+              </div>
+            )
           )}
         </div>
       ) : (
@@ -263,6 +292,15 @@ export default function SceneReleases({
                 </option>
               ))}
             </select>
+            {!deep && (
+              <button
+                className="deep-search-btn"
+                onClick={() => setDeep(true)}
+                title="Run the full multi-tracker fan-out — slower, but catches releases the quick search misses"
+              >
+                Deep search ↻
+              </button>
+            )}
           </div>
           {verified.length > 0 && (
             <section>

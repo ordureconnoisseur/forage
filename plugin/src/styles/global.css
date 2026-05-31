@@ -826,7 +826,37 @@ button {
 .release-controls {
   display: flex;
   justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
   margin-bottom: 12px;
+}
+/* Deep-search: opt into the full multi-tracker fan-out when the fast
+   (lean) default comes up short. Quiet pill so it doesn't compete with
+   the primary grab buttons. */
+.deep-search-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.deep-search-btn:hover {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.6);
+}
+/* In the empty-state hint it reads as an inline link, not a pill. */
+.empty-hint .deep-search-btn {
+  border: 0;
+  padding: 0;
+  color: var(--accent-bright);
+  text-decoration: underline;
 }
 
 /* Alias-retry: re-run the release search under a different name spelling. */

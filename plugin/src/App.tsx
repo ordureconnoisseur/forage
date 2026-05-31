@@ -315,6 +315,7 @@ export default function App() {
         )}
         {!needsSetup && route.kind === "scene" && (
           <SceneReleases
+            key={route.sceneId}
             sceneId={route.sceneId}
             performerName={route.performerName}
           />
