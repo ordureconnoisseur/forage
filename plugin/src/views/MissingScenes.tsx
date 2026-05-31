@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import {
+  addWatch,
   fetchMissing,
   type MissingResponse,
   type MissingScene,
+  type WatchTarget,
 } from "../api";
 import WatchControl from "../WatchControl";
 
@@ -46,6 +48,10 @@ export default function MissingScenes({
   // navigating. selected holds the chosen StashDB ids.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Bulk-watch: pick a quality for all selected scenes at once.
+  const [watchPicking, setWatchPicking] = useState(false);
+  const [watchBusy, setWatchBusy] = useState(false);
+  const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -88,6 +94,33 @@ export default function MissingScenes({
   const exitSelect = () => {
     setSelecting(false);
     setSelected(new Set());
+    setWatchPicking(false);
+  };
+
+  // Watch every selected scene at one quality target, in parallel.
+  const watchSelected = async (target: WatchTarget) => {
+    setWatchPicking(false);
+    setWatchBusy(true);
+    const chosen = data.missing.filter((s) => selected.has(s.stashdb_id));
+    await Promise.all(
+      chosen.map((s) =>
+        addWatch({
+          stashdb_id: s.stashdb_id,
+          title: s.title,
+          date: s.date,
+          studio: s.studio,
+          image_url: s.image_url,
+          performer_name: data.performer.name,
+          performer_id: data.performer.local_id,
+          target,
+        }).catch(() => {}),
+      ),
+    );
+    setWatchBusy(false);
+    const n = chosen.length;
+    exitSelect();
+    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
+    window.setTimeout(() => setWatchedMsg(null), 3500);
   };
 
   const allIds = data.missing.map((s) => s.stashdb_id);
@@ -160,20 +193,49 @@ export default function MissingScenes({
       )}
       {selecting && (
         <div className="ms-select-bar">
-          <span className="ms-select-count">
-            {selected.size} selected
-          </span>
+          <span className="ms-select-count">{selected.size} selected</span>
+          {watchPicking ? (
+            <div className="ms-watch-picker" role="menu">
+              <span className="ms-watch-picker-label">Watch at:</span>
+              {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
+                (t) => (
+                  <button
+                    key={t}
+                    disabled={watchBusy}
+                    onClick={() => watchSelected(t)}
+                  >
+                    {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
+                  </button>
+                ),
+              )}
+              <button
+                className="ms-watch-cancel"
+                onClick={() => setWatchPicking(false)}
+                aria-label="Cancel"
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <button
+              className="ms-select-watch"
+              disabled={selected.size === 0 || watchBusy}
+              onClick={() => setWatchPicking(true)}
+              title="Watch all selected scenes for releases"
+            >
+              {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
+            </button>
+          )}
           <button
             className="ms-select-grab"
             disabled={selected.size === 0}
-            onClick={() =>
-              onGrabSelected(performerId, Array.from(selected))
-            }
+            onClick={() => onGrabSelected(performerId, Array.from(selected))}
           >
             Grab {selected.size} selected →
           </button>
         </div>
       )}
+      {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
     </div>
   );
 }
