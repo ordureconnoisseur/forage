@@ -239,6 +239,16 @@ func (r *Repo) List(ctx context.Context, status string, limit, offset int) ([]Gr
 		status, limit, offset)
 }
 
+// CountRecentFailed counts grabs that failed at/after `since` (unix). Old
+// failures aren't actionable, so the notification badge only counts recent
+// ones rather than the all-time failed total.
+func (r *Repo) CountRecentFailed(ctx context.Context, since int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM grabs WHERE status = 'failed' AND updated_at >= ?`, since).Scan(&n)
+	return n, err
+}
+
 // Totals returns a status → count map for the UI's top-of-page strip.
 func (r *Repo) Totals(ctx context.Context) (map[string]int, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM grabs GROUP BY status`)

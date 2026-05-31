@@ -16,16 +16,13 @@ import (
 // decides. Notify-only.
 
 const (
-	// watchTickInterval is how often the loop wakes. The batch size is
-	// auto-sized so ALL watching rows are re-checked ~once per 24h, spread
-	// across these ticks (so the watchlist growing doesn't hammer
-	// Prowlarr — same rate-limit discipline as the collection search).
+	// watchTickInterval is how often the loop wakes.
 	watchTickInterval = 30 * time.Minute
-	// watchFullCycle is the target time to re-check every watch once.
-	watchFullCycle = 24 * time.Hour
-	// watchMinBatch / watchMaxBatch bound the auto-sized batch so a tiny
-	// list still progresses and a huge one can't spike Prowlarr.
-	watchMinBatch = 1
+	// watchMaxBatch caps how many watches are re-searched per tick. A lean
+	// search is only ~2 Prowlarr queries, so checking up to this many every
+	// 30 min is trivial load — small watchlists get re-checked every tick
+	// (responsive), and only a large list spreads across ticks (each scene
+	// every ceil(total/8) ticks) to keep Prowlarr load bounded.
 	watchMaxBatch = 8
 )
 
@@ -68,22 +65,15 @@ func (s *Server) watchTick(ctx context.Context) {
 	}
 }
 
-// watchBatchSize spreads the whole watchlist over watchFullCycle: with
-// ticksPerCycle ticks in 24h, each tick should cover total/ticks rows
-// (rounded up), clamped to [min,max].
+// watchBatchSize returns how many watches to re-check this tick: the whole
+// list while it's small (≤ watchMaxBatch — checked every tick), capped at
+// watchMaxBatch once it grows (then each scene is covered every
+// ceil(total/watchMaxBatch) ticks).
 func (s *Server) watchBatchSize(total int) int {
-	ticksPerCycle := int(watchFullCycle / watchTickInterval) // 48
-	if ticksPerCycle < 1 {
-		ticksPerCycle = 1
+	if total > watchMaxBatch {
+		return watchMaxBatch
 	}
-	n := (total + ticksPerCycle - 1) / ticksPerCycle
-	if n < watchMinBatch {
-		n = watchMinBatch
-	}
-	if n > watchMaxBatch {
-		n = watchMaxBatch
-	}
-	return n
+	return total
 }
 
 // checkWatch re-searches one watch and, on a verified release matching the

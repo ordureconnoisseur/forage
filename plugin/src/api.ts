@@ -878,6 +878,20 @@ export function fetchWatches(signal?: AbortSignal): Promise<{ watches: Watch[] }
   return get<{ watches: Watch[] }>("/watches", signal);
 }
 
+// Actionable, current-attention counts for the header bell + Watching-tab
+// badge. (No "new scenes" — discovery isn't an alert.)
+export interface NotificationCounts {
+  watches_available: number;
+  grabs_stalled: number;
+  grabs_failed: number;
+}
+
+export function fetchNotifications(
+  signal?: AbortSignal,
+): Promise<NotificationCounts> {
+  return get<NotificationCounts>("/notifications", signal);
+}
+
 export async function deleteWatch(stashDBID: string): Promise<void> {
   const r = await fetch(foragerBase() + `/watches/${encodeURIComponent(stashDBID)}`, {
     method: "DELETE",

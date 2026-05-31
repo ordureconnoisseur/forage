@@ -136,10 +136,18 @@ func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 }
 
 // CountWatching returns how many rows are still being watched — drives
-// the loop's auto batch sizing (spread all over ~24h).
+// the loop's auto batch sizing.
 func (r *Repo) CountWatching(ctx context.Context) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watches WHERE status = 'watching'`).Scan(&n)
+	return n, err
+}
+
+// CountAvailable returns how many watches have found a release and are
+// ready to grab — the headline notification signal.
+func (r *Repo) CountAvailable(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM watches WHERE status = 'available'`).Scan(&n)
 	return n, err
 }
 

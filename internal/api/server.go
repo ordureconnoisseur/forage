@@ -156,6 +156,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/performers/{id}/packs", s.getPerformerPacks)
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
 		r.Get("/discover", s.getDiscover)
+		r.Get("/notifications", s.getNotifications)
 		r.Get("/config", s.getConfig)
 		r.Post("/config", s.postConfig)
 		r.Post("/config/test/{section}", s.postConfigTest)

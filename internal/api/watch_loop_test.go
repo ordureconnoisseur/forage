@@ -29,15 +29,17 @@ func TestResolutionMatches(t *testing.T) {
 
 func TestWatchBatchSize(t *testing.T) {
 	s := &Server{}
-	// 48 ticks/cycle (24h / 30m). 240 watches → 5/tick (within bounds).
-	if n := s.watchBatchSize(240); n != 5 {
-		t.Errorf("batch(240) = %d, want 5", n)
+	// Small lists are fully checked each tick (responsive).
+	if n := s.watchBatchSize(1); n != 1 {
+		t.Errorf("batch(1) = %d, want 1", n)
 	}
-	// Tiny list still gets at least the min.
-	if n := s.watchBatchSize(1); n < watchMinBatch {
-		t.Errorf("batch(1) = %d, want >= %d", n, watchMinBatch)
+	if n := s.watchBatchSize(8); n != 8 {
+		t.Errorf("batch(8) = %d, want 8 (all checked while ≤ cap)", n)
 	}
-	// Huge list is capped.
+	// Larger lists cap at watchMaxBatch and spread across ticks.
+	if n := s.watchBatchSize(9); n != watchMaxBatch {
+		t.Errorf("batch(9) = %d, want %d (capped)", n, watchMaxBatch)
+	}
 	if n := s.watchBatchSize(100000); n != watchMaxBatch {
 		t.Errorf("batch(huge) = %d, want %d (capped)", n, watchMaxBatch)
 	}

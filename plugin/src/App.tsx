@@ -11,11 +11,14 @@ import Setup from "./views/Setup";
 import Settings from "./views/Settings";
 import AcornIcon from "./AcornIcon";
 import NavIcon from "./NavIcons";
+import NotificationsBell from "./NotificationsBell";
 import {
   fetchHealth,
+  fetchNotifications,
   foragerBase,
   Health,
   mixedContentBlocked,
+  NotificationCounts,
   startCollectionJob,
 } from "./api";
 
@@ -143,6 +146,31 @@ export default function App() {
   const needsSetup =
     !apiURL || !!healthError || health?.unconfigured === true;
 
+  // Poll the actionable-notification counts for the header bell + the
+  // Watching-tab badge. Light (cheap counts), every 45s, only once the
+  // daemon is reachable + configured. Re-runs on route change so acting
+  // on something (grabbing a ready watch) reflects promptly.
+  const [notif, setNotif] = useState<NotificationCounts | null>(null);
+  useEffect(() => {
+    if (!apiURL || needsSetup) {
+      setNotif(null);
+      return;
+    }
+    let cancelled = false;
+    const load = () =>
+      fetchNotifications()
+        .then((n) => {
+          if (!cancelled) setNotif(n);
+        })
+        .catch(() => {});
+    load();
+    const id = window.setInterval(load, 45000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [apiURL, needsSetup, healthNonce, route]);
+
   const goPerformers = () => setHash("#/");
   const goDiscover = () => setHash("#/discover");
   const goWatching = () => setHash("#/watching");
@@ -234,6 +262,11 @@ export default function App() {
           >
             <NavIcon name="watching" />
             Watching
+            {notif && notif.watches_available > 0 && (
+              <span className="nav-badge" title="Ready to grab">
+                {notif.watches_available > 9 ? "9+" : notif.watches_available}
+              </span>
+            )}
           </a>
           <a
             href="#/grabs"
@@ -258,14 +291,23 @@ export default function App() {
             Jobs
           </a>
         </nav>
-        <button
-          className="header-settings"
-          onClick={() => setSettingsOpen(true)}
-          title="Settings"
-          aria-label="Settings"
-        >
-          <GearIcon />
-        </button>
+        <div className="header-right">
+          {!needsSetup && (
+            <NotificationsBell
+              counts={notif}
+              onGoWatching={goWatching}
+              onGoGrabs={goGrabs}
+            />
+          )}
+          <button
+            className="header-settings"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <GearIcon />
+          </button>
+        </div>
       </header>
       {blocked && (
         <div className="banner banner-warn">
