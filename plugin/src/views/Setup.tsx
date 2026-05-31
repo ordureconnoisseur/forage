@@ -1,6 +1,7 @@
 import { useState } from "react";
 import {
   adminToken,
+  ConfigPatch,
   fetchConfig,
   fetchHealth,
   foragerBase,
@@ -16,14 +17,33 @@ import AcornIcon from "../AcornIcon";
 // into the full Settings form. Modelled on Hearth's onboarding: a step
 // state machine with test-before-advance and inline result feedback.
 //
+// The happy path walks every section forage needs to actually grab:
+//   Welcome → [Connect] → Stash+StashDB → Indexer → Download client →
+//   Library → Done
+// Finishing the wizard leaves a daemon that can browse → search → grab
+// without ever opening Settings.
+//
 // forage has two setup layers Hearth doesn't: (1) Connect — point the
 // plugin at the daemon (URL + token if required), browser-side, probed
-// via the public /healthz; (2) Credentials — when /healthz reports the
-// daemon is unconfigured, collect the minimum Stash + StashDB creds and
-// POST them to /config. Step 2 is skipped when the daemon already has
-// credentials (e.g. set via .env).
+// via the public /healthz; this step only shows in dev/cross-origin —
+// standalone serves the app at the same origin so there's nothing to
+// connect to. (2) Credentials onward — POSTed incrementally to /config
+// so a half-finished setup survives a reload.
+//
+// Each config step pre-checks the matching /healthz flag: when a section
+// is already set (e.g. via .env), it shows a green "✓ already configured"
+// and lets the user breeze past with no entry. Otherwise it shows the
+// fields + a Test button that must pass before Continue, plus a subtle
+// "Skip for now" link.
 
-type Step = "welcome" | "connect" | "credentials" | "done";
+type Step =
+  | "welcome"
+  | "connect"
+  | "credentials"
+  | "indexer"
+  | "clients"
+  | "library"
+  | "done";
 type Test =
   | { kind: "idle" }
   | { kind: "testing" }
@@ -38,6 +58,29 @@ function normalizeUrl(raw: string): string {
   if (s === "") return "";
   if (!/^https?:\/\//i.test(s)) s = "https://" + s;
   return s.replace(/\/+$/, "");
+}
+
+// parseCats turns the comma-separated category input into the number[]
+// the daemon expects, dropping anything non-numeric.
+function parseCats(s: string): number[] {
+  return s
+    .split(",")
+    .map((x) => parseInt(x.trim(), 10))
+    .filter((n) => !isNaN(n));
+}
+
+// isFullyConfigured is true when the daemon already has everything the
+// wizard would set — so a reconnect to a fully-provisioned daemon can
+// jump straight to the finish line instead of clicking through every
+// "already configured" screen.
+function isFullyConfigured(h: Health | null): boolean {
+  return (
+    !!h &&
+    !h.unconfigured &&
+    h.prowlarrConfigured &&
+    (h.qbitConfigured || h.sabConfigured) &&
+    h.placerConfigured
+  );
 }
 
 export default function Setup({
@@ -56,7 +99,7 @@ export default function Setup({
   // the wizard once everything's configured.
   onDone: () => void;
   // Escape hatch to the full Settings panel for anything the wizard
-  // doesn't cover (Prowlarr, download clients, advanced).
+  // doesn't cover (release rules, scene filtering, advanced).
   onAdvanced: () => void;
 }) {
   // Jump straight to the relevant step when there's already partial
@@ -75,12 +118,34 @@ export default function Setup({
 
   const [step, setStep] = useState<Step>(initialStep);
 
+  // liveHealth tracks the daemon's configured-state as the wizard makes
+  // changes: seeded from the prop, replaced by the connect probe, and
+  // refetched after each incremental save so the per-step "already
+  // configured ✓" checks reflect what's actually been persisted.
+  const [liveHealth, setLiveHealth] = useState<Health | null>(health);
+
+  // Whether the credentials step belongs in the flow (and the stepper).
+  // Captured from the daemon's initial state and updated by the connect
+  // probe, but NOT after the credentials save — so the dot count stays
+  // stable while the user walks the remaining steps.
+  const [needsCredsStep, setNeedsCredsStep] = useState<boolean>(
+    health ? health.unconfigured : true,
+  );
+
+  async function refreshHealth(): Promise<void> {
+    try {
+      setLiveHealth(await fetchHealth());
+    } catch {
+      // Best-effort — the next step just won't show its "configured ✓"
+      // shortcut, which is harmless (the user can still enter values).
+    }
+  }
+
   // Connect step
   const [url, setUrl] = useState(foragerBase());
   const [token, setToken] = useState(adminToken());
   const [needsToken, setNeedsToken] = useState(!!health?.adminAuthRequired);
   const [connTest, setConnTest] = useState<Test>({ kind: "idle" });
-  const [connHealth, setConnHealth] = useState<Health | null>(health);
 
   // Credentials step
   const [stashUrl, setStashUrl] = useState("");
@@ -91,6 +156,34 @@ export default function Setup({
   const [stashdbTest, setStashdbTest] = useState<Test>({ kind: "idle" });
   const [credErr, setCredErr] = useState<string | null>(null);
   const [savingCreds, setSavingCreds] = useState(false);
+
+  // Indexer step
+  const [prowlarrUrl, setProwlarrUrl] = useState("");
+  const [prowlarrKey, setProwlarrKey] = useState("");
+  const [prowlarrCats, setProwlarrCats] = useState("6000,6010,6020,6030,6040");
+  const [prowlarrTest, setProwlarrTest] = useState<Test>({ kind: "idle" });
+  const [indexerErr, setIndexerErr] = useState<string | null>(null);
+  const [savingIndexer, setSavingIndexer] = useState(false);
+
+  // Download-client step (qBittorrent and/or SABnzbd — either is enough)
+  const [qbitUrl, setQbitUrl] = useState("");
+  const [qbitUser, setQbitUser] = useState("");
+  const [qbitPass, setQbitPass] = useState("");
+  const [qbitCat, setQbitCat] = useState("forager");
+  const [qbitTest, setQbitTest] = useState<Test>({ kind: "idle" });
+  const [sabUrl, setSabUrl] = useState("");
+  const [sabKey, setSabKey] = useState("");
+  const [sabCat, setSabCat] = useState("forager");
+  const [sabTest, setSabTest] = useState<Test>({ kind: "idle" });
+  const [clientsErr, setClientsErr] = useState<string | null>(null);
+  const [savingClients, setSavingClients] = useState(false);
+
+  // Library step
+  const [libraryRoot, setLibraryRoot] = useState("");
+  const [stashPathMapping, setStashPathMapping] = useState("");
+  const [placementTest, setPlacementTest] = useState<Test>({ kind: "idle" });
+  const [libraryErr, setLibraryErr] = useState<string | null>(null);
+  const [savingLibrary, setSavingLibrary] = useState(false);
 
   // ── Connect ──────────────────────────────────────────────────────
   async function testConnect() {
@@ -114,7 +207,8 @@ export default function Setup({
       });
       return;
     }
-    setConnHealth(h);
+    setLiveHealth(h);
+    setNeedsCredsStep(h.unconfigured);
     if (h.adminAuthRequired) {
       setNeedsToken(true);
       if (!token.trim()) {
@@ -143,9 +237,14 @@ export default function Setup({
   }
 
   function connectContinue() {
-    // Skip the credentials step when the daemon is already configured.
-    if (connHealth && !connHealth.unconfigured) {
+    // A daemon that already has everything skips straight to the finish
+    // line. One with stash creds but missing pieces enters at the indexer
+    // step (each step auto-detects what's already set). Otherwise start
+    // from credentials.
+    if (isFullyConfigured(liveHealth)) {
       finish();
+    } else if (liveHealth && !liveHealth.unconfigured) {
+      setStep("indexer");
     } else {
       setStep("credentials");
     }
@@ -205,11 +304,166 @@ export default function Setup({
         );
         return;
       }
-      finish();
+      await refreshHealth();
+      setStep("indexer");
     } catch (e) {
       setCredErr((e as Error).message);
     } finally {
       setSavingCreds(false);
+    }
+  }
+
+  // ── Indexer ──────────────────────────────────────────────────────
+  async function runProwlarrTest() {
+    setProwlarrTest({ kind: "testing" });
+    try {
+      const r = await testSection("prowlarr", {
+        prowlarrUrl,
+        prowlarrApiKey: prowlarrKey,
+        prowlarrCategories: parseCats(prowlarrCats),
+      });
+      setProwlarrTest(
+        r.ok
+          ? { kind: "ok", detail: r.message || "Prowlarr reachable" }
+          : { kind: "err", detail: r.message || "Couldn't reach Prowlarr" },
+      );
+    } catch (e) {
+      setProwlarrTest({ kind: "err", detail: (e as Error).message });
+    }
+  }
+
+  async function saveIndexer() {
+    setSavingIndexer(true);
+    setIndexerErr(null);
+    try {
+      // Only send what the user actually entered, so we don't clobber an
+      // env-set value with an empty string. The Test already validated
+      // these, so force past the save-time re-probe.
+      const patch: ConfigPatch = {};
+      if (prowlarrUrl.trim()) patch.prowlarrUrl = prowlarrUrl.trim();
+      if (prowlarrKey.trim()) patch.prowlarrApiKey = prowlarrKey.trim();
+      const cats = parseCats(prowlarrCats);
+      if (cats.length) patch.prowlarrCategories = cats;
+      const r = await saveConfig(patch, { force: true });
+      if (!r.ok) {
+        setIndexerErr(r.error || "Couldn't save the indexer settings.");
+        return;
+      }
+      await refreshHealth();
+      setStep("clients");
+    } catch (e) {
+      setIndexerErr((e as Error).message);
+    } finally {
+      setSavingIndexer(false);
+    }
+  }
+
+  // ── Download clients ─────────────────────────────────────────────
+  async function runQbitTest() {
+    setQbitTest({ kind: "testing" });
+    try {
+      const r = await testSection("qbit", {
+        qbitUrl,
+        qbitUsername: qbitUser,
+        qbitPassword: qbitPass,
+        qbitCategory: qbitCat,
+      });
+      setQbitTest(
+        r.ok
+          ? { kind: "ok", detail: r.message || "qBittorrent reachable" }
+          : { kind: "err", detail: r.message || "Couldn't reach qBittorrent" },
+      );
+    } catch (e) {
+      setQbitTest({ kind: "err", detail: (e as Error).message });
+    }
+  }
+  async function runSabTest() {
+    setSabTest({ kind: "testing" });
+    try {
+      const r = await testSection("sab", {
+        sabUrl,
+        sabApiKey: sabKey,
+        sabCategory: sabCat,
+      });
+      setSabTest(
+        r.ok
+          ? { kind: "ok", detail: r.message || "SABnzbd reachable" }
+          : { kind: "err", detail: r.message || "Couldn't reach SABnzbd" },
+      );
+    } catch (e) {
+      setSabTest({ kind: "err", detail: (e as Error).message });
+    }
+  }
+
+  async function saveClients() {
+    setSavingClients(true);
+    setClientsErr(null);
+    try {
+      // Save only the client(s) whose test passed — leaving the other's
+      // env/default values untouched.
+      const patch: ConfigPatch = {};
+      if (qbitTest.kind === "ok") {
+        if (qbitUrl.trim()) patch.qbitUrl = qbitUrl.trim();
+        if (qbitUser.trim()) patch.qbitUsername = qbitUser.trim();
+        if (qbitPass.trim()) patch.qbitPassword = qbitPass.trim();
+        if (qbitCat.trim()) patch.qbitCategory = qbitCat.trim();
+      }
+      if (sabTest.kind === "ok") {
+        if (sabUrl.trim()) patch.sabUrl = sabUrl.trim();
+        if (sabKey.trim()) patch.sabApiKey = sabKey.trim();
+        if (sabCat.trim()) patch.sabCategory = sabCat.trim();
+      }
+      const r = await saveConfig(patch, { force: true });
+      if (!r.ok) {
+        setClientsErr(r.error || "Couldn't save the download client.");
+        return;
+      }
+      await refreshHealth();
+      setStep("library");
+    } catch (e) {
+      setClientsErr((e as Error).message);
+    } finally {
+      setSavingClients(false);
+    }
+  }
+
+  // ── Library ──────────────────────────────────────────────────────
+  async function runPlacementTest() {
+    setPlacementTest({ kind: "testing" });
+    try {
+      const r = await testSection("placement", {
+        libraryRoot,
+        ...(stashPathMapping.trim() ? { stashPathMapping } : {}),
+      });
+      setPlacementTest(
+        r.ok
+          ? { kind: "ok", detail: r.message || "Library path is writable" }
+          : { kind: "err", detail: r.message || "Couldn't use that path" },
+      );
+    } catch (e) {
+      setPlacementTest({ kind: "err", detail: (e as Error).message });
+    }
+  }
+
+  async function saveLibrary() {
+    setSavingLibrary(true);
+    setLibraryErr(null);
+    try {
+      const patch: ConfigPatch = {};
+      if (libraryRoot.trim()) patch.libraryRoot = libraryRoot.trim();
+      if (stashPathMapping.trim())
+        patch.stashPathMapping = stashPathMapping.trim();
+      const r = await saveConfig(patch, { force: true });
+      if (!r.ok) {
+        setLibraryErr(r.error || "Couldn't save the library settings.");
+        return;
+      }
+      await refreshHealth();
+      finish();
+    } catch (e) {
+      setLibraryErr((e as Error).message);
+    } finally {
+      setSavingLibrary(false);
     }
   }
 
@@ -227,7 +481,7 @@ export default function Setup({
         {step !== "welcome" && (
           <Stepper
             step={step}
-            needsCreds={!!connHealth?.unconfigured}
+            needsCreds={needsCredsStep}
             sameOrigin={sameOrigin}
           />
         )}
@@ -237,8 +491,8 @@ export default function Setup({
             <AcornIcon className="setup-acorn" />
             <h1>forage</h1>
             <p className="setup-tagline">
-              Performer-driven scene grabbing for Stash. Let's point the plugin
-              at your daemon.
+              Performer-driven scene grabbing for Stash. A few quick steps and
+              you'll be ready to browse, search and grab.
             </p>
             <button
               className="setup-primary"
@@ -312,8 +566,7 @@ export default function Setup({
             <h2>Connect Stash + StashDB</h2>
             <p className="setup-sub">
               forage needs read access to your Stash library and a StashDB API
-              key to know each performer's filmography. You can add Prowlarr and
-              download clients later in Settings.
+              key to know each performer's filmography.
             </p>
 
             <h4 className="setup-subhead">Stash</h4>
@@ -390,7 +643,7 @@ export default function Setup({
                 onClick={() => saveCredentials(false)}
                 disabled={!credsReady || savingCreds}
               >
-                {savingCreds ? "Saving…" : "Finish setup"}
+                {savingCreds ? "Saving…" : "Continue"}
               </button>
               {credErr && (
                 <button
@@ -406,6 +659,291 @@ export default function Setup({
             <button className="setup-link" onClick={onAdvanced}>
               Use advanced settings instead
             </button>
+          </div>
+        )}
+
+        {step === "indexer" && (
+          <div className="setup-step">
+            <h2>Add an indexer</h2>
+            <p className="setup-sub">
+              forage searches your Prowlarr indexers for scene releases. Point
+              it at Prowlarr and choose which categories to search.
+            </p>
+            {liveHealth?.prowlarrConfigured ? (
+              <ConfiguredNotice
+                label="Prowlarr is already configured"
+                onContinue={() => setStep("clients")}
+              />
+            ) : (
+              <>
+                <label className="setup-field">
+                  <span>Prowlarr URL</span>
+                  <input
+                    type="url"
+                    value={prowlarrUrl}
+                    spellCheck={false}
+                    placeholder="http://host.docker.internal:9696"
+                    onChange={(e) => setProwlarrUrl(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>Prowlarr API key</span>
+                  <input
+                    type="password"
+                    value={prowlarrKey}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="Prowlarr → Settings → General → API Key"
+                    onChange={(e) => setProwlarrKey(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>Categories</span>
+                  <input
+                    type="text"
+                    value={prowlarrCats}
+                    spellCheck={false}
+                    placeholder="6000,6010,6020,6030,6040"
+                    onChange={(e) => setProwlarrCats(e.target.value)}
+                  />
+                </label>
+                <div className="setup-inline-test">
+                  <button
+                    className="setup-secondary small"
+                    onClick={runProwlarrTest}
+                    disabled={
+                      !prowlarrUrl.trim() ||
+                      !prowlarrKey.trim() ||
+                      prowlarrTest.kind === "testing"
+                    }
+                  >
+                    Test Prowlarr
+                  </button>
+                  <TestLabel test={prowlarrTest} />
+                </div>
+                {indexerErr && <div className="setup-err">{indexerErr}</div>}
+                <div className="setup-actions">
+                  <button
+                    className="setup-primary"
+                    onClick={saveIndexer}
+                    disabled={prowlarrTest.kind !== "ok" || savingIndexer}
+                  >
+                    {savingIndexer ? "Saving…" : "Continue"}
+                  </button>
+                </div>
+                <button
+                  className="setup-link"
+                  onClick={() => setStep("clients")}
+                >
+                  Skip for now
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {step === "clients" && (
+          <div className="setup-step">
+            <h2>Add a download client</h2>
+            <p className="setup-sub">
+              forage sends grabs to qBittorrent (torrents) or SABnzbd (usenet).
+              Set up whichever you use — one is enough to get started.
+            </p>
+            {liveHealth?.qbitConfigured || liveHealth?.sabConfigured ? (
+              <ConfiguredNotice
+                label={
+                  liveHealth?.qbitConfigured && liveHealth?.sabConfigured
+                    ? "qBittorrent and SABnzbd are already configured"
+                    : liveHealth?.qbitConfigured
+                      ? "qBittorrent is already configured"
+                      : "SABnzbd is already configured"
+                }
+                onContinue={() => setStep("library")}
+              />
+            ) : (
+              <>
+                <h4 className="setup-subhead">qBittorrent</h4>
+                <label className="setup-field">
+                  <span>qBit URL</span>
+                  <input
+                    type="url"
+                    value={qbitUrl}
+                    spellCheck={false}
+                    placeholder="http://host.docker.internal:8083"
+                    onChange={(e) => setQbitUrl(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>qBit username</span>
+                  <input
+                    type="text"
+                    value={qbitUser}
+                    spellCheck={false}
+                    placeholder="leave blank for bypass_local_auth"
+                    onChange={(e) => setQbitUser(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>qBit password</span>
+                  <input
+                    type="password"
+                    value={qbitPass}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="password"
+                    onChange={(e) => setQbitPass(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>qBit category</span>
+                  <input
+                    type="text"
+                    value={qbitCat}
+                    spellCheck={false}
+                    placeholder="forager"
+                    onChange={(e) => setQbitCat(e.target.value)}
+                  />
+                </label>
+                <div className="setup-inline-test">
+                  <button
+                    className="setup-secondary small"
+                    onClick={runQbitTest}
+                    disabled={!qbitUrl.trim() || qbitTest.kind === "testing"}
+                  >
+                    Test qBit
+                  </button>
+                  <TestLabel test={qbitTest} />
+                </div>
+
+                <h4 className="setup-subhead">SABnzbd</h4>
+                <label className="setup-field">
+                  <span>SAB URL</span>
+                  <input
+                    type="url"
+                    value={sabUrl}
+                    spellCheck={false}
+                    placeholder="http://host.docker.internal:8080"
+                    onChange={(e) => setSabUrl(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>SAB API key</span>
+                  <input
+                    type="password"
+                    value={sabKey}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder="SAB → Config → General → API Key"
+                    onChange={(e) => setSabKey(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>SAB category</span>
+                  <input
+                    type="text"
+                    value={sabCat}
+                    spellCheck={false}
+                    placeholder="forager"
+                    onChange={(e) => setSabCat(e.target.value)}
+                  />
+                </label>
+                <div className="setup-inline-test">
+                  <button
+                    className="setup-secondary small"
+                    onClick={runSabTest}
+                    disabled={
+                      !sabUrl.trim() || !sabKey.trim() || sabTest.kind === "testing"
+                    }
+                  >
+                    Test SAB
+                  </button>
+                  <TestLabel test={sabTest} />
+                </div>
+
+                {clientsErr && <div className="setup-err">{clientsErr}</div>}
+                <div className="setup-actions">
+                  <button
+                    className="setup-primary"
+                    onClick={saveClients}
+                    disabled={
+                      (qbitTest.kind !== "ok" && sabTest.kind !== "ok") ||
+                      savingClients
+                    }
+                  >
+                    {savingClients ? "Saving…" : "Continue"}
+                  </button>
+                </div>
+                <button
+                  className="setup-link"
+                  onClick={() => setStep("library")}
+                >
+                  Skip for now
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
+        {step === "library" && (
+          <div className="setup-step">
+            <h2>Choose your library</h2>
+            <p className="setup-sub">
+              Where forage places finished downloads — a path inside the forage
+              container, on the same filesystem as your download client's
+              complete dir so it can hardlink.
+            </p>
+            {liveHealth?.placerConfigured ? (
+              <ConfiguredNotice
+                label="Library placement is already configured"
+                onContinue={finish}
+              />
+            ) : (
+              <>
+                <label className="setup-field">
+                  <span>Library root</span>
+                  <input
+                    type="text"
+                    value={libraryRoot}
+                    spellCheck={false}
+                    placeholder="/data/media/library"
+                    onChange={(e) => setLibraryRoot(e.target.value)}
+                  />
+                </label>
+                <label className="setup-field">
+                  <span>Stash path mapping (optional)</span>
+                  <input
+                    type="text"
+                    value={stashPathMapping}
+                    spellCheck={false}
+                    placeholder="/data/media/Media:Z:\Media"
+                    onChange={(e) => setStashPathMapping(e.target.value)}
+                  />
+                </label>
+                <div className="setup-inline-test">
+                  <button
+                    className="setup-secondary small"
+                    onClick={runPlacementTest}
+                    disabled={!libraryRoot.trim() || placementTest.kind === "testing"}
+                  >
+                    Test library
+                  </button>
+                  <TestLabel test={placementTest} />
+                </div>
+                {libraryErr && <div className="setup-err">{libraryErr}</div>}
+                <div className="setup-actions">
+                  <button
+                    className="setup-primary"
+                    onClick={saveLibrary}
+                    disabled={placementTest.kind !== "ok" || savingLibrary}
+                  >
+                    {savingLibrary ? "Saving…" : "Finish setup"}
+                  </button>
+                </div>
+                <button className="setup-link" onClick={finish}>
+                  Skip for now
+                </button>
+              </>
+            )}
           </div>
         )}
 
@@ -438,13 +976,13 @@ function Stepper({
   needsCreds: boolean;
   sameOrigin: boolean;
 }) {
-  // welcome isn't a dot; show connect → (credentials) → done. Same-origin
-  // drops the connect step (the daemon is serving us).
-  const steps: Step[] = sameOrigin
-    ? ["credentials", "done"]
-    : needsCreds
-      ? ["connect", "credentials", "done"]
-      : ["connect", "done"];
+  // welcome isn't a dot. Same-origin drops the connect step (the daemon
+  // is serving us); the credentials dot only shows when creds are still
+  // needed. Indexer → clients → library → done always follow.
+  const steps: Step[] = [];
+  if (!sameOrigin) steps.push("connect");
+  if (needsCreds) steps.push("credentials");
+  steps.push("indexer", "clients", "library", "done");
   return (
     <div className="setup-stepper" aria-hidden="true">
       {steps.map((s) => (
@@ -454,6 +992,28 @@ function Stepper({
         />
       ))}
     </div>
+  );
+}
+
+// ConfiguredNotice is the "breeze past" state for a step whose section the
+// daemon already has set (e.g. via .env) — a green confirmation plus a
+// plain Continue, no fields to fill.
+function ConfiguredNotice({
+  label,
+  onContinue,
+}: {
+  label: string;
+  onContinue: () => void;
+}) {
+  return (
+    <>
+      <div className="setup-test ok">✓ {label}</div>
+      <div className="setup-actions">
+        <button className="setup-primary" onClick={onContinue}>
+          Continue
+        </button>
+      </div>
+    </>
   );
 }
 
