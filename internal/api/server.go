@@ -115,37 +115,47 @@ func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	r.Use(s.corsMiddleware)
+
+	// Public, unauthenticated routes. /healthz must stay open so the
+	// plugin can probe reachability and read adminAuthRequired (to know
+	// whether to prompt for a token) before any token is entered. The
+	// served UI bundle isn't sensitive — it's the public plugin assets,
+	// and the API calls it makes carry the token like any other client.
 	r.Get("/", s.serveUI)
 	r.Get("/healthz", s.healthz)
-	r.Get("/performers", s.getPerformers)
-	r.Post("/refresh", s.postRefresh)
-	r.Post("/match", s.postMatch)
-	r.Get("/search", s.getSearch)
-	r.Post("/grab", s.postGrab)
-	r.Post("/grab/torrent", s.postGrabTorrent)
-	r.Post("/grab/torrent/inspect", s.postGrabTorrentInspect)
-	r.Get("/grabs", s.getGrabs)
-	r.Get("/grabs/{id}/detail", s.getGrabDetail)
-	r.Post("/grabs/{id}/match", s.postGrabMatch)
-	r.Delete("/grabs/{id}", s.deleteGrab)
-	r.Post("/jobs", s.postCollectionJob)
-	r.Get("/jobs", s.getCollectionJobs)
-	r.Get("/jobs/{id}", s.getCollectionJobDetail)
-	r.Post("/jobs/{id}/grab", s.postCollectionJobGrab)
-	r.Delete("/jobs/{id}", s.deleteCollectionJob)
-	r.Post("/watches", s.postWatch)
-	r.Get("/watches", s.getWatches)
-	r.Delete("/watches/{id}", s.deleteWatch)
-	r.Post("/watches/{id}/grab", s.postWatchGrab)
-	r.Get("/missing-scenes", s.getMissingScenes)
-	r.Get("/performers/{id}/packs", s.getPerformerPacks)
-	r.Get("/scenes/{id}/releases", s.getSceneReleases)
-	r.Get("/discover", s.getDiscover)
 
-	// /config routes guarded by optional Bearer-token middleware. The
-	// middleware is a no-op when FORAGER_ADMIN_TOKEN is unset.
+	// Everything else — all data and action routes — is gated by the
+	// optional admin token. The middleware is a no-op when
+	// FORAGER_ADMIN_TOKEN is unset (the common private-network case); when
+	// set, every route below requires a matching Bearer token. CORS
+	// preflight (OPTIONS) is answered by corsMiddleware before this runs,
+	// so browsers aren't blocked.
 	r.Group(func(r chi.Router) {
 		r.Use(s.adminAuthMiddleware)
+		r.Get("/performers", s.getPerformers)
+		r.Post("/refresh", s.postRefresh)
+		r.Post("/match", s.postMatch)
+		r.Get("/search", s.getSearch)
+		r.Post("/grab", s.postGrab)
+		r.Post("/grab/torrent", s.postGrabTorrent)
+		r.Post("/grab/torrent/inspect", s.postGrabTorrentInspect)
+		r.Get("/grabs", s.getGrabs)
+		r.Get("/grabs/{id}/detail", s.getGrabDetail)
+		r.Post("/grabs/{id}/match", s.postGrabMatch)
+		r.Delete("/grabs/{id}", s.deleteGrab)
+		r.Post("/jobs", s.postCollectionJob)
+		r.Get("/jobs", s.getCollectionJobs)
+		r.Get("/jobs/{id}", s.getCollectionJobDetail)
+		r.Post("/jobs/{id}/grab", s.postCollectionJobGrab)
+		r.Delete("/jobs/{id}", s.deleteCollectionJob)
+		r.Post("/watches", s.postWatch)
+		r.Get("/watches", s.getWatches)
+		r.Delete("/watches/{id}", s.deleteWatch)
+		r.Post("/watches/{id}/grab", s.postWatchGrab)
+		r.Get("/missing-scenes", s.getMissingScenes)
+		r.Get("/performers/{id}/packs", s.getPerformerPacks)
+		r.Get("/scenes/{id}/releases", s.getSceneReleases)
+		r.Get("/discover", s.getDiscover)
 		r.Get("/config", s.getConfig)
 		r.Post("/config", s.postConfig)
 		r.Post("/config/test/{section}", s.postConfigTest)

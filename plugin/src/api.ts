@@ -47,7 +47,10 @@ export function mixedContentBlocked(): boolean {
 }
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(foragerBase() + path, { signal });
+  const r = await fetch(foragerBase() + path, {
+    signal,
+    headers: authHeaders(),
+  });
   if (!r.ok) {
     const e = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(e.error || `HTTP ${r.status}`);
@@ -58,7 +61,7 @@ async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
 async function postJSON<T>(path: string, body: unknown): Promise<T> {
   const r = await fetch(foragerBase() + path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
   });
   if (!r.ok) {
@@ -381,6 +384,7 @@ export async function grabTorrentFile(
   if (name) fd.append("name", name);
   const r = await fetch(foragerBase() + "/grab/torrent", {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!r.ok) {
@@ -416,6 +420,7 @@ export async function inspectTorrentFile(file: File): Promise<TorrentInspect> {
   fd.append("torrent", file);
   const r = await fetch(foragerBase() + "/grab/torrent/inspect", {
     method: "POST",
+    headers: authHeaders(),
     body: fd,
   });
   if (!r.ok) {
@@ -544,7 +549,10 @@ export interface DeleteGrabResult {
 }
 
 export async function deleteGrab(id: number): Promise<DeleteGrabResult> {
-  const r = await fetch(foragerBase() + `/grabs/${id}`, { method: "DELETE" });
+  const r = await fetch(foragerBase() + `/grabs/${id}`, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
   if (!r.ok) {
     const e = await r.json().catch(() => ({ error: r.statusText }));
     throw new Error(e.error || `HTTP ${r.status}`);
@@ -789,6 +797,7 @@ export function fetchCollectionJobs(
 export async function cancelCollectionJob(id: string): Promise<void> {
   const r = await fetch(foragerBase() + `/jobs/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!r.ok) {
     const e = await r.json().catch(() => ({ error: r.statusText }));
@@ -861,6 +870,7 @@ export function fetchWatches(signal?: AbortSignal): Promise<{ watches: Watch[] }
 export async function deleteWatch(stashDBID: string): Promise<void> {
   const r = await fetch(foragerBase() + `/watches/${encodeURIComponent(stashDBID)}`, {
     method: "DELETE",
+    headers: authHeaders(),
   });
   if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
 }
