@@ -4656,3 +4656,20 @@ code.grab-fact-v,
   border: 1px solid rgba(120, 145, 175, 0.4);
   color: #aebfd4;
 }
+
+/* Place-failing badge — downloaded but can't get into the library.
+   Same pill family as ADOPTED/STALLED, danger-toned (the file's stuck). */
+.grab-placefail-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(248, 113, 113, 0.13);
+  border: 1px solid rgba(248, 113, 113, 0.4);
+  color: #f3a3a3;
+}

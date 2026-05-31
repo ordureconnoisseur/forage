@@ -798,6 +798,14 @@ function GrabRow({
               STALLED
             </span>
           )}
+          {g.place_failing && (
+            <span
+              className="grab-placefail-badge"
+              title="Downloaded, but can't place it into the library (check the place error below — permission / mount / path). Still retrying."
+            >
+              PLACE FAILING
+            </span>
+          )}
           {g.kind === "pack" && (
             <span className="grab-pack-badge" title="Multi-scene pack">
               <PackGlyph />

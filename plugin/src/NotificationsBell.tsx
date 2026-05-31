@@ -18,9 +18,14 @@ export default function NotificationsBell({
   const c = counts ?? {
     watches_available: 0,
     grabs_stalled: 0,
+    grabs_place_failing: 0,
     grabs_failed: 0,
   };
-  const total = c.watches_available + c.grabs_stalled + c.grabs_failed;
+  const total =
+    c.watches_available +
+    c.grabs_stalled +
+    c.grabs_place_failing +
+    c.grabs_failed;
 
   const items: {
     key: string;
@@ -40,6 +45,13 @@ export default function NotificationsBell({
       key: "stalled",
       tone: "amber",
       label: `${c.grabs_stalled} stalled download${c.grabs_stalled > 1 ? "s" : ""}`,
+      go: onGoGrabs,
+    });
+  if (c.grabs_place_failing > 0)
+    items.push({
+      key: "place",
+      tone: "danger",
+      label: `${c.grabs_place_failing} can't place into library`,
       go: onGoGrabs,
     });
   if (c.grabs_failed > 0)

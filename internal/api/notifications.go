@@ -9,9 +9,10 @@ import (
 // header bell + Watching-tab badge surface. Deliberately NOT "new scenes"
 // — discovery is browse-when-you-like (the Discover tab), not an alert.
 type notificationCounts struct {
-	WatchesAvailable int `json:"watches_available"` // watches that found a release, ready to grab
-	GrabsStalled     int `json:"grabs_stalled"`     // downloads stuck with no progress
-	GrabsFailed      int `json:"grabs_failed"`      // recently-failed grabs (not all-time)
+	WatchesAvailable  int `json:"watches_available"`   // watches that found a release, ready to grab
+	GrabsStalled      int `json:"grabs_stalled"`       // downloads stuck with no progress
+	GrabsPlaceFailing int `json:"grabs_place_failing"` // downloaded but can't get into the library
+	GrabsFailed       int `json:"grabs_failed"`        // recently-failed grabs (not all-time)
 }
 
 // failedNotifyWindow bounds the "failed" count to recent failures — an
@@ -37,6 +38,15 @@ func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
 			for _, g := range dl {
 				if isStalled(g) {
 					out.GrabsStalled++
+				}
+			}
+		}
+		// Placement-failing: downloaded grabs stuck at "completed" with a
+		// persistent place_error.
+		if comp, err := s.grabs.List(r.Context(), "completed", 200, 0); err == nil {
+			for _, g := range comp {
+				if isPlaceFailing(g) {
+					out.GrabsPlaceFailing++
 				}
 			}
 		}

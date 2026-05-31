@@ -17,6 +17,13 @@ import (
 // another release).
 const stalledAfter = 30 * time.Minute
 
+// placeFailingAfter is how long a downloaded grab can keep failing to
+// place into the library (status "completed" with a place_error, retried
+// each poll) before it's surfaced as stuck. The poller keeps retrying
+// regardless — this only flags it so a persistent permission/mount/path
+// problem doesn't fail silently.
+const placeFailingAfter = 10 * time.Minute
+
 // grabProgress is live download state for an in-flight grab, pulled
 // fresh from the download client on each /grabs poll.
 type grabProgress struct {
@@ -51,8 +58,12 @@ type grabOut struct {
 	// to qBit directly (under the forager category), rather than grabbed
 	// through forage. Derived: such grabs carry an info-hash but no
 	// download URL (there was no Prowlarr fetch).
-	Adopted bool   `json:"adopted,omitempty"`
-	Reason  string `json:"reason,omitempty"`
+	Adopted bool `json:"adopted,omitempty"`
+	// PlaceFailing flags a downloaded grab whose placement keeps failing
+	// (status completed + place_error, past placeFailingAfter) — the file
+	// is downloaded but can't get into the library.
+	PlaceFailing bool   `json:"place_failing,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 	PerformerName       string        `json:"performer_name,omitempty"`
 	PlacedPath          string        `json:"placed_path,omitempty"`
 	PlaceError          string        `json:"place_error,omitempty"`
@@ -89,6 +100,15 @@ func isStalled(g grabs.Grab) bool {
 		base = g.GrabbedAt
 	}
 	return base > 0 && time.Since(time.Unix(base, 0)) > stalledAfter
+}
+
+// isPlaceFailing reports whether a downloaded grab has been unable to
+// place into the library for a while (status completed + a place_error,
+// past placeFailingAfter). The poller keeps retrying; this just surfaces
+// a persistent placement problem.
+func isPlaceFailing(g grabs.Grab) bool {
+	return g.Status == "completed" && g.PlaceError != "" &&
+		g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > placeFailingAfter
 }
 
 // getGrabs returns the most-recent grabs with status totals for the
@@ -134,6 +154,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			Status:              g.Status,
 			Stalled:             isStalled(g),
 			Adopted:             g.DownloadURL == "" && g.ClientID != "",
+			PlaceFailing:        isPlaceFailing(g),
 			Reason:              g.Reason,
 			PerformerName:       g.PerformerName,
 			PlacedPath:          g.PlacedPath,

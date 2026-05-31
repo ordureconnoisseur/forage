@@ -474,6 +474,9 @@ export interface Grab {
   // True when forage adopted this from a torrent added to qBit directly
   // (forager category), rather than grabbing it through forage.
   adopted?: boolean;
+  // True when the download finished but placement into the library keeps
+  // failing (permission / mount / path issue).
+  place_failing?: boolean;
   reason?: string;
   performer_name?: string;
   placed_path?: string;
@@ -893,6 +896,7 @@ export function fetchWatches(signal?: AbortSignal): Promise<{ watches: Watch[] }
 export interface NotificationCounts {
   watches_available: number;
   grabs_stalled: number;
+  grabs_place_failing: number;
   grabs_failed: number;
 }
 
