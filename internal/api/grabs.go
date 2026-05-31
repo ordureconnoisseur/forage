@@ -37,19 +37,19 @@ type grabProgress struct {
 const qbitEtaUnknown = 8640000
 
 type grabOut struct {
-	ID                  int64         `json:"id"`
-	PredictedStashDBID  string        `json:"predicted_stashdb_id,omitempty"`
-	PredictedConfidence float64       `json:"predicted_confidence,omitempty"`
-	ActualStashDBID     string        `json:"actual_stashdb_id,omitempty"`
-	ReleaseTitle        string        `json:"release_title"`
-	ReleaseSize         int64         `json:"release_size,omitempty"`
-	ReleaseIndexer      string        `json:"release_indexer,omitempty"`
-	DownloadURL         string        `json:"download_url,omitempty"`
-	Client              string        `json:"client,omitempty"`
-	ClientID            string        `json:"client_id,omitempty"`
-	ClientName          string        `json:"client_name,omitempty"`
-	Category            string        `json:"category,omitempty"`
-	Status              string        `json:"status"`
+	ID                  int64   `json:"id"`
+	PredictedStashDBID  string  `json:"predicted_stashdb_id,omitempty"`
+	PredictedConfidence float64 `json:"predicted_confidence,omitempty"`
+	ActualStashDBID     string  `json:"actual_stashdb_id,omitempty"`
+	ReleaseTitle        string  `json:"release_title"`
+	ReleaseSize         int64   `json:"release_size,omitempty"`
+	ReleaseIndexer      string  `json:"release_indexer,omitempty"`
+	DownloadURL         string  `json:"download_url,omitempty"`
+	Client              string  `json:"client,omitempty"`
+	ClientID            string  `json:"client_id,omitempty"`
+	ClientName          string  `json:"client_name,omitempty"`
+	Category            string  `json:"category,omitempty"`
+	Status              string  `json:"status"`
 	// Stalled flags a torrent grab still "downloading" that's made no
 	// progress for stalledAfter — the UI badges it so the user can
 	// abandon it and pick another release.
@@ -62,17 +62,17 @@ type grabOut struct {
 	// PlaceFailing flags a downloaded grab whose placement keeps failing
 	// (status completed + place_error, past placeFailingAfter) — the file
 	// is downloaded but can't get into the library.
-	PlaceFailing bool   `json:"place_failing,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	PerformerName       string        `json:"performer_name,omitempty"`
-	PlacedPath          string        `json:"placed_path,omitempty"`
-	PlaceError          string        `json:"place_error,omitempty"`
-	GrabbedAt           int64         `json:"grabbed_at"`
-	UpdatedAt           int64         `json:"updated_at"`
-	CompletedAt         int64         `json:"completed_at,omitempty"`
-	PlacedAt            int64         `json:"placed_at,omitempty"`
-	ConfirmedAt         int64         `json:"confirmed_at,omitempty"`
-	Progress            *grabProgress `json:"progress,omitempty"`
+	PlaceFailing  bool          `json:"place_failing,omitempty"`
+	Reason        string        `json:"reason,omitempty"`
+	PerformerName string        `json:"performer_name,omitempty"`
+	PlacedPath    string        `json:"placed_path,omitempty"`
+	PlaceError    string        `json:"place_error,omitempty"`
+	GrabbedAt     int64         `json:"grabbed_at"`
+	UpdatedAt     int64         `json:"updated_at"`
+	CompletedAt   int64         `json:"completed_at,omitempty"`
+	PlacedAt      int64         `json:"placed_at,omitempty"`
+	ConfirmedAt   int64         `json:"confirmed_at,omitempty"`
+	Progress      *grabProgress `json:"progress,omitempty"`
 	// Pack fields — kind is "pack" for performer-pack grabs, with the
 	// progress counters; "single" / omitted otherwise.
 	Kind           string `json:"kind,omitempty"`
