@@ -11,6 +11,8 @@
 package torrentmeta
 
 import (
+	"crypto/sha1"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -109,6 +111,38 @@ func Parse(b []byte) (*Meta, error) {
 		}
 	}
 	return m, nil
+}
+
+// InfoHash returns the v1 info-hash — the hex SHA-1 of the bencoded
+// `info` dict's exact bytes — which is how qBit/libtorrent keys a
+// torrent. Hashing the original bytes (not a re-encode) is essential:
+// re-encoding could reorder keys and change the hash. SHA-1 here is the
+// BitTorrent v1 spec, not a security choice.
+func InfoHash(b []byte) (string, error) {
+	if len(b) == 0 || b[0] != 'd' {
+		return "", errors.New("torrent: not a bencoded dict")
+	}
+	i := 1
+	for i < len(b) && b[i] != 'e' {
+		k, ni, err := decode(b, i, 0)
+		if err != nil {
+			return "", err
+		}
+		kb, ok := k.([]byte)
+		if !ok {
+			return "", errors.New("torrent: dict key not a string")
+		}
+		_, vend, err := decode(b, ni, 0) // span of this key's value
+		if err != nil {
+			return "", err
+		}
+		if string(kb) == "info" {
+			sum := sha1.Sum(b[ni:vend])
+			return hex.EncodeToString(sum[:]), nil
+		}
+		i = vend
+	}
+	return "", errors.New("torrent: no info dict")
 }
 
 // decode is a minimal bencode reader. Returns the parsed value, the

@@ -84,3 +84,21 @@ func TestParseLargeFileSize(t *testing.T) {
 		t.Fatalf("size = %d, want 53687091200", m.TotalSize)
 	}
 }
+
+func TestInfoHash(t *testing.T) {
+	// Top dict wraps a known info dict; the hash is SHA-1 of the info
+	// dict's exact bytes (precomputed). Keys around `info` (announce)
+	// must not affect it.
+	tor := []byte("d8:announce3:foo4:infod6:lengthi12e4:name3:bar12:piece lengthi16e6:pieces0:ee")
+	got, err := InfoHash(tor)
+	if err != nil {
+		t.Fatalf("InfoHash: %v", err)
+	}
+	const want = "0dda68641cb282a91fdfa3a1208ea330044ed441"
+	if got != want {
+		t.Fatalf("InfoHash = %s, want %s", got, want)
+	}
+	if _, err := InfoHash([]byte("<html>nope</html>")); err == nil {
+		t.Fatal("expected error on non-bencode input")
+	}
+}

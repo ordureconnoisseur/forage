@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 type Client struct {
@@ -182,15 +184,19 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 // Returns nil on both fresh-add and duplicate-of-existing scenarios:
 // qBit's response is "Ok." either way, and the user observes the
 // torrent in qBit's UI either way.
-func (c *Client) AddTorrent(ctx context.Context, downloadURL, category string) error {
+// AddTorrent adds a magnet or .torrent URL to qBit. It returns the v1
+// info-hash when known (always for a fetched .torrent; empty for a magnet,
+// whose hash the caller derives from the URI) so the grab can be linked
+// without the poller's recent-additions guess.
+func (c *Client) AddTorrent(ctx context.Context, downloadURL, category string) (string, error) {
 	if downloadURL == "" {
-		return fmt.Errorf("download URL is empty")
+		return "", fmt.Errorf("download URL is empty")
 	}
 	if err := c.Login(ctx); err != nil {
-		return fmt.Errorf("login: %w", err)
+		return "", fmt.Errorf("login: %w", err)
 	}
 	if strings.HasPrefix(downloadURL, "magnet:") {
-		return c.addByURLs(ctx, downloadURL, category)
+		return "", c.addByURLs(ctx, downloadURL, category)
 	}
 	return c.addByFetchedFile(ctx, downloadURL, category)
 }
@@ -266,20 +272,20 @@ func looksLikeTorrent(b []byte) bool {
 	return len(t) > 0 && t[0] == 'd' && bytes.Contains(b, []byte("4:info"))
 }
 
-func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category string) error {
+func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category string) (string, error) {
 	// 1. Fetch the .torrent file (or in some cases a redirect to a
 	// magnet URI; we handle both). Retries on a transient stall — the
 	// Prowlarr /download proxy fronts the real tracker, and a cold
 	// Cloudflare challenge / slow indexer often succeeds on a second try.
 	body, err := c.fetchTorrentBytes(ctx, downloadURL)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	// Some indexers reply with a magnet URI in the body rather than a
 	// .torrent file. qBit can take those via the `urls` field directly.
 	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("magnet:")) {
-		return c.addByURLs(ctx, strings.TrimSpace(string(body)), category)
+		return "", c.addByURLs(ctx, strings.TrimSpace(string(body)), category)
 	}
 
 	// Guard: trackers behind a download cap / lapsed session reply 200
@@ -287,8 +293,15 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// that to qBit just yields an opaque "could not parse" — detect it
 	// here and fail with an actionable reason instead.
 	if !looksLikeTorrent(body) {
-		return fmt.Errorf("indexer returned a non-torrent response (HTML/error page) — likely the tracker's download cap or an expired session, not a bad torrent")
+		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page) — likely the tracker's download cap or an expired session, not a bad torrent")
 	}
+
+	// The info-hash (a) lets the grab link to its torrent without the
+	// poller's recent-additions guess, and (b) turns a "duplicate"
+	// refusal into a recoverable success when the torrent's already in
+	// qBit. Best-effort — a parse miss just means we fall back to the
+	// poller's linking.
+	hash, _ := torrentmeta.InfoHash(body)
 
 	// 2. Upload the .torrent bytes as a file.
 	var buf bytes.Buffer
@@ -299,20 +312,28 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	_ = mw.WriteField("paused", "false")
 	fileWriter, err := mw.CreateFormFile("torrents", "download.torrent")
 	if err != nil {
-		return fmt.Errorf("multipart file: %w", err)
+		return "", fmt.Errorf("multipart file: %w", err)
 	}
 	if _, err := fileWriter.Write(body); err != nil {
-		return fmt.Errorf("write torrent body: %w", err)
+		return "", fmt.Errorf("write torrent body: %w", err)
 	}
 	_ = mw.Close()
 	if err := c.postAdd(ctx, &buf, mw.FormDataContentType()); err != nil {
-		// We already confirmed the bytes are a bencoded .torrent above, so
-		// a refusal here isn't "couldn't parse" — qBit/libtorrent declined
-		// an otherwise-valid file (often a private-tracker encoding quirk,
-		// e.g. PornoLab's cp1251 names). Say so, and point at the fix.
-		return fmt.Errorf("qbit declined this torrent — it's a valid .torrent but qbit/libtorrent wouldn't add it (often a tracker encoding quirk); try another release")
+		// qBit refuses a *duplicate* info-hash with "Fails." — but the
+		// torrent is already present, so that's a recoverable success
+		// (the grab links to the existing download), not a failure.
+		if hash != "" {
+			if t, terr := c.TorrentInfo(ctx, hash); terr == nil && t != nil {
+				return hash, nil
+			}
+		}
+		// We confirmed the bytes are a bencoded .torrent above, so this
+		// isn't "couldn't parse" — qBit/libtorrent declined an otherwise-
+		// valid file (often a private-tracker encoding quirk, e.g.
+		// PornoLab's cp1251 names). Say so, and point at the fix.
+		return hash, fmt.Errorf("qbit declined this torrent — it's a valid .torrent but qbit/libtorrent wouldn't add it (often a tracker encoding quirk); try another release")
 	}
-	return nil
+	return hash, nil
 }
 
 // AddTorrentFile uploads raw .torrent bytes (e.g. a file the user

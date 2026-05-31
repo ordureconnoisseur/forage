@@ -189,12 +189,25 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 		s.failGrab(ctx, grabID, "qbit not configured")
 		return
 	}
-	if err := qb.AddTorrent(ctx, downloadURL, category); err != nil {
+	hash, err := qb.AddTorrent(ctx, downloadURL, category)
+	if err != nil {
 		s.log.Error("async torrent add", "release", releaseTitle, "grab_id", grabID, "err", err)
 		s.failGrab(ctx, grabID, "torrent add: "+err.Error())
 		return
 	}
-	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID)
+	// Link the grab to its qBit torrent by info-hash when we have it
+	// (fetched .torrent), so the poller doesn't have to guess via
+	// recent-additions — and a recovered duplicate links straight to the
+	// already-present download instead of being lost.
+	if hash != "" && s.grabs != nil {
+		if g, gerr := s.grabs.Get(ctx, grabID); gerr == nil && g != nil && g.ClientID == "" {
+			g.ClientID = hash
+			if uerr := s.grabs.Update(ctx, *g); uerr != nil {
+				s.log.Warn("link grab hash", "grab_id", grabID, "err", uerr)
+			}
+		}
+	}
+	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash)
 }
 
 // postGrabRetry re-attempts a failed grab using its stored download URL —

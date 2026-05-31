@@ -53,9 +53,11 @@ func main() {
 	}
 
 	log.Info("adding torrent", "url", *add)
-	if err := client.AddTorrent(ctx, *add, cfg.QbitCategory); err != nil {
+	if hash, err := client.AddTorrent(ctx, *add, cfg.QbitCategory); err != nil {
 		log.Error("add failed", "err", err)
 		os.Exit(1)
+	} else {
+		log.Info("added", "hash", hash)
 	}
 	fmt.Println("added — check qBit's UI")
 }
