@@ -325,7 +325,7 @@ func writeYAML(f *os.File, entries []entry) {
 }
 
 // yamlString returns a safely-quoted YAML scalar. Uses single-quoted
-// style (only escape: '' for a literal single quote). Handles the
+// style (only escape: ” for a literal single quote). Handles the
 // common release-name characters (brackets, dots, dashes, spaces) and
 // avoids the YAML 1.2 implicit-type traps double-quoted strings have.
 func yamlString(s string) string {

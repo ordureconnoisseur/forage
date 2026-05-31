@@ -63,9 +63,9 @@ func TestPickRecentSingleCandidate(t *testing.T) {
 // in-memory settle window at a partial count.
 func TestPackScanCoverageOK(t *testing.T) {
 	cases := []struct {
-		name           string
+		name            string
 		found, expected int
-		want           bool
+		want            bool
 	}{
 		{"unknown expected count → no floor", 1, 0, true},
 		{"negative expected treated as unknown", 5, -1, true},

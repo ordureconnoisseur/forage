@@ -331,10 +331,10 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 	var g Grab
 	var (
 		predictedID, releaseIndexer, downloadURL, clientID, clientName, category, actualID, reason sql.NullString
-		performerName, placedPath, placeError                                                       sql.NullString
-		predictedConfidence                                                                         sql.NullFloat64
-		releaseSize, completedAt, placedAt, confirmedAt                                             sql.NullInt64
-		kind                                                                                        sql.NullString
+		performerName, placedPath, placeError                                                      sql.NullString
+		predictedConfidence                                                                        sql.NullFloat64
+		releaseSize, completedAt, placedAt, confirmedAt                                            sql.NullInt64
+		kind                                                                                       sql.NullString
 	)
 	err := rows.Scan(&g.ID,
 		&predictedID, &predictedConfidence, &g.ReleaseTitle,

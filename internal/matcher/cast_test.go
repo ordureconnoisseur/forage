@@ -12,14 +12,14 @@ func TestNameInTokens(t *testing.T) {
 		name string
 		want bool
 	}{
-		{"Lucia Rossi", true},      // contiguous multi-token
-		{"Asteria Jade", true},     // contiguous
-		{"Samantha Reigns", true},  // contiguous
-		{"Mike Adriano", false},    // not named in this release
+		{"Lucia Rossi", true},       // contiguous multi-token
+		{"Asteria Jade", true},      // contiguous
+		{"Samantha Reigns", true},   // contiguous
+		{"Mike Adriano", false},     // not named in this release
 		{"Swallowed Reigns", false}, // both tokens present but far apart, not adjacent
-		{"Jade", true},             // single token, >=4 chars, present
-		{"Sam", false},             // single token <4 chars — too short to trust
-		{"", false},                // empty
+		{"Jade", true},              // single token, >=4 chars, present
+		{"Sam", false},              // single token <4 chars — too short to trust
+		{"", false},                 // empty
 	}
 	for _, c := range cases {
 		if got := nameInTokens(c.name, rel); got != c.want {

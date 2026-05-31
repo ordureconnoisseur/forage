@@ -24,12 +24,12 @@ type strategyResult struct {
 }
 
 type failureRow struct {
-	SceneID    string
-	Basename   string
-	Truth      []string
-	Predicted  []string
-	FalsePos   []string
-	FalseNeg   []string
+	SceneID   string
+	Basename  string
+	Truth     []string
+	Predicted []string
+	FalsePos  []string
+	FalseNeg  []string
 }
 
 func evaluate(s namedStrategy, scenes []stash.LabeledScene, known map[string]bool, haystackFn func(stash.LabeledScene) string) *strategyResult {

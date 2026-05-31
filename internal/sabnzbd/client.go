@@ -86,9 +86,9 @@ func (c *Client) AddURL(ctx context.Context, nzbURL, category string) (string, e
 		return "", err
 	}
 	var resp struct {
-		Status  bool     `json:"status"`
-		NzoIDs  []string `json:"nzo_ids"`
-		ErrMsg  string   `json:"error"`
+		Status bool     `json:"status"`
+		NzoIDs []string `json:"nzo_ids"`
+		ErrMsg string   `json:"error"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return "", fmt.Errorf("decode addurl: %w (body=%s)", err, body)

@@ -39,10 +39,10 @@ type ExtractedDate struct {
 // and `(?:[^0-9]|$)` on the right so partial numeric strings don't
 // match.
 type datePattern struct {
-	rx        *regexp.Regexp
-	label     string
-	twoYY     bool // true → group 1 is 2-digit year that needs disambiguation; emits both YY.MM.DD and DD.MM.YY interpretations
-	yearLast  bool // true → group 3 is the (4-digit) year; group 1 is day. Used by DD.MM.YYYY family.
+	rx       *regexp.Regexp
+	label    string
+	twoYY    bool // true → group 1 is 2-digit year that needs disambiguation; emits both YY.MM.DD and DD.MM.YY interpretations
+	yearLast bool // true → group 3 is the (4-digit) year; group 1 is day. Used by DD.MM.YYYY family.
 }
 
 var datePatterns = []datePattern{
