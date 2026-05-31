@@ -1149,8 +1149,8 @@ func pickRecent(ts []qbit.Torrent, g *grabs.Grab, claimed map[string]bool) *qbit
 	}
 	windowStart := g.GrabbedAt - 120
 	windowEnd := time.Now().Unix() + 120
-	var best *qbit.Torrent
-	bestDelta := int64(1<<62 - 1)
+	// Gather every unclaimed torrent in the time window + category.
+	var cands []*qbit.Torrent
 	for i := range ts {
 		t := &ts[i]
 		if t.AddedOn < windowStart || t.AddedOn > windowEnd {
@@ -1162,14 +1162,67 @@ func pickRecent(ts []qbit.Torrent, g *grabs.Grab, claimed map[string]bool) *qbit
 		if claimed[t.Hash] {
 			continue
 		}
+		cands = append(cands, t)
+	}
+	if len(cands) == 0 {
+		return nil
+	}
+	if len(cands) == 1 {
+		return cands[0]
+	}
+	// Multiple torrents landed in the same window — e.g. several grabs
+	// fired together. Time proximity alone can't tell them apart (and with
+	// equal grab times it effectively coin-flips, which swaps the grabs),
+	// so disambiguate by how well each torrent's name overlaps the grab's
+	// release title, using closest-added time only as the tiebreaker.
+	gTokens := titleTokens(g.ReleaseTitle)
+	var best *qbit.Torrent
+	bestScore := -1
+	bestDelta := int64(1<<62 - 1)
+	for _, t := range cands {
+		score := tokenOverlap(gTokens, titleTokens(t.Name))
 		delta := t.AddedOn - g.GrabbedAt
 		if delta < 0 {
 			delta = -delta
 		}
-		if delta < bestDelta {
-			bestDelta = delta
-			best = t
+		if score > bestScore || (score == bestScore && delta < bestDelta) {
+			best, bestScore, bestDelta = t, score, delta
 		}
 	}
 	return best
+}
+
+// titleTokens lowercases a release/torrent name and splits it into the set
+// of alphanumeric tokens ≥3 chars — enough to drop punctuation and noise
+// words ("of", "my") while keeping discriminating tokens ("bbc", "shower").
+func titleTokens(s string) map[string]bool {
+	out := map[string]bool{}
+	var b strings.Builder
+	flush := func() {
+		if b.Len() >= 3 {
+			out[b.String()] = true
+		}
+		b.Reset()
+	}
+	for _, r := range strings.ToLower(s) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		} else {
+			flush()
+		}
+	}
+	flush()
+	return out
+}
+
+// tokenOverlap counts how many of the grab's title tokens appear in the
+// torrent name's token set — the disambiguation score in pickRecent.
+func tokenOverlap(a, b map[string]bool) int {
+	n := 0
+	for tok := range a {
+		if b[tok] {
+			n++
+		}
+	}
+	return n
 }

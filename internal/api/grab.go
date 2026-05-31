@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"encoding/base32"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -101,9 +104,19 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 		if s.pool.Qbit() == nil {
 			return grabResponse{}, grabError{http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)"}
 		}
+		// A magnet carries its info_hash in the URI (xt=urn:btih:…), so we
+		// can set client_id synchronously and skip the poller's
+		// recent-additions guess entirely. That guess is purely
+		// time-based, so two grabs fired in the same instant could be
+		// linked to each other's torrents (a swap). Pinning the hash up
+		// front removes that risk for magnets; a .torrent fetch (hash not
+		// known until the bytes are parsed) still falls back to the
+		// poller, which now disambiguates by name. See pickRecent.
+		clientID := magnetInfoHash(req.DownloadURL)
 		// Async: insert the queued row, return, fetch + add in background
-		// (Prowlarr-fronted trackers can be slow). Poller links the hash.
-		grabID := s.insertGrab(ctx, req, "qbit", "", settings.QbitCategory, kind)
+		// (Prowlarr-fronted trackers can be slow). Poller links the hash
+		// when we couldn't derive it here.
+		grabID := s.insertGrab(ctx, req, "qbit", clientID, settings.QbitCategory, kind)
 		go s.addTorrentAsync(req.DownloadURL, settings.QbitCategory, req.ReleaseTitle, grabID)
 		s.log.Info("grab queued (async torrent add)",
 			"release", req.ReleaseTitle, "scene_id", req.SceneID,
@@ -180,6 +193,40 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 		return
 	}
 	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID)
+}
+
+// magnetInfoHash extracts the v1 info_hash from a magnet URI, normalised
+// to the lowercase 40-char hex that qBit keys torrents by. Handles both
+// hex (btih:<40 hex>) and base32 (btih:<32 base32>) encodings. Returns ""
+// for non-magnets, v2-only magnets (btmh), or anything malformed — callers
+// then fall back to poller-side linking.
+func magnetInfoHash(downloadURL string) string {
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(downloadURL)), "magnet:") {
+		return ""
+	}
+	u, err := url.Parse(downloadURL)
+	if err != nil {
+		return ""
+	}
+	const prefix = "urn:btih:"
+	for _, xt := range u.Query()["xt"] {
+		if !strings.HasPrefix(xt, prefix) {
+			continue
+		}
+		h := strings.TrimSpace(xt[len(prefix):])
+		switch len(h) {
+		case 40:
+			if _, err := hex.DecodeString(h); err == nil {
+				return strings.ToLower(h)
+			}
+		case 32:
+			b, err := base32.StdEncoding.DecodeString(strings.ToUpper(h))
+			if err == nil && len(b) == 20 {
+				return hex.EncodeToString(b)
+			}
+		}
+	}
+	return ""
 }
 
 // failGrab transitions a grab to failed with a reason. Best-effort.
