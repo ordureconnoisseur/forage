@@ -4684,25 +4684,21 @@ code.grab-fact-v,
   color: #d4a017;
 }
 /* Best pick — the recommended verified, grabbable, top-quality release.
-   Small accent tab pinned to the card's top-right, plus a faint accent
-   ring so the eye lands on it. */
+   A faint accent ring on the card + an inline chip leading the meta line.
+   Inline (not absolute) so the card's overflow:hidden can't clip it. */
 .release.is-best {
   border-color: rgba(var(--accent-rgb), 0.55);
 }
 .release-best {
-  position: absolute;
-  top: -1px;
-  right: 14px;
-  transform: translateY(-50%);
-  z-index: 2;
-  font-size: 9.5px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
   font-weight: 800;
-  letter-spacing: 0.08em;
-  padding: 2px 9px;
+  letter-spacing: 0.04em;
+  padding: 1px 8px;
   border-radius: var(--radius-pill);
   background: var(--accent-bright, #22c55e);
   color: #0a0a0a;
-  box-shadow: 0 0 0 3px var(--surface, #0e0e0e);
 }
 
 /* Bulk "Watch selected" — sits left of the Grab button in the select bar.

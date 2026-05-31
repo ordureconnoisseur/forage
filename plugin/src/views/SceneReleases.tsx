@@ -502,11 +502,6 @@ function ReleaseList({
               "release" + (tier ? " " + tier : "") + (isBest ? " is-best" : "")
             }
           >
-            {isBest && (
-              <span className="release-best" title="Recommended: best quality you can actually download">
-                ★ Best pick
-              </span>
-            )}
             {/* Match meter — the matcher's confidence this release IS the
                 viewed scene, made the left anchor instead of buried text. */}
             <div
@@ -536,6 +531,14 @@ function ReleaseList({
             <div className="release-body">
               <div className="release-title">{r.title}</div>
               <div className="release-meta">
+                {isBest && (
+                  <span
+                    className="release-best"
+                    title="Recommended: best quality you can actually download"
+                  >
+                    ★ Best
+                  </span>
+                )}
                 <ResBadge title={r.title} />
                 <span>{r.indexer}</span>
                 <span>·</span>
