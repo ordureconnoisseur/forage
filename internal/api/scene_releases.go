@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -319,6 +320,15 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string, lean bool) []str
 	return out
 }
 
+// releaseContentKey identifies the same underlying release across queries
+// even when the indexer hands back a different (tokenised) download URL
+// each time: same normalised title + indexer + size + protocol.
+func releaseContentKey(r prowlarr.Release) string {
+	title := strings.ToLower(strings.Join(strings.Fields(r.Title), " "))
+	return title + "|" + strings.ToLower(r.Indexer) + "|" +
+		strconv.FormatInt(r.Size, 10) + "|" + r.Protocol
+}
+
 // grabbable reports whether a release can actually be downloaded right
 // now. A torrent with zero seeders can't; usenet has no seeder notion so
 // it's always considered grabbable.
@@ -419,14 +429,22 @@ func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, s
 				return
 			}
 			for _, rel := range rels {
-				key := rel.GrabURL()
-				if key == "" {
-					key = rel.Title
+				// Dedup by grab URL (cheap, catches exact repeats) AND by a
+				// content key (title+indexer+size+protocol). Trackers like
+				// PornoLab hand back the same torrent with a different
+				// tokenised download URL across queries, so the URL key
+				// alone leaves visible duplicate rows.
+				urlKey := rel.GrabURL()
+				if urlKey == "" {
+					urlKey = rel.Title
 				}
-				if seen[key] {
+				ck := "c|" + releaseContentKey(rel)
+				uk := "u|" + urlKey
+				if seen[uk] || seen[ck] {
 					continue
 				}
-				seen[key] = true
+				seen[uk] = true
+				seen[ck] = true
 				merged = append(merged, rel)
 			}
 		}(term)
