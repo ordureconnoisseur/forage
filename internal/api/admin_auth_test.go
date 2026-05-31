@@ -149,6 +149,35 @@ func TestPostSession(t *testing.T) {
 	}
 }
 
+// TestDeleteSession verifies logout clears the cookie: the response carries
+// a forage_token cookie with a negative MaxAge (expiry in the past), which
+// instructs the browser to delete it. Works regardless of configured token.
+func TestDeleteSession(t *testing.T) {
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
+		store:     store,
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/session", nil)
+	rec := httptest.NewRecorder()
+	s.deleteSession(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	var cleared bool
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Errorf("expected an expiring %s cookie, got none", sessionCookieName)
+	}
+}
+
 // TestEffectiveAdminToken checks the precedence the gate relies on: a
 // non-empty UI-managed (config.json) token overrides the env token; an
 // unset stored token falls through to env.

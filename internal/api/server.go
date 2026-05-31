@@ -126,6 +126,9 @@ func (s *Server) Router() http.Handler {
 	// Establishes the forage_token cookie for <img> auth; self-validates the
 	// posted token, so it's safe to leave outside the gate.
 	r.Post("/session", s.postSession)
+	// Clears the forage_token cookie (logout). Public — it only removes the
+	// caller's own credential, and a locked-out client has no valid token.
+	r.Delete("/session", s.deleteSession)
 
 	// Everything else — all data and action routes — is gated by the
 	// optional admin token. The middleware is a no-op when

@@ -89,3 +89,22 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": true})
 }
+
+// deleteSession clears the forage_token cookie — the logout path. It's
+// HttpOnly, so client JS can't clear it; this overwrites it with an
+// expired cookie. Public + unauthenticated: removing your own browser's
+// credential is harmless, and a locked-out client can't present a valid
+// token anyway. Pairs with the client dropping its stored bearer token.
+func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
+	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+	http.SetCookie(w, &http.Cookie{
+		Name:     sessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   secure,
+		MaxAge:   -1,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
