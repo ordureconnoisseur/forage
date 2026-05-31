@@ -158,8 +158,20 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		if out[i].Rejected != out[j].Rejected {
 			return !out[i].Rejected // non-rejected first
 		}
+		// Deliverability gate: a 0-seeder torrent can't actually be
+		// downloaded, so it sinks below everything grabbable regardless of
+		// quality — otherwise a dead 1080p outranks a healthy 720p and the
+		// top pick stalls.
+		if gi, gj := grabbable(out[i]), grabbable(out[j]); gi != gj {
+			return gi
+		}
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
+		}
+		// Within equal score (same resolution/indexer), the larger file is
+		// the better encode — prefer it over an over-compressed sibling.
+		if out[i].Size != out[j].Size {
+			return out[i].Size > out[j].Size
 		}
 		return out[i].Popularity > out[j].Popularity
 	})
@@ -305,6 +317,13 @@ func sceneSearchTerms(scene *stashdb.Scene, perfNames []string, lean bool) []str
 		out = append(out, c)
 	}
 	return out
+}
+
+// grabbable reports whether a release can actually be downloaded right
+// now. A torrent with zero seeders can't; usenet has no seeder notion so
+// it's always considered grabbable.
+func grabbable(r sceneRelease) bool {
+	return !(r.Protocol == "torrent" && r.Seeders == 0)
 }
 
 // verifyReleases runs the matcher over a set of Prowlarr releases and

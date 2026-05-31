@@ -74,19 +74,43 @@ function releaseKey(r: SceneRelease): string {
   return r.download_url || r.info_url || r.title;
 }
 
+// grabbable: a torrent with zero seeders can't actually be downloaded.
+// Usenet has no seeder notion, so it's always grabbable.
+function grabbable(r: SceneRelease): boolean {
+  return !(r.protocol === "torrent" && r.seeders === 0);
+}
+
+// healthClass tints the seeder/grab count: dead (0 seeders) red, low
+// (≤3, or 0 usenet grabs) amber, otherwise neutral.
+function healthClass(r: SceneRelease): string {
+  if (r.protocol === "usenet") return r.grabs === 0 ? "low" : "";
+  if (r.seeders === 0) return "dead";
+  if (r.seeders <= 3) return "low";
+  return "";
+}
+
 function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
   const out = [...rels];
   out.sort((a, b) => {
+    // Dead torrents sink in the quality-oriented modes (popularity mode
+    // already orders by availability, so leave it pure).
+    if (sort !== "popularity") {
+      const ga = grabbable(a);
+      const gb = grabbable(b);
+      if (ga !== gb) return ga ? -1 : 1;
+    }
     if (sort === "quality") {
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
+      if (b.size !== a.size) return b.size - a.size; // bigger encode wins
       return b.popularity - a.popularity;
     }
     if (sort === "match") {
       if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      // tie on match → prefer higher quality, then availability
+      // tie on match → prefer higher quality, then bitrate, then availability
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
+      if (b.size !== a.size) return b.size - a.size;
       return b.popularity - a.popularity;
     }
     // popularity
@@ -182,6 +206,14 @@ export default function SceneReleases({
     data.releases.filter((r) => !r.verified),
     sort,
   );
+
+  // The recommended grab: the top verified, non-rejected, grabbable
+  // release in the server's (deliverability-aware) order — flagged so you
+  // don't have to compare, regardless of how the list is currently sorted.
+  const best = data.releases.find(
+    (r) => r.verified && !r.rejected && grabbable(r),
+  );
+  const bestKey = best ? releaseKey(best) : null;
 
   // grab queues a release. sceneIdOverride lets the user grab an
   // unverified release AS the scene the matcher actually thinks it is
@@ -331,7 +363,12 @@ export default function SceneReleases({
           {verified.length > 0 && (
             <section>
               <h3 className="section-header">Verified ({verified.length})</h3>
-              <ReleaseList releases={verified} grabs={grabs} onGrab={grab} />
+              <ReleaseList
+                releases={verified}
+                grabs={grabs}
+                onGrab={grab}
+                bestKey={bestKey}
+              />
             </section>
           )}
           {unverified.length > 0 && (
@@ -423,6 +460,7 @@ function ReleaseList({
   releases,
   grabs,
   onGrab,
+  bestKey,
 }: {
   releases: SceneRelease[];
   grabs: Record<string, GrabState>;
@@ -432,6 +470,7 @@ function ReleaseList({
     confOverride?: number,
     force?: boolean,
   ) => void;
+  bestKey?: string | null;
 }) {
   return (
     <ul className="release-list">
@@ -439,6 +478,7 @@ function ReleaseList({
         const state = grabs[releaseKey(r)] || { status: "idle" };
         const queued = state.status === "queued" || state.status === "grabbing";
         const tier = r.verified && r.confidence > 0 ? confTier(r.confidence) : "";
+        const isBest = bestKey != null && releaseKey(r) === bestKey;
         const pct = Math.round(r.confidence * 100);
         const score = r.score ?? 0;
         const scoreClass = r.rejected
@@ -456,7 +496,17 @@ function ReleaseList({
             )
             .join("\n") || undefined;
         return (
-          <li key={releaseKey(r)} className={"release" + (tier ? " " + tier : "")}>
+          <li
+            key={releaseKey(r)}
+            className={
+              "release" + (tier ? " " + tier : "") + (isBest ? " is-best" : "")
+            }
+          >
+            {isBest && (
+              <span className="release-best" title="Recommended: best quality you can actually download">
+                ★ Best pick
+              </span>
+            )}
             {/* Match meter — the matcher's confidence this release IS the
                 viewed scene, made the left anchor instead of buried text. */}
             <div
@@ -493,7 +543,7 @@ function ReleaseList({
                 <span>·</span>
                 <span>{humanSize(r.size)}</span>
                 <span>·</span>
-                <span>
+                <span className={"rel-health " + healthClass(r)}>
                   {r.protocol === "usenet"
                     ? `${r.grabs} grabs`
                     : `${r.seeders} seeders`}

@@ -4673,3 +4673,34 @@ code.grab-fact-v,
   border: 1px solid rgba(248, 113, 113, 0.4);
   color: #f3a3a3;
 }
+
+/* ─── Release ranking cues ───────────────────────────────────────────
+   Health colour on the seeder/grab count + the "best pick" marker. */
+.rel-health.dead {
+  color: var(--danger, #f87171);
+  font-weight: 600;
+}
+.rel-health.low {
+  color: #d4a017;
+}
+/* Best pick — the recommended verified, grabbable, top-quality release.
+   Small accent tab pinned to the card's top-right, plus a faint accent
+   ring so the eye lands on it. */
+.release.is-best {
+  border-color: rgba(var(--accent-rgb), 0.55);
+}
+.release-best {
+  position: absolute;
+  top: -1px;
+  right: 14px;
+  transform: translateY(-50%);
+  z-index: 2;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bright, #22c55e);
+  color: #0a0a0a;
+  box-shadow: 0 0 0 3px var(--surface, #0e0e0e);
+}
