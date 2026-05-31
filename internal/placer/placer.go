@@ -52,6 +52,21 @@ func (p *Placer) LibraryRoot() string {
 	return p.libraryRoot
 }
 
+// FreeSpace returns the bytes available on the filesystem backing the
+// library root — used for a disk-space preflight before a grab. Because
+// placement hardlinks (staging and library share a filesystem in the
+// recommended setup), free space here reflects what the download needs.
+func (p *Placer) FreeSpace() (uint64, error) {
+	if !p.Configured() {
+		return 0, errors.New("placer not configured")
+	}
+	var st syscall.Statfs_t
+	if err := syscall.Statfs(p.libraryRoot, &st); err != nil {
+		return 0, fmt.Errorf("statfs %s: %w", p.libraryRoot, err)
+	}
+	return uint64(st.Bavail) * uint64(st.Bsize), nil
+}
+
 // Place lands the source file (or folder) into
 // <libraryRoot>/<performer>/<basename>. Returns the final path.
 // Idempotent — re-running after a previous success returns the

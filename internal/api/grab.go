@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -35,6 +36,9 @@ type grabRequest struct {
 	// pack confirm path drives identify toward.
 	Kind       string `json:"kind"`
 	VideoCount int    `json:"video_count"`
+	// Force bypasses the disk-space preflight (the user chose to grab
+	// anyway despite the library volume looking too full).
+	Force bool `json:"force,omitempty"`
 }
 
 type grabResponse struct {
@@ -95,6 +99,21 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 	if protocol == "" {
 		protocol = inferProtocol(req.DownloadURL)
 	}
+
+	// Disk-space preflight: refuse a grab that won't fit on the library
+	// volume (hardlink placement means staging shares that filesystem).
+	// Skipped when placement is off or the size is unknown; the user can
+	// override with force.
+	if !req.Force && req.ReleaseSize > 0 {
+		if pl := s.pool.Placer(); pl.Configured() {
+			if free, err := pl.FreeSpace(); err == nil && free > 0 && uint64(req.ReleaseSize) > free {
+				return grabResponse{}, grabError{http.StatusInsufficientStorage,
+					fmt.Sprintf("not enough free space: needs %s, only %s free on the library volume — grab anyway to override",
+						humanBytes(req.ReleaseSize), humanBytes(int64(free)))}
+			}
+		}
+	}
+
 	settings := s.pool.Settings()
 	kind := req.Kind
 	if kind == "" {
@@ -285,6 +304,19 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("grab retry", "id", g.ID, "client", g.Client, "release", g.ReleaseTitle)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// humanBytes formats a byte count as a compact GB/MB string for grab
+// error messages.
+func humanBytes(n int64) string {
+	switch {
+	case n >= 1<<30:
+		return fmt.Sprintf("%.1fGB", float64(n)/(1<<30))
+	case n >= 1<<20:
+		return fmt.Sprintf("%.0fMB", float64(n)/(1<<20))
+	default:
+		return fmt.Sprintf("%dB", n)
+	}
 }
 
 // magnetInfoHash extracts the v1 info_hash from a magnet URI, normalised

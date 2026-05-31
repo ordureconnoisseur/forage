@@ -774,6 +774,16 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		}
 	}
 	if g.ClientID == "" {
+		// Never got linked to a qBit torrent. With .torrent grabs now
+		// pinned to their info-hash at add time (and magnets to their
+		// btih), an unlinked grab past this window means the add itself
+		// never landed — don't leave it queued forever.
+		if g.Status == "queued" && g.GrabbedAt > 0 &&
+			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout {
+			g.Status = "failed"
+			g.Reason = "never linked to a qBit torrent (add likely failed)"
+			return true, "", nil
+		}
 		return dirty, "", nil
 	}
 	t, err := qb.TorrentInfo(ctx, g.ClientID)
@@ -826,6 +836,12 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 // "queued" grab is far less harmful than a false "failed" on a
 // download that's actually in flight.
 const sabRegisterGrace = 5 * time.Minute
+
+// qbitLinkTimeout is how long a qBit grab may sit "queued" without ever
+// linking to a torrent before it's declared failed. Well beyond the 2-min
+// async-add budget, so a slow add still resolves first; a grab still
+// unlinked past it means the add never landed.
+const qbitLinkTimeout = 10 * time.Minute
 
 // adoptionGrace delays adopting a freshly-added qBit torrent, so a
 // torrent added through the forage UI gets linked to its existing grab

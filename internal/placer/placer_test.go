@@ -100,3 +100,17 @@ func TestPlaceDirFresh(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeSpace(t *testing.T) {
+	p := New(t.TempDir(), nil)
+	free, err := p.FreeSpace()
+	if err != nil {
+		t.Fatalf("FreeSpace: %v", err)
+	}
+	if free == 0 {
+		t.Fatal("expected non-zero free space on a real filesystem")
+	}
+	if _, err := New("", nil).FreeSpace(); err == nil {
+		t.Fatal("expected an error from an unconfigured placer")
+	}
+}
