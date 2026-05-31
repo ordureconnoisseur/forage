@@ -37,6 +37,29 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "stashdb_id required")
 		return
 	}
+	// Hydrate display metadata from StashDB when the caller didn't supply
+	// it. The plugin's scene card already passes title/date/studio/image,
+	// so this only fires for bare adds (curl, integrations) — keeping the
+	// Watching tab able to render a thumbnail regardless of entry point.
+	if req.ImageURL == "" {
+		if sdb := s.pool.StashDB(); sdb != nil {
+			if sc, ferr := sdb.FindScene(r.Context(), req.StashDBID); ferr == nil && sc != nil {
+				if req.Title == "" {
+					req.Title = sc.Title
+				}
+				if req.Date == "" {
+					req.Date = sc.Date
+				}
+				if req.Studio == "" && sc.Studio != nil {
+					req.Studio = sc.Studio.Name
+				}
+				if len(sc.Images) > 0 {
+					req.ImageURL = sc.Images[0].URL
+				}
+			}
+		}
+	}
+
 	target := normalizeTarget(req.Target)
 	if err := s.watches.Add(r.Context(), watches.Watch{
 		StashDBID:     req.StashDBID,

@@ -142,6 +142,23 @@ func (r *Repo) CountWatching(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// BackfillMeta fills display metadata (title/date/studio/image) for a
+// watch ONLY where the stored value is empty — so a watch added with just
+// an id (the API, a future "send to forage" integration) can still render
+// itself once the loop has resolved its scene. Never clobbers a value the
+// caller already set.
+func (r *Repo) BackfillMeta(ctx context.Context, stashDBID, title, date, studio, image string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  title       = CASE WHEN COALESCE(title,'')       = '' THEN ? ELSE title END,
+		  date        = CASE WHEN COALESCE(date,'')        = '' THEN ? ELSE date END,
+		  studio_name = CASE WHEN COALESCE(studio_name,'') = '' THEN ? ELSE studio_name END,
+		  image_url   = CASE WHEN COALESCE(image_url,'')   = '' THEN ? ELSE image_url END
+		WHERE stashdb_id = ?`,
+		title, date, studio, image, stashDBID)
+	return err
+}
+
 // MarkAvailable flips a watch to available and records the found release.
 func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer, protocol string, size int64) error {
 	_, err := r.db.ExecContext(ctx, `

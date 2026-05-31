@@ -103,6 +103,22 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	if err != nil || scene == nil {
 		return
 	}
+	// Backfill any display metadata the watch is missing (e.g. it was
+	// added bare via the API) from the scene we just resolved — so the
+	// Watching tab can show a thumbnail/title even for non-card adds.
+	if w.ImageURL == "" || w.Title == "" || w.StudioName == "" {
+		img := ""
+		if len(scene.Images) > 0 {
+			img = scene.Images[0].URL
+		}
+		studio := ""
+		if scene.Studio != nil {
+			studio = scene.Studio.Name
+		}
+		if berr := s.watches.BackfillMeta(ctx, w.StashDBID, scene.Title, scene.Date, studio, img); berr != nil {
+			s.log.Warn("watch backfill meta", "scene", w.StashDBID, "err", berr)
+		}
+	}
 	perfNames := s.scenePerformerNames(ctx, scene, w.PerformerName, "")
 	releases, err := s.searchSceneReleases(ctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, true /*lean*/)
 	if err != nil || len(releases) == 0 {
