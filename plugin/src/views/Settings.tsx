@@ -29,6 +29,7 @@ type SectionKey =
   | "downloads"
   | "library"
   | "releases"
+  | "security"
   | "advanced";
 
 const sensitiveFields = new Set([
@@ -37,7 +38,17 @@ const sensitiveFields = new Set([
   "prowlarrApiKey",
   "qbitPassword",
   "sabApiKey",
+  "adminToken",
 ]);
+
+// randomToken makes a 32-byte (64 hex char) secret with the browser's
+// CSPRNG — same strength class as an *arr API key, generated client-side
+// so it never has to be invented or round-tripped before use.
+function randomToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 interface Props {
   onClose: () => void;
@@ -64,6 +75,7 @@ export default function Settings({ onClose, health }: Props) {
     downloads: false,
     library: false,
     releases: false,
+    security: false,
     advanced: false,
   });
 
@@ -176,15 +188,26 @@ export default function Settings({ onClose, health }: Props) {
     setSaveMsg(null);
     setSaveFailed(false);
     try {
+      // Capture a token change before the patch is cleared. The save
+      // POST authenticates with the CURRENT (old) token; once it
+      // succeeds the daemon requires the new one, so this browser must
+      // adopt it — otherwise its next request would 401. Clearing it
+      // ("") turns auth off and removes the stored token.
+      const tokenChange = patch.adminToken;
       const r = await saveConfig(patch, { force });
       if (r.results) setProbes(r.results);
       if (!r.ok) {
         setSaveFailed(true);
         setSaveMsg(r.error || "save failed");
       } else {
-        // Server reloaded; clear the patch and refetch.
+        if (tokenChange !== undefined) {
+          setAdminToken(tokenChange);
+          setToken(tokenChange); // keep the Connection field in sync
+        }
+        // Server reloaded; clear the patch and refetch (now authenticated
+        // with the new token, if one was set).
         setPatch({});
-        setSaveMsg("saved");
+        setSaveMsg(tokenChange !== undefined ? "saved — token updated" : "saved");
         const fresh = await fetchConfig();
         setData(fresh);
       }
@@ -595,6 +618,47 @@ export default function Settings({ onClose, health }: Props) {
             value={displayValue("releaseRules", data?.fields["releaseRules"])}
             onChange={(json) => setField("releaseRules", json)}
           />
+        </Section>
+
+        <Section
+          title="Security"
+          isOpen={open.security}
+          onToggle={() => setOpen((o) => ({ ...o, security: !o.security }))}
+        >
+          <Field label="Admin token">
+            <div className="token-row">
+              <SecretInput
+                value={displayValue("adminToken", data?.fields["adminToken"])}
+                onChange={(v) => setField("adminToken", v)}
+                placeholder={
+                  hasSecretPlaceholder("adminToken", data?.fields["adminToken"])
+                    ? "•••••••• (set; leave blank to keep)"
+                    : "no token — API is open"
+                }
+              />
+              <button
+                type="button"
+                className="settings-test"
+                onClick={() => setField("adminToken", randomToken())}
+                title="Generate a strong random token"
+              >
+                Generate
+              </button>
+            </div>
+            <SourceBadge field={data?.fields["adminToken"]} />
+          </Field>
+          <p className="settings-tip">
+            A shared secret that every client must send to reach the API —
+            like an *arr API key. While it's blank, anyone who can reach
+            the daemon can browse your library and submit grabs, so set one
+            if forage is reachable beyond a trusted network.{" "}
+            <strong>Generate</strong> → <strong>Save changes</strong> and
+            this browser adopts the new token automatically; other devices
+            enter it under Connection. Clear the field to turn auth off.
+            Recover a lost token from <code>data/config.json</code> on the
+            daemon host. An env <code>FORAGER_ADMIN_TOKEN</code> still
+            applies when this is blank.
+          </p>
         </Section>
 
         <Section

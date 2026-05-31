@@ -10,9 +10,20 @@ import (
 	"strings"
 )
 
+// effectiveAdminToken is the token the gate enforces: the UI-managed
+// config.json value when set, else the env FORAGER_ADMIN_TOKEN. Mirrors
+// Compose's precedence (a non-empty stored value overrides env) without
+// building the full Sources map on every request.
+func (s *Server) effectiveAdminToken() string {
+	if st := s.store.Get().AdminToken; st != nil && *st != "" {
+		return *st
+	}
+	return s.bootstrap.AdminToken
+}
+
 func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		token := s.bootstrap.AdminToken
+		token := s.effectiveAdminToken()
 		if token == "" {
 			next.ServeHTTP(w, r)
 			return

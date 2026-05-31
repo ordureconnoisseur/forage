@@ -661,6 +661,10 @@ export interface ConfigPatch {
   orphanAfter?: string;
   cacheRefresh?: string;
   allowedOrigin?: string;
+  // Shared secret gating every API route. Empty clears it (auth off).
+  // Stored server-side in config.json; the plugin adopts it into
+  // localStorage after a successful save so it keeps authenticating.
+  adminToken?: string;
 }
 
 export interface ProbeResult {

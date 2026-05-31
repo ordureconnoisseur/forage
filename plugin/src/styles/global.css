@@ -1313,6 +1313,16 @@ button {
   display: flex;
   gap: 6px;
 }
+/* Admin-token row: secret input + Generate button on one line. */
+.token-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+  width: 100%;
+}
+.token-row .secret-input {
+  flex: 1;
+}
 .secret-input input {
   flex: 1;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

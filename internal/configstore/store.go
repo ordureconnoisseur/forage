@@ -72,6 +72,10 @@ type StoredConfig struct {
 	OrphanAfter   *string `json:"orphanAfter,omitempty"`
 	CacheRefresh  *string `json:"cacheRefresh,omitempty"`
 	AllowedOrigin *string `json:"allowedOrigin,omitempty"`
+	// AdminToken is the shared secret that gates every API route. Empty
+	// (or absent) = no auth. Stored here so it's UI-manageable; an env
+	// FORAGER_ADMIN_TOKEN still applies when this is unset.
+	AdminToken *string `json:"adminToken,omitempty"`
 }
 
 // Patch is the wire shape POSTed to /config. Identical to StoredConfig
@@ -306,6 +310,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.AllowedOrigin != nil {
 		base.AllowedOrigin = patch.AllowedOrigin
+	}
+	if patch.AdminToken != nil {
+		base.AdminToken = patch.AdminToken
 	}
 }
 

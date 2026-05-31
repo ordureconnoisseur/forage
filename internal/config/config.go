@@ -226,6 +226,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
 	out.AllowedOrigin = str("allowedOrigin", stored.AllowedOrigin, b.AllowedOrigin, "*")
+	out.AdminToken = str("adminToken", stored.AdminToken, b.AdminToken, "")
 	return out, src
 }
 

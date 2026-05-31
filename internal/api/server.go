@@ -311,7 +311,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"placerConfigured":     s.pool.Placer().Configured(),
 		"libraryRoot":          s.pool.Placer().LibraryRoot(),
 		"unconfigured":         !config.IsConfigured(cfg),
-		"adminAuthRequired":    s.bootstrap.AdminToken != "",
+		"adminAuthRequired":    s.effectiveAdminToken() != "",
 	})
 }
 

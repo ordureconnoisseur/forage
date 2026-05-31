@@ -41,6 +41,7 @@ var sensitiveFields = map[string]bool{
 	"prowlarrApiKey": true,
 	"qbitPassword":   true,
 	"sabApiKey":      true,
+	"adminToken":     true,
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -69,6 +70,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
 		"allowedOrigin":       {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
+		"adminToken":          secretField(cfg.AdminToken, sources["adminToken"]),
 	}
 	writeJSON(w, http.StatusOK, configFieldsResponse{
 		Fields: fields,
@@ -250,6 +252,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.AllowedOrigin != nil {
 		merged.AllowedOrigin = patch.AllowedOrigin
+	}
+	if patch.AdminToken != nil {
+		merged.AdminToken = patch.AdminToken
 	}
 	cfg, _ := config.Compose(s.bootstrap, merged)
 	return cfg

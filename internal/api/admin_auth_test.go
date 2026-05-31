@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/configstore"
 )
 
 // TestAdminAuthMiddleware verifies the gate that now fronts every data and
@@ -30,9 +31,16 @@ func TestAdminAuthMiddleware(t *testing.T) {
 		{"set token, missing Bearer prefix → 401", "secret", "secret", http.StatusUnauthorized},
 		{"set token, correct Bearer → reaches handler", "secret", "Bearer secret", http.StatusOK},
 	}
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := &Server{bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: c.token}}}
+			s := &Server{
+				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: c.token}},
+				store:     store,
+			}
 			h := s.adminAuthMiddleware(sentinel)
 			req := httptest.NewRequest(http.MethodGet, "/performers", nil)
 			if c.authHeader != "" {
@@ -42,6 +50,45 @@ func TestAdminAuthMiddleware(t *testing.T) {
 			h.ServeHTTP(rec, req)
 			if rec.Code != c.want {
 				t.Errorf("status = %d, want %d (body=%q)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestEffectiveAdminToken checks the precedence the gate relies on: a
+// non-empty UI-managed (config.json) token overrides the env token; an
+// unset stored token falls through to env.
+func TestEffectiveAdminToken(t *testing.T) {
+	str := func(s string) *string { return &s }
+	cases := []struct {
+		name   string
+		env    string
+		stored *string
+		want   string
+	}{
+		{"neither set", "", nil, ""},
+		{"env only", "env-tok", nil, "env-tok"},
+		{"stored only", "", str("ui-tok"), "ui-tok"},
+		{"stored overrides env", "env-tok", str("ui-tok"), "ui-tok"},
+		{"empty stored falls through to env", "env-tok", str(""), "env-tok"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store, err := configstore.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.stored != nil {
+				if err := store.Set(configstore.Patch{AdminToken: c.stored}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			s := &Server{
+				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: c.env}},
+				store:     store,
+			}
+			if got := s.effectiveAdminToken(); got != c.want {
+				t.Errorf("effectiveAdminToken() = %q, want %q", got, c.want)
 			}
 		})
 	}
