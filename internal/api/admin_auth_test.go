@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
@@ -50,6 +51,99 @@ func TestAdminAuthMiddleware(t *testing.T) {
 			h.ServeHTTP(rec, req)
 			if rec.Code != c.want {
 				t.Errorf("status = %d, want %d (body=%q)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TestAdminAuthCookie verifies the <img>-auth path: the gate accepts the
+// token from the forage_token cookie (which browsers attach to image
+// requests) as well as the Authorization header.
+func TestAdminAuthCookie(t *testing.T) {
+	sentinel := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name   string
+		cookie string
+		want   int
+	}{
+		{"correct cookie reaches handler", "secret", http.StatusOK},
+		{"wrong cookie → 401", "nope", http.StatusUnauthorized},
+		{"empty cookie → 401", "", http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Server{
+				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
+				store:     store,
+			}
+			h := s.adminAuthMiddleware(sentinel)
+			req := httptest.NewRequest(http.MethodGet, "/img/performer/1", nil)
+			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookie})
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != c.want {
+				t.Errorf("status = %d, want %d", rec.Code, c.want)
+			}
+		})
+	}
+}
+
+// TestPostSession verifies the cookie handshake: no token → no-op; correct
+// token → Set-Cookie; wrong token → 401 and no cookie.
+func TestPostSession(t *testing.T) {
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hasCookie := func(rec *httptest.ResponseRecorder) bool {
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == sessionCookieName && c.Value != "" {
+				return true
+			}
+		}
+		return false
+	}
+
+	// No token configured → 200, required:false, no cookie.
+	t.Run("open daemon is a no-op", func(t *testing.T) {
+		s := &Server{store: store}
+		req := httptest.NewRequest(http.MethodPost, "/session", strings.NewReader(`{}`))
+		rec := httptest.NewRecorder()
+		s.postSession(rec, req)
+		if rec.Code != http.StatusOK || hasCookie(rec) {
+			t.Errorf("open daemon: code=%d cookie=%v, want 200 + no cookie", rec.Code, hasCookie(rec))
+		}
+	})
+
+	// Token configured: correct → cookie; wrong → 401, no cookie.
+	for _, c := range []struct {
+		name   string
+		body   string
+		want   int
+		cookie bool
+	}{
+		{"correct token sets cookie", `{"token":"secret"}`, http.StatusOK, true},
+		{"wrong token → 401", `{"token":"nope"}`, http.StatusUnauthorized, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Server{
+				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
+				store:     store,
+			}
+			req := httptest.NewRequest(http.MethodPost, "/session", strings.NewReader(c.body))
+			rec := httptest.NewRecorder()
+			s.postSession(rec, req)
+			if rec.Code != c.want {
+				t.Errorf("code = %d, want %d", rec.Code, c.want)
+			}
+			if hasCookie(rec) != c.cookie {
+				t.Errorf("cookie set = %v, want %v", hasCookie(rec), c.cookie)
 			}
 		})
 	}
