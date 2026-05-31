@@ -2,13 +2,13 @@
 
 **Performer-driven scene grabbing for Stash.**
 
-forage is a [Stash](https://stashapp.cc) plugin backed by a small Go daemon. You browse a performer's StashDB filmography against your own library, find releases for the scenes you're missing, grab them through qBittorrent or SABnzbd, and forage drops the finished files into a per-performer folder — then confirms, by perceptual hash, that what landed is actually what you wanted.
+forage is a self-hosted web app for [Stash](https://stashapp.cc) users, backed by a small Go daemon. You browse a performer's StashDB filmography against your own library, find releases for the scenes you're missing, grab them through qBittorrent or SABnzbd, and forage drops the finished files into a per-performer folder — then confirms, by perceptual hash, that what landed is actually what you wanted. The daemon serves the app at its own URL (like an *arr); an optional Stash plugin adds a launcher button to Stash's navbar.
 
-> **Naming:** *forage* is the product — the plugin and the experience. *forager* is the daemon that backs it (and the name of this repo, the container, and the `FORAGER_*` environment variables). When you read "forager" below, it's the service; "forage" is the thing you click.
+> **Naming:** *forage* is the product — the app and the experience. *forager* is the daemon that backs it (and the name of this repo, the container, and the `FORAGER_*` environment variables). When you read "forager" below, it's the service; "forage" is the thing you open.
 
 ```mermaid
 flowchart LR
-    UI["🌰 Stash plugin (forage)<br/><i>React · Vite single-file bundle</i>"]
+    UI["🌰 forage web app<br/><i>React · served by the daemon at /</i>"]
 
     subgraph Daemon ["forager daemon (Go)"]
         direction TB
@@ -30,7 +30,7 @@ flowchart LR
     Sab[("SABnzbd")]
     Library[/"&lt;library&gt;/&lt;performer&gt;/&lt;file&gt;"/]
 
-    UI <-->|HTTPS + Bearer token| API
+    UI <-->|same-origin · token + cookie| API
 
     Cache <-->|cache sync| Stash
     Cache <-->|cache sync| StashDB
@@ -147,15 +147,15 @@ The performer folder is whichever performer page you grabbed from — predictabl
 
 ### First-run setup
 
-A guided wizard runs on first launch: **Welcome → Connect** (daemon URL, plus an admin token if the daemon requires one, each tested before you continue) **→ Credentials** (Stash + StashDB, shown only if the daemon has no credentials yet) **→ Done**. There's an "advanced settings" escape on every step for Prowlarr / download clients / the rest.
+A guided wizard runs on first launch: **Welcome → Connect** (daemon URL, plus an admin token if the daemon requires one, each tested before you continue) **→ Credentials** (Stash + StashDB, shown only if the daemon has no credentials yet) **→ Done**. When you open forage from the daemon's own URL (the usual case) the **Connect** step is skipped — the app already knows where its daemon is. There's an "advanced settings" escape on every step for Prowlarr / download clients / the rest.
 
 ### Security & access
 
-Every API route except `/` (the UI bundle) and `/healthz` (liveness) is gated by an optional **admin token** — a shared secret, like an *arr API key. Set or generate one in **Settings → Security** (or via `FORAGER_ADMIN_TOKEN`); the plugin then sends it as a Bearer token on every request. While no token is set the API is **open to anyone who can reach it**, so:
+Every API route except `/` (the app), `/healthz` (liveness), and `/session` (cookie handshake) is gated by an optional **admin token** — a shared secret, like an *arr API key. Set or generate one in **Settings → Security** (or via `FORAGER_ADMIN_TOKEN`). The app sends it as a Bearer token on API calls, and `/session` exchanges it for an `HttpOnly` cookie so `<img>` requests (performer portraits, scene screenshots — proxied from your Stash through the daemon) authenticate too, since image loads can't carry a header. This is the same cookie-session model the *arrs use to protect their media-cover routes: when a token is set, **everything including images requires it**. While no token is set the API is **open to anyone who can reach it**, so:
 
 - Keep forager on a trusted network (Tailscale, LAN). Don't expose it to the internet without a token.
-- The token rides in a header, so it's only as private as the transport — put forager behind HTTPS (Tailscale Serve, Cloudflare Tunnel, a reverse proxy). This is also required for the plugin to call it from an HTTPS Stash page (browsers block mixed content).
-- Lock `FORAGER_ALLOWED_ORIGIN` to your Stash origin as defense-in-depth.
+- The token rides in a header/cookie, so it's only as private as the transport — put forager behind HTTPS (Tailscale Serve, Cloudflare Tunnel, a reverse proxy). The app is now the front door, so this matters more than ever.
+- Lock `FORAGER_ALLOWED_ORIGIN` as defense-in-depth.
 
 See [Configuration reference](#configuration-reference) for the token's precedence (UI value overrides env). A lost token can be recovered from `data/config.json` on the daemon host.
 
@@ -214,21 +214,27 @@ docker logs forager     # confirm each client is reached
 
 You should see `stash reachable`, `stashdb reachable`, `prowlarr reachable`, `qbit reachable`, `sab reachable`, `placer configured`, and `listening`.
 
+Then **open forage in a browser at the daemon's URL** — `http://<host>:7979/` directly, or your HTTPS front-end (below). That's the whole app; the first-run wizard takes it from there. No build step, no plugin required.
+
 ### 5. (Optional) HTTPS
 
 If your Stash UI is HTTPS, browsers refuse to call HTTP endpoints from it (mixed content). Front forager with Tailscale Serve, a Cloudflare Tunnel, or a reverse proxy. The compose template includes a Tailscale sidecar example.
 
-## Install — plugin
+## Install — Stash launcher (optional)
+
+forage runs standalone at the daemon's URL — you don't need this. The Stash plugin is just a convenience: it adds a **Forage** button to Stash's navbar that opens your daemon. It ships in each [release](https://github.com/ordureconnoisseur/forager/releases) as `forage-plugin-<version>.zip` (three small files — no app bundle).
+
+To build it yourself:
 
 ```bash
 cd plugin
 npm install
 npm run build
 # Copy these three files into Stash's plugin directory (e.g. <stash-config>/plugins/forage/):
-#   forage.yml  dist/forage.entry.js  dist/index.html
+#   forage.yml  dist/forage.entry.js  dist/launch.html
 ```
 
-Reload plugins in Stash → the **forage** tab appears. Open it and the first-run wizard walks you through pointing it at your daemon. (Or click the gear → set the daemon URL manually.)
+Reload plugins in Stash → a **Forage** button appears in the navbar. Click it: the first time it asks for your daemon URL (saved in the browser), then it redirects there; after that it's a one-click launch.
 
 ---
 
