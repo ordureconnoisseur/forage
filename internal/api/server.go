@@ -142,6 +142,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/grabs", s.getGrabs)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
 		r.Post("/grabs/{id}/match", s.postGrabMatch)
+		r.Post("/grabs/{id}/retry", s.postGrabRetry)
 		r.Delete("/grabs/{id}", s.deleteGrab)
 		r.Post("/jobs", s.postCollectionJob)
 		r.Get("/jobs", s.getCollectionJobs)

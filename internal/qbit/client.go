@@ -257,6 +257,15 @@ func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]b
 	return nil, lastErr
 }
 
+// looksLikeTorrent reports whether the body is a bencoded .torrent (a
+// top-level dict containing an `info` key) rather than the HTML/error page
+// some indexers return when a download is rate-limited or the session has
+// lapsed. Cheap structural check — not a full bencode parse.
+func looksLikeTorrent(b []byte) bool {
+	t := bytes.TrimLeft(b, " \t\r\n")
+	return len(t) > 0 && t[0] == 'd' && bytes.Contains(b, []byte("4:info"))
+}
+
 func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category string) error {
 	// 1. Fetch the .torrent file (or in some cases a redirect to a
 	// magnet URI; we handle both). Retries on a transient stall — the
@@ -271,6 +280,14 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// .torrent file. qBit can take those via the `urls` field directly.
 	if bytes.HasPrefix(bytes.TrimSpace(body), []byte("magnet:")) {
 		return c.addByURLs(ctx, strings.TrimSpace(string(body)), category)
+	}
+
+	// Guard: trackers behind a download cap / lapsed session reply 200
+	// with an HTML error or login page instead of a .torrent. Uploading
+	// that to qBit just yields an opaque "could not parse" — detect it
+	// here and fail with an actionable reason instead.
+	if !looksLikeTorrent(body) {
+		return fmt.Errorf("indexer returned a non-torrent response (HTML/error page) — likely the tracker's download cap or an expired session, not a bad torrent")
 	}
 
 	// 2. Upload the .torrent bytes as a file.

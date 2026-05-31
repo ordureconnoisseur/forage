@@ -19,6 +19,7 @@ import {
   inspectTorrentFile,
   type TorrentInspect,
   matchGrab,
+  retryGrab,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -440,6 +441,10 @@ export default function GrabsList({
                 setNotice(`Matched grab #${g.id} to StashDB`);
                 void refresh();
               }}
+              onRetried={() => {
+                setNotice(`Retrying grab #${g.id}…`);
+                void refresh();
+              }}
               onPickScene={onPickScene}
             />
           ))}
@@ -678,6 +683,7 @@ function GrabRow({
   onToggle,
   onDeleted,
   onMatched,
+  onRetried,
   onPickScene,
 }: {
   g: Grab;
@@ -685,8 +691,22 @@ function GrabRow({
   onToggle: () => void;
   onDeleted: (res: DeleteGrabResult) => void;
   onMatched: () => void;
+  onRetried: () => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
+  const [retrying, setRetrying] = useState(false);
+  const [retryErr, setRetryErr] = useState<string | null>(null);
+  async function handleRetry() {
+    setRetrying(true);
+    setRetryErr(null);
+    try {
+      await retryGrab(g.id);
+      onRetried(); // parent refreshes; row re-renders as queued
+    } catch (e) {
+      setRetryErr((e as Error).message);
+      setRetrying(false);
+    }
+  }
   const [detail, setDetail] = useState<GrabDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -1000,6 +1020,20 @@ function GrabRow({
 
           {/* Action bar */}
           <div className="grab-actions">
+            {/* Retry a failed grab from its stored download URL — for
+                transient failures (a tracker download cap will just fail
+                again; Pick another release is the fix there). */}
+            {g.status === "failed" && (
+              <button
+                className="grab-action retry"
+                onClick={handleRetry}
+                disabled={retrying}
+                title="Re-attempt this release"
+              >
+                {retrying ? "Retrying…" : "Retry ↻"}
+              </button>
+            )}
+            {retryErr && <span className="grab-delete-err">{retryErr}</span>}
             {/* When a grab stalled or didn't land cleanly, jump back to the
                 scene's releases to pick a different one — forage never
                 auto-retries. */}

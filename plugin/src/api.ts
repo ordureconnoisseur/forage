@@ -546,6 +546,11 @@ export function matchGrab(id: number, stashdbId?: string): Promise<MatchResult> 
   );
 }
 
+// retryGrab re-attempts a failed grab from its stored download URL.
+export function retryGrab(id: number): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>(`/grabs/${id}/retry`, {});
+}
+
 export interface DeleteGrabResult {
   ok: boolean;
   removed: string[];

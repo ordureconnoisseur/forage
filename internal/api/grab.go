@@ -8,9 +8,11 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
@@ -193,6 +195,83 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 		return
 	}
 	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID)
+}
+
+// postGrabRetry re-attempts a failed grab using its stored download URL —
+// resets the row to queued and re-runs the add. Good for transient
+// failures (indexer hiccup, network blip); a tracker download cap will
+// just fail again, where "Pick another release" is the real fix.
+func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
+	if s.grabs == nil {
+		writeErr(w, http.StatusServiceUnavailable, "grabs unavailable")
+		return
+	}
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	g, err := s.grabs.Get(r.Context(), id)
+	if err != nil || g == nil {
+		writeErr(w, http.StatusNotFound, "grab not found")
+		return
+	}
+	if g.Status != "failed" {
+		writeErr(w, http.StatusUnprocessableEntity, "only failed grabs can be retried")
+		return
+	}
+	if g.DownloadURL == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "grab has no download URL to retry")
+		return
+	}
+
+	settings := s.pool.Settings()
+	// Reset: clear the prior failure + client link so the poller re-links
+	// a fresh add.
+	g.Status = "queued"
+	g.Reason = "retry requested"
+	g.PlaceError = ""
+	g.ClientID = ""
+
+	switch g.Client {
+	case "qbit":
+		if s.pool.Qbit() == nil {
+			writeErr(w, http.StatusServiceUnavailable, "qbit not configured")
+			return
+		}
+		cat := g.Category
+		if cat == "" {
+			cat = settings.QbitCategory
+		}
+		g.Category = cat
+		g.ClientID = magnetInfoHash(g.DownloadURL) // pin hash for magnets
+		_ = s.grabs.Update(r.Context(), *g)
+		go s.addTorrentAsync(g.DownloadURL, cat, g.ReleaseTitle, g.ID)
+	case "sabnzbd":
+		sb := s.pool.Sab()
+		if sb == nil {
+			writeErr(w, http.StatusServiceUnavailable, "sab not configured")
+			return
+		}
+		cat := g.Category
+		if cat == "" {
+			cat = settings.SabCategory
+		}
+		clientID, aerr := sb.AddURL(r.Context(), g.DownloadURL, cat)
+		if aerr != nil {
+			s.failGrab(r.Context(), g.ID, "retry add: "+aerr.Error())
+			writeErr(w, http.StatusBadGateway, "sabnzbd: "+aerr.Error())
+			return
+		}
+		g.Category = cat
+		g.ClientID = clientID
+		_ = s.grabs.Update(r.Context(), *g)
+	default:
+		writeErr(w, http.StatusUnprocessableEntity, "unknown client; can't retry")
+		return
+	}
+	s.log.Info("grab retry", "id", g.ID, "client", g.Client, "release", g.ReleaseTitle)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 // magnetInfoHash extracts the v1 info_hash from a magnet URI, normalised

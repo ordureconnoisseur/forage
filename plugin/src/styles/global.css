@@ -4474,6 +4474,20 @@ code.grab-fact-v,
 .grab-action.pick-another:hover {
   background: rgba(var(--accent-rgb), 0.28);
 }
+/* Retry — quiet secondary action on a failed grab. */
+.grab-action.retry {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+}
+.grab-action.retry:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.6);
+  color: var(--accent-bright, #22c55e);
+}
+.grab-action.retry:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 
 /* ─── Notification bell + badges ─────────────────────────────────────
    Header bell (matches the gear) with a count badge, opening a small
