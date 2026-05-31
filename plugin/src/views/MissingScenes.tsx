@@ -1,12 +1,10 @@
 import { useEffect, useState } from "react";
 import {
-  addWatch,
-  deleteWatch,
   fetchMissing,
   type MissingResponse,
   type MissingScene,
-  type WatchTarget,
 } from "../api";
+import WatchControl from "../WatchControl";
 
 // grabStatusLabel maps a raw grab status to a short card badge label.
 function grabStatusLabel(status: string): string {
@@ -195,45 +193,6 @@ function SceneCard({
   selected: boolean;
   onPick: () => void;
 }) {
-  // Local watch state so the Track control updates immediately without a
-  // full reload. Seeded from the server's watch_status.
-  const [watch, setWatch] = useState<string>(s.watch_status || "");
-  const [picking, setPicking] = useState(false);
-  const [busy, setBusy] = useState(false);
-
-  const track = async (target: WatchTarget) => {
-    setPicking(false);
-    setBusy(true);
-    try {
-      await addWatch({
-        stashdb_id: s.stashdb_id,
-        title: s.title,
-        date: s.date,
-        studio: s.studio,
-        image_url: s.image_url,
-        performer_name: performerName,
-        performer_id: performerId,
-        target,
-      });
-      setWatch("watching");
-    } catch {
-      /* leave state as-is */
-    } finally {
-      setBusy(false);
-    }
-  };
-  const untrack = async () => {
-    setPicking(false);
-    setBusy(true);
-    try {
-      await deleteWatch(s.stashdb_id);
-      setWatch("");
-    } catch {
-      /* noop */
-    } finally {
-      setBusy(false);
-    }
-  };
 
   return (
     <div
@@ -274,69 +233,22 @@ function SceneCard({
             {grabStatusLabel(s.grab_status)}
           </span>
         )}
-        {/* Watch control — expands inline (no popup) so it can't be
-            clipped by the thumb's overflow. stopPropagation keeps clicks
-            off the card's navigate action. Hidden in select mode. */}
+        {/* Watch control — hidden in select mode (the card toggles
+            selection then, not navigation). */}
         {!selecting && (
-          <div className="scene-watch" onClick={(e) => e.stopPropagation()}>
-            {watch === "available" ? (
-              <span
-                className="watch-chip is-available"
-                title="A release was found — open the Watching tab to grab it"
-              >
-                <BookmarkGlyph filled />
-                Ready
-              </span>
-            ) : watch === "watching" ? (
-              <button
-                className="watch-chip is-watching"
-                disabled={busy}
-                onClick={untrack}
-                title="Watching for releases — click to stop"
-              >
-                <BookmarkGlyph filled />
-                Watching
-              </button>
-            ) : picking ? (
-              <div className="watch-picker" role="menu" aria-label="Watch at quality">
-                {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
-                  (t) => (
-                    <button
-                      key={t}
-                      className="watch-q"
-                      disabled={busy}
-                      onClick={() => track(t)}
-                    >
-                      {t === "any"
-                        ? "Any"
-                        : t === "4k"
-                          ? "4K"
-                          : t === "480p"
-                            ? "SD"
-                            : t}
-                    </button>
-                  ),
-                )}
-                <button
-                  className="watch-q watch-cancel"
-                  onClick={() => setPicking(false)}
-                  aria-label="Cancel"
-                >
-                  ×
-                </button>
-              </div>
-            ) : (
-              <button
-                className="watch-chip"
-                disabled={busy}
-                onClick={() => setPicking(true)}
-                title="Watch for releases at a chosen quality"
-              >
-                <BookmarkGlyph />
-                Watch
-              </button>
-            )}
-          </div>
+          <WatchControl
+            scene={{
+              stashdb_id: s.stashdb_id,
+              title: s.title,
+              date: s.date,
+              studio: s.studio,
+              image_url: s.image_url,
+            }}
+            performerName={performerName}
+            performerId={performerId}
+            initialStatus={s.watch_status || ""}
+            variant="overlay"
+          />
         )}
       </div>
       <div className="scene-info">
@@ -358,22 +270,3 @@ function SceneCard({
   );
 }
 
-// BookmarkGlyph — the watch metaphor. Outline when idle, filled once the
-// scene is being watched. Sized to sit inline with the chip label.
-function BookmarkGlyph({ filled = false }: { filled?: boolean }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="11"
-      height="11"
-      aria-hidden="true"
-      fill={filled ? "currentColor" : "none"}
-      stroke="currentColor"
-      strokeWidth="2.2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />
-    </svg>
-  );
-}

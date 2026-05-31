@@ -138,6 +138,7 @@ export interface DiscoverScene {
   studio_name?: string;
   image_url?: string;
   performers: DiscoverPerformer[];
+  watch_status?: string;
 }
 
 export interface DiscoverResponse {

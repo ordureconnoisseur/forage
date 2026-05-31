@@ -6,6 +6,7 @@ import {
   type SceneReleasesResponse,
 } from "../api";
 import { ResBadge } from "../ResBadge";
+import WatchControl from "../WatchControl";
 import { humanSize } from "../format";
 
 // Map the matcher's 0..1 confidence into one of five outline tiers.
@@ -254,6 +255,19 @@ export default function SceneReleases({
               View on StashDB ↗
             </a>
           </div>
+          {/* Nothing here good enough? Watch the scene for a future
+              release at a chosen quality instead of grabbing now. */}
+          <WatchControl
+            scene={{
+              stashdb_id: data.scene.stashdb_id,
+              title: data.scene.title,
+              date: data.scene.date,
+              studio: data.scene.studio,
+              image_url: data.scene.image_url,
+            }}
+            performerName={performerName || data.scene.performers[0]?.name}
+            variant="inline"
+          />
         </div>
       </div>
 

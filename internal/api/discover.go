@@ -23,6 +23,9 @@ type discoverScene struct {
 	StudioName  string              `json:"studio_name,omitempty"`
 	ImageURL    string              `json:"image_url,omitempty"`
 	Performers  []discoverPerformer `json:"performers"`
+	// WatchStatus is "watching"/"available" when the user tracks this
+	// scene, empty otherwise — so the card's watch control reflects it.
+	WatchStatus string `json:"watch_status,omitempty"`
 }
 
 type discoverPerformer struct {
@@ -133,10 +136,11 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scenes := materializeScenes(recentRaw, perfMap, favoriteOnly)
+	watchStatus := s.watchStatusByScene(r.Context())
+	scenes := materializeScenes(recentRaw, perfMap, watchStatus, favoriteOnly)
 	// Trending isn't favourite-filtered — the whole point is "what's
 	// hot globally", regardless of which performers we have.
-	trending := materializeScenes(trendingRaw, perfMap, false)
+	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
 
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
 	trendingRefreshedAt, _ := cache.TrendingRefreshedAt(r.Context(), s.db)
@@ -193,7 +197,7 @@ func collectPerformerIDs(idsJSON string, into map[string]struct{}) {
 	}
 }
 
-func materializeScenes(raw []discoverRawRow, perfMap map[string]discoverPerformer, favoriteOnly bool) []discoverScene {
+func materializeScenes(raw []discoverRawRow, perfMap map[string]discoverPerformer, watchStatus map[string]string, favoriteOnly bool) []discoverScene {
 	out := make([]discoverScene, 0, len(raw))
 	for _, r := range raw {
 		var ids []string
@@ -221,6 +225,7 @@ func materializeScenes(raw []discoverRawRow, perfMap map[string]discoverPerforme
 			StudioName:  r.studio,
 			ImageURL:    r.image,
 			Performers:  performers,
+			WatchStatus: watchStatus[r.stashdbID],
 		})
 	}
 	return out

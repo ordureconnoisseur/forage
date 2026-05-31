@@ -3972,6 +3972,30 @@ code.grab-fact-v,
   color: #fff;
 }
 
+/* Relative wrap so the overlay watch control can sit over a thumb that
+   is itself a <button> (discover cards) — the control can't be nested
+   inside the button, so it's a sibling positioned against this wrap. */
+.scene-thumb-wrap {
+  position: relative;
+}
+
+/* Inline variant — the scene-releases hero ("watch this if nothing here
+   is good enough"). Normal flow, slightly larger chip, fixed-width
+   picker so the segmented bar doesn't stretch across the hero. */
+.watch-inline {
+  display: inline-flex;
+  margin-top: 14px;
+}
+.watch-inline .watch-chip {
+  font-size: 12px;
+  padding: 6px 14px;
+  opacity: 1;
+}
+.watch-inline .watch-picker {
+  width: 320px;
+  flex: none;
+}
+
 /* Watching tab list. */
 .watch-list {
   list-style: none;

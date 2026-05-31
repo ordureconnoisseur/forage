@@ -7,6 +7,7 @@ import {
   fetchDiscover,
   performerImageURL,
 } from "../api";
+import WatchControl from "../WatchControl";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -295,33 +296,48 @@ function TrendingCard({
   const primaryLibraryPerformer = s.performers[0];
   return (
     <div className="trending-card">
-      <button
-        type="button"
-        className="scene-thumb scene-thumb-button"
-        onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
-        title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
-      >
-        {s.image_url ? (
-          <img
-            src={s.image_url}
-            alt=""
-            loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-        ) : null}
-        <a
-          href={`https://stashdb.org/scenes/${s.stashdb_id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="thumb-external"
-          title="Open on StashDB"
-          onClick={(e) => e.stopPropagation()}
+      <div className="scene-thumb-wrap">
+        <button
+          type="button"
+          className="scene-thumb scene-thumb-button"
+          onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
+          title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
         >
-          ↗
-        </a>
-      </button>
+          {s.image_url ? (
+            <img
+              src={s.image_url}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : null}
+          <a
+            href={`https://stashdb.org/scenes/${s.stashdb_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="thumb-external"
+            title="Open on StashDB"
+            onClick={(e) => e.stopPropagation()}
+          >
+            ↗
+          </a>
+        </button>
+        <WatchControl
+          scene={{
+            stashdb_id: s.stashdb_id,
+            title: s.title,
+            date: s.release_date,
+            studio: s.studio_name,
+            image_url: s.image_url,
+          }}
+          performerName={primaryLibraryPerformer?.name}
+          performerId={primaryLibraryPerformer?.stash_id}
+          initialStatus={s.watch_status || ""}
+          variant="overlay"
+        />
+      </div>
       <div className="trending-card-body">
         <div className="trending-card-title" title={s.title || ""}>
           {s.title || "(untitled)"}
@@ -365,33 +381,48 @@ function DiscoverCard({
   const primaryLibraryPerformer = s.performers[0];
   return (
     <div className="scene-card discover-card">
-      <button
-        type="button"
-        className="scene-thumb scene-thumb-button"
-        onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
-        title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
-      >
-        {s.image_url ? (
-          <img
-            src={s.image_url}
-            alt=""
-            loading="lazy"
-            onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
-            }}
-          />
-        ) : null}
-        <a
-          href={`https://stashdb.org/scenes/${s.stashdb_id}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="thumb-external"
-          title="Open on StashDB"
-          onClick={(e) => e.stopPropagation()}
+      <div className="scene-thumb-wrap">
+        <button
+          type="button"
+          className="scene-thumb scene-thumb-button"
+          onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
+          title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
         >
-          ↗
-        </a>
-      </button>
+          {s.image_url ? (
+            <img
+              src={s.image_url}
+              alt=""
+              loading="lazy"
+              onError={(e) => {
+                (e.currentTarget as HTMLImageElement).style.display = "none";
+              }}
+            />
+          ) : null}
+          <a
+            href={`https://stashdb.org/scenes/${s.stashdb_id}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="thumb-external"
+            title="Open on StashDB"
+            onClick={(e) => e.stopPropagation()}
+          >
+            ↗
+          </a>
+        </button>
+        <WatchControl
+          scene={{
+            stashdb_id: s.stashdb_id,
+            title: s.title,
+            date: s.release_date,
+            studio: s.studio_name,
+            image_url: s.image_url,
+          }}
+          performerName={primaryLibraryPerformer?.name}
+          performerId={primaryLibraryPerformer?.stash_id}
+          initialStatus={s.watch_status || ""}
+          variant="overlay"
+        />
+      </div>
       <div className="scene-info">
         <div className="title">{s.title || "(untitled)"}</div>
         <div className="meta">
