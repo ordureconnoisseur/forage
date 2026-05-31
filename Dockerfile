@@ -1,5 +1,16 @@
 # syntax=docker/dockerfile:1.7
 
+# ── UI stage ───────────────────────────────────────────────────────
+# Build the plugin SPA fresh from source so the released image always
+# serves the current standalone app at /, regardless of what's committed
+# to internal/api/ui/index.html.
+FROM node:22-alpine AS ui
+WORKDIR /ui
+COPY plugin/package.json plugin/package-lock.json ./
+RUN npm ci
+COPY plugin/ ./
+RUN npm run build
+
 # ── Build stage ────────────────────────────────────────────────────
 FROM golang:1.26-alpine AS build
 WORKDIR /src
@@ -10,6 +21,8 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
+# Overwrite the committed bundle with the freshly-built one before embedding.
+COPY --from=ui /ui/dist/index.html internal/api/ui/index.html
 
 # CGO disabled keeps modernc.org/sqlite in pure-Go mode (smaller image,
 # no glibc dependency in the final stage).

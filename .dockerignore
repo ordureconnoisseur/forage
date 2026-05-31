@@ -14,3 +14,9 @@ bench-out
 matcher-bench-out
 studio-bench-out
 date-bench-out
+
+# Node artifacts — the Docker UI stage runs `npm ci` itself, so host
+# node_modules/dist must not leak into the build context and clobber it.
+node_modules
+plugin/node_modules
+plugin/dist
