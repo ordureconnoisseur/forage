@@ -3993,3 +3993,198 @@ code.grab-fact-v,
   color: var(--danger, #f87171);
   border-color: var(--danger, #f87171);
 }
+
+/* ─── First-run setup wizard ─────────────────────────────────────────
+   Centered card flow shown when the plugin isn't connected/configured.
+   Mirrors the Hearth onboarding feel: one decision per screen, with
+   inline test feedback. */
+.setup {
+  display: flex;
+  justify-content: center;
+  padding: 48px 16px;
+}
+.setup-card {
+  width: 100%;
+  max-width: 480px;
+  background: var(--surface, rgba(255, 255, 255, 0.03));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md, 14px);
+  padding: 32px 28px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}
+/* Step dots */
+.setup-stepper {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-bottom: 24px;
+}
+.setup-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--glass-border);
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+.setup-dot.active {
+  background: var(--accent-bright, #22c55e);
+  transform: scale(1.25);
+}
+/* Welcome / done screens */
+.setup-welcome {
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 0;
+}
+.setup-acorn {
+  font-size: 56px;
+  line-height: 1;
+}
+.setup-check {
+  font-size: 44px;
+  line-height: 1;
+  width: 76px;
+  height: 76px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #0a0a0a;
+  background: var(--accent-bright, #22c55e);
+}
+.setup-welcome h1 {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 700;
+}
+.setup-tagline {
+  color: var(--text-muted);
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+/* Step screens */
+.setup-step h2 {
+  margin: 0 0 6px;
+  font-size: 20px;
+}
+.setup-sub {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 0 0 20px;
+}
+.setup-subhead {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.setup-field {
+  display: block;
+  margin-bottom: 14px;
+}
+.setup-field > span {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 5px;
+  color: var(--text-muted);
+}
+.setup-field input {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm, 8px);
+  border: 1px solid var(--glass-border);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font: inherit;
+}
+.setup-field input:focus {
+  outline: none;
+  border-color: rgba(var(--accent-rgb), 0.6);
+}
+/* Inline test row (credentials step) */
+.setup-inline-test {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+/* Test-state line */
+.setup-test {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  margin: 4px 0 2px;
+}
+.setup-test.ok {
+  color: var(--accent-bright, #22c55e);
+}
+.setup-test.err {
+  color: var(--danger, #f87171);
+}
+.setup-test.testing {
+  color: var(--text-muted);
+}
+.setup-err {
+  color: var(--danger, #f87171);
+  font-size: 13px;
+  margin: 10px 0 0;
+}
+/* Buttons */
+.setup-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 22px;
+}
+.setup-primary,
+.setup-secondary {
+  flex: 1;
+  padding: 11px 16px;
+  border-radius: var(--radius-pill, 999px);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: opacity 0.12s ease, background 0.12s ease;
+}
+.setup-primary {
+  background: var(--accent-bright, #22c55e);
+  color: #0a0a0a;
+}
+.setup-secondary {
+  background: transparent;
+  border-color: var(--glass-border);
+  color: var(--text);
+}
+.setup-secondary.small {
+  flex: 0 0 auto;
+  padding: 7px 14px;
+  font-size: 13px;
+}
+.setup-primary:disabled,
+.setup-secondary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.setup-secondary:hover:not(:disabled) {
+  border-color: rgba(var(--accent-rgb), 0.6);
+}
+.setup-link {
+  display: block;
+  margin: 18px auto 0;
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.setup-link:hover {
+  color: var(--accent-bright, #22c55e);
+}
