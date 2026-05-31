@@ -3789,77 +3789,133 @@ code.grab-fact-v,
   color: #d4a017;
 }
 
-/* ─── Watchlist ──────────────────────────────────────────────────────
-   Track control overlays the bottom-left of a missing scene's thumb,
-   mirroring the top-right grab badge. It's a separate interactive
-   region inside the role=button card, so the React layer stops click
-   propagation; these styles just give it presence. */
-.scene-track {
+/* ─── Watch control ──────────────────────────────────────────────────
+   Lives in the bottom strip of a missing-scene thumb. Idle, it's a small
+   bookmark chip at bottom-left; on click it expands INLINE into a
+   full-width segmented quality bar that stays within the thumb — no
+   popup, so the thumb's overflow:hidden can't clip it (the bug the old
+   dropdown had). The strip itself is click-through so tapping empty
+   thumb still opens the scene; only the controls capture clicks. */
+.scene-watch {
   position: absolute;
-  bottom: 8px;
   left: 8px;
+  right: 8px;
+  bottom: 8px;
   z-index: 3;
+  display: flex;
+  pointer-events: none;
 }
-.track-btn {
-  padding: 3px 10px;
+.scene-watch > * {
+  pointer-events: auto;
+}
+
+.watch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 11px;
   border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: rgba(10, 10, 10, 0.62);
+  backdrop-filter: blur(6px);
+  color: rgba(255, 255, 255, 0.88);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  border: 1px solid var(--glass-border);
-  background: rgba(0, 0, 0, 0.6);
-  color: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(4px);
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+  opacity: 0.82;
+  transition: opacity 0.14s ease, background 0.14s ease, color 0.14s ease,
+    border-color 0.14s ease;
 }
-.track-btn:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.8);
-  border-color: rgba(var(--accent-rgb), 0.6);
+.watch-chip svg {
+  flex: none;
+}
+.scene-card:hover .watch-chip {
+  opacity: 1;
+}
+.watch-chip:hover:not(:disabled) {
+  background: rgba(10, 10, 10, 0.82);
+  border-color: rgba(var(--accent-rgb), 0.7);
   color: #fff;
 }
-.track-btn:disabled {
-  opacity: 0.6;
+.watch-chip:disabled {
   cursor: default;
 }
-/* Tracking-active variants: watching is amber, available is bright accent. */
-.track-btn.is-watching {
-  background: var(--status-queued, #d4a017);
+/* Active states: watching is amber, available (a release was found) is
+   bright accent with a soft pulse to pull the eye to the Watching tab. */
+.watch-chip.is-watching {
+  background: #d4a017;
   border-color: transparent;
   color: #0a0a0a;
+  opacity: 1;
 }
-.track-btn.is-available {
+.watch-chip.is-available {
   background: var(--accent-bright, #22c55e);
   border-color: transparent;
   color: #0a0a0a;
+  opacity: 1;
+  cursor: default;
+  animation: watchReady 2.4s ease-in-out infinite;
 }
-/* Quality picker — pops up above the Track button. */
-.track-menu {
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 0;
+@keyframes watchReady {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(var(--accent-rgb), 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(var(--accent-rgb), 0.28);
+  }
+}
+
+/* Picking: full-width inline segmented bar, slid up from the bottom. */
+.watch-picker {
+  flex: 1;
   display: flex;
-  flex-direction: column;
-  min-width: 120px;
+  gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-md, 11px);
+  background: rgba(10, 10, 10, 0.8);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--glass-border);
-  background: var(--surface-2, #1a1a1a);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: watchPickerIn 0.16s ease;
 }
-.track-menu button {
-  text-align: left;
-  padding: 7px 10px;
+@keyframes watchPickerIn {
+  from {
+    opacity: 0;
+    transform: translateY(7px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.watch-q {
+  flex: 1;
+  padding: 5px 0;
   border: 0;
-  border-radius: var(--radius-sm, 6px);
-  background: transparent;
-  color: var(--text);
-  font-size: 13px;
+  border-radius: var(--radius-sm, 7px);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
   cursor: pointer;
-  transition: background 0.1s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
-.track-menu button:hover {
-  background: rgba(var(--accent-rgb), 0.18);
+.watch-q:hover:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.9);
+  color: #0a0a0a;
+}
+.watch-q.watch-cancel {
+  flex: 0 0 26px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+.watch-q.watch-cancel:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
 }
 
 /* Watching tab list. */
