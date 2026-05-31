@@ -1,0 +1,93 @@
+name: Release
+
+# Cut a release by pushing a semver tag, e.g. `git tag v0.1.0 && git push
+# origin v0.1.0`. Builds + publishes the daemon image to GHCR and attaches
+# a ready-to-drop-in plugin bundle to the GitHub Release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub Release
+  packages: write # push the image to GHCR
+
+jobs:
+  image:
+    name: Daemon image → GHCR
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # GHCR requires a lowercase image path; the repo is already
+          # lowercase (ordureconnoisseur/forager).
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=raw,value=latest
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+
+  release:
+    name: Plugin bundle + GitHub Release
+    runs-on: ubuntu-latest
+    needs: image
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+
+      - name: Build plugin
+        working-directory: plugin
+        run: |
+          npm ci
+          npm run build
+
+      - name: Package plugin
+        run: |
+          mkdir -p bundle/forage
+          cp plugin/forage.yml plugin/dist/forage.entry.js plugin/dist/index.html bundle/forage/
+          (cd bundle && zip -r "../forage-plugin-${GITHUB_REF_NAME}.zip" forage)
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: forage-plugin-*.zip
+          body: |
+            ## forage ${{ github.ref_name }}
+
+            **Daemon image:** `ghcr.io/${{ github.repository }}:${{ github.ref_name }}`
+            (also tagged `:latest`)
+
+            **Plugin:** download `forage-plugin-${{ github.ref_name }}.zip`, unzip,
+            and copy the `forage/` folder into your Stash `plugins/` directory.
+            Reload plugins in Stash and open the **forage** tab — the first-run
+            wizard walks you through pointing it at your daemon.
+
+            See the [README](https://github.com/${{ github.repository }}#install--daemon)
+            for daemon setup (compose, env, download-client categories).

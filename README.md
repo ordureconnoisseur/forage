@@ -306,4 +306,4 @@ CGO is disabled (`modernc.org/sqlite`), so the binary is statically linked. The 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+[AGPL-3.0](LICENSE). forage is free software — you can redistribute and modify it under the GNU Affero General Public License v3. Because it's a network service, a modified version you run for others must also make its source available to them.
