@@ -10,6 +10,7 @@ import {
   setForagerBase,
   testSection,
 } from "../api";
+import AcornIcon from "../AcornIcon";
 
 // First-run setup wizard — the guided alternative to dropping a new user
 // into the full Settings form. Modelled on Hearth's onboarding: a step
@@ -222,9 +223,7 @@ export default function Setup({
 
         {step === "welcome" && (
           <div className="setup-welcome">
-            <div className="setup-acorn" aria-hidden="true">
-              🌰
-            </div>
+            <AcornIcon className="setup-acorn" />
             <h1>forage</h1>
             <p className="setup-tagline">
               Performer-driven scene grabbing for Stash. Let's point the plugin

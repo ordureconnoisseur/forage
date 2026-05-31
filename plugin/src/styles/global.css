@@ -4039,9 +4039,38 @@ code.grab-fact-v,
   gap: 14px;
   padding: 16px 0;
 }
+/* Neon-glowing acorn on the welcome screen — the brand mark turned up
+   to "fancy" with layered drop-shadows + a slow pulse. */
 .setup-acorn {
-  font-size: 56px;
-  line-height: 1;
+  width: 92px;
+  height: 92px;
+  display: inline-block;
+  color: var(--accent-bright, #22c55e);
+  animation: acornGlow 3.2s ease-in-out infinite;
+}
+.setup-acorn svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  fill: currentColor;
+}
+@keyframes acornGlow {
+  0%,
+  100% {
+    filter: drop-shadow(0 0 5px var(--accent-glow))
+      drop-shadow(0 0 14px var(--accent-glow-wide));
+  }
+  50% {
+    filter: drop-shadow(0 0 11px var(--accent-bright))
+      drop-shadow(0 0 30px var(--accent-glow));
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .setup-acorn {
+    animation: none;
+    filter: drop-shadow(0 0 8px var(--accent-glow))
+      drop-shadow(0 0 20px var(--accent-glow-wide));
+  }
 }
 .setup-check {
   font-size: 44px;
