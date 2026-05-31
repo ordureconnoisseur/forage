@@ -123,6 +123,9 @@ func (s *Server) Router() http.Handler {
 	// and the API calls it makes carry the token like any other client.
 	r.Get("/", s.serveUI)
 	r.Get("/healthz", s.healthz)
+	// Establishes the forage_token cookie for <img> auth; self-validates the
+	// posted token, so it's safe to leave outside the gate.
+	r.Post("/session", s.postSession)
 
 	// Everything else — all data and action routes — is gated by the
 	// optional admin token. The middleware is a no-op when
@@ -158,6 +161,12 @@ func (s *Server) Router() http.Handler {
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
 		r.Get("/discover", s.getDiscover)
 		r.Get("/notifications", s.getNotifications)
+		// Stash image proxy — performer portraits + scene screenshots,
+		// fetched server-side with the stored Stash API key so the browser
+		// never needs Stash creds. Gated like everything else (cookie auth
+		// for <img>).
+		r.Get("/img/performer/{id}", s.getPerformerImage)
+		r.Get("/img/scene/{id}/screenshot", s.getSceneScreenshot)
 		r.Get("/config", s.getConfig)
 		r.Post("/config", s.postConfig)
 		r.Post("/config/test/{section}", s.postConfigTest)

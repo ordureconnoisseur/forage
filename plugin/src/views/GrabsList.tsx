@@ -23,6 +23,7 @@ import {
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
+  proxiedImageURL,
 } from "../api";
 
 // GrabsList surfaces the full state machine the poller advances:
@@ -869,24 +870,24 @@ function GrabRow({
               // placed file's own Stash screenshot (covers grabs with no
               // StashDB match), and only then the performer portrait.
               const isPack = g.kind === "pack";
+              // performer_image_url / local_scene_image_url are daemon-
+              // relative (/img/...) — resolve them through the image proxy.
+              // image_url is an absolute StashDB CDN URL (passes through).
+              const perfImg = proxiedImageURL(detail?.performer_image_url) || "";
+              const sceneShot =
+                proxiedImageURL(detail?.local_scene_image_url) || "";
+              const stashdbImg = proxiedImageURL(detail?.image_url) || "";
               const heroSrc = posterFailed
                 ? ""
                 : isPack
-                  ? detail?.performer_image_url ||
-                    detail?.image_url ||
-                    detail?.local_scene_image_url ||
-                    ""
-                  : detail?.image_url ||
-                    detail?.local_scene_image_url ||
-                    detail?.performer_image_url ||
-                    "";
+                  ? perfImg || stashdbImg || sceneShot || ""
+                  : stashdbImg || sceneShot || perfImg || "";
               // A scene image is 16:9; a performer portrait is 3:4. Frame
               // the poster to match whichever the hero actually is so a
               // scene thumbnail isn't cropped into a portrait (and vice
               // versa). The performer portrait is the only non-scene
               // source, so anything else is a scene image.
-              const isScene =
-                !!heroSrc && heroSrc !== detail?.performer_image_url;
+              const isScene = !!heroSrc && heroSrc !== perfImg;
               const posterClass =
                 "grab-poster" +
                 (heroSrc ? (isScene ? " is-scene" : "") : " is-mono");

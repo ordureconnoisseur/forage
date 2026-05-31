@@ -102,11 +102,14 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 				resp.LocalSceneID = scene.ID
 				cfg, _ := config.Compose(s.bootstrap, s.store.Get())
 				if cfg.StashURL != "" {
-					base := strings.TrimRight(cfg.StashURL, "/")
-					resp.StashSceneURL = base + "/scenes/" + scene.ID
-					// The placed scene's own screenshot — a real thumbnail
-					// for the single even when StashDB has no match.
-					resp.LocalSceneImageURL = base + "/scene/" + scene.ID + "/screenshot"
+					// "View in Stash" opens the user's Stash UI directly, so
+					// it stays an absolute Stash URL.
+					resp.StashSceneURL = strings.TrimRight(cfg.StashURL, "/") + "/scenes/" + scene.ID
+					// The screenshot is rendered inside forage, so it goes
+					// through the daemon's image proxy (daemon-relative path;
+					// the client prepends its base). A real thumbnail for the
+					// single even when StashDB has no match.
+					resp.LocalSceneImageURL = "/img/scene/" + scene.ID + "/screenshot"
 				}
 			}
 		}
@@ -114,9 +117,10 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 
 	// Performer portrait, from the user's own Stash. The grab's folder
 	// name is the performer's display name (from the suggest step or the
-	// matched release), so we map it back to a local stash_id and build
-	// the image URL Stash already serves. Loads with the user's Stash
-	// session since the plugin renders inside Stash.
+	// matched release), so we map it back to a local stash_id and serve the
+	// portrait through the daemon's image proxy (daemon-relative path; the
+	// client prepends its base). Works whether forage runs standalone or as
+	// a Stash launcher — the browser never needs a Stash session.
 	if g.PerformerName != "" {
 		var stashID string
 		err := s.db.QueryRowContext(r.Context(),
@@ -125,7 +129,7 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 		if err == nil && stashID != "" {
 			cfg, _ := config.Compose(s.bootstrap, s.store.Get())
 			if cfg.StashURL != "" {
-				resp.PerformerImageURL = strings.TrimRight(cfg.StashURL, "/") + "/performer/" + stashID + "/image"
+				resp.PerformerImageURL = "/img/performer/" + stashID
 			}
 		}
 	}

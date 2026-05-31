@@ -253,28 +253,64 @@ export interface SceneReleasesResponse {
   releases: SceneRelease[];
 }
 
-// ── Stash UI integration ───────────────────────────────────────────
+// ── Images ─────────────────────────────────────────────────────────
 //
-// The plugin loads from Stash's origin in production
-// (e.g. `https://your-stash.example.com/plugin/forage/assets/index.html`).
-// That lets us address Stash's performer images at
-// `<origin>/performer/<id>/image` without any GraphQL call. In dev mode
-// (`localhost:5173`) there's no Stash to talk to — performer images
+// forage renders performer portraits + scene screenshots through the
+// daemon's own image proxy (`/img/...`), which fetches from Stash
+// server-side with the stored API key. So image URLs are just
+// foragerBase()-relative — same-origin when the daemon serves the app
+// standalone. The browser never needs Stash credentials. On the Vite dev
+// server with no daemon configured there's nothing to proxy, so images
 // fall through to a placeholder.
 
-export function stashBase(): string | null {
-  if (typeof location === "undefined") return null;
-  // Heuristic: localhost / 127.0.0.1 is the Vite dev server, not Stash.
-  if (location.hostname === "localhost" || location.hostname === "127.0.0.1") {
+export function imageBase(): string | null {
+  const base = foragerBase();
+  if (base) return base; // explicit daemon URL configured
+  // base === "" → same-origin. Correct when the daemon serves us; wrong on
+  // the dev server (localhost:5173), where no daemon lives at this origin.
+  if (
+    typeof location !== "undefined" &&
+    (location.hostname === "localhost" || location.hostname === "127.0.0.1")
+  ) {
     return null;
   }
-  return location.origin;
+  return ""; // same-origin daemon
 }
 
 export function performerImageURL(localStashID: string): string | null {
-  const base = stashBase();
-  if (!base) return null;
-  return `${base}/performer/${encodeURIComponent(localStashID)}/image`;
+  const base = imageBase();
+  if (base === null) return null;
+  return `${base}/img/performer/${encodeURIComponent(localStashID)}`;
+}
+
+// proxiedImageURL resolves a daemon-relative image path (e.g. a grab
+// detail's `/img/scene/{id}/screenshot`) against the daemon base. Leaves
+// absolute URLs untouched (legacy data / StashDB CDN); returns null when
+// there's no daemon to proxy through.
+export function proxiedImageURL(path?: string | null): string | null {
+  if (!path) return null;
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = imageBase();
+  if (base === null) return null;
+  return `${base}${path}`;
+}
+
+// establishSession posts the stored admin token so the daemon sets the
+// forage_token cookie — required for <img> requests (portraits, screenshots)
+// to authenticate, since image loads can't carry the bearer header. The
+// daemon replies ok/required:false when no token is configured, so this is
+// safe to call unconditionally. Call on boot and whenever the token changes.
+export async function establishSession(): Promise<void> {
+  try {
+    await fetch(foragerBase() + "/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token: adminToken() }),
+      credentials: "include",
+    });
+  } catch {
+    // Best-effort — images fall back to placeholders if this fails.
+  }
 }
 
 export function fetchSceneReleases(

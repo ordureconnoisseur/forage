@@ -13,6 +13,7 @@ import AcornIcon from "./AcornIcon";
 import NavIcon from "./NavIcons";
 import NotificationsBell from "./NotificationsBell";
 import {
+  establishSession,
   fetchHealth,
   fetchNotifications,
   foragerBase,
@@ -111,6 +112,14 @@ export default function App() {
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
+
+  // Establish the forage_token cookie so <img> requests (performer
+  // portraits, scene screenshots) authenticate without a bearer header.
+  // No-op when no admin token is set. Re-run when the daemon URL or token
+  // changes (healthNonce bumps after a Settings/Setup save).
+  useEffect(() => {
+    establishSession();
+  }, [apiURL, healthNonce]);
 
   // Probe /healthz on mount + after Settings closes. When the URL
   // isn't set yet, skip the fetch (it'd hit Stash's origin and
