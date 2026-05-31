@@ -299,16 +299,24 @@ function SceneCard({
               </button>
             ) : picking ? (
               <div className="watch-picker" role="menu" aria-label="Watch at quality">
-                {(["any", "1080p", "4k", "720p"] as WatchTarget[]).map((t) => (
-                  <button
-                    key={t}
-                    className="watch-q"
-                    disabled={busy}
-                    onClick={() => track(t)}
-                  >
-                    {t === "any" ? "Any" : t === "4k" ? "4K" : t}
-                  </button>
-                ))}
+                {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
+                  (t) => (
+                    <button
+                      key={t}
+                      className="watch-q"
+                      disabled={busy}
+                      onClick={() => track(t)}
+                    >
+                      {t === "any"
+                        ? "Any"
+                        : t === "4k"
+                          ? "4K"
+                          : t === "480p"
+                            ? "SD"
+                            : t}
+                    </button>
+                  ),
+                )}
                 <button
                   className="watch-q watch-cancel"
                   onClick={() => setPicking(false)}

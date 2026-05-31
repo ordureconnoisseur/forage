@@ -153,7 +153,7 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 // to "any".
 func normalizeTarget(t string) string {
 	switch t {
-	case watches.Target720, watches.Target1080, watches.Target4K:
+	case watches.Target480, watches.Target720, watches.Target1080, watches.Target4K:
 		return t
 	default:
 		return watches.TargetAny

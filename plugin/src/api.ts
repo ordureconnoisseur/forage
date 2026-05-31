@@ -837,7 +837,7 @@ export function grabJobScene(
 // ── Watches (track a scene → notified when a release at the target
 //    quality appears; the server never grabs, you do) ─────────────────
 
-export type WatchTarget = "any" | "720p" | "1080p" | "4k";
+export type WatchTarget = "any" | "480p" | "720p" | "1080p" | "4k";
 export type WatchStatus = "watching" | "available";
 
 export interface Watch {

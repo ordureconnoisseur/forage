@@ -17,6 +17,7 @@ import (
 // does NOT satisfy a Target1080. TargetAny matches any verified release.
 const (
 	TargetAny  = "any"
+	Target480  = "480p" // SD (matches releases tagged 480p/360p)
 	Target720  = "720p"
 	Target1080 = "1080p"
 	Target4K   = "4k"
