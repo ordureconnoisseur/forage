@@ -4457,12 +4457,22 @@ code.grab-fact-v,
   border-color: rgba(var(--accent-rgb), 0.6);
 }
 
-/* Stalled badge — a torrent stuck with no progress. Amber, distinct from
-   the status chips since "stalled" is an annotation on a downloading grab,
-   not a pipeline state. */
-.grab-status-badge.chip-stalled {
-  background: #d4a017;
-  color: #0a0a0a;
+/* Stalled badge — a torrent stuck with no progress. An annotation on a
+   downloading grab (not a pipeline state), so it's a sibling pill to the
+   ADOPTED badge — same shape, amber-toned for "needs attention". */
+.grab-stalled-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(212, 161, 23, 0.13);
+  border: 1px solid rgba(212, 161, 23, 0.4);
+  color: #e0b84e;
 }
 /* "Pick another release" — primary action on a stalled/failed/mismatched
    /orphaned grab, leading the action bar. */

@@ -792,10 +792,10 @@ function GrabRow({
           <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
           {g.stalled && (
             <span
-              className="grab-status-badge chip-stalled"
+              className="grab-stalled-badge"
               title="No download progress for a while — try abandoning it and picking another release"
             >
-              stalled
+              STALLED
             </span>
           )}
           {g.kind === "pack" && (
