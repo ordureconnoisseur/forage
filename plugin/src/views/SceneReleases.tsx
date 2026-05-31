@@ -19,6 +19,16 @@ function confTier(c: number): string {
   return "conf-5";
 }
 
+// confColor mirrors the confTier bands as concrete colours for the match
+// meter (number + micro-bar). Kept in sync with the .release.conf-N CSS.
+function confColor(c: number): string {
+  if (c >= 0.7) return "#22c55e"; // accent-bright
+  if (c >= 0.55) return "#16a34a"; // accent
+  if (c >= 0.4) return "#84cc16"; // lime
+  if (c >= 0.25) return "#d4a017"; // amber
+  return "#b85454"; // red-clay
+}
+
 // Release sort is user-selectable because "best" is genuinely
 // ambiguous among verified releases (all the same scene):
 //   - quality:    highest resolution wins — usually what you want
@@ -408,8 +418,53 @@ function ReleaseList({
         const state = grabs[releaseKey(r)] || { status: "idle" };
         const queued = state.status === "queued" || state.status === "grabbing";
         const tier = r.verified && r.confidence > 0 ? confTier(r.confidence) : "";
+        const pct = Math.round(r.confidence * 100);
+        const score = r.score ?? 0;
+        const scoreClass = r.rejected
+          ? "is-reject"
+          : score > 0
+            ? "pos"
+            : score < 0
+              ? "neg"
+              : "zero";
+        const scoreTitle =
+          (r.score_hits || [])
+            .map(
+              (h) =>
+                `${h.label}: ${h.points > 0 ? "+" : ""}${h.points}${h.reject ? " (reject)" : ""}`,
+            )
+            .join("\n") || undefined;
         return (
           <li key={releaseKey(r)} className={"release" + (tier ? " " + tier : "")}>
+            {/* Match meter — the matcher's confidence this release IS the
+                viewed scene, made the left anchor instead of buried text. */}
+            <div
+              className="release-match"
+              style={
+                r.confidence > 0
+                  ? ({ ["--band" as string]: confColor(r.confidence) } as React.CSSProperties)
+                  : undefined
+              }
+              title={r.confidence > 0 ? `Matcher confidence: ${pct}%` : undefined}
+            >
+              {r.confidence > 0 ? (
+                <>
+                  <span className="rm-pct">
+                    {pct}
+                    <i>%</i>
+                  </span>
+                  <span className="rm-meter">
+                    <i style={{ width: `${pct}%` }} />
+                  </span>
+                  <span className="rm-label">match</span>
+                </>
+              ) : (
+                <span className="rm-na" title="Not scored against this scene">
+                  —
+                </span>
+              )}
+            </div>
+
             <div className="release-body">
               <div className="release-title">{r.title}</div>
               <div className="release-meta">
@@ -425,34 +480,6 @@ function ReleaseList({
                     ? `${r.grabs} grabs`
                     : `${r.seeders} seeders`}
                 </span>
-                {r.confidence > 0 && (
-                  <>
-                    <span>·</span>
-                    <span>match {r.confidence.toFixed(2)}</span>
-                  </>
-                )}
-                {(r.score_hits?.length || r.rejected) && (
-                  <>
-                    <span>·</span>
-                    <span
-                      className={
-                        "release-score " +
-                        (r.rejected
-                          ? "is-reject"
-                          : (r.score ?? 0) >= 0
-                            ? "pos"
-                            : "neg")
-                      }
-                      title={(r.score_hits || [])
-                        .map((h) => `${h.label}: ${h.points > 0 ? "+" : ""}${h.points}${h.reject ? " (reject)" : ""}`)
-                        .join("\n")}
-                    >
-                      {r.rejected
-                        ? "⛔ rejected"
-                        : `score ${(r.score ?? 0) > 0 ? "+" : ""}${r.score ?? 0}`}
-                    </span>
-                  </>
-                )}
               </div>
               {!r.verified && r.best_match_title && (
                 <div className="release-warn">
@@ -478,6 +505,16 @@ function ReleaseList({
                 <MatchBreakdown reasons={r.reasons} />
               )}
             </div>
+
+            {/* Quality score — the user's release-preference total, the
+                differentiator among same-scene releases. */}
+            <div className={"release-score-stat " + scoreClass} title={scoreTitle}>
+              <span className="rs-val">
+                {r.rejected ? "⛔" : `${score > 0 ? "+" : ""}${score}`}
+              </span>
+              <span className="rs-label">{r.rejected ? "reject" : "score"}</span>
+            </div>
+
             <GrabButton state={state} onClick={() => onGrab(r)} />
           </li>
         );

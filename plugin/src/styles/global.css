@@ -735,17 +735,97 @@ button {
 }
 .release {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: auto 1fr auto auto;
   gap: 16px;
   align-items: center;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
-  padding: 14px 18px;
+  padding: 14px 18px 14px 16px;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   position: relative;
   overflow: hidden;
+}
+
+/* Match meter — left anchor. Big banded % + a micro fill-bar; the band
+   colour (passed via --band) tracks the confTier scale. */
+.release-match {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 48px;
+  flex: none;
+}
+.rm-pct {
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--band, var(--text));
+}
+.rm-pct i {
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 600;
+  opacity: 0.55;
+  margin-left: 1px;
+}
+.rm-meter {
+  width: 100%;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+.rm-meter i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--band, var(--accent));
+}
+.rm-label,
+.rs-label {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.rm-na {
+  color: var(--text-muted);
+  font-size: 15px;
+  opacity: 0.6;
+}
+
+/* Quality-score stat — right anchor, before the grab button. Bold signed
+   value, coloured by sign / reject; the per-rule breakdown is the title. */
+.release-score-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 44px;
+  flex: none;
+  cursor: default;
+}
+.rs-val {
+  font-size: 18px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.release-score-stat.pos .rs-val {
+  color: var(--accent-bright, #22c55e);
+}
+.release-score-stat.neg .rs-val {
+  color: var(--amber, #d4a017);
+}
+.release-score-stat.is-reject .rs-val,
+.release-score-stat.is-reject .rs-label {
+  color: var(--danger, #f87171);
 }
 
 /* Confidence outline — five-tier gradient meter. The matcher emits
@@ -811,9 +891,13 @@ button {
   background: #b85454;
 }
 .release-title {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 13px;
   font-weight: 500;
+  letter-spacing: -0.01em;
   word-break: break-all;
-  margin-bottom: 4px;
+  margin-bottom: 5px;
+  color: var(--text);
 }
 .release-meta {
   color: var(--text-muted);
@@ -3770,23 +3854,6 @@ code.grab-fact-v,
 }
 .rules-reset:hover {
   border-color: var(--glass-border-bright);
-}
-
-/* Release score breakdown — the "why this score" chips on a release. */
-.release-score {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-weight: 600;
-}
-.release-score.is-reject {
-  color: var(--danger, #f87171);
-}
-.release-score.pos {
-  color: var(--accent-bright);
-}
-.release-score.neg {
-  color: #d4a017;
 }
 
 /* ─── Watch control ──────────────────────────────────────────────────
