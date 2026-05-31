@@ -357,6 +357,8 @@ export interface GrabRequest {
   // many scenes to drive identify toward.
   kind?: "single" | "pack";
   video_count?: number;
+  // Bypass the daemon's disk-space preflight (user chose "grab anyway").
+  force?: boolean;
 }
 
 export interface GrabResponse {

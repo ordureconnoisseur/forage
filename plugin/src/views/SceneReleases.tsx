@@ -192,6 +192,7 @@ export default function SceneReleases({
     rel: SceneRelease,
     sceneIdOverride?: string,
     confOverride?: number,
+    force?: boolean,
   ) => {
     const k = releaseKey(rel);
     setGrabs((g) => ({ ...g, [k]: { status: "grabbing" } }));
@@ -205,6 +206,7 @@ export default function SceneReleases({
         scene_id: sceneIdOverride ?? data.scene.stashdb_id,
         confidence: confOverride ?? rel.confidence,
         performer_name: performerName,
+        force,
       });
       setGrabs((g) => ({
         ...g,
@@ -424,7 +426,12 @@ function ReleaseList({
 }: {
   releases: SceneRelease[];
   grabs: Record<string, GrabState>;
-  onGrab: (r: SceneRelease, sceneIdOverride?: string, confOverride?: number) => void;
+  onGrab: (
+    r: SceneRelease,
+    sceneIdOverride?: string,
+    confOverride?: number,
+    force?: boolean,
+  ) => void;
 }) {
   return (
     <ul className="release-list">
@@ -532,7 +539,10 @@ function ReleaseList({
               <div className="release-score-stat is-empty" aria-hidden="true" />
             )}
 
-            <GrabButton state={state} onClick={() => onGrab(r)} />
+            <GrabButton
+              state={state}
+              onGrab={(force) => onGrab(r, undefined, undefined, force)}
+            />
           </li>
         );
       })}
@@ -573,11 +583,17 @@ function MatchBreakdown({ reasons }: { reasons: string[] }) {
   );
 }
 
-function GrabButton({ state, onClick }: { state: GrabState; onClick: () => void }) {
+function GrabButton({
+  state,
+  onGrab,
+}: {
+  state: GrabState;
+  onGrab: (force?: boolean) => void;
+}) {
   switch (state.status) {
     case "idle":
       return (
-        <button className="grab-btn" onClick={onClick}>
+        <button className="grab-btn" onClick={() => onGrab()}>
           Grab ↓
         </button>
       );
@@ -593,15 +609,19 @@ function GrabButton({ state, onClick }: { state: GrabState; onClick: () => void 
           Queued → {state.client}
         </button>
       );
-    case "error":
+    case "error": {
+      // A disk-space preflight rejection is overridable — offer "Grab
+      // anyway" (force) rather than a plain retry.
+      const lowSpace = /free space/i.test(state.message);
       return (
         <button
           className="grab-btn error"
-          onClick={onClick}
+          onClick={() => onGrab(lowSpace)}
           title={state.message}
         >
-          Failed — retry
+          {lowSpace ? "Grab anyway" : "Failed — retry"}
         </button>
       );
+    }
   }
 }
