@@ -88,6 +88,19 @@ type Server struct {
 	// for a single-user daemon. Guarded by sessionMu.
 	sessionMu sync.Mutex
 	sessions  map[string]time.Time
+
+	// sceneTitles memoises StashDB scene id → display title, so the Grabs
+	// list can label a scene-attempt group with its real title instead of a
+	// bare id. Titles are immutable, so entries effectively never go stale;
+	// a negative result (id not found / StashDB down) is cached briefly so a
+	// fast-polling list doesn't hammer StashDB. Guarded by sceneTitleMu.
+	sceneTitleMu sync.Mutex
+	sceneTitles  map[string]sceneTitleEntry
+}
+
+type sceneTitleEntry struct {
+	title   string
+	fetched time.Time
 }
 
 type filmoEntry struct {

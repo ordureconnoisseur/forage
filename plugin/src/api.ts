@@ -572,6 +572,10 @@ export interface Grab {
   predicted_stashdb_id?: string;
   predicted_confidence?: number;
   actual_stashdb_id?: string;
+  // The StashDB scene's real title — present only for grabs the daemon
+  // grouped (2+ attempts at one scene), so the group header can show it
+  // instead of a bare id. Empty/absent otherwise.
+  scene_title?: string;
   release_title: string;
   release_size?: number;
   release_indexer?: string;

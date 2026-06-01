@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -41,15 +42,20 @@ type grabOut struct {
 	PredictedStashDBID  string  `json:"predicted_stashdb_id,omitempty"`
 	PredictedConfidence float64 `json:"predicted_confidence,omitempty"`
 	ActualStashDBID     string  `json:"actual_stashdb_id,omitempty"`
-	ReleaseTitle        string  `json:"release_title"`
-	ReleaseSize         int64   `json:"release_size,omitempty"`
-	ReleaseIndexer      string  `json:"release_indexer,omitempty"`
-	DownloadURL         string  `json:"download_url,omitempty"`
-	Client              string  `json:"client,omitempty"`
-	ClientID            string  `json:"client_id,omitempty"`
-	ClientName          string  `json:"client_name,omitempty"`
-	Category            string  `json:"category,omitempty"`
-	Status              string  `json:"status"`
+	// SceneTitle is the StashDB scene's real title (resolved server-side and
+	// cached), populated only for grabs whose scene is grouped (2+ attempts)
+	// so the group header shows the title instead of a bare id. Empty when
+	// unknown — the UI falls back to the id.
+	SceneTitle     string `json:"scene_title,omitempty"`
+	ReleaseTitle   string `json:"release_title"`
+	ReleaseSize    int64  `json:"release_size,omitempty"`
+	ReleaseIndexer string `json:"release_indexer,omitempty"`
+	DownloadURL    string `json:"download_url,omitempty"`
+	Client         string `json:"client,omitempty"`
+	ClientID       string `json:"client_id,omitempty"`
+	ClientName     string `json:"client_name,omitempty"`
+	Category       string `json:"category,omitempty"`
+	Status         string `json:"status"`
 	// Stalled flags a torrent grab still "downloading" that's made no
 	// progress for stalledAfter — the UI badges it so the user can
 	// abandon it and pick another release.
@@ -171,7 +177,83 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	s.enrichProgress(r, out)
+	s.enrichSceneTitles(r, out)
 	writeJSON(w, http.StatusOK, grabsResponse{Grabs: out, Totals: totals})
+}
+
+// sceneTitleTTL: a found title is immutable, so this is effectively
+// permanent for the daemon's lifetime. A miss (not found / StashDB
+// unreachable) is retried after a short window so a fast-polling list
+// doesn't hammer StashDB on every tick.
+const (
+	sceneTitleTTL     = 24 * time.Hour
+	sceneTitleMissTTL = 2 * time.Minute
+)
+
+// enrichSceneTitles fills SceneTitle for grabs whose scene has 2+ attempts
+// in this result — exactly the scenes the UI renders as an attempt-group,
+// whose header would otherwise show a bare stashdb id. Single-attempt grabs
+// don't get a header, so we skip them (no wasted StashDB lookups). Titles
+// are cached (immutable), so steady-state polling resolves from memory with
+// no StashDB calls.
+func (s *Server) enrichSceneTitles(r *http.Request, out []grabOut) {
+	// Count attempts per scene id (actual once confirmed, else predicted).
+	counts := map[string]int{}
+	for i := range out {
+		if sid := grabSceneID(out[i]); sid != "" {
+			counts[sid]++
+		}
+	}
+	for i := range out {
+		sid := grabSceneID(out[i])
+		if sid == "" || counts[sid] < 2 {
+			continue
+		}
+		if title := s.sceneTitle(r.Context(), sid); title != "" {
+			out[i].SceneTitle = title
+		}
+	}
+}
+
+// grabSceneID returns the scene id a grab is tied to: the confirmed actual
+// id when known, else the prediction. Matches the grouping key the UI uses.
+func grabSceneID(g grabOut) string {
+	if g.ActualStashDBID != "" {
+		return g.ActualStashDBID
+	}
+	return g.PredictedStashDBID
+}
+
+// sceneTitle resolves a StashDB scene id to its title, memoised. Returns ""
+// when StashDB isn't configured, the id isn't found, or the lookup fails —
+// callers fall back to the id.
+func (s *Server) sceneTitle(ctx context.Context, id string) string {
+	s.sceneTitleMu.Lock()
+	if s.sceneTitles == nil {
+		s.sceneTitles = map[string]sceneTitleEntry{}
+	}
+	if e, ok := s.sceneTitles[id]; ok {
+		ttl := sceneTitleTTL
+		if e.title == "" {
+			ttl = sceneTitleMissTTL
+		}
+		if time.Since(e.fetched) < ttl {
+			s.sceneTitleMu.Unlock()
+			return e.title
+		}
+	}
+	s.sceneTitleMu.Unlock()
+
+	title := ""
+	if sdb := s.pool.StashDB(); sdb != nil {
+		if sc, err := sdb.FindScene(ctx, id); err == nil && sc != nil {
+			title = sc.Title
+		}
+	}
+	s.sceneTitleMu.Lock()
+	s.sceneTitles[id] = sceneTitleEntry{title: title, fetched: time.Now()}
+	s.sceneTitleMu.Unlock()
+	return title
 }
 
 // enrichProgress attaches live download progress to grabs that are

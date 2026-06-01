@@ -4766,6 +4766,7 @@ code.grab-fact-v,
   gap: 8px;
   overflow: hidden;
 }
+/* Separator between the "N attempts" count and the identity block. */
 .gsg-title::before {
   content: "·";
   flex: none;
@@ -4791,6 +4792,26 @@ code.grab-fact-v,
 .gsg-scene:hover {
   color: var(--accent-bright);
   opacity: 1;
+}
+/* When the real scene title is known it replaces the bare id as the
+   caption's identity — slightly brighter than the surrounding muted text
+   (it's the thing you read), but still caption-weight, and truncates
+   gracefully on a long title. */
+.gsg-scene-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--text, #fff);
+  opacity: 0.82;
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gsg-scene-title:hover {
+  opacity: 1;
+  text-decoration: underline;
+  text-decoration-color: var(--glass-border-bright);
 }
 .gsg-tally {
   flex: none;

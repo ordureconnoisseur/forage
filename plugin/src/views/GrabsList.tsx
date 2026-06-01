@@ -712,6 +712,7 @@ type SceneGroupItem = {
   kind: "group";
   key: string; // the shared scene id
   sceneId: string;
+  sceneTitle?: string; // StashDB title, when the daemon resolved it
   performerName?: string;
   grabs: Grab[];
 };
@@ -761,6 +762,7 @@ function groupGrabsByScene(grabs: Grab[]): GrabListItem[] {
         kind: "group",
         key,
         sceneId: key,
+        sceneTitle: bucket.find((g) => g.scene_title)?.scene_title,
         performerName: bucket.find((g) => g.performer_name)?.performer_name,
         grabs: bucket,
       };
@@ -816,15 +818,29 @@ function SceneGroup({
           {group.performerName && (
             <span className="gsg-performer">{group.performerName}</span>
           )}
-          <a
-            className="gsg-scene"
-            href={stashdbScene(group.sceneId)}
-            target="_blank"
-            rel="noopener noreferrer"
-            title="View scene on StashDB"
-          >
-            scene {group.sceneId.slice(0, 8)}
-          </a>
+          {group.sceneTitle ? (
+            <>
+              <a
+                className="gsg-scene-title"
+                href={stashdbScene(group.sceneId)}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="View scene on StashDB"
+              >
+                {group.sceneTitle}
+              </a>
+            </>
+          ) : (
+            <a
+              className="gsg-scene"
+              href={stashdbScene(group.sceneId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="View scene on StashDB"
+            >
+              scene {group.sceneId.slice(0, 8)}
+            </a>
+          )}
         </div>
         {parts.length > 0 && <div className="gsg-tally">{parts.join(" · ")}</div>}
       </div>
