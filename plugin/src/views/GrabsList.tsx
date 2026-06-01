@@ -24,6 +24,9 @@ import {
   setGrabPerformer,
   fetchPerformers,
   refreshPerformers,
+  resolveDuplicate,
+  type DuplicateReview,
+  type SceneCopy,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -464,6 +467,10 @@ export default function GrabsList({
               },
               onPerformerSet: (name: string) => {
                 setNotice(`Filed under ${name}`);
+                void refresh();
+              },
+              onResolvedDuplicate: (msg: string) => {
+                setNotice(msg);
                 void refresh();
               },
               onPickScene,
@@ -985,6 +992,101 @@ function ChipPortrait({
   );
 }
 
+// resLabel buckets a file's pixel height into the resolution label the user
+// thinks in. "?" when Stash didn't report a height.
+function resLabel(c?: SceneCopy): string {
+  const h = c?.height ?? 0;
+  if (h >= 2160) return "2160p";
+  if (h >= 1440) return "1440p";
+  if (h >= 1080) return "1080p";
+  if (h >= 720) return "720p";
+  if (h >= 480) return "480p";
+  if (h > 0) return `${h}p`;
+  return "?";
+}
+
+// DupCopyRow renders one copy line in a duplicate compare: tag (yours/pack),
+// resolution, size, and the path (truncated, full path on hover).
+function DupCopyRow({ tag, copy }: { tag: string; copy?: SceneCopy }) {
+  return (
+    <div className="grab-dup-copy">
+      <span className="grab-dup-tag">{tag}</span>
+      <span className="grab-dup-res">{resLabel(copy)}</span>
+      {copy?.size ? (
+        <span className="grab-dup-size">{humanSize(copy.size)}</span>
+      ) : null}
+      {copy?.path ? (
+        <span className="grab-dup-path" title={copy.path}>
+          {copy.path}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+// DupCard is one scene the pack duplicated. "yours" is the pre-existing
+// library copy (the highest-resolution one when several exist); "pack" is
+// what this download delivered. Keep yours drops the pack's copy; Keep pack
+// drops the original(s); Keep both leaves everything and dismisses the item.
+function DupCard({
+  dup,
+  busy,
+  disabled,
+  onResolve,
+}: {
+  dup: DuplicateReview;
+  busy: boolean;
+  disabled: boolean;
+  onResolve: (keep: "existing" | "pack" | "both") => void;
+}) {
+  // Representative existing copy = highest resolution, so "yours" reflects the
+  // best file the user already holds.
+  const best = [...dup.existing].sort(
+    (a, b) => (b.height ?? 0) - (a.height ?? 0),
+  )[0];
+  const others = dup.existing.length - 1;
+  return (
+    <div className="grab-dup-card">
+      <div className="grab-dup-title">
+        {dup.scene_title || dup.stashdb_id}
+      </div>
+      <div className="grab-dup-compare">
+        <DupCopyRow tag="yours" copy={best} />
+        <DupCopyRow tag="pack" copy={dup.pack} />
+        {others > 0 && (
+          <div className="grab-dup-more">
+            + {others} other cop{others === 1 ? "y" : "ies"} already in your
+            library
+          </div>
+        )}
+      </div>
+      <div className="grab-dup-actions">
+        <button
+          className="grab-action"
+          disabled={disabled}
+          onClick={() => onResolve("existing")}
+        >
+          {busy ? "…" : "Keep yours"}
+        </button>
+        <button
+          className="grab-action"
+          disabled={disabled}
+          onClick={() => onResolve("pack")}
+        >
+          Keep pack
+        </button>
+        <button
+          className="grab-action ghost"
+          disabled={disabled}
+          onClick={() => onResolve("both")}
+        >
+          Keep both
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function GrabRow({
   g,
   expanded,
@@ -993,6 +1095,7 @@ function GrabRow({
   onMatched,
   onRetried,
   onPerformerSet,
+  onResolvedDuplicate,
   onPickScene,
 }: {
   g: Grab;
@@ -1002,6 +1105,7 @@ function GrabRow({
   onMatched: () => void;
   onRetried: () => void;
   onPerformerSet: (name: string) => void;
+  onResolvedDuplicate: (msg: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [retrying, setRetrying] = useState(false);
@@ -1101,6 +1205,40 @@ function GrabRow({
       setPerfSearching(false);
     }
   }
+  // Duplicate review (PackDedupKeep="review"): resolve a scene the pack
+  // delivered that the library already had. dupBusy holds the in-flight dup
+  // id; resolvedDups optimistically hides rows the user just decided so the
+  // section collapses without waiting for the next list poll.
+  const [dupBusy, setDupBusy] = useState<number | null>(null);
+  const [dupErr, setDupErr] = useState<string | null>(null);
+  const [resolvedDups, setResolvedDups] = useState<Set<number>>(new Set());
+  async function resolveDup(
+    dupId: number,
+    keep: "existing" | "pack" | "both",
+  ) {
+    if (dupBusy != null) return;
+    setDupBusy(dupId);
+    setDupErr(null);
+    try {
+      const res = await resolveDuplicate(dupId, keep);
+      if (!res.ok) {
+        throw new Error((res.errors ?? []).join("; ") || "resolve failed");
+      }
+      setResolvedDups((s) => new Set(s).add(dupId));
+      onResolvedDuplicate(
+        keep === "both"
+          ? "Kept both copies"
+          : keep === "pack"
+            ? "Kept the pack copy, removed the original"
+            : "Kept your copy, removed the pack's",
+      );
+    } catch (e) {
+      setDupErr((e as Error).message);
+    } finally {
+      setDupBusy(null);
+    }
+  }
+
   const confirmTimer = useRef<number | undefined>(undefined);
   const fetchedDetail = useRef(false);
 
@@ -1195,6 +1333,14 @@ function GrabRow({
             <span className="grab-pack-badge" title="Multi-scene pack">
               <PackGlyph />
               PACK
+            </span>
+          )}
+          {(g.pending_duplicates ?? 0) > 0 && (
+            <span
+              className="grab-dups-badge"
+              title="This pack delivered scenes you already have — open to choose which copy to keep"
+            >
+              {g.pending_duplicates} TO REVIEW
             </span>
           )}
           {g.adopted && (
@@ -1329,6 +1475,39 @@ function GrabRow({
               <Pipeline g={g} />
             </div>
           </div>
+
+          {/* Duplicate review (PackDedupKeep="review") — scenes this pack
+              delivered that the library already had. The user keeps the
+              better copy per scene; the destroy runs server-side. */}
+          {(() => {
+            const dups = (detail?.duplicates ?? []).filter(
+              (d) => !resolvedDups.has(d.id),
+            );
+            if (dups.length === 0) return null;
+            return (
+              <div className="grab-dups">
+                <div className="grab-dups-head">
+                  <span className="grab-dups-warn" aria-hidden="true">
+                    !
+                  </span>
+                  {dups.length} duplicate{dups.length === 1 ? "" : "s"} to review
+                  <span className="grab-dups-sub">
+                    — scenes this pack delivered that you already have
+                  </span>
+                </div>
+                {dups.map((d) => (
+                  <DupCard
+                    key={d.id}
+                    dup={d}
+                    busy={dupBusy === d.id}
+                    disabled={dupBusy != null}
+                    onResolve={(keep) => resolveDup(d.id, keep)}
+                  />
+                ))}
+                {dupErr && <div className="grab-delete-err">{dupErr}</div>}
+              </div>
+            );
+          })()}
 
           {/* Live download progress — full-width band, only in flight. */}
           {g.progress && (

@@ -718,6 +718,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               onChange={(e) => setField("packDedupKeep", e.target.value)}
             >
               <option value="existing">Keep my existing copy</option>
+              <option value="review">Ask me each time (review)</option>
               <option value="pack">Keep the pack's copy</option>
               <option value="both">Keep both (no dedup)</option>
             </select>
@@ -728,7 +729,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             survives. Removing a copy deletes its file; the torrent keeps
             seeding from the download client's own copy regardless. Pack
             copies are often re-encodes, so "keep my existing copy" is the
-            safe default.
+            safe default. "Ask me each time" never deletes automatically — it
+            flags each clash on the grab so you pick the better file (handy
+            when some pack copies are higher quality than yours). "Keep the
+            pack's copy" deletes your originals automatically, so it only acts
+            once a pack has fully scanned.
           </p>
           <div className="settings-actions inline">
             <button

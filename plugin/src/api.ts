@@ -615,6 +615,10 @@ export interface Grab {
   pack_files?: number;
   pack_identified?: number;
   pack_deduped?: number;
+  // Count of unresolved review-mode dedup items (PackDedupKeep="review") —
+  // scenes the pack delivered that the library already had. The card badges
+  // this and loads the per-scene compare from the detail endpoint.
+  pending_duplicates?: number;
 }
 
 export interface GrabsResponse {
@@ -657,10 +661,42 @@ export interface GrabDetail {
     scene_count: number;
     favorite: boolean;
   }[];
+  // Pending review-mode duplicates: scenes this pack delivered that the
+  // library already had. Each compares the pack's copy against the
+  // pre-existing one(s) so the user keeps the better file.
+  duplicates?: DuplicateReview[];
+}
+
+// SceneCopy is one physical copy of a scene — height buckets to a resolution
+// label, size shows the file weight, path disambiguates where it lives.
+export interface SceneCopy {
+  scene_id: string;
+  title?: string;
+  path?: string;
+  size?: number;
+  height?: number;
+}
+
+export interface DuplicateReview {
+  id: number;
+  stashdb_id: string;
+  scene_title?: string;
+  pack: SceneCopy;
+  existing: SceneCopy[];
 }
 
 export function fetchGrabDetail(id: number): Promise<GrabDetail> {
   return get<GrabDetail>(`/grabs/${id}/detail`);
+}
+
+// resolveDuplicate applies a keep decision to one pending review item.
+// "existing" drops the pack's copy, "pack" drops the pre-existing one(s),
+// "both" keeps everything (dismiss). The destroy runs server-side.
+export function resolveDuplicate(
+  id: number,
+  keep: "existing" | "pack" | "both",
+): Promise<{ ok: boolean; resolution: string; removed?: string[]; errors?: string[] }> {
+  return postJSON(`/duplicates/${id}/resolve`, { keep });
 }
 
 export interface MatchResult {

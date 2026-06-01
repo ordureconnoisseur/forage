@@ -5460,3 +5460,138 @@ code.grab-fact-v,
     transform: translate(-50%, 0);
   }
 }
+
+/* ── Pack duplicate review (PackDedupKeep="review") ──────────────────
+   Reuses the grab-detail glass language; an amber accent (the same hue
+   as the stalled badge) marks it as "needs a decision" without becoming
+   a different-looking card. */
+.grab-dups-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(212, 161, 23, 0.13);
+  border: 1px solid rgba(212, 161, 23, 0.4);
+  color: #e0b84e;
+}
+.grab-dups {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(212, 161, 23, 0.32);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, rgba(212, 161, 23, 1) 5%, var(--glass-bg));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grab-dups-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #e0b84e;
+}
+.grab-dups-warn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(212, 161, 23, 0.18);
+  border: 1px solid rgba(212, 161, 23, 0.5);
+  color: #e0b84e;
+}
+.grab-dups-sub {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.grab-dup-card {
+  padding: 10px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.grab-dup-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.grab-dup-compare {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.grab-dup-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+.grab-dup-tag {
+  flex: none;
+  width: 44px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.grab-dup-res {
+  flex: none;
+  font-weight: 700;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.grab-dup-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.grab-dup-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.75;
+}
+.grab-dup-more {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-left: 52px;
+}
+.grab-dup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 2px;
+}
+/* The dup cards reuse .grab-action; size them down a touch and give the
+   "keep both" dismiss a quieter ghost treatment. */
+.grab-dup-actions .grab-action {
+  padding: 6px 14px;
+  font-size: 12px;
+}
+.grab-action.ghost {
+  background: transparent;
+  color: var(--text-muted);
+}
+.grab-action.ghost:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--glass-border-bright);
+}
