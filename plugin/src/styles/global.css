@@ -4707,34 +4707,37 @@ code.grab-fact-v,
    here" is answerable at a glance. Single grabs never get this — they
    render as bare rows.
 
-   Design: NO container box. The attempts stay the exact same rounded
-   cards as everywhere else on the page — grouping is conveyed by a light
-   caption above them + proximity (the attempt cards cluster at a tight
-   gap, while the normal 8px gap separates the group from its neighbours).
-   So a group reads as "a captioned set of the usual cards", not a
-   different-looking widget. No wrapper, no flat rows, no extra verticals. */
+   Design: a quiet BRACKET around the set. Proximity-only was too subtle —
+   it landed in the uncanny valley where a group looked almost like two
+   ungrouped cards, reading as "something's off" rather than intentional.
+   So wrap the set in a faint, rounded, dashed-free outline with a hair of
+   inset padding — just enough to say "these belong together" deliberately.
+   Crucially the inner cards keep their FULL normal .grab-row styling
+   (rounded, bordered, status rail), so the bracket frames real cards
+   rather than recreating the heavy box-in-box that read as a flat widget.
+   The frame is neutral (no status colour): a group can hold mixed
+   outcomes, so colour stays per-row where it's accurate. */
 .grab-scene-group {
   list-style: none;
   display: flex;
   flex-direction: column;
-  /* Attempt cards inside cluster tightly; the parent .grab-list gap (8px)
-     handles separation from neighbours. A little extra top space makes the
-     caption read as belonging to the cards below it, not floating between
-     two list items. */
-  gap: 4px;
-  margin-top: 6px;
-}
-/* No extra top margin when a group is the very first item. */
-.grab-list > .grab-scene-group:first-child {
-  margin-top: 0;
+  gap: 5px;
+  /* The bracket. Lighter than a row border, with a faint tint so it reads
+     as a recessed tray the cards sit in — present, not loud. */
+  border: 1px solid var(--glass-border);
+  /* Concentric with the inner cards: their 12px radius + 6px padding ≈ an
+     18px outer radius, so the corners nest cleanly instead of clashing. */
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.012);
+  padding: 6px;
 }
 
-/* Caption line — sits above the attempt cards, no box of its own. */
+/* Caption line — sits inside the bracket, above the attempt cards. */
 .gsg-head {
   display: flex;
   align-items: baseline;
   gap: 8px;
-  padding: 2px 4px 1px;
+  padding: 2px 6px 1px;
 }
 .gsg-id {
   flex: none;
