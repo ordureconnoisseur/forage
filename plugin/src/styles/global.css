@@ -4118,6 +4118,22 @@ code.grab-fact-v,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Block button on a ranked indexer row — quiet muted X, reddens on hover. */
+.idx-block {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px;
+}
+.idx-block:hover {
+  color: var(--danger, #f87171);
+}
 .reorder-move {
   display: flex;
   gap: 3px;
@@ -4208,11 +4224,14 @@ code.grab-fact-v,
   color: var(--text-muted);
 }
 .idx-blocked-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: transparent;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 14px;
+  font-size: 13px;
   line-height: 1;
   padding: 0;
 }

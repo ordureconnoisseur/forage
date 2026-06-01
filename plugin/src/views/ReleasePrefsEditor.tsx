@@ -29,6 +29,26 @@ function arrayMove<T>(arr: T[], from: number, to: number): T[] {
   return next;
 }
 
+// XIcon — a plain stroke "✕", used for block/unblock controls instead of an
+// emoji (emoji render inconsistently across platforms and clash with the
+// app's flat icon language).
+function XIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <path d="M6 6 18 18 M18 6 6 18" />
+    </svg>
+  );
+}
+
 // ReorderList is a tiny dependency-free drag-to-reorder list: HTML5
 // draggable + onDragOver live-swap, plus ↑/↓ buttons so it's fully
 // keyboard-accessible (mirrors the advanced editor's move affordance).
@@ -197,8 +217,8 @@ export default function ReleasePrefsEditor({
         <>
           <h4 className="prefs-head">Indexers</h4>
           <p className="prefs-sub">
-            Drag to rank your preferred sources. Block (⛔) to never grab from
-            one.
+            Drag to rank your preferred sources. Block one to never grab from
+            it.
           </p>
           {ranked.length > 0 && (
             <ReorderList
@@ -216,7 +236,7 @@ export default function ReleasePrefsEditor({
                     title="Block this indexer"
                     aria-label={"Block " + n}
                   >
-                    ⛔
+                    <XIcon />
                   </button>
                 </span>
               )}
@@ -234,7 +254,7 @@ export default function ReleasePrefsEditor({
                     title="Unblock"
                     aria-label={"Unblock " + n}
                   >
-                    ×
+                    <XIcon />
                   </button>
                 </span>
               ))}
