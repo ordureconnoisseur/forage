@@ -4703,30 +4703,38 @@ code.grab-fact-v,
 }
 
 /* ─── Scene group (multiple torrent attempts for one scene) ──────────
-   A card wrapping every attempt at the same scene, so "how many torrents
-   have I tried here" is answerable at a glance. Single grabs never get
-   this — they render as bare rows.
+   Multiple attempts at the same scene, so "how many torrents have I tried
+   here" is answerable at a glance. Single grabs never get this — they
+   render as bare rows.
 
-   Design: the group is the ONE box. Its attempt rows shed their own
-   border/background to become entries separated by hairline dividers —
-   so we read one frame, not box-in-box-in-box. The container is
-   deliberately neutral (no status rail): a group can hold mixed outcomes
-   (a confirmed grab beside a stalled one), so colour belongs per-row,
-   where it's accurate, not on the wrapper. */
+   Design: NO container box. The attempts stay the exact same rounded
+   cards as everywhere else on the page — grouping is conveyed by a light
+   caption above them + proximity (the attempt cards cluster at a tight
+   gap, while the normal 8px gap separates the group from its neighbours).
+   So a group reads as "a captioned set of the usual cards", not a
+   different-looking widget. No wrapper, no flat rows, no extra verticals. */
 .grab-scene-group {
   list-style: none;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.015);
-  overflow: hidden;
-  position: relative;
+  display: flex;
+  flex-direction: column;
+  /* Attempt cards inside cluster tightly; the parent .grab-list gap (8px)
+     handles separation from neighbours. A little extra top space makes the
+     caption read as belonging to the cards below it, not floating between
+     two list items. */
+  gap: 4px;
+  margin-top: 6px;
+}
+/* No extra top margin when a group is the very first item. */
+.grab-list > .grab-scene-group:first-child {
+  margin-top: 0;
 }
 
+/* Caption line — sits above the attempt cards, no box of its own. */
 .gsg-head {
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 14px;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 4px 1px;
 }
 .gsg-id {
   flex: none;
@@ -4735,7 +4743,7 @@ code.grab-fact-v,
   gap: 4px;
 }
 .gsg-count {
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1;
   color: var(--text-muted);
@@ -4744,7 +4752,7 @@ code.grab-fact-v,
 .gsg-count-label {
   font-size: 11px;
   color: var(--text-muted);
-  opacity: 0.7;
+  opacity: 0.65;
   letter-spacing: 0.02em;
 }
 .gsg-title {
@@ -4755,20 +4763,16 @@ code.grab-fact-v,
   gap: 8px;
   overflow: hidden;
 }
-/* A thin divider before the performer name separates the count from the
-   identity without another box. */
 .gsg-title::before {
-  content: "";
+  content: "·";
   flex: none;
-  align-self: center;
-  width: 1px;
-  height: 12px;
-  background: var(--glass-border);
+  color: var(--text-muted);
+  opacity: 0.5;
 }
 .gsg-performer {
   font-weight: 600;
-  font-size: 13px;
-  color: var(--text, #fff);
+  font-size: 12px;
+  color: var(--text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4776,7 +4780,7 @@ code.grab-fact-v,
 .gsg-scene {
   font-size: 11px;
   color: var(--text-muted);
-  opacity: 0.65;
+  opacity: 0.55;
   text-decoration: none;
   font-family: var(--mono, ui-monospace, monospace);
   flex: none;
@@ -4789,35 +4793,20 @@ code.grab-fact-v,
   flex: none;
   font-size: 11px;
   color: var(--text-muted);
-  opacity: 0.8;
+  opacity: 0.75;
   font-variant-numeric: tabular-nums;
 }
 
-/* Attempt rows nested in the card: a stacked list, not free-floating
-   cards. */
+/* The attempts: plain stack. Each child keeps the normal .grab-row card
+   styling untouched — no overrides — so a grouped attempt is visually
+   identical to a standalone grab. */
 .gsg-attempts {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-}
-/* Collapse the nested-box look: inside a group, rows lose their own
-   frame and become flush entries divided by a hairline. Their per-status
-   left accent stays (it's the only colour cue, and it's accurate). */
-.gsg-attempts .grab-row {
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-  border-top: 1px solid var(--glass-border);
-}
-.gsg-attempts .grab-row:hover {
-  background: rgba(255, 255, 255, 0.025);
-}
-.gsg-attempts .grab-row.open {
-  background: rgba(255, 255, 255, 0.03);
+  gap: 4px;
 }
 
 /* ─── Release ranking cues ───────────────────────────────────────────
