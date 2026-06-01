@@ -197,7 +197,10 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		Username string `json:"username"`
 		Password string `json:"password"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
 
 	userOK := subtle.ConstantTimeCompare([]byte(body.Username), []byte(s.effectiveUsername())) == 1
 	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) == nil
@@ -230,7 +233,10 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Token string `json:"token"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
 	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(token)) != 1 {
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return

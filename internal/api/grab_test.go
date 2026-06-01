@@ -31,3 +31,26 @@ func TestMagnetInfoHash(t *testing.T) {
 		})
 	}
 }
+
+func TestValidGrabURL(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"https://prowlarr.example/dl/abc.torrent", true},
+		{"http://tracker.example/x", true},
+		{"magnet:?xt=urn:btih:14E9A3CD6BD02D5BA10BAA1F9145C44E75EBDB99", true},
+		{"  magnet:?xt=urn:btih:abc  ", true}, // trimmed
+		{"file:///etc/passwd", false},
+		{"ftp://host/x", false},
+		{"gopher://host", false},
+		{"", false},
+		{"not a url", false},
+		{"https://", false}, // scheme but no host
+	}
+	for _, c := range cases {
+		if got := validGrabURL(c.in); got != c.want {
+			t.Errorf("validGrabURL(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}

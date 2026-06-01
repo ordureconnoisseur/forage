@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -56,7 +58,13 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req grabMatchRequest
-	_ = json.NewDecoder(r.Body).Decode(&req) // body optional
+	// Body is optional (an empty body falls back to the grab's own
+	// prediction), so io.EOF is fine — but a present-yet-malformed body is
+	// a client error, not a silent fallback.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
 	target := extractStashDBID(req.StashDBID)
 	if target == "" {
 		target = grab.PredictedStashDBID

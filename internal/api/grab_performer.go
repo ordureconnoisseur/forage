@@ -30,7 +30,10 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req setPerformerRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
 	performer := strings.TrimSpace(req.PerformerName)
 	if performer == "" {
 		writeErr(w, http.StatusBadRequest, "performer_name required")

@@ -95,6 +95,15 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 	if req.DownloadURL == "" {
 		return grabResponse{}, grabError{http.StatusBadRequest, "download_url required"}
 	}
+	// Scheme allowlist: forage only ever fetches a .torrent over http(s) or
+	// hands a magnet straight to qBit. Reject anything else (file://,
+	// gopher://, ftp://, …) so a crafted download_url can't point the daemon
+	// at an unintended scheme. In practice the URL comes from Prowlarr, but
+	// the endpoint is callable, so validate at the boundary.
+	if !validGrabURL(req.DownloadURL) {
+		return grabResponse{}, grabError{http.StatusBadRequest,
+			"download_url must be an http(s) or magnet URL"}
+	}
 	protocol := req.Protocol
 	if protocol == "" {
 		protocol = inferProtocol(req.DownloadURL)
@@ -381,4 +390,20 @@ func inferProtocol(url string) string {
 		return "torrent"
 	}
 	return "usenet"
+}
+
+// validGrabURL accepts only the schemes forage actually acts on: a magnet
+// URI (handed to qBit) or an http(s) URL (a .torrent / NZB the daemon
+// fetches). Everything else is rejected so a crafted download_url can't
+// steer the daemon at file://, ftp://, gopher://, etc.
+func validGrabURL(raw string) bool {
+	s := strings.TrimSpace(raw)
+	if strings.HasPrefix(strings.ToLower(s), "magnet:") {
+		return true
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return false
+	}
+	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
