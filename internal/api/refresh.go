@@ -49,3 +49,31 @@ func (s *Server) postRefresh(w http.ResponseWriter, r *http.Request) {
 		"studioRefreshedAt":    studAt,
 	})
 }
+
+// postRefreshPerformers refreshes ONLY the performer cache — the fast pull,
+// without the studio sweep. Backs the inline "refresh" affordance on the
+// grab performer-reassign search, so a just-created Stash performer shows up
+// immediately instead of waiting for the 6h cache tick. Shares refreshMu
+// with postRefresh so the two can't run concurrently.
+func (s *Server) postRefreshPerformers(w http.ResponseWriter, r *http.Request) {
+	if !s.refreshMu.TryLock() {
+		writeErr(w, http.StatusConflict, "refresh already in progress")
+		return
+	}
+	defer s.refreshMu.Unlock()
+
+	stashC := s.pool.Stash()
+	if stashC == nil {
+		writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := cache.RefreshPerformers(ctx, stashC, s.db, s.log.With("op", "performers")); err != nil {
+		s.log.Error("performer refresh failed", "err", err)
+		writeErr(w, http.StatusInternalServerError, "performer refresh: "+err.Error())
+		return
+	}
+	perfAt, _ := cache.PerformerRefreshedAt(ctx, s.db)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "performerRefreshedAt": perfAt})
+}

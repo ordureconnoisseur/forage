@@ -957,6 +957,13 @@ export async function stashDBFromStash(
   return r.json();
 }
 
+// refreshPerformers forces an immediate re-sync of the performer cache from
+// Stash (the fast pull, no studio sweep) — so a just-created performer shows
+// up in search right away instead of waiting for the 6h cache tick.
+export function refreshPerformers(): Promise<{ ok: boolean }> {
+  return postJSON("/refresh/performers", {});
+}
+
 // ── Download-client setup check (read-only diagnostic) ─────────────────
 
 export interface ClientCheck {

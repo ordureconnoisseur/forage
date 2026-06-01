@@ -168,6 +168,7 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.adminAuthMiddleware)
 		r.Get("/performers", s.getPerformers)
 		r.Post("/refresh", s.postRefresh)
+		r.Post("/refresh/performers", s.postRefreshPerformers)
 		r.Post("/match", s.postMatch)
 		r.Get("/search", s.getSearch)
 		r.Post("/grab", s.postGrab)

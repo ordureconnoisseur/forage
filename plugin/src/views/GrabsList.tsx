@@ -23,6 +23,7 @@ import {
   retryGrab,
   setGrabPerformer,
   fetchPerformers,
+  refreshPerformers,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -857,6 +858,27 @@ function SceneGroup({
   );
 }
 
+// RefreshIcon — circular-arrows glyph as an svg (flat, matches the app's
+// icon language), used by the performer-search re-sync button.
+function RefreshIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="1em"
+      height="1em"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v5h-5" />
+    </svg>
+  );
+}
+
 // PerformerChip — a reassignment option. Hovering shows the performer's
 // portrait (via the daemon's image proxy) so you can visually confirm it's
 // the right person before re-filing. Portrait-only by design: "is this who
@@ -1025,6 +1047,21 @@ function GrabRow({
       setPerfBusy(false);
     }
   }
+  // Re-runnable performer search (so the refresh button can re-query after
+  // syncing the cache, not just on keystroke). Returns the matches.
+  const [perfSearching, setPerfSearching] = useState(false);
+  async function runPerfSearch(q: string) {
+    if (q.trim().length < 2) {
+      setPerfResults([]);
+      return;
+    }
+    try {
+      const r = await fetchPerformers({ q: q.trim() });
+      setPerfResults(r.performers.slice(0, 6));
+    } catch {
+      setPerfResults([]);
+    }
+  }
   // Debounced performer search for the free-text box (anything the
   // suggestions didn't surface).
   useEffect(() => {
@@ -1035,19 +1072,29 @@ function GrabRow({
     }
     let alive = true;
     const t = window.setTimeout(() => {
-      fetchPerformers({ q })
-        .then((r) => {
-          if (alive) setPerfResults(r.performers.slice(0, 6));
-        })
-        .catch(() => {
-          if (alive) setPerfResults([]);
-        });
+      if (alive) void runPerfSearch(q);
     }, 250);
     return () => {
       alive = false;
       clearTimeout(t);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [perfQuery]);
+  // Force a Stash performer re-sync, then re-run the current search so a
+  // just-created performer appears without waiting for the 6h cache tick.
+  async function refreshPerfCache() {
+    if (perfSearching) return;
+    setPerfSearching(true);
+    setPerfErr(null);
+    try {
+      await refreshPerformers();
+      await runPerfSearch(perfQuery);
+    } catch (e) {
+      setPerfErr((e as Error).message);
+    } finally {
+      setPerfSearching(false);
+    }
+  }
   const confirmTimer = useRef<number | undefined>(undefined);
   const fetchedDetail = useRef(false);
 
@@ -1397,15 +1444,29 @@ function GrabRow({
                       onPick={() => applyPerformer(p.name)}
                     />
                   ))}
-                <input
-                  className="grab-setperf-search"
-                  type="text"
-                  value={perfQuery}
-                  placeholder="search…"
-                  spellCheck={false}
-                  disabled={perfBusy}
-                  onChange={(e) => setPerfQuery(e.target.value)}
-                />
+                <span className="grab-setperf-searchwrap">
+                  <input
+                    className="grab-setperf-search"
+                    type="text"
+                    value={perfQuery}
+                    placeholder="search…"
+                    spellCheck={false}
+                    disabled={perfBusy}
+                    onChange={(e) => setPerfQuery(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className={
+                      "grab-setperf-refresh" + (perfSearching ? " spinning" : "")
+                    }
+                    onClick={refreshPerfCache}
+                    disabled={perfBusy || perfSearching}
+                    title="Re-sync performers from Stash (for one you just created)"
+                    aria-label="Refresh performers from Stash"
+                  >
+                    <RefreshIcon />
+                  </button>
+                </span>
               </div>
               {perfResults.length > 0 && (
                 <div className="grab-setperf-results">

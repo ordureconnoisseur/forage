@@ -2697,6 +2697,11 @@ code.grab-fact-v,
   color: var(--status-downloading, #d4a14a);
   font-size: 10px;
 }
+.grab-setperf-searchwrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .grab-setperf-search {
   width: 120px;
   font-size: 12px;
@@ -2705,6 +2710,35 @@ code.grab-fact-v,
   border: 1px solid var(--glass-border);
   background: var(--glass-bg);
   color: var(--text);
+}
+/* Re-sync performers from Stash — for a performer you just created that
+   isn't in the 6h cache yet. */
+.grab-setperf-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  font-size: 13px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.grab-setperf-refresh:hover {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.6);
+}
+.grab-setperf-refresh.spinning {
+  color: var(--accent-bright);
+}
+.grab-setperf-refresh.spinning svg {
+  animation: collSpin 0.7s linear infinite;
+}
+.grab-setperf-refresh:disabled {
+  cursor: default;
 }
 .grab-setperf-search:focus {
   outline: none;
