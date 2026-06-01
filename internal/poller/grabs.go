@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -811,6 +812,33 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		g.ProgressAt = time.Now().Unix()
 		dirty = true
 	}
+
+	// Self-heal a PREMATURE placement: a placed_path set while qBit still
+	// reports the torrent incomplete (progress < 1). This is the bogus
+	// state a mid-download reassign used to create — a partial file
+	// hardlinked into the library, then wrongly promoted (placed → scanned
+	// → …). qBit's progress is the authority here, NOT forage's status
+	// (which may already have been promoted past "downloading"). Undo it:
+	// remove the partial library copy, clear placement, reset to
+	// downloading so the place step re-files cleanly on real completion.
+	// The seeding source is untouched. Guarded to incomplete torrents, so a
+	// legitimately-placed, fully-downloaded seeding grab is never disturbed.
+	if g.PlacedPath != "" && t.Progress < 1 {
+		bad := g.PlacedPath
+		if rerr := os.RemoveAll(bad); rerr != nil {
+			p.log.Warn("heal: remove premature placement", "id", g.ID, "path", bad, "err", rerr)
+		}
+		g.PlacedPath = ""
+		g.PlacedAt = 0
+		g.PlaceError = ""
+		g.Status = "downloading"
+		g.Reason = "heal: cleared premature placement (download still in progress)"
+		dirty = true
+		p.log.Info("heal: cleared premature placement",
+			"id", g.ID, "path", bad, "progress", t.Progress)
+		return dirty, t.ContentPath, nil
+	}
+
 	newStatus := classifyQbitState(t.State)
 	// Don't downgrade post-completed states (placed/scanned/etc.)
 	// back to "completed" just because qBit still reports the torrent
