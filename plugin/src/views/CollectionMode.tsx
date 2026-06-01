@@ -26,6 +26,43 @@ const GRAB_CONCURRENCY = 3;
 // Below the floor the scene waits for manual review.
 const AUTO_PICK_FLOOR = 0.5;
 
+// resolutionRank extracts a sortable height from a release title. Mirrors
+// SceneReleases.resolutionRank so collection auto-pick ranks quality the
+// same way the single-scene page's "★ Best" does.
+function resolutionRank(title: string): number {
+  const t = title.toLowerCase();
+  if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return 2160;
+  if (/\b1080p?\b/.test(t)) return 1080;
+  if (/\b720p?\b/.test(t)) return 720;
+  if (/\b480p?\b/.test(t)) return 480;
+  return 0;
+}
+
+// pickBest chooses the auto-pick release for a scene the same way the
+// single-scene page does: among VERIFIED, non-rejected, grabbable
+// (seeders>0 for torrents) releases clearing the confidence floor, take the
+// highest quality — resolution, then bigger encode, then availability.
+// Previously collection mode just grabbed the highest-confidence verified
+// release, ignoring resolution entirely (a 720p could beat a 2160p). Returns
+// the chosen release's download_url, or null when nothing qualifies.
+function pickBest(releases: SceneRelease[]): string | null {
+  const candidates = releases.filter(
+    (r) =>
+      r.verified &&
+      !r.rejected &&
+      r.confidence >= AUTO_PICK_FLOOR &&
+      (r.protocol === "usenet" || r.seeders > 0),
+  );
+  if (candidates.length === 0) return null;
+  candidates.sort((a, b) => {
+    const d = resolutionRank(b.title) - resolutionRank(a.title);
+    if (d !== 0) return d;
+    if (b.size !== a.size) return b.size - a.size;
+    return b.popularity - a.popularity;
+  });
+  return candidates[0].download_url;
+}
+
 type RowStatus =
   | "pending"
   | "searching"
@@ -271,9 +308,9 @@ export default function CollectionMode({
           const releases = (res.releases || [])
             .slice()
             .sort((a, b) => b.confidence - a.confidence);
-          const best = releases.find((x) => x.verified);
-          const autoPick =
-            best && best.confidence >= AUTO_PICK_FLOOR ? best.download_url : null;
+          // Auto-pick the best QUALITY verified release (resolution/size),
+          // not merely the highest-confidence one.
+          const autoPick = pickBest(releases);
           setRow(scene.stashdb_id, {
             status: releases.length === 0 ? "empty" : "done",
             releases,
@@ -319,9 +356,7 @@ export default function CollectionMode({
       const releases = (res.releases || [])
         .slice()
         .sort((a, b) => b.confidence - a.confidence);
-      const best = releases.find((x) => x.verified);
-      const autoPick =
-        best && best.confidence >= AUTO_PICK_FLOOR ? best.download_url : null;
+      const autoPick = pickBest(releases);
       setRows((r) => ({
         ...r,
         [scene.stashdb_id]: {
