@@ -70,6 +70,14 @@ type Config struct {
 	// = use the built-in defaults. Stored as JSON so the rule-editor UI
 	// round-trips it without a bespoke encoding.
 	ReleaseRules string
+	// ReleasePrefs is the friendly (no-typing) release-ranking preferences,
+	// an opaque JSON string the client owns and compiles into ReleaseRules.
+	// The daemon stores and round-trips it but never interprets it — scoring
+	// always runs off ReleaseRules. Empty = no friendly prefs saved yet.
+	ReleasePrefs string
+	// ReleaseAdvanced marks ReleaseRules as hand-tuned in the advanced
+	// editor, so the client stops auto-recompiling them from ReleasePrefs.
+	ReleaseAdvanced bool
 	// ExcludedSceneTags is a list of StashDB tag names whose scenes are
 	// dropped from the missing-scenes gap analysis (and its counts) —
 	// e.g. "Compilation", "Music Video". Matched case-insensitively.
@@ -146,6 +154,8 @@ func LoadBootstrap() BootstrapConfig {
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
 	b.ReleaseRules = b.envOr("FORAGER_RELEASE_RULES", "", "releaseRules")
+	b.ReleasePrefs = b.envOr("FORAGER_RELEASE_PREFS", "", "releasePrefs")
+	b.ReleaseAdvanced = b.envBool("FORAGER_RELEASE_ADVANCED", false, "releaseAdvanced")
 	b.ExcludedSceneTags = parseCSVStrings(b.envOr("FORAGER_EXCLUDED_SCENE_TAGS", "", "excludedSceneTags"))
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
@@ -239,6 +249,8 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
 	out.ReleaseRules = str("releaseRules", stored.ReleaseRules, b.ReleaseRules, "")
+	out.ReleasePrefs = str("releasePrefs", stored.ReleasePrefs, b.ReleasePrefs, "")
+	out.ReleaseAdvanced = boolean("releaseAdvanced", stored.ReleaseAdvanced, b.ReleaseAdvanced, false)
 	if stored.ExcludedSceneTags != nil {
 		out.ExcludedSceneTags = append([]string(nil), (*stored.ExcludedSceneTags)...)
 		src["excludedSceneTags"] = SourceJSON

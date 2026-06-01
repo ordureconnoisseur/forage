@@ -68,6 +68,8 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
 		"packDedupKeep":       {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
 		"releaseRules":        {Value: cfg.ReleaseRules, Source: sources["releaseRules"]},
+		"releasePrefs":        {Value: cfg.ReleasePrefs, Source: sources["releasePrefs"]},
+		"releaseAdvanced":     {Value: cfg.ReleaseAdvanced, Source: sources["releaseAdvanced"]},
 		"excludedSceneTags":   {Value: cfg.ExcludedSceneTags, Source: sources["excludedSceneTags"]},
 		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},

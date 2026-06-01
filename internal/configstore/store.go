@@ -66,6 +66,15 @@ type StoredConfig struct {
 	// ReleaseRules is the release-scoring preference list as a JSON array
 	// string (scoring.Rule[]). Empty = built-in defaults.
 	ReleaseRules *string `json:"releaseRules,omitempty"`
+	// ReleasePrefs is the friendly (no-typing) release-ranking preferences
+	// as an opaque JSON string the CLIENT owns and compiles into
+	// ReleaseRules. The daemon never interprets it — it only persists and
+	// round-trips it. Empty = no friendly prefs saved yet.
+	ReleasePrefs *string `json:"releasePrefs,omitempty"`
+	// ReleaseAdvanced flags that ReleaseRules was hand-tuned in the advanced
+	// editor, so the client stops auto-recompiling them from ReleasePrefs.
+	// *bool so an explicit false (back-to-simple) round-trips.
+	ReleaseAdvanced *bool `json:"releaseAdvanced,omitempty"`
 	// ExcludedSceneTags drops scenes carrying any of these StashDB tag
 	// names from the gap analysis (case-insensitive). nil = no change.
 	ExcludedSceneTags *[]string `json:"excludedSceneTags,omitempty"`
@@ -310,6 +319,12 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.ReleaseRules != nil {
 		base.ReleaseRules = patch.ReleaseRules
+	}
+	if patch.ReleasePrefs != nil {
+		base.ReleasePrefs = patch.ReleasePrefs
+	}
+	if patch.ReleaseAdvanced != nil {
+		base.ReleaseAdvanced = patch.ReleaseAdvanced
 	}
 	if patch.ExcludedSceneTags != nil {
 		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)
