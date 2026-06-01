@@ -4702,6 +4702,105 @@ code.grab-fact-v,
   color: #f3a3a3;
 }
 
+/* ─── Scene group (multiple torrent attempts for one scene) ──────────
+   A card wrapping every attempt at the same scene, so "how many torrents
+   have I tried here" is answerable at a glance. Single grabs never get
+   this — they render as bare rows. The card reads as one unit: a header
+   summarising the count + outcome tally, then the attempt rows nested
+   tight beneath with their own status accents intact. */
+.grab-scene-group {
+  list-style: none;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.018);
+  overflow: hidden;
+  position: relative;
+}
+/* Left edge in amber: a group exists only because something needed
+   retrying, so the container itself reads as "needs attention". */
+.grab-scene-group::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--status-orphaned, #d9a441);
+  opacity: 0.7;
+}
+
+.gsg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 14px 9px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  background: rgba(255, 255, 255, 0.022);
+}
+.gsg-id {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+.gsg-count {
+  font-size: 17px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text, #fff);
+  font-variant-numeric: tabular-nums;
+}
+.gsg-count-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+.gsg-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+}
+.gsg-performer {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text, #fff);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gsg-scene {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-family: var(--mono, ui-monospace, monospace);
+  flex: none;
+}
+.gsg-scene:hover {
+  color: var(--accent-bright);
+  text-decoration: underline;
+}
+.gsg-tally {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Attempt rows nested in the card: tighter gap + flush sides so they read
+   as a stack belonging to the group, not free-floating cards. The rows
+   keep their own per-status left accent. */
+.gsg-attempts {
+  list-style: none;
+  margin: 0;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* ─── Release ranking cues ───────────────────────────────────────────
    Health colour on the seeder/grab count + the "best pick" marker. */
 .rel-health.dead {

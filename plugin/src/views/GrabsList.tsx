@@ -1,5 +1,6 @@
 import {
   Fragment,
+  type ReactNode,
   useCallback,
   useEffect,
   useMemo,
@@ -234,6 +235,18 @@ export default function GrabsList({
     });
   }, [data, filter, q]);
 
+  // Group the filtered grabs into render items: a scene with 2+ attempts
+  // becomes a single SceneGroup card; everything else (lone grabs, packs,
+  // and grabs with no scene id) stays a standalone row. This is what makes
+  // "how many torrents am I trying for this scene" legible — every retry /
+  // pick-another for one scene shares its stashdb id, so they collapse into
+  // one card. Order follows the first attempt's position in `filtered`, so
+  // the existing newest-first ordering is preserved.
+  const items = useMemo<GrabListItem[]>(
+    () => groupGrabsByScene(filtered),
+    [filtered],
+  );
+
   if (loading) return <div className="empty">Loading grabs…</div>;
   if (error) return <div className="empty error">Failed to load: {error}</div>;
   if (!data) return null;
@@ -424,31 +437,39 @@ export default function GrabsList({
         <div className="empty">No grabs match this filter.</div>
       ) : (
         <ul className="grab-list">
-          {filtered.map((g) => (
-            <GrabRow
-              key={g.id}
-              g={g}
-              expanded={expanded.has(g.id)}
-              onToggle={() =>
+          {items.map((item) => {
+            const rowProps = (g: Grab) => ({
+              g,
+              expanded: expanded.has(g.id),
+              onToggle: () =>
                 setExpanded((s) => {
                   const next = new Set(s);
                   if (next.has(g.id)) next.delete(g.id);
                   else next.add(g.id);
                   return next;
-                })
-              }
-              onDeleted={(res) => handleDeleted(g.id, res)}
-              onMatched={() => {
+                }),
+              onDeleted: (res: DeleteGrabResult) => handleDeleted(g.id, res),
+              onMatched: () => {
                 setNotice(`Matched grab #${g.id} to StashDB`);
                 void refresh();
-              }}
-              onRetried={() => {
+              },
+              onRetried: () => {
                 setNotice(`Retrying grab #${g.id}…`);
                 void refresh();
-              }}
-              onPickScene={onPickScene}
-            />
-          ))}
+              },
+              onPickScene,
+            });
+            if (item.kind === "group") {
+              return (
+                <SceneGroup key={item.key} group={item}>
+                  {item.grabs.map((g) => (
+                    <GrabRow key={g.id} {...rowProps(g)} />
+                  ))}
+                </SceneGroup>
+              );
+            }
+            return <GrabRow key={item.grab.id} {...rowProps(item.grab)} />;
+          })}
         </ul>
       )}
     </div>
@@ -675,6 +696,140 @@ function PackGlyph() {
       <path d="m2 17 10 5 10-5" />
       <path d="m2 12 10 5 10-5" />
     </svg>
+  );
+}
+
+// ── Scene grouping ──────────────────────────────────────────────────
+//
+// A render item is either one standalone grab or a group of attempts at
+// the same scene. We group by the grab's scene id (actual, once phash
+// confirms, else predicted) so every retry / pick-another-release for one
+// scene collapses into a single card — the answer to "how many torrents
+// have I tried for this scene?". Packs and grabs with no scene id are never
+// grouped (a pack is many scenes; a no-id grab can't be tied to one).
+
+type SceneGroupItem = {
+  kind: "group";
+  key: string; // the shared scene id
+  sceneId: string;
+  performerName?: string;
+  grabs: Grab[];
+};
+type SingleItem = { kind: "single"; grab: Grab };
+type GrabListItem = SceneGroupItem | SingleItem;
+
+// sceneKey returns the id two attempts at the same scene share, or "" when
+// the grab can't be grouped (pack, or no predicted/actual scene id).
+function sceneKey(g: Grab): string {
+  if (g.kind === "pack") return "";
+  return g.actual_stashdb_id || g.predicted_stashdb_id || "";
+}
+
+function groupGrabsByScene(grabs: Grab[]): GrabListItem[] {
+  // First pass: bucket by scene key, preserving first-seen order so the
+  // overall list keeps its newest-first ordering (the group lands where its
+  // newest attempt would have been).
+  const order: string[] = [];
+  const buckets = new Map<string, Grab[]>();
+  const singles: GrabListItem[] = [];
+  const slot = new Map<string, number>(); // key → index into `items`
+  const items: GrabListItem[] = [];
+
+  for (const g of grabs) {
+    const key = sceneKey(g);
+    if (!key) {
+      items.push({ kind: "single", grab: g });
+      continue;
+    }
+    if (!buckets.has(key)) {
+      buckets.set(key, []);
+      order.push(key);
+      slot.set(key, items.length);
+      // Placeholder; resolved to single-or-group in the second pass.
+      items.push({ kind: "single", grab: g });
+    }
+    buckets.get(key)!.push(g);
+  }
+
+  // Second pass: a bucket with 2+ attempts becomes a group card; a lone
+  // attempt stays a plain row.
+  for (const key of order) {
+    const bucket = buckets.get(key)!;
+    const idx = slot.get(key)!;
+    if (bucket.length >= 2) {
+      items[idx] = {
+        kind: "group",
+        key,
+        sceneId: key,
+        performerName: bucket.find((g) => g.performer_name)?.performer_name,
+        grabs: bucket,
+      };
+    } else {
+      items[idx] = { kind: "single", grab: bucket[0] };
+    }
+  }
+  void singles;
+  return items;
+}
+
+// liveOutcome buckets a status into the three the summary line counts:
+// "live" (still in flight), "done" (landed in the library), or "dead"
+// (failed / abandoned / didn't match). Mirrors IN_FLIGHT / OUTCOME.
+function attemptTally(grabs: Grab[]): { live: number; done: number; dead: number } {
+  let live = 0;
+  let done = 0;
+  let dead = 0;
+  for (const g of grabs) {
+    if (g.status === "confirmed") done++;
+    else if (isActiveStatus(g.status)) live++;
+    else dead++; // mismatched / orphaned / failed
+  }
+  return { live, done, dead };
+}
+
+// SceneGroup is the attempt-stack card: one bordered block per scene with a
+// header (performer · scene link · attempt tally) wrapping the per-attempt
+// GrabRows passed as children. The header summarises at a glance; each
+// attempt keeps its full row behaviour (expand / retry / delete / pick
+// another) untouched.
+function SceneGroup({
+  group,
+  children,
+}: {
+  group: SceneGroupItem;
+  children: ReactNode;
+}) {
+  const tally = attemptTally(group.grabs);
+  const n = group.grabs.length;
+  const parts: string[] = [];
+  if (tally.live) parts.push(`${tally.live} in flight`);
+  if (tally.done) parts.push(`${tally.done} in library`);
+  if (tally.dead) parts.push(`${tally.dead} dead`);
+  return (
+    <li className="grab-scene-group">
+      <div className="gsg-head">
+        <div className="gsg-id">
+          <span className="gsg-count">{n}</span>
+          <span className="gsg-count-label">attempts</span>
+        </div>
+        <div className="gsg-title">
+          {group.performerName && (
+            <span className="gsg-performer">{group.performerName}</span>
+          )}
+          <a
+            className="gsg-scene"
+            href={stashdbScene(group.sceneId)}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="View scene on StashDB"
+          >
+            scene {group.sceneId.slice(0, 8)}
+          </a>
+        </div>
+        {parts.length > 0 && <div className="gsg-tally">{parts.join(" · ")}</div>}
+      </div>
+      <ul className="gsg-attempts">{children}</ul>
+    </li>
   );
 }
 
