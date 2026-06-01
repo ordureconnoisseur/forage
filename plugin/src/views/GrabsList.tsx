@@ -1255,10 +1255,9 @@ function GrabRow({
           {/* Action bar */}
           {/* Set / change the performer folder — re-files the (still-
               seeding) download into <library>/<performer>/. The fix for an
-              Unsorted or mis-identified adopted grab. Packs span many
-              performers, so they're excluded. */}
-          {g.kind !== "pack" && (
-            <div className="grab-setperf">
+              Unsorted or mis-identified grab. Packs included: forage files a
+              whole pack into one performer folder, so it's reassignable too. */}
+          <div className="grab-setperf">
               <span className="grab-setperf-label">
                 {g.performer_name && g.performer_name !== "Unsorted"
                   ? "Performer"
@@ -1314,7 +1313,6 @@ function GrabRow({
               {perfBusy && <span className="grab-setperf-busy">Re-filing…</span>}
               {perfErr && <span className="grab-delete-err">{perfErr}</span>}
             </div>
-          )}
 
           <div className="grab-actions">
             {/* Retry a failed grab from its stored download URL — for

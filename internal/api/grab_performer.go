@@ -46,12 +46,10 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "grab not found")
 		return
 	}
-	if g.Kind == "pack" {
-		// A pack spans many performers; one folder can't represent it.
-		writeErr(w, http.StatusUnprocessableEntity,
-			"can't set a single performer on a pack grab — identify its scenes in Stash")
-		return
-	}
+	// Packs are allowed: forage files a whole pack into a single performer
+	// folder anyway, so reassigning just moves that directory. (This differs
+	// from /match, which applies one scene's metadata and genuinely can't
+	// represent a many-scene pack.)
 
 	pl := s.pool.Placer()
 	if !pl.Configured() {

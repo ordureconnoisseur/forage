@@ -40,7 +40,7 @@ type grabDetailResponse struct {
 	LocalSceneImageURL string `json:"local_scene_image_url,omitempty"`
 	// PerformerSuggestions ranks local performers whose name appears in the
 	// release title — the one-click options the card offers for reassigning
-	// a mis-filed / Unsorted grab to the right folder. Empty for packs.
+	// a mis-filed / Unsorted grab to the right folder.
 	PerformerSuggestions []suggestedPerformer `json:"performer_suggestions,omitempty"`
 }
 
@@ -139,10 +139,9 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Performer reassignment options (one-click chips on the card). Ranked
-	// guesses from the release title; not for packs (many performers).
-	if g.Kind != "pack" {
-		resp.PerformerSuggestions = s.suggestPerformers(r.Context(), g.ReleaseTitle)
-	}
+	// guesses from the release title — for singles and packs alike (a pack
+	// is filed into one performer folder, so it's reassignable too).
+	resp.PerformerSuggestions = s.suggestPerformers(r.Context(), g.ReleaseTitle)
 
 	writeJSON(w, http.StatusOK, resp)
 }
