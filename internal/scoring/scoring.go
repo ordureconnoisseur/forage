@@ -159,5 +159,12 @@ func DefaultRules() []Rule {
 		{Label: "4K / 2160p", On: OnTitle, Pattern: `\b(2160p?|3840p?|4k|uhd)\b`, Points: 70},
 		{Label: "720p", On: OnTitle, Pattern: `\b720p?\b`, Points: 30},
 		{Label: "480p / SD", On: OnTitle, Pattern: `\b(480p?|360p?|\bsd\b)\b`, Points: -50},
+		// Prefer usenet at EQUAL quality: nzb downloads don't depend on
+		// seeders, so they're more reliably grabbable (dead torrents are the
+		// common stall). +25 breaks a same-resolution tie toward usenet but
+		// is small enough never to cross a resolution tier (the gaps above
+		// are ≥30), so quality always dominates. Harmless for torrent-only
+		// setups — no usenet releases to prefer. Retune/remove in Settings.
+		{Label: "prefer usenet", On: OnProtocol, Pattern: `usenet`, Points: 25},
 	}
 }

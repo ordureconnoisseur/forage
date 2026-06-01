@@ -9,6 +9,9 @@ const DEFAULT_RULES: ReleaseRule[] = [
   { label: "4K / 2160p", on: "title", pattern: "\\b(2160p?|3840p?|4k|uhd)\\b", points: 70 },
   { label: "720p", on: "title", pattern: "\\b720p?\\b", points: 30 },
   { label: "480p / SD", on: "title", pattern: "\\b(480p?|360p?|\\bsd\\b)\\b", points: -50 },
+  // Prefer usenet at equal quality (seeder-independent); +25 breaks a
+  // same-resolution tie without ever crossing a resolution tier.
+  { label: "prefer usenet", on: "protocol", pattern: "usenet", points: 25 },
 ];
 
 function parseRules(json: string): ReleaseRule[] {

@@ -120,6 +120,29 @@ func TestDefaultsResolution(t *testing.T) {
 	}
 }
 
+func TestDefaultUsenetPreference(t *testing.T) {
+	s := New(DefaultRules())
+	// Same resolution: usenet wins the tie (+25).
+	nzb1080 := s.Score("Scene 1080p", "NZBFinder", "usenet").Score
+	tor1080 := s.Score("Scene 1080p", "PornoLab", "torrent").Score
+	if nzb1080 <= tor1080 {
+		t.Errorf("1080p usenet (%d) should outrank 1080p torrent (%d)", nzb1080, tor1080)
+	}
+	// But the usenet nudge must NOT cross a resolution tier: a higher-res
+	// torrent still beats a lower-res nzb.
+	tor1080b := s.Score("Scene 1080p", "PornoLab", "torrent").Score
+	nzb720 := s.Score("Scene 720p", "NZBFinder", "usenet").Score
+	if nzb720 >= tor1080b {
+		t.Errorf("720p usenet (%d) must not beat 1080p torrent (%d)", nzb720, tor1080b)
+	}
+	// And 1080p torrent still beats 4K usenet (forage's 1080p>4K default
+	// preference holds even with the usenet bump).
+	nzb4k := s.Score("Scene 2160p", "NZBFinder", "usenet").Score
+	if nzb4k >= tor1080b {
+		t.Errorf("4K usenet (%d) must not beat 1080p torrent (%d)", nzb4k, tor1080b)
+	}
+}
+
 func TestResolution(t *testing.T) {
 	cases := map[string]string{
 		"Scene 1080p x":            Res1080,
