@@ -8,6 +8,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // TestAdminAuthMiddleware verifies the gate that now fronts every data and
@@ -56,9 +57,10 @@ func TestAdminAuthMiddleware(t *testing.T) {
 	}
 }
 
-// TestAdminAuthCookie verifies the <img>-auth path: the gate accepts the
-// token from the forage_token cookie (which browsers attach to image
-// requests) as well as the Authorization header.
+// TestAdminAuthCookie verifies the <img>-auth path: the gate accepts a
+// forage_token cookie that carries a VALID server-side session id (the new
+// model — the cookie no longer carries the raw token). A made-up cookie
+// value, or the raw token, is rejected.
 func TestAdminAuthCookie(t *testing.T) {
 	sentinel := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -67,21 +69,27 @@ func TestAdminAuthCookie(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s := &Server{
+		bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
+		store:     store,
+	}
+	// Mint a real session; its id is the only cookie value that passes.
+	validID, err := s.newSession()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
 		name   string
 		cookie string
 		want   int
 	}{
-		{"correct cookie reaches handler", "secret", http.StatusOK},
-		{"wrong cookie → 401", "nope", http.StatusUnauthorized},
+		{"valid session id reaches handler", validID, http.StatusOK},
+		{"raw token is no longer a valid cookie → 401", "secret", http.StatusUnauthorized},
+		{"made-up cookie → 401", "nope", http.StatusUnauthorized},
 		{"empty cookie → 401", "", http.StatusUnauthorized},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			s := &Server{
-				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
-				store:     store,
-			}
 			h := s.adminAuthMiddleware(sentinel)
 			req := httptest.NewRequest(http.MethodGet, "/img/performer/1", nil)
 			req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: c.cookie})
@@ -91,6 +99,153 @@ func TestAdminAuthCookie(t *testing.T) {
 				t.Errorf("status = %d, want %d", rec.Code, c.want)
 			}
 		})
+	}
+}
+
+// TestPasswordGatesWithoutToken verifies a password-only daemon (no admin
+// token) is gated: authRequired is true off the password alone, and a
+// valid session cookie is the way through.
+func TestPasswordGatesWithoutToken(t *testing.T) {
+	sentinel := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+	s := &Server{
+		bootstrap: config.BootstrapConfig{Config: config.Config{
+			Username:     "ethan",
+			PasswordHash: string(hash),
+		}},
+		store: store,
+	}
+	if !s.authRequired() {
+		t.Fatal("password set but authRequired() is false")
+	}
+	h := s.adminAuthMiddleware(sentinel)
+	// No credential → 401.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/performers", nil))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("no-credential status = %d, want 401", rec.Code)
+	}
+	// Valid session cookie → through.
+	id, err := s.newSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/performers", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: id})
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("valid-session status = %d, want 200", rec.Code)
+	}
+}
+
+// TestPostLogin verifies the username+password login: a correct pair sets a
+// forage_token cookie whose value is a random session id (NOT the
+// password), and a wrong pair is 401 with no cookie. Also confirms the
+// issued session is actually valid against the gate.
+func TestPostLogin(t *testing.T) {
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, _ := bcrypt.GenerateFromPassword([]byte("hunter2hunter2"), bcrypt.MinCost)
+	s := &Server{
+		bootstrap: config.BootstrapConfig{Config: config.Config{
+			Username:     "ethan",
+			PasswordHash: string(hash),
+		}},
+		store: store,
+	}
+	cookieValue := func(rec *httptest.ResponseRecorder) string {
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == sessionCookieName {
+				return c.Value
+			}
+		}
+		return ""
+	}
+
+	cases := []struct {
+		name string
+		body string
+		want int
+		set  bool
+	}{
+		{"correct credentials", `{"username":"ethan","password":"hunter2hunter2"}`, http.StatusOK, true},
+		{"wrong password", `{"username":"ethan","password":"nope"}`, http.StatusUnauthorized, false},
+		{"wrong username", `{"username":"mallory","password":"hunter2hunter2"}`, http.StatusUnauthorized, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(c.body))
+			rec := httptest.NewRecorder()
+			s.postLogin(rec, req)
+			if rec.Code != c.want {
+				t.Fatalf("code = %d, want %d (body=%q)", rec.Code, c.want, rec.Body.String())
+			}
+			cv := cookieValue(rec)
+			if c.set {
+				if cv == "" {
+					t.Fatal("expected a forage_token cookie, got none")
+				}
+				if cv == "hunter2hunter2" {
+					t.Error("cookie value is the password — must be a session id")
+				}
+				if !s.sessionValid(cv) {
+					t.Error("issued session id is not valid against the gate")
+				}
+			} else if cv != "" {
+				t.Errorf("expected no cookie on failure, got %q", cv)
+			}
+		})
+	}
+}
+
+// TestLogoutInvalidatesSession proves logout drops the session SERVER-SIDE:
+// after DELETE /session, replaying the old cookie value is rejected by the
+// gate (not merely cleared from the browser).
+func TestLogoutInvalidatesSession(t *testing.T) {
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{
+		bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
+		store:     store,
+	}
+	id, err := s.newSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !s.sessionValid(id) {
+		t.Fatal("fresh session should be valid")
+	}
+	req := httptest.NewRequest(http.MethodDelete, "/session", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: id})
+	rec := httptest.NewRecorder()
+	s.deleteSession(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want 200", rec.Code)
+	}
+	if s.sessionValid(id) {
+		t.Error("session still valid after logout — server-side drop failed")
+	}
+	// And the gate now rejects the replayed cookie.
+	h := s.adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	greq := httptest.NewRequest(http.MethodGet, "/performers", nil)
+	greq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: id})
+	grec := httptest.NewRecorder()
+	h.ServeHTTP(grec, greq)
+	if grec.Code != http.StatusUnauthorized {
+		t.Errorf("replayed cookie status = %d, want 401", grec.Code)
 	}
 }
 

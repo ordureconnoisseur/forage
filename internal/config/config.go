@@ -82,7 +82,16 @@ type Config struct {
 	AllowedOrigin     string
 	// AdminToken gates every API route except / and /healthz when set
 	// (UI-managed via config.json, or FORAGER_ADMIN_TOKEN). Empty = open.
+	// Now demoted to "the API key" — the programmatic-client credential —
+	// since the human web login is Username + Password.
 	AdminToken string
+	// Username is the web-UI login name (the *arr Forms-auth model).
+	// Paired with PasswordHash.
+	Username string
+	// PasswordHash is the bcrypt hash of the web-UI login password (never
+	// the plaintext). Empty = no password login. UI-managed via
+	// config.json, or FORAGER_PASSWORD_HASH for headless setups.
+	PasswordHash string
 }
 
 // BootstrapConfig is the env-loaded layer. Same fields as Config —
@@ -144,6 +153,8 @@ func LoadBootstrap() BootstrapConfig {
 	b.LogLevel = envLogLevel("FORAGER_LOG_LEVEL", slog.LevelInfo)
 	b.AllowedOrigin = b.envOr("FORAGER_ALLOWED_ORIGIN", "*", "allowedOrigin")
 	b.AdminToken = os.Getenv("FORAGER_ADMIN_TOKEN")
+	b.Username = b.envOr("FORAGER_USERNAME", "", "username")
+	b.PasswordHash = b.envOr("FORAGER_PASSWORD_HASH", "", "passwordHash")
 	return b
 }
 
@@ -241,6 +252,8 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
 	out.AllowedOrigin = str("allowedOrigin", stored.AllowedOrigin, b.AllowedOrigin, "*")
 	out.AdminToken = str("adminToken", stored.AdminToken, b.AdminToken, "")
+	out.Username = str("username", stored.Username, b.Username, "")
+	out.PasswordHash = str("passwordHash", stored.PasswordHash, b.PasswordHash, "")
 	return out, src
 }
 

@@ -79,6 +79,15 @@ type Server struct {
 	scorerMu  sync.Mutex
 	scorer    *scoring.Scorer
 	scorerSrc string // the ReleaseRules JSON the cached scorer was built from
+
+	// sessions holds valid web-login session ids → expiry. Populated by
+	// POST /login (and the API-key→cookie POST /session), checked by the
+	// auth middleware for the forage_token cookie, dropped by DELETE
+	// /session. In-memory: sessions don't survive a daemon restart, so a
+	// restart logs everyone out and they re-login — conventional and fine
+	// for a single-user daemon. Guarded by sessionMu.
+	sessionMu sync.Mutex
+	sessions  map[string]time.Time
 }
 
 type filmoEntry struct {
@@ -123,8 +132,14 @@ func (s *Server) Router() http.Handler {
 	// and the API calls it makes carry the token like any other client.
 	r.Get("/", s.serveUI)
 	r.Get("/healthz", s.healthz)
-	// Establishes the forage_token cookie for <img> auth; self-validates the
-	// posted token, so it's safe to leave outside the gate.
+	// Username+password web login. Public: bcrypt-validates the posted
+	// credentials, and on success issues a server-side session + the
+	// forage_token cookie. The primary human login path.
+	r.Post("/login", s.postLogin)
+	// Establishes the forage_token cookie from the API key (admin token)
+	// for clients that authenticate by Bearer key rather than password —
+	// chiefly so their <img> loads pass the gate. Self-validates the posted
+	// token, so it's safe to leave outside the gate.
 	r.Post("/session", s.postSession)
 	// Clears the forage_token cookie (logout). Public — it only removes the
 	// caller's own credential, and a locked-out client has no valid token.
@@ -325,7 +340,13 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"placerConfigured":     s.pool.Placer().Configured(),
 		"libraryRoot":          s.pool.Placer().LibraryRoot(),
 		"unconfigured":         !config.IsConfigured(cfg),
-		"adminAuthRequired":    s.effectiveAdminToken() != "",
+		// adminAuthRequired is true when EITHER a password or an API key
+		// (admin token) is set — the UI keys its login gate off this.
+		"adminAuthRequired": s.authRequired(),
+		// passwordSet lets the UI choose which login form to show:
+		// username+password (the default) vs the API-key fallback for a
+		// token-only daemon.
+		"passwordSet": s.effectivePasswordHash() != "",
 	})
 }
 

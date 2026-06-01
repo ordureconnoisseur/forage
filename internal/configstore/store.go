@@ -77,8 +77,17 @@ type StoredConfig struct {
 	AllowedOrigin *string `json:"allowedOrigin,omitempty"`
 	// AdminToken is the shared secret that gates every API route. Empty
 	// (or absent) = no auth. Stored here so it's UI-manageable; an env
-	// FORAGER_ADMIN_TOKEN still applies when this is unset.
+	// FORAGER_ADMIN_TOKEN still applies when this is unset. After the
+	// username+password login landed it's demoted to "the API key" — the
+	// programmatic-client credential, not the human web login.
 	AdminToken *string `json:"adminToken,omitempty"`
+	// Username is the web-UI login name (the *arr Forms-auth model).
+	// Paired with PasswordHash; both empty = no password login.
+	Username *string `json:"username,omitempty"`
+	// PasswordHash is the bcrypt hash of the web-UI login password —
+	// NEVER the plaintext. The /config endpoint accepts a plaintext
+	// `password`, hashes it here, and only the hash is ever persisted.
+	PasswordHash *string `json:"passwordHash,omitempty"`
 }
 
 // Patch is the wire shape POSTed to /config. Identical to StoredConfig
@@ -320,6 +329,12 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.AdminToken != nil {
 		base.AdminToken = patch.AdminToken
+	}
+	if patch.Username != nil {
+		base.Username = patch.Username
+	}
+	if patch.PasswordHash != nil {
+		base.PasswordHash = patch.PasswordHash
 	}
 }
 

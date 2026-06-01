@@ -16,6 +16,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/cache"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // configFieldsResponse is what GET /config returns. Each field comes
@@ -42,6 +43,7 @@ var sensitiveFields = map[string]bool{
 	"qbitPassword":   true,
 	"sabApiKey":      true,
 	"adminToken":     true,
+	"passwordHash":   true,
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -72,6 +74,12 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
 		"allowedOrigin":       {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
 		"adminToken":          secretField(cfg.AdminToken, sources["adminToken"]),
+		"username":            {Value: cfg.Username, Source: sources["username"]},
+		// passwordHash is masked like any secret; the UI only reads its
+		// hasSecret flag (to show "password is set"), and writes a
+		// plaintext `password` field that the daemon hashes — the hash
+		// itself never round-trips to the client.
+		"passwordHash": secretField(cfg.PasswordHash, sources["passwordHash"]),
 	}
 	writeJSON(w, http.StatusOK, configFieldsResponse{
 		Fields: fields,
@@ -101,10 +109,35 @@ func secretField(val string, src config.FieldSource) configField {
 // changed section in parallel before persisting; on any probe failure
 // returns 422 with per-section results unless ?force=true.
 func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
-	var patch configstore.Patch
-	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+	// The wire body is the stored patch plus a write-only plaintext
+	// `password`. We hash the password into PasswordHash here and never
+	// persist the plaintext — StoredConfig has no Password field, so it
+	// can't reach disk even by accident.
+	var body struct {
+		configstore.Patch
+		Password *string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
 		return
+	}
+	patch := body.Patch
+	if body.Password != nil {
+		if *body.Password == "" {
+			// Empty password clears the hash → turns password login off
+			// (falls back to env/default at compose time, like other
+			// cleared fields).
+			empty := ""
+			patch.PasswordHash = &empty
+		} else {
+			hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError, "could not hash password")
+				return
+			}
+			h := string(hashed)
+			patch.PasswordHash = &h
+		}
 	}
 	force := r.URL.Query().Get("force") == "true"
 
@@ -260,6 +293,12 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.AdminToken != nil {
 		merged.AdminToken = patch.AdminToken
+	}
+	if patch.Username != nil {
+		merged.Username = patch.Username
+	}
+	if patch.PasswordHash != nil {
+		merged.PasswordHash = patch.PasswordHash
 	}
 	cfg, _ := config.Compose(s.bootstrap, merged)
 	return cfg
