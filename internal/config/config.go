@@ -144,7 +144,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.StashDBAPIKey = b.envOr("FORAGER_STASHDB_API_KEY", "", "stashdbApiKey")
 	b.ProwlarrURL = strings.TrimRight(b.envOr("FORAGER_PROWLARR_URL", "", "prowlarrUrl"), "/")
 	b.ProwlarrAPIKey = b.envOr("FORAGER_PROWLARR_API_KEY", "", "prowlarrApiKey")
-	b.ProwlarrCategories = parseCSVInts(b.envOr("FORAGER_PROWLARR_CATEGORIES", "6000,6010,6020,6030,6040", "prowlarrCategories"))
+	b.ProwlarrCategories = parseCSVInts(b.envOr("FORAGER_PROWLARR_CATEGORIES", "6000,6010,6030,6040,6041,6045,6047,6050,6080", "prowlarrCategories"))
 	b.QbitURL = strings.TrimRight(b.envOr("FORAGER_QBIT_URL", "", "qbitUrl"), "/")
 	b.QbitUsername = b.envOr("FORAGER_QBIT_USERNAME", "", "qbitUsername")
 	b.QbitPassword = b.envOr("FORAGER_QBIT_PASSWORD", "", "qbitPassword")
