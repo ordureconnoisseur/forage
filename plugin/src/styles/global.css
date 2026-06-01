@@ -2697,6 +2697,30 @@ code.grab-fact-v,
   font-size: 12px;
   color: var(--text-muted);
 }
+/* Hover portrait for a reassignment chip — "is this the right person?"
+   Fixed + portalled so the card's overflow can't clip it. */
+.grab-chip-portrait {
+  position: fixed;
+  z-index: 1000;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--glass-bg-strong, rgba(20, 20, 20, 0.95));
+  border: 1px solid var(--glass-border-bright);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+.grab-chip-portrait .perf-hovercard-img {
+  border-radius: 0;
+}
+.grab-chip-portrait-name {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .grab-setperf-chip:disabled,
 .grab-setperf-result:disabled,
 .grab-setperf-search:disabled {

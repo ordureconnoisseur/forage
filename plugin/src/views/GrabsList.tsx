@@ -27,7 +27,9 @@ import {
   GrabStatus,
   isActiveStatus,
   proxiedImageURL,
+  performerImageURL,
 } from "../api";
+import { createPortal } from "react-dom";
 
 // GrabsList surfaces the full state machine the poller advances:
 //
@@ -851,6 +853,112 @@ function SceneGroup({
   );
 }
 
+// PerformerChip — a reassignment option. Hovering shows the performer's
+// portrait (via the daemon's image proxy) so you can visually confirm it's
+// the right person before re-filing. Portrait-only by design: "is this who
+// I mean?" is the whole question when reassigning. Portalled + fixed so the
+// card's overflow can't clip it.
+const CHIP_HOVER_DELAY_MS = 200;
+function PerformerChip({
+  stashId,
+  name,
+  favorite,
+  disabled,
+  variant,
+  onPick,
+}: {
+  stashId: string;
+  name: string;
+  favorite?: boolean;
+  disabled?: boolean;
+  variant: "chip" | "result";
+  onPick: () => void;
+}) {
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const cancel = () => {
+    if (timer.current) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+    }
+  };
+  useEffect(() => () => cancel(), []);
+  const img = performerImageURL(stashId);
+  return (
+    <>
+      <button
+        className={"grab-setperf-" + variant}
+        disabled={disabled}
+        onClick={onPick}
+        onMouseEnter={(e) => {
+          if (!img) return;
+          const rect = e.currentTarget.getBoundingClientRect();
+          cancel();
+          timer.current = window.setTimeout(
+            () => setAnchor(rect),
+            CHIP_HOVER_DELAY_MS,
+          );
+        }}
+        onMouseLeave={() => {
+          cancel();
+          setAnchor(null);
+        }}
+        title={`File under ${name}`}
+      >
+        {favorite && <span className="grab-setperf-fav">★</span>}
+        {name}
+      </button>
+      {anchor &&
+        img &&
+        createPortal(
+          <ChipPortrait anchor={anchor} img={img} name={name} />,
+          document.body,
+        )}
+    </>
+  );
+}
+
+function ChipPortrait({
+  anchor,
+  img,
+  name,
+}: {
+  anchor: DOMRect;
+  img: string;
+  name: string;
+}) {
+  const CARD_W = 150;
+  const GAP = 8;
+  const vw = window.innerWidth;
+  let left = anchor.left;
+  if (left + CARD_W > vw - GAP) left = vw - CARD_W - GAP;
+  if (left < GAP) left = GAP;
+  const showBelow = anchor.bottom + 220 < window.innerHeight;
+  const top = showBelow ? anchor.bottom + GAP : anchor.top - GAP;
+  return (
+    <div
+      className="grab-chip-portrait"
+      style={{
+        left,
+        top,
+        width: CARD_W,
+        transform: showBelow ? "" : "translateY(-100%)",
+      }}
+    >
+      <div className="perf-hovercard-img">
+        <img
+          src={img}
+          alt=""
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      </div>
+      <div className="grab-chip-portrait-name">{name}</div>
+    </div>
+  );
+}
+
 function GrabRow({
   g,
   expanded,
@@ -1273,16 +1381,15 @@ function GrabRow({
                   .filter((p) => p.name !== g.performer_name)
                   .slice(0, 5)
                   .map((p) => (
-                    <button
+                    <PerformerChip
                       key={p.stash_id}
-                      className="grab-setperf-chip"
+                      stashId={p.stash_id}
+                      name={p.name}
+                      favorite={p.favorite}
                       disabled={perfBusy}
-                      onClick={() => applyPerformer(p.name)}
-                      title={`File under ${p.name}`}
-                    >
-                      {p.favorite && <span className="grab-setperf-fav">★</span>}
-                      {p.name}
-                    </button>
+                      variant="chip"
+                      onPick={() => applyPerformer(p.name)}
+                    />
                   ))}
                 <input
                   className="grab-setperf-search"
@@ -1299,14 +1406,14 @@ function GrabRow({
                   {perfResults
                     .filter((p) => p.name !== g.performer_name)
                     .map((p) => (
-                      <button
+                      <PerformerChip
                         key={p.stash_id}
-                        className="grab-setperf-result"
+                        stashId={p.stash_id}
+                        name={p.name}
                         disabled={perfBusy}
-                        onClick={() => applyPerformer(p.name)}
-                      >
-                        {p.name}
-                      </button>
+                        variant="result"
+                        onPick={() => applyPerformer(p.name)}
+                      />
                     ))}
                 </div>
               )}
