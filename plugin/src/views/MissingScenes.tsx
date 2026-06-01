@@ -46,6 +46,7 @@ export default function MissingScenes({
   onPickScene,
   onCollection,
   onGrabSelected,
+  onUpgrade,
 }: {
   performerId: string;
   // Receives the performer name too so the scene-releases page can
@@ -56,6 +57,9 @@ export default function MissingScenes({
   onCollection: (performerId: string) => void;
   // Launches the collection flow scoped to a hand-picked scene subset.
   onGrabSelected: (performerId: string, sceneIds: string[]) => void;
+  // Starts an upgrade crawl over owned scenes (sceneIds = the selection, or
+  // omitted = every owned scene) and jumps to its review.
+  onUpgrade: (performerId: string, sceneIds?: string[]) => void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -151,7 +155,12 @@ export default function MissingScenes({
     window.setTimeout(() => setWatchedMsg(null), 3500);
   };
 
-  const allIds = data.missing.map((s) => s.stashdb_id);
+  // Selection works in Missing (grab/watch) and Owned (upgrade) views — not
+  // in Both (mixed kinds, ambiguous action). allIds is the current view's set.
+  const selectable = view === "missing" || view === "owned";
+  const allIds = (view === "owned" ? data.owned : data.missing).map(
+    (s) => s.stashdb_id,
+  );
   const allSelected = selected.size === allIds.length && allIds.length > 0;
 
   // The cards to show for the current view. Owned scenes are tagged so the
@@ -212,8 +221,8 @@ export default function MissingScenes({
             ))}
           </div>
         </div>
-        {view === "missing" &&
-          data.missing.length > 0 &&
+        {selectable &&
+          allIds.length > 0 &&
           (selecting ? (
             <div className="ms-select-actions">
               <button
@@ -236,12 +245,22 @@ export default function MissingScenes({
               >
                 Select
               </button>
-              <button
-                className="collection-cta"
-                onClick={() => onCollection(performerId)}
-              >
-                Complete collection →
-              </button>
+              {view === "owned" ? (
+                <button
+                  className="collection-cta"
+                  onClick={() => onUpgrade(performerId)}
+                  title="Search every owned scene for a higher-quality release"
+                >
+                  Upgrade collection →
+                </button>
+              ) : (
+                <button
+                  className="collection-cta"
+                  onClick={() => onCollection(performerId)}
+                >
+                  Complete collection →
+                </button>
+              )}
             </div>
           ))}
       </div>
@@ -260,7 +279,7 @@ export default function MissingScenes({
               owned={e.kind === "owned"}
               resolution={e.kind === "owned" ? e.s.resolution : undefined}
               onPick={() =>
-                selecting && e.kind === "missing"
+                selecting
                   ? toggleSelected(e.s.stashdb_id)
                   : onPickScene(e.s.stashdb_id, data.performer.name)
               }
@@ -309,6 +328,19 @@ export default function MissingScenes({
             onClick={() => onGrabSelected(performerId, Array.from(selected))}
           >
             Grab {selected.size} selected →
+          </button>
+        </div>
+      )}
+      {view === "owned" && selecting && (
+        <div className="ms-select-bar">
+          <span className="ms-select-count">{selected.size} selected</span>
+          <button
+            className="ms-select-grab"
+            disabled={selected.size === 0}
+            onClick={() => onUpgrade(performerId, Array.from(selected))}
+            title="Search the selected scenes for a higher-quality release"
+          >
+            Upgrade {selected.size} selected →
           </button>
         </div>
       )}

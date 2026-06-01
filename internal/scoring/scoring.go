@@ -49,6 +49,24 @@ func Resolution(title string) string {
 	return ResNone
 }
 
+// ResolutionHeight returns the approximate pixel height for a title's
+// resolution tier (0 when none detected). Used to decide whether a release
+// is a genuine upgrade over a copy you already own — comparing the release's
+// tier against the owned file's reported height.
+func ResolutionHeight(title string) int {
+	switch Resolution(title) {
+	case Res4K:
+		return 2160
+	case Res1080:
+		return 1080
+	case Res720:
+		return 720
+	case Res480:
+		return 480
+	}
+	return 0
+}
+
 // On selects which release field a rule's Pattern matches against.
 // Resolution etc. live in the title; the indexer/source is a separate
 // structured field (Prowlarr's indexer name), not present in the title —

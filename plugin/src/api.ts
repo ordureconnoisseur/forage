@@ -1089,10 +1089,14 @@ export interface CollectionJob {
 export function startCollectionJob(
   performerId: string,
   sceneIds?: string[],
+  opts?: { upgrade?: boolean },
 ): Promise<CollectionJob> {
   return postJSON<CollectionJob>("/jobs", {
     performer_id: performerId,
     scene_ids: sceneIds && sceneIds.length > 0 ? sceneIds : undefined,
+    // upgrade=true targets owned scenes and only suggests releases that beat
+    // the current copy's resolution.
+    upgrade: opts?.upgrade || undefined,
   });
 }
 

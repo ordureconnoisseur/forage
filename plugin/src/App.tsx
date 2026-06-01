@@ -264,6 +264,17 @@ export default function App() {
     }
     goJobs();
   };
+  // Start an UPGRADE crawl over owned scenes (sceneIds = the selection, or
+  // omitted = every owned scene) and jump straight to its review — the job
+  // only suggests releases that beat each scene's current resolution.
+  const goUpgrade = async (id: string, sceneIds?: string[]) => {
+    try {
+      const job = await startCollectionJob(id, sceneIds, { upgrade: true });
+      goJobReview(job.id, id);
+    } catch (e) {
+      alert("Couldn't start upgrade job: " + (e as Error).message);
+    }
+  };
 
   const blocked = mixedContentBlocked();
 
@@ -385,6 +396,7 @@ export default function App() {
             onPickScene={goScene}
             onCollection={goCollection}
             onGrabSelected={goCollectionSelected}
+            onUpgrade={goUpgrade}
           />
         )}
         {ready && route.kind === "collection" && (

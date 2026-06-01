@@ -12,6 +12,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/scoring"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
 // Collection jobs run a "complete the collection" / multi-scene grab on
@@ -60,6 +62,10 @@ type jobScene struct {
 	// PickedURL is the grab URL of the chosen release (auto-pick's choice,
 	// or the user's later re-pick), "" when nothing is selected.
 	PickedURL string `json:"picked_url,omitempty"`
+	// CurrentHeight is the pixel height of the copy the user already owns,
+	// set only on upgrade jobs. The pick logic suggests a release only when
+	// its resolution beats this; the Review UI can show "you have 1080p".
+	CurrentHeight int `json:"current_height,omitempty"`
 }
 
 type collectionJob struct {
@@ -74,7 +80,11 @@ type collectionJob struct {
 	StartedAt     int64      `json:"started_at"`
 	FinishedAt    int64      `json:"finished_at,omitempty"`
 	Scenes        []jobScene `json:"scenes"`
-	cancel        context.CancelFunc
+	// Upgrade marks a job that targets scenes the user already owns and only
+	// suggests releases that beat the current copy's resolution (vs the
+	// default "complete the collection" job that targets missing scenes).
+	Upgrade bool `json:"upgrade,omitempty"`
+	cancel  context.CancelFunc
 }
 
 // jobStore is the in-memory registry of collection jobs.
@@ -109,8 +119,12 @@ func (j *collectionJob) snapshot(light bool) collectionJob {
 type startJobRequest struct {
 	PerformerID string `json:"performer_id"`
 	// Optional subset of StashDB scene ids (the multi-select). Empty =
-	// every missing scene for the performer.
+	// every missing scene (or, for an upgrade job, every owned scene).
 	SceneIDs []string `json:"scene_ids,omitempty"`
+	// Upgrade targets scenes the user already owns and only suggests
+	// releases that beat the current copy's resolution. Default false =
+	// "complete the collection" (missing scenes).
+	Upgrade bool `json:"upgrade,omitempty"`
 }
 
 // postCollectionJob starts a server-side collection crawl and returns the
@@ -125,7 +139,7 @@ func (s *Server) postCollectionJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "performer_id required")
 		return
 	}
-	job, err := s.startCollectionJob(req.PerformerID, req.SceneIDs)
+	job, err := s.startCollectionJob(req.PerformerID, req.SceneIDs, req.Upgrade)
 	if err != nil {
 		var ge grabError
 		status := http.StatusBadGateway
@@ -280,7 +294,7 @@ func (s *Server) postCollectionJobGrab(w http.ResponseWriter, r *http.Request) {
 
 // startCollectionJob resolves the target scene set and launches the
 // background crawl. Returns the job with its scene list populated.
-func (s *Server) startCollectionJob(performerID string, sceneIDs []string) (*collectionJob, error) {
+func (s *Server) startCollectionJob(performerID string, sceneIDs []string, upgrade bool) (*collectionJob, error) {
 	ctx := context.Background()
 	stashDBC := s.pool.StashDB()
 	if stashDBC == nil || s.pool.Prowlarr() == nil {
@@ -299,7 +313,16 @@ func (s *Server) startCollectionJob(performerID string, sceneIDs []string) (*col
 	if err != nil {
 		return nil, grabError{http.StatusBadGateway, "stashdb: " + err.Error()}
 	}
-	owned, err := s.ownedStashDBSet(ctx)
+	// Target membership: a "complete" job targets MISSING scenes; an
+	// "upgrade" job targets OWNED scenes (and records each one's current
+	// resolution so the crawl can floor its suggestions to genuine upgrades).
+	var ownedCopies map[string][]stash.SceneRef
+	var owned map[string]bool
+	if upgrade {
+		ownedCopies, err = s.ownedSceneCopies(ctx)
+	} else {
+		owned, err = s.ownedStashDBSet(ctx)
+	}
 	if err != nil {
 		return nil, grabError{http.StatusBadGateway, "stash: " + err.Error()}
 	}
@@ -312,8 +335,12 @@ func (s *Server) startCollectionJob(performerID string, sceneIDs []string) (*col
 
 	var js []jobScene
 	for _, sc := range scenes {
-		if owned[sc.ID] {
-			continue // already in library
+		if upgrade {
+			if len(ownedCopies[sc.ID]) == 0 {
+				continue // only upgrade what you actually own
+			}
+		} else if owned[sc.ID] {
+			continue // complete: skip what you already have
 		}
 		if len(want) > 0 && !want[sc.ID] {
 			continue // not in the selected subset
@@ -322,10 +349,18 @@ func (s *Server) startCollectionJob(performerID string, sceneIDs []string) (*col
 		if inFlight[sc.ID] != "" {
 			st = jobSceneSkipped // already grabbed / downloading
 		}
-		js = append(js, jobScene{StashDBID: sc.ID, Title: sc.Title, Status: st})
+		row := jobScene{StashDBID: sc.ID, Title: sc.Title, Status: st}
+		if upgrade {
+			row.CurrentHeight = bestCopy(ownedCopies[sc.ID]).Height
+		}
+		js = append(js, row)
 	}
 	if len(js) == 0 {
-		return nil, grabError{http.StatusUnprocessableEntity, "no missing scenes to grab for this performer"}
+		msg := "no missing scenes to grab for this performer"
+		if upgrade {
+			msg = "no owned scenes to upgrade for this performer"
+		}
+		return nil, grabError{http.StatusUnprocessableEntity, msg}
 	}
 
 	jobCtx, cancel := context.WithCancel(context.Background())
@@ -340,6 +375,7 @@ func (s *Server) startCollectionJob(performerID string, sceneIDs []string) (*col
 		Total:         len(js),
 		StartedAt:     time.Now().Unix(),
 		Scenes:        js,
+		Upgrade:       upgrade,
 		cancel:        cancel,
 	}
 	s.jobs.jobs[id] = job
@@ -454,15 +490,26 @@ func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *c
 	})
 
 	// Pre-select the best verified, non-rejected release over the floor as
-	// a SUGGESTION (not a grab).
+	// a SUGGESTION (not a grab). On an upgrade job, additionally require the
+	// release to beat the resolution of the copy already owned — otherwise
+	// it's not an upgrade, just a re-grab. Candidates are sorted best-first
+	// (resolution-weighted score), so we scan past any that don't clear the
+	// owned height and take the first that does.
+	curHeight := job.Scenes[i].CurrentHeight
 	pickURL, pickTitle := "", ""
 	for k := range cands {
-		if cands[k].Verified && !cands[k].Rejected && cands[k].Confidence >= jobSuggestFloor {
-			pickURL, pickTitle = cands[k].DownloadURL, cands[k].Title
-			break
+		if !cands[k].Verified || cands[k].Rejected || cands[k].Confidence < jobSuggestFloor {
+			continue
 		}
+		if job.Upgrade && scoring.ResolutionHeight(cands[k].Title) <= curHeight {
+			continue // not better than what you already have
+		}
+		pickURL, pickTitle = cands[k].DownloadURL, cands[k].Title
+		break
 	}
 	if pickURL == "" {
+		// For an upgrade job this reads as "nothing better available"; for a
+		// complete job, "nothing confident". Same terminal, non-grabbable row.
 		s.setJobScene(job, i, jobSceneNoMatch, "", cands, "")
 		return
 	}
