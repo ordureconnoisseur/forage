@@ -147,7 +147,7 @@ The performer folder is whichever performer page you grabbed from — predictabl
 
 ### First-run setup
 
-A guided wizard runs on first launch: **Welcome → Connect** (daemon URL, plus an admin token if the daemon requires one, each tested before you continue) **→ Credentials** (Stash + StashDB, shown only if the daemon has no credentials yet) **→ Done**. When you open forage from the daemon's own URL (the usual case) the **Connect** step is skipped — the app already knows where its daemon is. There's an "advanced settings" escape on every step for Prowlarr / download clients / the rest.
+A guided wizard runs on first launch and configures everything forage needs, each step tested before it continues: **Welcome → Stash + StashDB → Indexer (Prowlarr) → Download client (qBittorrent / SABnzbd) → Library folder → Done**. Steps the daemon already has (e.g. set via `.env`) show a green "already configured" and you breeze past. When forage is served from its own daemon URL (the usual case) there's no "connect to the daemon" step — the app already knows where it is; that step only appears in the cross-origin Stash-plugin/dev case. An "advanced settings" escape on every step opens the full Settings panel.
 
 ### Security & access
 
@@ -173,52 +173,68 @@ Every credential and connection setting is editable from the plugin's Settings p
 - **qBittorrent** and/or **SABnzbd** (optional — grabs route by the release's protocol).
 - A **library directory** writable by the daemon, on the same filesystem as your download clients' complete dir (so hardlinks work — it falls back to copy if cross-device).
 
-## Install — daemon
+## Install
 
-### 1. Configure `.env`
+forage configures itself in the browser. You don't edit any config files to
+get started — you start the daemon, open it, and a **first-run wizard** walks
+you through connecting Stash, StashDB, Prowlarr, your download client, and the
+library folder, testing each one before it continues. The only thing the
+wizard *can't* do for you is decide where files live on disk (that's the host's
+job, below).
+
+### 1. Start the daemon
+
+**Docker (most common):**
 
 ```bash
-cp .env.example .env
+cp docker-compose.example.yml docker-compose.yml   # edit the one volume line — see below
+docker compose up -d --build
 ```
 
-Fill in `FORAGER_STASH_URL`, `FORAGER_STASH_API_KEY`, and `FORAGER_STASHDB_API_KEY` — everything else can be set from the plugin's Settings later. Set `FORAGER_LIBRARY_ROOT` to where forage should place files (**this path is inside the container** — the compose mount must put your real host directory there).
-
-### 2. Wire volumes
-
-```bash
-cp docker-compose.example.yml docker-compose.yml
-```
-
-Edit `docker-compose.yml` for your environment (it's gitignored, so your copy stays local). The key pattern: bind-mount one filesystem at a single in-container path, with both the download clients' complete dir and the library dir living inside it, so hardlinking is metadata-only:
+The single thing you must get right is the **volume mount** — forage places
+finished downloads by *hardlinking* them into your library, which only works
+when the download folder and the library folder are on the **same filesystem**.
+So bind-mount one media disk at one path, with both inside it:
 
 ```
-/data/media/downloads/complete/   ← qBit + SAB write here
+/data/media/downloads/complete/   ← your download client writes here
 /data/media/library/              ← forage hardlinks here; Stash scans this
 ```
 
-### 3. Download-client categories
+(If they're on different disks forage still works — it falls back to copying —
+but you lose the no-extra-space benefit of hardlinks.)
 
-Create a category in each client and point its save path at the **staging** dir (not the library — the placer hardlinks staging → library):
+No `.env` needed — every credential and path is set in the wizard. (`.env` exists
+for unattended/immutable deploys; see [Configuration reference](#configuration-reference).)
 
-- **qBittorrent**: a category (e.g. `forage`) with `save_path = /data/media/downloads/complete`.
-- **SABnzbd**: a category (e.g. `forage`) with `dir = /data/media/downloads/complete`.
+### 2. Open forage
 
-Set `FORAGER_QBIT_CATEGORY` / `FORAGER_SAB_CATEGORY` to match (the built-in default is `manual`).
+Browse to **`http://<host>:7979/`**. The first-run wizard takes it from
+there — Stash + StashDB keys, then Prowlarr, a download client, and the library
+path, each with a **Test** button. When it's done you can browse → search →
+grab. No build step, no plugin.
 
-### 4. Bring it up
+> **One manual cross-app step:** in qBittorrent/SABnzbd, create a category
+> (e.g. `forage`) whose save path is your download folder above
+> (`/data/media/downloads/complete`), and enter that category name in the
+> wizard's download-client step. forage downloads under that category so it
+> knows which finished files are its to place.
 
-```bash
-docker compose up -d --build
-docker logs forager     # confirm each client is reached
-```
+### 3. (Optional) HTTPS
 
-You should see `stash reachable`, `stashdb reachable`, `prowlarr reachable`, `qbit reachable`, `sab reachable`, `placer configured`, and `listening`.
+To reach forage from another device — or from an HTTPS Stash page (browsers
+block HTTP calls from an HTTPS origin) — front it with Tailscale Serve, a
+Cloudflare Tunnel, or a reverse proxy. The compose template includes a
+Tailscale sidecar example.
 
-Then **open forage in a browser at the daemon's URL** — `http://<host>:7979/` directly, or your HTTPS front-end (below). That's the whole app; the first-run wizard takes it from there. No build step, no plugin required.
+### Advanced: configure via `.env` instead of the wizard
 
-### 5. (Optional) HTTPS
-
-If your Stash UI is HTTPS, browsers refuse to call HTTP endpoints from it (mixed content). Front forager with Tailscale Serve, a Cloudflare Tunnel, or a reverse proxy. The compose template includes a Tailscale sidecar example.
+For unattended or immutable-infra deploys, skip the wizard by pre-filling
+config. Copy `.env.example` to `.env` and set at minimum
+`FORAGER_STASH_URL`, `FORAGER_STASH_API_KEY`, `FORAGER_STASHDB_API_KEY`, and
+`FORAGER_LIBRARY_ROOT` (an **in-container** path). Anything set in the UI
+overrides `.env`; see the [Configuration reference](#configuration-reference)
+for the full list and precedence.
 
 ## Install — Stash launcher (optional)
 
