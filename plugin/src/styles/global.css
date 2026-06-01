@@ -4773,6 +4773,17 @@ code.grab-fact-v,
   color: var(--text-muted);
   opacity: 0.5;
 }
+/* Separator between the performer and the scene id/title — without it the
+   two names run together as one phrase ("Gracie Jane Sneaky Masseur"). Only
+   renders when a performer precedes, so a title-only group has no stray
+   leading dot. */
+.gsg-performer + .gsg-scene::before,
+.gsg-performer + .gsg-scene-title::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--text-muted);
+  opacity: 0.5;
+}
 .gsg-performer {
   font-weight: 600;
   font-size: 12px;
