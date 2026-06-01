@@ -61,7 +61,7 @@ type Settings struct {
 	// SabDeleteAfterPlace tells the poller to delete a SAB download
 	// (history + files) once it's been placed into the library.
 	SabDeleteAfterPlace bool
-	// PackDedupKeep: "existing" | "pack" | "both" — which copy survives
+	// PackDedupKeep: "existing" | "pack" | "review" | "both" — which copy survives
 	// when a pack scene duplicates one already in the library.
 	PackDedupKeep string
 	// ExcludedSceneTags: StashDB tag names whose scenes are dropped from

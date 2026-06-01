@@ -180,6 +180,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/{id}/performer", s.postGrabPerformer)
 		r.Post("/grabs/{id}/retry", s.postGrabRetry)
 		r.Delete("/grabs/{id}", s.deleteGrab)
+		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
 		r.Post("/jobs", s.postCollectionJob)
 		r.Get("/jobs", s.getCollectionJobs)
 		r.Get("/jobs/{id}", s.getCollectionJobDetail)

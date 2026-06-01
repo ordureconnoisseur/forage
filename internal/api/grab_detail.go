@@ -42,6 +42,11 @@ type grabDetailResponse struct {
 	// release title — the one-click options the card offers for reassigning
 	// a mis-filed / Unsorted grab to the right folder.
 	PerformerSuggestions []suggestedPerformer `json:"performer_suggestions,omitempty"`
+	// Duplicates are pending review-mode dedup items for a pack: scenes the
+	// pack delivered that the library already had. The card renders a
+	// per-scene compare (pack vs existing) with Keep buttons. Empty unless
+	// PackDedupKeep="review" found collisions.
+	Duplicates []dupView `json:"duplicates,omitempty"`
 }
 
 // getGrabDetail powers the expanded grab card.
@@ -142,6 +147,14 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 	// guesses from the release title — for singles and packs alike (a pack
 	// is filed into one performer folder, so it's reassignable too).
 	resp.PerformerSuggestions = s.suggestPerformers(r.Context(), g.ReleaseTitle)
+
+	// Pending duplicate-review items (PackDedupKeep="review"). Best-effort —
+	// a lookup failure just renders the card without the review section.
+	if dups, err := s.grabs.PendingDuplicatesByGrab(r.Context(), id); err != nil {
+		s.log.Warn("grab duplicates lookup", "id", id, "err", err)
+	} else {
+		resp.Duplicates = toDupViews(dups)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -277,7 +290,13 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 4. The grab row — always, so a partial failure can't strand it.
+	// 4. Pending review-duplicate rows for this pack — they reference scenes
+	// we just destroyed, so drop them so they can't linger as stale reviews.
+	if derr := s.grabs.DeleteDuplicatesByGrab(r.Context(), id); derr != nil {
+		addErr("duplicate records", derr)
+	}
+
+	// 5. The grab row — always, so a partial failure can't strand it.
 	if derr := s.grabs.Delete(r.Context(), id); derr != nil {
 		addErr("grab record", derr)
 	} else {

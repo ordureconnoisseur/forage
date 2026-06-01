@@ -574,23 +574,29 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		// Download-then-dedup: reconcile pack scenes whose StashDB id the
 		// library already had outside this pack. Which copy survives is
 		// configurable (PackDedupKeep): keep existing (default, removing
-		// the pack's), keep pack (removing the existing), or keep both (no
-		// dedup). Best-effort — a failure still lets the pack confirm.
+		// the pack's), keep pack (removing the existing), keep both (no
+		// dedup), or review (record collisions for the user to resolve and
+		// destroy nothing now). Best-effort — a failure still lets the pack
+		// confirm.
 		keep := p.pool.Settings().PackDedupKeep
+		pendingReview := 0
 		if keep != "both" {
-			// coverageVerified gates the only irreversible dedup branch
-			// (keep="pack", which deletes pre-existing library copies). A
-			// magnet/manual pack has PackFiles==0, for which
+			// coverageVerified gates the only irreversible AUTOMATIC dedup
+			// branch (keep="pack", which deletes pre-existing library copies).
+			// A magnet/manual pack has PackFiles==0, for which
 			// packScanCoverageOK returns true vacuously — so we must treat
 			// an unknown expected count as UNverified, not as "100% covered".
 			// This is what stops the orphan-backstop / post-restart partial
 			// confirm from destroying originals against an incomplete set.
 			coverageVerified := g.PackFiles > 0 && packScanCoverageOK(found, g.PackFiles)
 			endpoint, _ := p.identifyEndpoint(ctx, sc)
-			if deduped, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep, coverageVerified); err != nil {
+			if deduped, recorded, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep, coverageVerified); err != nil {
 				p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
-			} else if deduped > 0 {
-				g.PackDeduped += deduped
+			} else {
+				if deduped > 0 {
+					g.PackDeduped += deduped
+				}
+				pendingReview = recorded
 			}
 		}
 		// Record the final scene total for the UI when we never had a real
@@ -603,9 +609,12 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		g.Status = "confirmed"
 		g.ConfirmedAt = time.Now().Unix()
 		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified, %d dup removed", identified, found, g.PackDeduped)
+		if pendingReview > 0 {
+			g.Reason += fmt.Sprintf(", %d to review", pendingReview)
+		}
 		dirty = true
 		p.forgetPackScan(g.ID)
-		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "deduped", g.PackDeduped)
+		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "deduped", g.PackDeduped, "pendingReview", pendingReview)
 	}
 	return dirty, nil
 }
@@ -634,9 +643,13 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 // destroyed twice. Destroy removes the Stash scene + its file; the torrent
 // keeps seeding from the download client's own (separate) hardlink.
 // Returns the count removed.
-func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, endpoint, keep string, coverageVerified bool) (int, error) {
-	// keep="pack" is the only mode that deletes copies that were already in
-	// the library (the "external" copies below). That deletion is
+// Returns (destroyed, recorded): destroyed counts copies actually removed
+// (keep="existing"/"pack"); recorded counts pending review items written
+// (keep="review", which destroys nothing now and defers the decision to the
+// user). Exactly one is non-zero for a given mode.
+func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, endpoint, keep string, coverageVerified bool) (int, int, error) {
+	// keep="pack" is the only AUTOMATIC mode that deletes copies that were
+	// already in the library (the "external" copies below). That deletion is
 	// irreversible (SceneDestroy(deleteFile=true)), so we refuse it whenever
 	// the pack scan isn't verifiably complete — a magnet/manual pack
 	// (PackFiles==0), a partial scan that confirmed via the orphan backstop,
@@ -644,13 +657,13 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 	// those cases the pack set is not trustworthy as "everything that
 	// landed," and acting on it could strand the user without an original.
 	// Skipping leaves the pack's own copy in place and destroys nothing; the
-	// duplicate simply goes unreconciled (the review path handles it
-	// deliberately). keep="existing" is always safe — it only ever drops the
-	// pack's freshly-downloaded copy — so it is not gated.
+	// duplicate simply goes unreconciled. keep="existing" is always safe — it
+	// only ever drops the pack's freshly-downloaded copy — and keep="review"
+	// destroys nothing here (it records pending items), so neither is gated.
 	if keep == "pack" && !coverageVerified {
 		p.log.Warn("pack dedup: keep=pack skipped — scan coverage unverified, originals preserved",
 			"id", g.ID, "packFiles", g.PackFiles, "scanned", len(packScenes))
-		return 0, nil
+		return 0, 0, nil
 	}
 
 	packIDs := make(map[string]bool, len(packScenes))
@@ -663,7 +676,7 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 	if endpoint == "" {
 		var err error
 		if sweep, err = sc.FindAllSceneStashDBIDs(ctx); err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 	}
 	cache := map[string][]stash.SceneRef{}
@@ -684,6 +697,7 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 	}
 
 	deduped := 0
+	recorded := 0
 	destroyed := map[string]bool{}
 	destroy := func(sceneID string) {
 		if sceneID == "" || destroyed[sceneID] {
@@ -701,8 +715,9 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		if ps.StashDBID == "" {
 			continue
 		}
+		refs := copiesOf(ps.StashDBID)
 		var externalIDs []string
-		for _, ref := range copiesOf(ps.StashDBID) {
+		for _, ref := range refs {
 			if !packIDs[ref.SceneID] {
 				externalIDs = append(externalIDs, ref.SceneID)
 			}
@@ -710,15 +725,72 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		if len(externalIDs) == 0 {
 			continue // unique to this pack — keep it
 		}
-		if keep == "pack" {
+		switch keep {
+		case "review":
+			// Destroy nothing now — record the collision for the user to
+			// resolve per scene. Idempotent: re-ticks refresh a still-pending
+			// row in place.
+			if p.recordReviewDuplicate(ctx, g, ps, refs, packIDs) {
+				recorded++
+			}
+		case "pack":
 			for _, eid := range externalIDs {
 				destroy(eid) // keep the pack copy, drop the originals
 			}
-		} else {
-			destroy(ps.ID) // default: keep the original, drop the pack copy
+		default:
+			destroy(ps.ID) // "existing": keep the original, drop the pack copy
 		}
 	}
-	return deduped, nil
+	return deduped, recorded, nil
+}
+
+// recordReviewDuplicate writes (or refreshes) a pending review item for one
+// pack scene that collides with copies already in the library. refs is every
+// local copy of the scene's cross-id; packIDs marks which of those belong to
+// this pack. Returns false (and logs) on a write error. Skips writing if the
+// pack copy can't be located among refs AND we have no fallback identity —
+// without a pack-side scene id there's nothing to act on later.
+func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps stash.SceneMatch, refs []stash.SceneRef, packIDs map[string]bool) bool {
+	var pack grabs.SceneCopy
+	var existing []grabs.SceneCopy
+	for _, ref := range refs {
+		c := grabs.SceneCopy{SceneID: ref.SceneID, Title: ref.Title, Path: ref.Path, Size: ref.Size, Height: ref.Height}
+		if packIDs[ref.SceneID] {
+			// Representative pack copy: prefer the scene the pack confirm
+			// identified (ps.ID); otherwise the largest, as a stable pick.
+			if pack.SceneID == "" || ref.SceneID == ps.ID || ref.Size > pack.Size {
+				pack = c
+			}
+		} else {
+			existing = append(existing, c)
+		}
+	}
+	if pack.SceneID == "" {
+		pack = grabs.SceneCopy{SceneID: ps.ID, Title: ps.Title, Path: ps.FilePath}
+	}
+	if pack.SceneID == "" {
+		return false
+	}
+	title := pack.Title
+	if title == "" {
+		if ps.Title != "" {
+			title = ps.Title
+		} else if len(existing) > 0 {
+			title = existing[0].Title
+		}
+	}
+	d := grabs.PackDuplicate{
+		GrabID:     g.ID,
+		StashDBID:  ps.StashDBID,
+		SceneTitle: title,
+		Pack:       pack,
+		Existing:   existing,
+	}
+	if err := p.repo.UpsertDuplicate(ctx, d); err != nil {
+		p.log.Warn("pack dedup: record review item", "id", g.ID, "scene", ps.StashDBID, "err", err)
+		return false
+	}
+	return true
 }
 
 // packScanSettled reports whether Stash has stopped indexing new scenes

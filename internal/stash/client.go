@@ -452,8 +452,9 @@ query ForagerAllScenesWithPaths($page: Int!, $perPage: Int!) {
   findScenes(filter: { page: $page, per_page: $perPage }) {
     scenes {
       id
+      title
       stash_ids { endpoint stash_id }
-      files { path }
+      files { path size width height }
     }
   }
 }`
@@ -464,7 +465,11 @@ query ForagerAllScenesWithPaths($page: Int!, $perPage: Int!) {
 // keep the pack copy, to know which existing scenes to remove.
 type SceneRef struct {
 	SceneID string
+	Title   string
 	Path    string
+	Size    int64 // bytes; 0 if Stash didn't report it
+	Width   int   // pixels; 0 if unknown
+	Height  int   // pixels; 0 if unknown — the dimension the UI buckets into 1080p/2160p/…
 }
 
 // FindAllSceneStashDBIDs sweeps the library and returns a map from each
@@ -481,9 +486,13 @@ func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]Scene
 			FindScenes struct {
 				Scenes []struct {
 					ID       string    `json:"id"`
+					Title    string    `json:"title"`
 					StashIDs []StashID `json:"stash_ids"`
 					Files    []struct {
-						Path string `json:"path"`
+						Path   string `json:"path"`
+						Size   int64  `json:"size"`
+						Width  int    `json:"width"`
+						Height int    `json:"height"`
 					} `json:"files"`
 				} `json:"scenes"`
 			} `json:"findScenes"`
@@ -501,7 +510,7 @@ func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]Scene
 				continue
 			}
 			for _, f := range s.Files {
-				out[id] = append(out[id], SceneRef{SceneID: s.ID, Path: f.Path})
+				out[id] = append(out[id], SceneRef{SceneID: s.ID, Title: s.Title, Path: f.Path, Size: f.Size, Width: f.Width, Height: f.Height})
 			}
 		}
 		if len(resp.FindScenes.Scenes) < perPage {
@@ -521,7 +530,8 @@ query ForagerScenesByStashID($endpoint: String!, $stashId: String!) {
   ) {
     scenes {
       id
-      files { path }
+      title
+      files { path size width height }
     }
   }
 }`
@@ -541,8 +551,12 @@ func (c *Client) FindSceneRefsByStashID(ctx context.Context, endpoint, stashID s
 		FindScenes struct {
 			Scenes []struct {
 				ID    string `json:"id"`
+				Title string `json:"title"`
 				Files []struct {
-					Path string `json:"path"`
+					Path   string `json:"path"`
+					Size   int64  `json:"size"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
 				} `json:"files"`
 			} `json:"scenes"`
 		} `json:"findScenes"`
@@ -554,11 +568,11 @@ func (c *Client) FindSceneRefsByStashID(ctx context.Context, endpoint, stashID s
 	var out []SceneRef
 	for _, s := range resp.FindScenes.Scenes {
 		if len(s.Files) == 0 {
-			out = append(out, SceneRef{SceneID: s.ID})
+			out = append(out, SceneRef{SceneID: s.ID, Title: s.Title})
 			continue
 		}
 		for _, f := range s.Files {
-			out = append(out, SceneRef{SceneID: s.ID, Path: f.Path})
+			out = append(out, SceneRef{SceneID: s.ID, Title: s.Title, Path: f.Path, Size: f.Size, Width: f.Width, Height: f.Height})
 		}
 	}
 	return out, nil

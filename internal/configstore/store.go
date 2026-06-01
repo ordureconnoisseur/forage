@@ -60,7 +60,7 @@ type StoredConfig struct {
 	// *bool so an explicit false round-trips (nil = fall through to
 	// env/default).
 	SabDeleteAfterPlace *bool `json:"sabDeleteAfterPlace,omitempty"`
-	// PackDedupKeep: "existing" | "pack" | "both". Controls which copy
+	// PackDedupKeep: "existing" | "pack" | "review" | "both". Controls which copy
 	// survives when a pack scene duplicates one already in the library.
 	PackDedupKeep *string `json:"packDedupKeep,omitempty"`
 	// ReleaseRules is the release-scoring preference list as a JSON array

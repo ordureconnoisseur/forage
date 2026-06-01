@@ -525,12 +525,12 @@ func TestDedupPackGateBlocksUnverified(t *testing.T) {
 	packScenes := []stash.SceneMatch{{ID: "pack-1", StashDBID: "sdb-abc"}}
 
 	before := r.stash.reqCount()
-	deduped, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", false)
+	deduped, recorded, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", false)
 	if err != nil {
 		t.Fatalf("dedupPack: %v", err)
 	}
-	if deduped != 0 {
-		t.Fatalf("gate should block all destruction, got deduped=%d", deduped)
+	if deduped != 0 || recorded != 0 {
+		t.Fatalf("gate should block all action, got deduped=%d recorded=%d", deduped, recorded)
 	}
 	if got := r.stash.reqCount() - before; got != 0 {
 		t.Fatalf("blocked keep=pack must make zero Stash calls, made %d", got)
@@ -549,10 +549,57 @@ func TestDedupPackVerifiedQueriesStash(t *testing.T) {
 	packScenes := []stash.SceneMatch{{ID: "pack-1", StashDBID: "sdb-abc"}}
 
 	before := r.stash.reqCount()
-	if _, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", true); err != nil {
+	if _, _, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", true); err != nil {
 		t.Fatalf("dedupPack: %v", err)
 	}
 	if got := r.stash.reqCount() - before; got == 0 {
 		t.Fatalf("verified keep=pack should query Stash for external copies, made 0 requests")
+	}
+}
+
+// TestDedupPackReviewRecordsPending exercises keep="review": when the pack
+// delivers a scene the library already had, review mode must destroy nothing
+// and instead persist a pending duplicate (pack copy + the pre-existing copy)
+// for the user to resolve. Proves the detection path through the repo,
+// including the existing-copies JSON round-trip.
+func TestDedupPackReviewRecordsPending(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	// Two library copies of the same StashDB scene: the pack's and a
+	// pre-existing one. The fake returns both for the cross-id lookup.
+	r.stash.set([]fakeScene{
+		{id: "pack-1", title: "Scene A", path: "/lib/pack/a.mp4", stashDBID: "sdb-abc"},
+		{id: "old-9", title: "Scene A", path: "/lib/old/a.mp4", stashDBID: "sdb-abc"},
+	})
+	g := &grabs.Grab{ID: 1, PackFiles: 1}
+	packScenes := []stash.SceneMatch{{ID: "pack-1", StashDBID: "sdb-abc", Title: "Scene A", FilePath: "/lib/pack/a.mp4"}}
+
+	deduped, recorded, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "review", true)
+	if err != nil {
+		t.Fatalf("dedupPack: %v", err)
+	}
+	if deduped != 0 {
+		t.Fatalf("review mode must destroy nothing, deduped=%d", deduped)
+	}
+	if recorded != 1 {
+		t.Fatalf("expected 1 recorded review item, got %d", recorded)
+	}
+
+	dups, err := r.repo.PendingDuplicatesByGrab(context.Background(), 1)
+	if err != nil {
+		t.Fatalf("PendingDuplicatesByGrab: %v", err)
+	}
+	if len(dups) != 1 {
+		t.Fatalf("expected 1 pending dup, got %d", len(dups))
+	}
+	d := dups[0]
+	if d.Pack.SceneID != "pack-1" {
+		t.Fatalf("pack copy = %q, want pack-1", d.Pack.SceneID)
+	}
+	if len(d.Existing) != 1 || d.Existing[0].SceneID != "old-9" {
+		t.Fatalf("existing copies = %+v, want [old-9]", d.Existing)
+	}
+	if d.Status != "pending" {
+		t.Fatalf("status = %q, want pending", d.Status)
 	}
 }

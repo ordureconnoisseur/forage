@@ -85,6 +85,10 @@ type grabOut struct {
 	PackFiles      int    `json:"pack_files,omitempty"`
 	PackIdentified int    `json:"pack_identified,omitempty"`
 	PackDeduped    int    `json:"pack_deduped,omitempty"`
+	// PendingDuplicates is the count of unresolved review-mode dedup items
+	// for this pack (PackDedupKeep="review"). The UI badges the pack and
+	// loads the per-scene compare from the detail endpoint.
+	PendingDuplicates int `json:"pending_duplicates,omitempty"`
 }
 
 type grabsResponse struct {
@@ -176,6 +180,16 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			PackDeduped:         g.PackDeduped,
 		})
 	}
+	// Badge packs that have pending review-mode duplicates. One grouped
+	// query rather than per-row; best-effort — a failure just omits badges.
+	if counts, derr := s.grabs.PendingDuplicateCounts(r.Context()); derr != nil {
+		s.log.Warn("pending duplicate counts", "err", derr)
+	} else if len(counts) > 0 {
+		for i := range out {
+			out[i].PendingDuplicates = counts[out[i].ID]
+		}
+	}
+
 	s.enrichProgress(r, out)
 	s.enrichSceneTitles(r, out)
 	writeJSON(w, http.StatusOK, grabsResponse{Grabs: out, Totals: totals})

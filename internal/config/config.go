@@ -62,7 +62,10 @@ type Config struct {
 	// PackDedupKeep controls what pack download-then-dedup does when a
 	// pack scene duplicates one already in the library:
 	//   "existing" — keep the existing copy, remove the pack's (default)
-	//   "pack"     — keep the pack's copy, remove the existing
+	//   "pack"     — keep the pack's copy, remove the existing (automatic;
+	//                gated on verified scan coverage since it deletes originals)
+	//   "review"   — destroy nothing automatically; record each collision for
+	//                the user to resolve per scene in the Grabs UI
 	//   "both"     — keep both (dedup disabled)
 	PackDedupKeep string
 	// ReleaseRules is the user's release-scoring preference list as a JSON
@@ -346,6 +349,8 @@ func normalizePackKeep(v string) string {
 		return "pack"
 	case "both":
 		return "both"
+	case "review":
+		return "review"
 	default:
 		return "existing"
 	}

@@ -164,3 +164,37 @@ CREATE TABLE IF NOT EXISTS watches (
 CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
 
+-- pack_duplicate: one row per (pack grab, StashDB scene) collision that the
+-- review-mode dedup path (PackDedupKeep="review") found — a scene the pack
+-- delivered that the library ALREADY had elsewhere. Instead of the auto
+-- keep="pack" path destroying a pre-existing copy unattended, review mode
+-- records the collision here as `pending` and waits for the user to choose
+-- per scene which copy survives. The resolve endpoint then runs the
+-- (irreversible) SceneDestroy in the foreground on the chosen side. This is
+-- the only dedup path that can delete a pre-existing library copy, and it
+-- never does so without an explicit decision.
+--
+-- existing_copies is a JSON array of the pre-existing copies
+-- ({scene_id,title,path,size,height}); pack_* hold the pack's own copy. The
+-- UI compares pack vs existing (resolution/size/path) so the user keeps the
+-- better file. UNIQUE(grab_id, stashdb_id) makes detection idempotent — a
+-- re-tick upserts rather than duplicating.
+CREATE TABLE IF NOT EXISTS pack_duplicate (
+  id              INTEGER PRIMARY KEY AUTOINCREMENT,
+  grab_id         INTEGER NOT NULL,
+  stashdb_id      TEXT NOT NULL,
+  scene_title     TEXT NOT NULL DEFAULT '',
+  pack_scene_id   TEXT NOT NULL,
+  pack_path       TEXT NOT NULL DEFAULT '',
+  pack_size       INTEGER NOT NULL DEFAULT 0,
+  pack_height     INTEGER NOT NULL DEFAULT 0,
+  existing_copies TEXT NOT NULL DEFAULT '[]', -- JSON [{scene_id,title,path,size,height}]
+  status          TEXT NOT NULL DEFAULT 'pending', -- pending | resolved
+  resolution      TEXT NOT NULL DEFAULT '',         -- existing | pack | both (once resolved)
+  created_at      INTEGER NOT NULL,
+  resolved_at     INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(grab_id, stashdb_id)
+);
+CREATE INDEX IF NOT EXISTS idx_pack_dup_status ON pack_duplicate(status);
+CREATE INDEX IF NOT EXISTS idx_pack_dup_grab   ON pack_duplicate(grab_id);
+
