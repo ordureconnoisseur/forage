@@ -761,6 +761,23 @@ export function fetchHealth(): Promise<Health> {
   return get<Health>("/healthz");
 }
 
+// IndexerInfo is one configured Prowlarr indexer, as the friendly
+// release-prefs editor needs it: a name to rank/block, a protocol badge,
+// and whether it's enabled.
+export interface IndexerInfo {
+  name: string;
+  protocol: string; // "torrent" | "usenet"
+  enabled: boolean;
+}
+
+// fetchIndexers lists the user's Prowlarr indexers for the friendly
+// release-ranking UI. Returns an empty list when Prowlarr is unconfigured
+// (the daemon answers 200 + [] in that case, so the UI hides the section).
+export async function fetchIndexers(): Promise<IndexerInfo[]> {
+  const r = await get<{ indexers: IndexerInfo[] }>("/indexers");
+  return r.indexers ?? [];
+}
+
 // ── Daemon config (UI-editable via /config) ───────────────────────────
 
 export type FieldSource = "json" | "env" | "default";
@@ -817,6 +834,13 @@ export interface ConfigPatch {
   // Release-scoring rules as a JSON array string (ReleaseRule[]). Empty =
   // built-in defaults.
   releaseRules?: string;
+  // Friendly (no-typing) release-ranking prefs as a JSON string
+  // (ReleasePrefs). Client-owned; the daemon stores it but never interprets
+  // it — it's compiled into releaseRules client-side.
+  releasePrefs?: string;
+  // True once releaseRules was hand-tuned in the advanced editor, so the
+  // client stops auto-recompiling them from releasePrefs.
+  releaseAdvanced?: boolean;
   // StashDB tag names whose scenes are dropped from the missing-scenes
   // gap analysis (case-insensitive). Empty = no filtering.
   excludedSceneTags?: string[];
