@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   adminToken,
+  clearSession,
   ConfigField,
   ConfigFieldsResponse,
   ConfigPatch,
@@ -53,10 +54,12 @@ function randomToken(): string {
 
 interface Props {
   onClose: () => void;
+  // Called after the user logs out — App drops to the Login gate.
+  onLoggedOut: () => void;
   health: Health | null;
 }
 
-export default function Settings({ onClose, health }: Props) {
+export default function Settings({ onClose, onLoggedOut, health }: Props) {
   // Connection (localStorage-backed)
   const [apiURL, setApiURL] = useState(foragerBase());
   const [token, setToken] = useState(adminToken());
@@ -179,6 +182,15 @@ export default function Settings({ onClose, health }: Props) {
     // Force a fresh load against the new URL by reloading the page —
     // simplest way to reset every in-flight fetch/state.
     location.reload();
+  }
+
+  // Log out: clear the forage_token cookie server-side and drop the stored
+  // bearer token, then let App show the Login gate. Doesn't touch the
+  // daemon's configured token — just this browser's credential.
+  async function logout() {
+    await clearSession();
+    setAdminToken("");
+    onLoggedOut();
   }
 
   async function saveDaemonConfig(force = false) {
@@ -688,6 +700,20 @@ export default function Settings({ onClose, health }: Props) {
             daemon host. An env <code>FORAGER_ADMIN_TOKEN</code> still
             applies when this is blank.
           </p>
+          {health?.adminAuthRequired && (
+            <>
+              <div className="settings-actions inline">
+                <button className="settings-logout" onClick={logout}>
+                  Log out
+                </button>
+              </div>
+              <p className="settings-tip">
+                Forgets this browser's token and returns to the login screen.
+                Doesn't change the daemon's token — other devices stay signed
+                in.
+              </p>
+            </>
+          )}
         </Section>
 
         <Section

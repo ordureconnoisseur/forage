@@ -9,6 +9,7 @@ import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
 import Setup from "./views/Setup";
 import Settings from "./views/Settings";
+import Login from "./views/Login";
 import AcornIcon from "./AcornIcon";
 import NavIcon from "./NavIcons";
 import NotificationsBell from "./NotificationsBell";
@@ -20,7 +21,9 @@ import {
   Health,
   mixedContentBlocked,
   NotificationCounts,
+  setUnauthorizedHandler,
   startCollectionJob,
+  verifyToken,
 } from "./api";
 
 // URL-hash routes, parsed by parseRoute. The scene route carries the
@@ -106,6 +109,11 @@ export default function App() {
   // loading splash instead of flashing the setup wizard before we know
   // whether the daemon is reachable.
   const [healthProbed, setHealthProbed] = useState(false);
+  // Whether we hold a valid admin token, when the daemon requires one.
+  // null = not yet determined (verifying); true = a gated probe succeeded;
+  // false = no/invalid token → show the Login gate. Irrelevant (left at
+  // true) when the daemon doesn't require auth.
+  const [authOk, setAuthOk] = useState<boolean | null>(null);
   // foragerBase() is read once per render; useEffect below re-runs
   // when settings open/close so a Save updates the URL → triggers a
   // fresh health probe.
@@ -134,15 +142,26 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     fetchHealth()
-      .then((h) => {
+      .then(async (h) => {
         if (cancelled) return;
         setHealth(h);
         setHealthError(null);
+        // Resolve the auth phase before flipping healthProbed (below, in
+        // finally) so we never flash the app or the login gate: an
+        // auth-required daemon gets a silent gated probe; an open one is
+        // authed by definition.
+        if (!h.adminAuthRequired) {
+          setAuthOk(true);
+        } else {
+          const ok = await verifyToken();
+          if (!cancelled) setAuthOk(ok);
+        }
       })
       .catch((e) => {
         if (cancelled) return;
         setHealthError((e as Error).message);
         setHealth(null);
+        setAuthOk(null);
       })
       .finally(() => {
         if (!cancelled) setHealthProbed(true);
@@ -152,15 +171,35 @@ export default function App() {
     };
   }, [settingsOpen, apiURL, healthNonce]);
 
+  // Any API call returning 401 (token revoked/rotated, cookie expired)
+  // fires this — even calls whose own error handling is silent — so a
+  // mid-session lockout bounces to the Login gate instead of leaving
+  // broken/empty views. needsLogin (below) gates on authOk === false.
+  useEffect(() => {
+    setUnauthorizedHandler(() => setAuthOk(false));
+    return () => setUnauthorizedHandler(null);
+  }, []);
+
   // Drive the top-level phase off the probe result, not URL presence:
   //   - loading  → first probe hasn't resolved yet
+  //   - login    → daemon reachable + requires a token we don't hold
   //   - setup    → daemon unreachable at this origin / no configured URL,
   //                or reachable but missing Stash creds (unconfigured)
-  //   - ready    → daemon reachable + configured
+  //   - ready    → daemon reachable + configured + authed
+  //
+  // Login precedes setup: a configured-but-locked daemon can't be
+  // configured without auth, so the gate wins even when unconfigured.
   const loading = !healthProbed;
+  const needsLogin =
+    healthProbed &&
+    !healthError &&
+    health?.adminAuthRequired === true &&
+    authOk === false;
   const needsSetup =
-    healthProbed && (!!healthError || health?.unconfigured === true);
-  const ready = healthProbed && !needsSetup;
+    healthProbed &&
+    !needsLogin &&
+    (!!healthError || health?.unconfigured === true);
+  const ready = healthProbed && !needsLogin && !needsSetup;
   // Same-origin: an empty base reached a live daemon → the daemon is
   // serving us standalone, so the setup wizard can skip its "connect to
   // your daemon" step entirely.
@@ -393,6 +432,7 @@ export default function App() {
             <span className="coll-spinner" />
           </div>
         )}
+        {needsLogin && <Login onAuthed={() => setAuthOk(true)} />}
         {needsSetup && (
           <Setup
             health={health}
@@ -404,7 +444,14 @@ export default function App() {
         )}
       </main>
       {settingsOpen && (
-        <Settings onClose={() => setSettingsOpen(false)} health={health} />
+        <Settings
+          onClose={() => setSettingsOpen(false)}
+          onLoggedOut={() => {
+            setSettingsOpen(false);
+            setAuthOk(false);
+          }}
+          health={health}
+        />
       )}
     </div>
   );

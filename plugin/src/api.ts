@@ -46,15 +46,49 @@ export function mixedContentBlocked(): boolean {
   );
 }
 
+// ApiError carries the HTTP status alongside the message so callers (and
+// the global 401 handler below) can react to auth failures specifically,
+// not just on the error string.
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+// A single app-wide hook the App subscribes to so a 401 from ANY API call
+// — even one whose caller swallows the error (the notifications poll) —
+// bounces the user back to the login gate. Set once on mount.
+let unauthorizedHandler: (() => void) | null = null;
+export function setUnauthorizedHandler(fn: (() => void) | null) {
+  unauthorizedHandler = fn;
+}
+
+// fireUnauthorized notifies the App when a request was rejected for auth.
+// Kept separate from throwForStatus so helpers that read the body
+// themselves (saveConfig's 422 path) can still signal a 401.
+function fireUnauthorized(status: number) {
+  if (status === 401) unauthorizedHandler?.();
+}
+
+// throwForStatus reads the error body and throws an ApiError, firing the
+// global unauthorized hook on 401. Centralises the duplicated
+// `if (!r.ok) { … }` blocks so every route surfaces status uniformly.
+async function throwForStatus(r: Response): Promise<never> {
+  const e = await r.json().catch(() => ({ error: r.statusText }));
+  fireUnauthorized(r.status);
+  throw new ApiError(r.status, e.error || `HTTP ${r.status}`);
+}
+
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
   const r = await fetch(foragerBase() + path, {
     signal,
     headers: authHeaders(),
+    credentials: "include",
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   return r.json() as Promise<T>;
 }
 
@@ -63,11 +97,9 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body),
+    credentials: "include",
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   return r.json() as Promise<T>;
 }
 
@@ -313,6 +345,37 @@ export async function establishSession(): Promise<void> {
   }
 }
 
+// verifyToken probes a gated endpoint to confirm the stored token (Bearer
+// header + cookie) is currently accepted. Returns true on 200, false on a
+// 401 (or unreachable). Deliberately does NOT fire the global unauthorized
+// handler — the login gate and the boot probe handle the false case
+// themselves, so a verification miss mustn't recursively bounce the app.
+export async function verifyToken(): Promise<boolean> {
+  try {
+    const r = await fetch(foragerBase() + "/notifications", {
+      headers: authHeaders(),
+      credentials: "include",
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+// clearSession asks the daemon to expire the forage_token cookie (it's
+// HttpOnly, so client JS can't). Best-effort half of logout; the caller
+// also drops the stored bearer token via setAdminToken("").
+export async function clearSession(): Promise<void> {
+  try {
+    await fetch(foragerBase() + "/session", {
+      method: "DELETE",
+      credentials: "include",
+    });
+  } catch {
+    // Best-effort — the bearer token is cleared client-side regardless.
+  }
+}
+
 export function fetchSceneReleases(
   stashDBID: string,
   opts?: {
@@ -424,12 +487,10 @@ export async function grabTorrentFile(
   const r = await fetch(foragerBase() + "/grab/torrent", {
     method: "POST",
     headers: authHeaders(),
+    credentials: "include",
     body: fd,
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   return r.json() as Promise<GrabResponse>;
 }
 
@@ -460,12 +521,10 @@ export async function inspectTorrentFile(file: File): Promise<TorrentInspect> {
   const r = await fetch(foragerBase() + "/grab/torrent/inspect", {
     method: "POST",
     headers: authHeaders(),
+    credentials: "include",
     body: fd,
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   return r.json() as Promise<TorrentInspect>;
 }
 
@@ -605,11 +664,9 @@ export async function deleteGrab(id: number): Promise<DeleteGrabResult> {
   const r = await fetch(foragerBase() + `/grabs/${id}`, {
     method: "DELETE",
     headers: authHeaders(),
+    credentials: "include",
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   return r.json() as Promise<DeleteGrabResult>;
 }
 
@@ -757,11 +814,11 @@ function authHeaders(): Record<string, string> {
 }
 
 export async function fetchConfig(): Promise<ConfigFieldsResponse> {
-  const r = await fetch(foragerBase() + "/config", { headers: authHeaders() });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  const r = await fetch(foragerBase() + "/config", {
+    headers: authHeaders(),
+    credentials: "include",
+  });
+  if (!r.ok) return throwForStatus(r);
   return r.json();
 }
 
@@ -773,11 +830,15 @@ export async function saveConfig(
   const r = await fetch(foragerBase() + "/config" + qs, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
     body: JSON.stringify(patch),
   });
   const body = await r.json().catch(() => ({}));
+  // 422 is a normal "probes failed" response the caller renders inline; any
+  // other non-2xx (incl. a 401 once auth is on) is a hard error.
   if (!r.ok && r.status !== 422) {
-    throw new Error(body.error || `HTTP ${r.status}`);
+    fireUnauthorized(r.status);
+    throw new ApiError(r.status, body.error || `HTTP ${r.status}`);
   }
   return { ok: r.ok, ...body } as SaveConfigResponse;
 }
@@ -789,12 +850,10 @@ export async function testSection(
   const r = await fetch(foragerBase() + `/config/test/${section}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
     body: JSON.stringify(patch),
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) return throwForStatus(r);
   const body = await r.json();
   return body.result as ProbeResult;
 }
@@ -858,11 +917,9 @@ export async function cancelCollectionJob(id: string): Promise<void> {
   const r = await fetch(foragerBase() + `/jobs/${encodeURIComponent(id)}`, {
     method: "DELETE",
     headers: authHeaders(),
+    credentials: "include",
   });
-  if (!r.ok) {
-    const e = await r.json().catch(() => ({ error: r.statusText }));
-    throw new Error(e.error || `HTTP ${r.status}`);
-  }
+  if (!r.ok) await throwForStatus(r);
 }
 
 // fetchCollectionJob returns one job WITH per-scene candidate lists, for
@@ -946,8 +1003,9 @@ export async function deleteWatch(stashDBID: string): Promise<void> {
   const r = await fetch(foragerBase() + `/watches/${encodeURIComponent(stashDBID)}`, {
     method: "DELETE",
     headers: authHeaders(),
+    credentials: "include",
   });
-  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+  if (!r.ok) await throwForStatus(r);
 }
 
 export function grabWatch(stashDBID: string): Promise<{ ok: boolean }> {

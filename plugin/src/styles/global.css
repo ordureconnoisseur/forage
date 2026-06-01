@@ -1511,6 +1511,22 @@ button {
   border-color: var(--accent);
 }
 
+/* Logout — same outline shape as a test button, tinted toward danger so
+   it reads as "sign out" rather than a neutral action. */
+.settings-logout {
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.settings-logout:hover {
+  color: var(--danger, #f87171);
+  border-color: var(--danger, #f87171);
+}
+
 .settings-footer {
   display: flex;
   align-items: center;
