@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   deleteWatch,
+  dismissWatch,
   fetchWatches,
   grabWatch,
   type Watch,
@@ -139,6 +140,17 @@ function WatchCard({
       setBusy(false);
     }
   };
+  // Reject this find but keep watching — ignores this exact release and
+  // flips back to watching for a different one.
+  const dismiss = async () => {
+    setBusy(true);
+    try {
+      await dismissWatch(w.stashdb_id);
+      onChanged();
+    } catch {
+      setBusy(false);
+    }
+  };
 
   const avail = w.status === "available";
   return (
@@ -190,13 +202,25 @@ function WatchCard({
       </div>
       <div className="watch-actions">
         {avail ? (
-          <button
-            className="watch-grab"
-            disabled={busy || grabbed}
-            onClick={grab}
-          >
-            {grabbed ? "Queued ✓" : busy ? "Grabbing…" : "Grab ↓"}
-          </button>
+          <>
+            <button
+              className="watch-grab"
+              disabled={busy || grabbed}
+              onClick={grab}
+            >
+              {grabbed ? "Queued ✓" : busy ? "Grabbing…" : "Grab ↓"}
+            </button>
+            {!grabbed && (
+              <button
+                className="watch-dismiss"
+                disabled={busy}
+                onClick={dismiss}
+                title="Not this one — ignore this release and keep watching for a better one"
+              >
+                Dismiss
+              </button>
+            )}
+          </>
         ) : (
           <span className="watch-spinner-label">
             <span className="coll-spinner" /> watching

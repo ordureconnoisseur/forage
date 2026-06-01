@@ -123,7 +123,7 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	// First verified, non-rejected release whose resolution matches the
 	// target (exact; "any" accepts anything). Best-scoring first so the
 	// recorded release is the nicest qualifying one.
-	best := s.bestWatchMatch(cands, w.Target)
+	best := s.bestWatchMatch(cands, w.Target, w.IgnoredURLs)
 	if best == nil {
 		return
 	}
@@ -139,7 +139,11 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 // bestWatchMatch returns the best verified, non-rejected release matching
 // the target resolution, or nil. Candidates are score-ranked first so the
 // chosen release is the highest-scoring qualifier.
-func (s *Server) bestWatchMatch(cands []sceneRelease, target string) *sceneRelease {
+func (s *Server) bestWatchMatch(cands []sceneRelease, target string, ignored []string) *sceneRelease {
+	ignoredSet := make(map[string]bool, len(ignored))
+	for _, u := range ignored {
+		ignoredSet[u] = true
+	}
 	// Rank like the releases endpoint: score desc (verified/non-rejected
 	// filtered below).
 	bestIdx := -1
@@ -147,6 +151,11 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, target string) *sceneRelea
 	for i := range cands {
 		c := &cands[i]
 		if !c.Verified || c.Rejected {
+			continue
+		}
+		// Skip releases the user dismissed for this watch — a rejected
+		// dead/over-compressed find must not re-surface.
+		if ignoredSet[c.DownloadURL] {
 			continue
 		}
 		if !resolutionMatches(target, scoring.Resolution(c.Title)) {

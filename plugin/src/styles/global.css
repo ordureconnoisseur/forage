@@ -4517,6 +4517,26 @@ code.grab-fact-v,
   color: var(--text-muted);
   font-size: 12px;
 }
+/* Dismiss — reject this find but keep watching. Quiet outlined pill,
+   between the primary Grab and the remove ✕. */
+.watch-dismiss {
+  padding: 7px 12px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 13px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.watch-dismiss:hover {
+  color: var(--text);
+  border-color: var(--glass-border-bright);
+}
+.watch-dismiss:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
 .watch-remove {
   width: 30px;
   height: 30px;

@@ -236,5 +236,26 @@ func migrateGrabsColumns(db *sql.DB) error {
 			}
 		}
 	}
+
+	// 2026-06-01 watch-dismiss: ignored_urls holds the download URLs the
+	// user has dismissed for a watch (JSON array). A dismissed release is
+	// skipped by the watch loop so the same dead/over-compressed find can't
+	// re-surface. Guard on the watches table existing (schema.sql creates it
+	// fresh with the column already present on a new DB).
+	var watchesExists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='watches'`).Scan(&watchesExists); err != nil {
+		return err
+	}
+	if watchesExists > 0 {
+		var n int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('watches') WHERE name = 'ignored_urls'`).Scan(&n); err != nil {
+			return err
+		}
+		if n == 0 {
+			if _, err := db.Exec(`ALTER TABLE watches ADD COLUMN ignored_urls TEXT NOT NULL DEFAULT '[]'`); err != nil {
+				return fmt.Errorf("add watches ignored_urls column: %w", err)
+			}
+		}
+	}
 	return nil
 }

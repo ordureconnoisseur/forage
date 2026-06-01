@@ -155,7 +155,11 @@ CREATE TABLE IF NOT EXISTS watches (
   found_size     INTEGER NOT NULL DEFAULT 0,
   created_at     INTEGER NOT NULL,
   last_checked   INTEGER NOT NULL DEFAULT 0, -- unix; 0 = never. The loop claims oldest first.
-  found_at       INTEGER NOT NULL DEFAULT 0
+  found_at       INTEGER NOT NULL DEFAULT 0,
+  -- download URLs the user dismissed for this watch (JSON array). The watch
+  -- loop skips these so a rejected dead/over-compressed find can't
+  -- re-surface; the watch keeps looking for a different release.
+  ignored_urls   TEXT NOT NULL DEFAULT '[]'
 );
 CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);

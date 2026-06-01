@@ -18,7 +18,8 @@ CREATE TABLE IF NOT EXISTS watches (
   found_title TEXT, found_url TEXT, found_indexer TEXT, found_protocol TEXT,
   found_size INTEGER NOT NULL DEFAULT 0,
   created_at INTEGER NOT NULL, last_checked INTEGER NOT NULL DEFAULT 0,
-  found_at INTEGER NOT NULL DEFAULT 0);`
+  found_at INTEGER NOT NULL DEFAULT 0,
+  ignored_urls TEXT NOT NULL DEFAULT '[]');`
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
@@ -109,5 +110,39 @@ func TestMarkAvailable(t *testing.T) {
 	// CountWatching excludes available too.
 	if n, _ := r.CountWatching(ctx); n != 0 {
 		t.Errorf("CountWatching = %d, want 0", n)
+	}
+}
+
+func TestDismiss(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	_ = r.Add(ctx, Watch{StashDBID: "s", Title: "x", Target: Target1080})
+	_ = r.MarkAvailable(ctx, "s", "Dead 1080p", "http://dead", "PornoLab", "torrent", 100)
+
+	if err := r.Dismiss(ctx, "s", "http://dead"); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := r.List(ctx)
+	w := ws[0]
+	// Flipped back to watching, found fields cleared, URL recorded as ignored.
+	if w.Status != StatusWatching {
+		t.Errorf("status = %q, want watching", w.Status)
+	}
+	if w.FoundURL != "" || w.FoundTitle != "" {
+		t.Errorf("found fields should be cleared, got %+v", w)
+	}
+	if len(w.IgnoredURLs) != 1 || w.IgnoredURLs[0] != "http://dead" {
+		t.Errorf("ignored urls = %v, want [http://dead]", w.IgnoredURLs)
+	}
+	// It's claimable again (back to watching).
+	if got, _ := r.ClaimBatch(ctx, 10); len(got) != 1 {
+		t.Error("dismissed watch should be claimable again")
+	}
+	// Dismissing a second different release accumulates, not replaces.
+	_ = r.MarkAvailable(ctx, "s", "Tiny 1080p", "http://tiny", "1337x", "torrent", 50)
+	_ = r.Dismiss(ctx, "s", "http://tiny")
+	ws, _ = r.List(ctx)
+	if len(ws[0].IgnoredURLs) != 2 {
+		t.Errorf("ignored urls = %v, want 2 entries", ws[0].IgnoredURLs)
 	}
 }

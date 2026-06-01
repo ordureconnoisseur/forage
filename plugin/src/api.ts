@@ -1091,3 +1091,10 @@ export async function deleteWatch(stashDBID: string): Promise<void> {
 export function grabWatch(stashDBID: string): Promise<{ ok: boolean }> {
   return postJSON(`/watches/${encodeURIComponent(stashDBID)}/grab`, {});
 }
+
+// dismissWatch rejects the watch's current found release (e.g. it's dead or
+// over-compressed): ignores that exact release going forward and flips the
+// watch back to watching so the loop surfaces a different one.
+export function dismissWatch(stashDBID: string): Promise<{ ok: boolean }> {
+  return postJSON(`/watches/${encodeURIComponent(stashDBID)}/dismiss`, {});
+}

@@ -181,6 +181,41 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// postWatchDismiss rejects the watch's current found release: ignore that
+// exact release (by URL) going forward and flip the watch back to watching
+// so the loop surfaces a different one. For the common case where the find
+// is dead/over-compressed and you don't want it but still want the scene.
+func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	list, err := s.watches.List(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	var wt *watches.Watch
+	for i := range list {
+		if list[i].StashDBID == id {
+			wt = &list[i]
+			break
+		}
+	}
+	if wt == nil {
+		writeErr(w, http.StatusNotFound, "watch not found")
+		return
+	}
+	if wt.Status != watches.StatusAvailable || wt.FoundURL == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "watch has no found release to dismiss")
+		return
+	}
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+		s.log.Error("watch dismiss", "scene", id, "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	s.log.Info("watch find dismissed — back to watching", "scene", id, "ignored", wt.FoundURL)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
 // normalizeTarget validates the quality target, defaulting unknown values
 // to "any".
 func normalizeTarget(t string) string {

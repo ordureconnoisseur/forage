@@ -10,6 +10,7 @@ package watches
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -48,6 +49,10 @@ type Watch struct {
 	CreatedAt     int64  `json:"created_at"`
 	LastChecked   int64  `json:"last_checked"`
 	FoundAt       int64  `json:"found_at,omitempty"`
+	// IgnoredURLs are download URLs the user dismissed for this watch — the
+	// loop skips them so a rejected dead/over-compressed find can't
+	// re-surface. Not exposed in the API (internal to the loop's matching).
+	IgnoredURLs []string `json:"-"`
 }
 
 type Repo struct{ db *sql.DB }
@@ -180,6 +185,48 @@ func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer
 	return err
 }
 
+// Dismiss rejects the watch's current found release: adds its URL to the
+// ignored set (so the loop never re-surfaces it) and flips the watch back
+// to watching, clearing the found_* fields so the next qualifying release
+// can take their place. No-op-safe when the URL is empty or already
+// ignored. Returns the watch's new ignored URL count for logging.
+func (r *Repo) Dismiss(ctx context.Context, stashDBID, url string) error {
+	// Read the current ignored set, append, re-marshal — small list, simple.
+	var ignoredJSON string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COALESCE(ignored_urls,'[]') FROM watches WHERE stashdb_id = ?`,
+		stashDBID).Scan(&ignoredJSON)
+	if err != nil {
+		return err
+	}
+	var ignored []string
+	if ignoredJSON != "" {
+		_ = json.Unmarshal([]byte(ignoredJSON), &ignored)
+	}
+	if url != "" {
+		seen := false
+		for _, u := range ignored {
+			if u == url {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			ignored = append(ignored, url)
+		}
+	}
+	b, _ := json.Marshal(ignored)
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  status = 'watching',
+		  found_title = '', found_url = '', found_indexer = '',
+		  found_protocol = '', found_size = 0, found_at = 0,
+		  ignored_urls = ?
+		WHERE stashdb_id = ?`,
+		string(b), stashDBID)
+	return err
+}
+
 // Nullable text columns are COALESCE'd to "" so a freshly-added watch
 // (NULLs for the not-yet-found fields) scans cleanly into strings.
 const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
@@ -187,7 +234,7 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(performer_name,''), COALESCE(performer_id,''), target, status,
 	COALESCE(found_title,''), COALESCE(found_url,''), COALESCE(found_indexer,''),
 	COALESCE(found_protocol,''), found_size,
-	created_at, last_checked, found_at`
+	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]')`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -198,13 +245,17 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 	var out []Watch
 	for rows.Next() {
 		var w Watch
+		var ignoredJSON string
 		if err := rows.Scan(
 			&w.StashDBID, &w.Title, &w.Date, &w.StudioName, &w.ImageURL,
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
-			&w.CreatedAt, &w.LastChecked, &w.FoundAt,
+			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
 		); err != nil {
 			return nil, err
+		}
+		if ignoredJSON != "" && ignoredJSON != "[]" {
+			_ = json.Unmarshal([]byte(ignoredJSON), &w.IgnoredURLs)
 		}
 		out = append(out, w)
 	}
