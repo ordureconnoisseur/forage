@@ -461,6 +461,10 @@ export default function GrabsList({
                 setNotice(`Retrying grab #${g.id}…`);
                 void refresh();
               },
+              onPerformerSet: (name: string) => {
+                setNotice(`Filed under ${name}`);
+                void refresh();
+              },
               onPickScene,
             });
             if (item.kind === "group") {
@@ -966,6 +970,7 @@ function GrabRow({
   onDeleted,
   onMatched,
   onRetried,
+  onPerformerSet,
   onPickScene,
 }: {
   g: Grab;
@@ -974,6 +979,7 @@ function GrabRow({
   onDeleted: (res: DeleteGrabResult) => void;
   onMatched: () => void;
   onRetried: () => void;
+  onPerformerSet: (name: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [retrying, setRetrying] = useState(false);
@@ -1013,7 +1019,7 @@ function GrabRow({
     setPerfErr(null);
     try {
       await setGrabPerformer(g.id, n);
-      onRetried(); // reuse the parent refresh + notice path
+      onPerformerSet(n); // parent refreshes + shows "Filed under <name>"
     } catch (e) {
       setPerfErr((e as Error).message);
       setPerfBusy(false);
