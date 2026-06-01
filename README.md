@@ -266,7 +266,7 @@ Reload plugins in Stash → a **Forage** button appears in the navbar. Click it:
 | `FORAGER_STASHDB_API_KEY` | _required_ | StashDB API key |
 | `FORAGER_PROWLARR_URL` | _empty_ | Prowlarr URL (search 503s if unset) |
 | `FORAGER_PROWLARR_API_KEY` | _empty_ | Prowlarr API key |
-| `FORAGER_PROWLARR_CATEGORIES` | `6000,6010,6020,6030,6040` | XXX category list for Prowlarr queries |
+| `FORAGER_PROWLARR_CATEGORIES` | `6000,6010,6030,6040,6041,6045,6047,6050,6080` | XXX category list for Prowlarr queries (parent, DVD, XviD, x264, HD Clips, UHD, OnlyFans, Packs, SD) |
 | `FORAGER_QBIT_URL` | _empty_ | qBit URL (torrent grab 503s if unset) |
 | `FORAGER_QBIT_USERNAME` | _empty_ | optional; blank if `bypass_local_auth` is on |
 | `FORAGER_QBIT_PASSWORD` | _empty_ | optional |
