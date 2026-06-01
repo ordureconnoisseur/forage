@@ -1082,14 +1082,20 @@ function GrabRow({
   }, [perfQuery]);
   // Force a Stash performer re-sync, then re-run the current search so a
   // just-created performer appears without waiting for the 6h cache tick.
+  // perfSyncMsg gives explicit feedback (the icon spin alone was too subtle).
+  const [perfSyncMsg, setPerfSyncMsg] = useState<string | null>(null);
   async function refreshPerfCache() {
     if (perfSearching) return;
     setPerfSearching(true);
     setPerfErr(null);
+    setPerfSyncMsg("Syncing performers from Stash…");
     try {
       await refreshPerformers();
       await runPerfSearch(perfQuery);
+      setPerfSyncMsg("Synced ✓ — performers up to date");
+      window.setTimeout(() => setPerfSyncMsg(null), 4000);
     } catch (e) {
+      setPerfSyncMsg(null);
       setPerfErr((e as Error).message);
     } finally {
       setPerfSearching(false);
@@ -1468,21 +1474,43 @@ function GrabRow({
                   </button>
                 </span>
               </div>
-              {perfResults.length > 0 && (
-                <div className="grab-setperf-results">
-                  {perfResults
-                    .filter((p) => p.name !== g.performer_name)
-                    .map((p) => (
-                      <PerformerChip
-                        key={p.stash_id}
-                        stashId={p.stash_id}
-                        name={p.name}
-                        disabled={perfBusy}
-                        variant="result"
-                        onPick={() => applyPerformer(p.name)}
-                      />
-                    ))}
-                </div>
+              {(() => {
+                // Dedup search results against the suggestion chips above
+                // (and the current performer), so the same name doesn't
+                // appear in both rows.
+                const suggestedNames = new Set(
+                  (detail?.performer_suggestions ?? [])
+                    .slice(0, 5)
+                    .map((p) => p.name.toLowerCase()),
+                );
+                const results = perfResults.filter(
+                  (p) =>
+                    p.name !== g.performer_name &&
+                    !suggestedNames.has(p.name.toLowerCase()),
+                );
+                if (results.length === 0) return null;
+                return (
+                  <div className="grab-setperf-results">
+                    <span className="grab-setperf-results-label">
+                      Search results
+                    </span>
+                    <div className="grab-setperf-results-chips">
+                      {results.map((p) => (
+                        <PerformerChip
+                          key={p.stash_id}
+                          stashId={p.stash_id}
+                          name={p.name}
+                          disabled={perfBusy}
+                          variant="result"
+                          onPick={() => applyPerformer(p.name)}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+              {perfSyncMsg && (
+                <span className="grab-setperf-sync">{perfSyncMsg}</span>
               )}
               {perfBusy && <span className="grab-setperf-busy">Re-filing…</span>}
               {perfErr && <span className="grab-delete-err">{perfErr}</span>}

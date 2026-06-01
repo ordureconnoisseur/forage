@@ -2744,11 +2744,31 @@ code.grab-fact-v,
   outline: none;
   border-color: var(--accent);
 }
+/* Search results sit below the suggestion chips, separated by a hairline +
+   a small label so it's clear these are looked-up (not forage's guesses). */
 .grab-setperf-results {
+  width: 100%;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+}
+.grab-setperf-results-label {
+  display: block;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.grab-setperf-results-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  width: 100%;
+}
+/* Performer-sync feedback line (refresh button). */
+.grab-setperf-sync {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--accent-bright, #22c55e);
 }
 .grab-setperf-busy {
   font-size: 12px;
