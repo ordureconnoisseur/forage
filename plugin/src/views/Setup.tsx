@@ -169,11 +169,11 @@ export default function Setup({
   const [qbitUrl, setQbitUrl] = useState("");
   const [qbitUser, setQbitUser] = useState("");
   const [qbitPass, setQbitPass] = useState("");
-  const [qbitCat, setQbitCat] = useState("forager");
+  const [qbitCat, setQbitCat] = useState("forage");
   const [qbitTest, setQbitTest] = useState<Test>({ kind: "idle" });
   const [sabUrl, setSabUrl] = useState("");
   const [sabKey, setSabKey] = useState("");
-  const [sabCat, setSabCat] = useState("forager");
+  const [sabCat, setSabCat] = useState("forage");
   const [sabTest, setSabTest] = useState<Test>({ kind: "idle" });
   const [clientsErr, setClientsErr] = useState<string | null>(null);
   const [savingClients, setSavingClients] = useState(false);
@@ -800,7 +800,7 @@ export default function Setup({
                     type="text"
                     value={qbitCat}
                     spellCheck={false}
-                    placeholder="forager"
+                    placeholder="forage"
                     onChange={(e) => setQbitCat(e.target.value)}
                   />
                 </label>
@@ -843,7 +843,7 @@ export default function Setup({
                     type="text"
                     value={sabCat}
                     spellCheck={false}
-                    placeholder="forager"
+                    placeholder="forage"
                     onChange={(e) => setSabCat(e.target.value)}
                   />
                 </label>

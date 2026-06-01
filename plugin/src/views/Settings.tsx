@@ -592,7 +592,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               type="text"
               value={displayValue("qbitCategory", data?.fields["qbitCategory"])}
               onChange={(e) => setField("qbitCategory", e.target.value)}
-              placeholder="forager"
+              placeholder="forage"
             />
             <SourceBadge field={data?.fields["qbitCategory"]} />
           </Field>
@@ -629,7 +629,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               type="text"
               value={displayValue("sabCategory", data?.fields["sabCategory"])}
               onChange={(e) => setField("sabCategory", e.target.value)}
-              placeholder="forager"
+              placeholder="forage"
             />
             <SourceBadge field={data?.fields["sabCategory"]} />
           </Field>
