@@ -144,6 +144,26 @@ func ExtractDates(s string) []ExtractedDate {
 					InParens: inParens,
 				})
 			}
+			// MM.DD.YY — US convention (Brazzers / Naughty America / Reality
+			// Kings name scenes month-first). a=month, b=day, c=2-digit year.
+			// Only fires when a ≤ 12 (else the month is invalid), i.e. exactly
+			// the ambiguous/US case the YY.MM.DD and DD.MM.YY readings miss.
+			// The matcher scores every interpretation against each candidate's
+			// own date and keeps the best, so emitting this can only help a
+			// US-dated release land on its scene — there's no global guess to
+			// get wrong. The "mm"-prefixed format (not "yy") means TopDate
+			// still prefers the YY reading on ties, so TopDate's contract and
+			// the date-bench diagnostic are unchanged.
+			if y := disambiguateYY(c); validYMD(y, a, b) {
+				sep := string(dp.label[2]) // '.', '-', '_', or ' '
+				emit(ExtractedDate{
+					Date:     fmt.Sprintf("%04d-%02d-%02d", y, a, b),
+					Match:    match,
+					Pos:      pos,
+					Format:   "mm" + sep + "dd" + sep + "yy",
+					InParens: inParens,
+				})
+			}
 		}
 	}
 
@@ -175,6 +195,27 @@ func TopDate(s string) string {
 		}
 	}
 	return best.Date
+}
+
+// AllDates returns every distinct YYYY-MM-DD interpretation found in s, in
+// the order ExtractDates produced them. Unlike TopDate it does NOT collapse
+// to a single reading: an ambiguous date like "09.11.26" yields all of
+// 2009-11-26 (YY.MM.DD), 2026-11-09 (DD.MM.YY) and 2026-09-11 (MM.DD.YY).
+// The matcher scores each interpretation against a candidate's own scene
+// date and keeps the best, so the correct reading is whichever one the
+// matching scene confirms — no global day/month/year-order guess required.
+func AllDates(s string) []string {
+	hits := ExtractDates(s)
+	seen := map[string]bool{}
+	out := make([]string, 0, len(hits))
+	for _, h := range hits {
+		if seen[h.Date] {
+			continue
+		}
+		seen[h.Date] = true
+		out = append(out, h.Date)
+	}
+	return out
 }
 
 // dateBetter reports whether candidate a should outrank b.

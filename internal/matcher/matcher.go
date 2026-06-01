@@ -162,7 +162,9 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 
 	localPerformerIDs := m.perfScanner.Match(releaseName)
 	studioIDs := m.studioScanner.Match(releaseName)
-	date := TopDate(releaseName)
+	// All plausible date readings, not one guessed best — each candidate's
+	// own scene date picks the right one at scoring time.
+	dates := AllDates(releaseName)
 
 	stashDBPerfIDs := make([]string, 0, len(localPerformerIDs))
 	for _, id := range localPerformerIDs {
@@ -207,9 +209,13 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 		queries := []stashdb.SceneQuery{
 			{PerformerIDs: stashDBPerfIDs, StudioIDs: stashDBStudioIDs, PerPage: 50},
 		}
-		if date != "" {
+		// One date-narrowed precision pass per distinct date reading
+		// (US/EU/year-first). The session cache dedups identical queries, and
+		// the broad performer query below still guarantees candidacy when
+		// every reading is wrong — so adding readings only ever helps.
+		for _, d := range dates {
 			queries = append([]stashdb.SceneQuery{
-				{PerformerIDs: stashDBPerfIDs, StudioIDs: stashDBStudioIDs, Date: date, PerPage: 50},
+				{PerformerIDs: stashDBPerfIDs, StudioIDs: stashDBStudioIDs, Date: d, PerPage: 50},
 			}, queries...)
 		}
 		// Performer-only broad query. The performer+studio query above is
@@ -270,7 +276,7 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 		// Ordered, UNfiltered tokens for cast-name phrase matching — a
 		// performer name must match as adjacent tokens, and stopword
 		// filtering would both drop name tokens and create false adjacency.
-		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, tokens, stashDBPerfSet, stashDBStudioSet, date, releaseJAVCodes)
+		c.Confidence, c.Reasons, c.TitleOverlap = score(c, releaseTokenSet, tokens, stashDBPerfSet, stashDBStudioSet, dates, releaseJAVCodes)
 	}
 
 	out := make([]Candidate, 0, len(candidates))
@@ -388,10 +394,10 @@ const (
 	javCodeFloor = 0.85
 )
 
-func score(c *Candidate, releaseTokens map[string]bool, orderedTokens []string, perfSet, studioSet map[string]bool, releaseDate string, releaseJAVCodes map[string]bool) (float64, []string, float64) {
+func score(c *Candidate, releaseTokens map[string]bool, orderedTokens []string, perfSet, studioSet map[string]bool, releaseDates []string, releaseJAVCodes map[string]bool) (float64, []string, float64) {
 	pScore, pReason := performerOverlap(c.Scene, perfSet)
 	sScore, sReason := studioMatch(c.Scene, studioSet)
-	dScore, dReason := dateProximity(c.Scene.Date, releaseDate)
+	dScore, dReason := bestDateProximity(c.Scene.Date, releaseDates)
 	tScore, tReason := titleOverlap(c.Scene.Title, releaseTokens)
 	castScore, castReason := castInTitle(c.Scene, orderedTokens)
 
@@ -512,6 +518,32 @@ func studioMatch(scene stashdb.Scene, detected map[string]bool) (float64, string
 		return 1, "studio: match"
 	}
 	return 0, "studio: no-match"
+}
+
+// bestDateProximity scores the candidate's scene date against every plausible
+// reading of the release date and keeps the closest. The candidate's known
+// date disambiguates the release's ambiguous one — a US "09.11.26" matches a
+// 2026-09-11 scene under MM.DD.YY, an EU release matches under DD.MM.YY — so
+// we never have to globally guess the day/month/year order. This can only
+// raise the correct scene's score (it gets the best of its readings) and
+// can't decide a match on its own: date is a soft 20% weight applied only to
+// candidates already surfaced by a performer/studio match, so a coincidental
+// hit on a wrong reading is both improbable and non-decisive.
+func bestDateProximity(sceneDate string, releaseDates []string) (float64, string) {
+	if len(releaseDates) == 0 {
+		return dateProximity(sceneDate, "")
+	}
+	best, bestReason := 0.0, "date: no reading matched"
+	for _, rd := range releaseDates {
+		s, reason := dateProximity(sceneDate, rd)
+		if s > best || bestReason == "date: no reading matched" {
+			best, bestReason = s, reason
+		}
+		if best == 1.0 {
+			break // exact — can't do better
+		}
+	}
+	return best, bestReason
 }
 
 func dateProximity(sceneDate, releaseDate string) (float64, string) {
