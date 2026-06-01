@@ -1,16 +1,19 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   addWatch,
+  destroyScene,
   fetchMissing,
+  type DuplicateScene,
   type MissingResponse,
   type MissingScene,
   type OwnedScene,
   type WatchTarget,
 } from "../api";
+import { humanSize } from "../format";
 import WatchControl from "../WatchControl";
 
-// SceneView is the Owned · Both · Missing filter on the performer page.
-type SceneView = "owned" | "both" | "missing";
+// SceneView is the Owned · Both · Missing · Dupes filter on the performer page.
+type SceneView = "owned" | "both" | "missing" | "dupes";
 
 // resTierFromLabel maps a resolution label ("480p"/"1080p"/"2160p") to a
 // quality tier class, so the owned badge can tint low-res scenes (the best
@@ -76,8 +79,11 @@ export default function MissingScenes({
   // performers and sessions; defaults to Missing (the original behaviour).
   const [view, setView] = useState<SceneView>(() => {
     const v = localStorage.getItem("forage.sceneView");
-    return v === "owned" || v === "both" ? v : "missing";
+    return v === "owned" || v === "both" || v === "dupes" ? v : "missing";
   });
+  // Bumped after a duplicate-copy delete to re-fetch (the deleted copy
+  // disappears, and a scene with one copy left drops off the Dupes list).
+  const [reloadKey, setReloadKey] = useState(0);
   useEffect(() => {
     localStorage.setItem("forage.sceneView", view);
     // Multi-select is a missing-only action — drop it when leaving that view.
@@ -109,7 +115,7 @@ export default function MissingScenes({
     return () => {
       cancelled = true;
     };
-  }, [performerId]);
+  }, [performerId, reloadKey]);
 
   if (loading) return <div className="empty">Loading missing scenes…</div>;
   if (error) return <div className="empty error">Failed to load: {error}</div>;
@@ -206,6 +212,7 @@ export default function MissingScenes({
                 ["owned", "Owned", data.owned.length],
                 ["both", "Both", data.total_scenes],
                 ["missing", "Missing", data.missing.length],
+                ["dupes", "Dupes", data.duplicates.length],
               ] as [SceneView, string, number][]
             ).map(([v, label, count]) => (
               <button
@@ -264,7 +271,23 @@ export default function MissingScenes({
             </div>
           ))}
       </div>
-      {entries.length === 0 ? (
+      {view === "dupes" ? (
+        data.duplicates.length === 0 ? (
+          <div className="empty">
+            No duplicates — you hold a single copy of every owned scene.
+          </div>
+        ) : (
+          <div className="dup-list">
+            {data.duplicates.map((d) => (
+              <DuplicateCard
+                key={d.stashdb_id}
+                dup={d}
+                onDeleted={() => setReloadKey((k) => k + 1)}
+              />
+            ))}
+          </div>
+        )
+      ) : entries.length === 0 ? (
         <div className="empty">{emptyMessage}</div>
       ) : (
         <div className="scene-grid">
@@ -454,6 +477,103 @@ function SceneCard({
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+// DuplicateCard shows a scene you hold 2+ library copies of: each copy's
+// resolution/size/path, the highest-res marked "best", with a two-click
+// Delete (irreversible — removes the Stash scene + file). Deleting reloads
+// the list, so a scene drops off once a single copy remains.
+function DuplicateCard({
+  dup,
+  onDeleted,
+}: {
+  dup: DuplicateScene;
+  onDeleted: () => void;
+}) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [armId, setArmId] = useState<string | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const armTimer = useRef<number | undefined>(undefined);
+
+  async function del(sceneId: string) {
+    // First click arms; second within 4s commits.
+    if (armId !== sceneId) {
+      setArmId(sceneId);
+      clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArmId(null), 4000);
+      return;
+    }
+    clearTimeout(armTimer.current);
+    setArmId(null);
+    setBusyId(sceneId);
+    setErr(null);
+    try {
+      await destroyScene(sceneId);
+      onDeleted();
+    } catch (e) {
+      setErr((e as Error).message);
+      setBusyId(null);
+    }
+  }
+
+  return (
+    <div className="dup-card">
+      <div className="dup-card-head">
+        {dup.image_url ? (
+          <img
+            className="dup-card-thumb"
+            src={dup.image_url}
+            alt=""
+            loading="lazy"
+            onError={(e) => {
+              (e.currentTarget as HTMLImageElement).style.display = "none";
+            }}
+          />
+        ) : null}
+        <div className="dup-card-headinfo">
+          <div className="dup-card-title">{dup.title || dup.stashdb_id}</div>
+          <div className="dup-card-sub">
+            {dup.copies.length} copies
+            {dup.date ? ` · ${dup.date}` : ""}
+            {dup.studio ? ` · ${dup.studio}` : ""}
+          </div>
+        </div>
+      </div>
+      <div className="dup-card-copies">
+        {dup.copies.map((c, i) => (
+          <div className="dup-copy-row" key={c.scene_id}>
+            <span
+              className={"scene-res-badge inline res-" + resTierFromLabel(c.resolution)}
+            >
+              {c.resolution || "?"}
+            </span>
+            {i === 0 && <span className="dup-best">best</span>}
+            {c.size ? (
+              <span className="dup-copy-size">{humanSize(c.size)}</span>
+            ) : null}
+            {c.path ? (
+              <span className="dup-copy-path" title={c.path}>
+                {c.path}
+              </span>
+            ) : null}
+            <button
+              className={"dup-del" + (armId === c.scene_id ? " armed" : "")}
+              disabled={busyId != null}
+              onClick={() => del(c.scene_id)}
+              title="Delete this copy (removes the Stash scene + file)"
+            >
+              {busyId === c.scene_id
+                ? "Deleting…"
+                : armId === c.scene_id
+                  ? "Confirm delete"
+                  : "Delete"}
+            </button>
+          </div>
+        ))}
+      </div>
+      {err && <div className="grab-delete-err">{err}</div>}
     </div>
   );
 }

@@ -150,3 +150,34 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 	s.log.Info("duplicate resolved", "dup", id, "grab", dup.GrabID, "keep", req.Keep, "removed", out.Removed)
 	writeJSON(w, http.StatusOK, out)
 }
+
+// postDestroyScene deletes one local Stash scene (and its file) by id.
+//
+//	POST /scenes/{id}/destroy   ({id} = LOCAL Stash scene id)
+//
+// Backs the performer page's duplicates-cleanup view: when you hold 2+ copies
+// of the same StashDB scene, this removes the one you don't want. Like the
+// pack-review resolve, it's a deliberate, foreground, user-initiated destroy
+// (SceneDestroy with delete_file=true) — note {id} here is a LOCAL scene id,
+// distinct from the StashDB id that /scenes/{id}/releases takes. Invalidates
+// the owned memos so the duplicates list refreshes immediately.
+func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "scene id required")
+		return
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
+		return
+	}
+	if err := sc.SceneDestroy(r.Context(), id, true, true); err != nil {
+		s.log.Warn("destroy scene", "scene", id, "err", err)
+		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
+		return
+	}
+	s.invalidateOwned()
+	s.log.Info("scene destroyed (duplicate cleanup)", "scene", id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}

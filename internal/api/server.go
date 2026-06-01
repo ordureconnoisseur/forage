@@ -204,6 +204,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/missing-scenes", s.getMissingScenes)
 		r.Get("/performers/{id}/packs", s.getPerformerPacks)
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
+		r.Post("/scenes/{id}/destroy", s.postDestroyScene)
 		r.Get("/discover", s.getDiscover)
 		r.Get("/indexers", s.getIndexers)
 		r.Get("/download-setup", s.getDownloadSetup)
@@ -306,6 +307,18 @@ func (s *Server) ownedSceneCopies(ctx context.Context) (map[string][]stash.Scene
 	s.ownedCopies = copies
 	s.ownedCopiesFetched = time.Now()
 	return s.ownedCopies, nil
+}
+
+// invalidateOwned drops both owned-set memos so the next /missing-scenes load
+// reflects a just-deleted copy (the duplicates-cleanup destroy path) instead
+// of serving a stale owned/duplicate list for up to ownedTTL.
+func (s *Server) invalidateOwned() {
+	s.ownedMu.Lock()
+	s.ownedSet = nil
+	s.ownedMu.Unlock()
+	s.ownedCopiesMu.Lock()
+	s.ownedCopies = nil
+	s.ownedCopiesMu.Unlock()
 }
 
 // filmoTTL is how long a performer's cached StashDB filmography is reused.

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/ordureconnoisseur/forager/internal/stash"
@@ -65,16 +66,41 @@ type ownedScene struct {
 	GrabStatus string `json:"grab_status,omitempty"`
 }
 
+// sceneCopyView is one local Stash scene that carries a given StashDB
+// cross-id — a single "copy" in the duplicates view. A scene with multiple
+// files collapses to its best file here; what the user deletes is the whole
+// Stash scene (SceneID).
+type sceneCopyView struct {
+	SceneID    string `json:"scene_id"`
+	Path       string `json:"path,omitempty"`
+	Resolution string `json:"resolution,omitempty"`
+	Height     int    `json:"height,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+}
+
+// duplicateScene is a scene the user holds 2+ separate library copies of —
+// the cleanup surface (keep the best, delete the rest). Copies is sorted
+// best-resolution-first.
+type duplicateScene struct {
+	StashDBID string         `json:"stashdb_id"`
+	Title     string         `json:"title"`
+	Date      string         `json:"date,omitempty"`
+	Studio    string         `json:"studio,omitempty"`
+	ImageURL  string         `json:"image_url,omitempty"`
+	Copies    []sceneCopyView `json:"copies"`
+}
+
 type missingResponse struct {
 	Performer struct {
 		LocalID   string `json:"local_id"`
 		StashDBID string `json:"stashdb_id"`
 		Name      string `json:"name"`
 	} `json:"performer"`
-	TotalScenes int            `json:"total_scenes"`
-	OwnedCount  int            `json:"owned_count"`
-	Missing     []missingScene `json:"missing"`
-	Owned       []ownedScene   `json:"owned"`
+	TotalScenes int              `json:"total_scenes"`
+	OwnedCount  int              `json:"owned_count"`
+	Missing     []missingScene   `json:"missing"`
+	Owned       []ownedScene     `json:"owned"`
+	Duplicates  []duplicateScene `json:"duplicates"`
 }
 
 // getMissingScenes returns the StashDB scenes featuring the given
@@ -184,13 +210,19 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 	// quality + any in-flight upgrade grab.
 	missing := make([]missingScene, 0, len(scenes))
 	owned := make([]ownedScene, 0)
+	duplicates := make([]duplicateScene, 0)
 	for _, sc := range scenes {
-		if copies := ownedCopies[sc.ID]; len(copies) > 0 {
-			os := toOwnedScene(sc, bestCopy(copies))
+		if refs := ownedCopies[sc.ID]; len(refs) > 0 {
+			os := toOwnedScene(sc, bestCopy(refs))
 			if st, ok := grabStatus[sc.ID]; ok {
 				os.GrabStatus = st
 			}
 			owned = append(owned, os)
+			// 2+ distinct library scenes for the same StashDB id → a
+			// duplicate the user can clean up.
+			if copies := sceneCopyViews(refs); len(copies) >= 2 {
+				duplicates = append(duplicates, toDuplicateScene(sc, copies))
+			}
 			continue
 		}
 		ms := toMissingScene(sc)
@@ -208,6 +240,7 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		OwnedCount:  len(owned),
 		Missing:     missing,
 		Owned:       owned,
+		Duplicates:  duplicates,
 	}
 	out.Performer.LocalID = perf.StashID
 	out.Performer.StashDBID = stashDBPerformerID
@@ -291,6 +324,50 @@ func resolutionLabel(h int) string {
 	default:
 		return ""
 	}
+}
+
+// sceneCopyViews collapses the per-file refs of a StashDB cross-id into one
+// entry per distinct local Stash scene (its best file), sorted
+// best-resolution-first. A scene with several files is ONE copy here — what
+// the duplicates view deletes is the whole scene, not a file.
+func sceneCopyViews(refs []stash.SceneRef) []sceneCopyView {
+	best := map[string]stash.SceneRef{}
+	order := make([]string, 0, len(refs))
+	for _, r := range refs {
+		cur, ok := best[r.SceneID]
+		if !ok {
+			order = append(order, r.SceneID)
+			best[r.SceneID] = r
+			continue
+		}
+		if r.Height > cur.Height {
+			best[r.SceneID] = r
+		}
+	}
+	out := make([]sceneCopyView, 0, len(order))
+	for _, id := range order {
+		r := best[id]
+		out = append(out, sceneCopyView{
+			SceneID:    id,
+			Path:       r.Path,
+			Resolution: resolutionLabel(r.Height),
+			Height:     r.Height,
+			Size:       r.Size,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Height > out[j].Height })
+	return out
+}
+
+func toDuplicateScene(s stashdb.Scene, copies []sceneCopyView) duplicateScene {
+	out := duplicateScene{StashDBID: s.ID, Title: s.Title, Date: s.Date, Copies: copies}
+	if s.Studio != nil {
+		out.Studio = s.Studio.Name
+	}
+	if len(s.Images) > 0 {
+		out.ImageURL = s.Images[0].URL
+	}
+	return out
 }
 
 func toOwnedScene(s stashdb.Scene, copy stash.SceneRef) ownedScene {

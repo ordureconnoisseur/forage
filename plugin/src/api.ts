@@ -251,6 +251,27 @@ export interface OwnedScene {
   grab_status?: string;
 }
 
+// SceneCopyView is one local Stash scene carrying a StashDB cross-id — a
+// "copy" in the duplicates view. Deleting it removes that whole scene + file.
+export interface SceneCopyView {
+  scene_id: string;
+  path?: string;
+  resolution?: string;
+  height?: number;
+  size?: number;
+}
+
+// DuplicateScene is a scene you hold 2+ separate library copies of. copies is
+// sorted best-resolution-first.
+export interface DuplicateScene {
+  stashdb_id: string;
+  title: string;
+  date?: string;
+  studio?: string;
+  image_url?: string;
+  copies: SceneCopyView[];
+}
+
 export interface MissingResponse {
   performer: {
     local_id: string;
@@ -261,6 +282,13 @@ export interface MissingResponse {
   owned_count: number;
   missing: MissingScene[];
   owned: OwnedScene[];
+  duplicates: DuplicateScene[];
+}
+
+// destroyScene deletes one local Stash scene (and its file) by LOCAL scene id
+// — the duplicates-cleanup action. Irreversible; caller confirms intent.
+export function destroyScene(sceneId: string): Promise<{ ok: boolean }> {
+  return postJSON(`/scenes/${encodeURIComponent(sceneId)}/destroy`, {});
 }
 
 export function fetchMissing(localPerformerID: string): Promise<MissingResponse> {

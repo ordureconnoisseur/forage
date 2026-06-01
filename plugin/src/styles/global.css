@@ -5676,3 +5676,113 @@ code.grab-fact-v,
 .scene-card.owned .scene-thumb img {
   opacity: 0.92;
 }
+
+/* ── Duplicates cleanup (performer page · Dupes filter) ─────────────── */
+.dup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.dup-card {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dup-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.dup-card-thumb {
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 8px;
+  flex: none;
+  background: rgba(0, 0, 0, 0.3);
+}
+.dup-card-headinfo {
+  min-width: 0;
+}
+.dup-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+.dup-card-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.dup-card-copies {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.dup-copy-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+/* Inline variant of the resolution badge — the owned-grid one is absolutely
+   positioned over a thumb; here it sits in a row. */
+.scene-res-badge.inline {
+  position: static;
+  box-shadow: none;
+  flex: none;
+}
+.dup-best {
+  flex: none;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-bright, #22c55e);
+}
+.dup-copy-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.dup-copy-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.75;
+}
+.dup-del {
+  flex: none;
+  margin-left: auto;
+  padding: 4px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: transparent;
+  color: #fca5a5;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+.dup-del:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.12);
+}
+/* Armed (second-click) — solid red so the irreversible step is unmistakable. */
+.dup-del.armed {
+  background: var(--status-failed, #ef4444);
+  border-color: var(--status-failed, #ef4444);
+  color: #fff;
+}
+.dup-del:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
