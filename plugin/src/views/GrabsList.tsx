@@ -21,6 +21,8 @@ import {
   type TorrentInspect,
   matchGrab,
   retryGrab,
+  setGrabPerformer,
+  fetchPerformers,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -888,6 +890,50 @@ function GrabRow({
   const [matchBusy, setMatchBusy] = useState(false);
   const [matchErr, setMatchErr] = useState<string | null>(null);
   const [posterFailed, setPosterFailed] = useState(false);
+
+  // Performer reassignment — re-files an Unsorted / mis-identified grab.
+  const [perfBusy, setPerfBusy] = useState(false);
+  const [perfErr, setPerfErr] = useState<string | null>(null);
+  const [perfQuery, setPerfQuery] = useState("");
+  const [perfResults, setPerfResults] = useState<
+    { stash_id: string; name: string }[]
+  >([]);
+  async function applyPerformer(name: string) {
+    const n = name.trim();
+    if (!n || perfBusy) return;
+    setPerfBusy(true);
+    setPerfErr(null);
+    try {
+      await setGrabPerformer(g.id, n);
+      onRetried(); // reuse the parent refresh + notice path
+    } catch (e) {
+      setPerfErr((e as Error).message);
+      setPerfBusy(false);
+    }
+  }
+  // Debounced performer search for the free-text box (anything the
+  // suggestions didn't surface).
+  useEffect(() => {
+    const q = perfQuery.trim();
+    if (q.length < 2) {
+      setPerfResults([]);
+      return;
+    }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      fetchPerformers({ q })
+        .then((r) => {
+          if (alive) setPerfResults(r.performers.slice(0, 6));
+        })
+        .catch(() => {
+          if (alive) setPerfResults([]);
+        });
+    }, 250);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+  }, [perfQuery]);
   const confirmTimer = useRef<number | undefined>(undefined);
   const fetchedDetail = useRef(false);
 
@@ -1207,6 +1253,69 @@ function GrabRow({
           )}
 
           {/* Action bar */}
+          {/* Set / change the performer folder — re-files the (still-
+              seeding) download into <library>/<performer>/. The fix for an
+              Unsorted or mis-identified adopted grab. Packs span many
+              performers, so they're excluded. */}
+          {g.kind !== "pack" && (
+            <div className="grab-setperf">
+              <span className="grab-setperf-label">
+                {g.performer_name && g.performer_name !== "Unsorted"
+                  ? "Performer"
+                  : "Set performer"}
+                {g.performer_name && (
+                  <span className="grab-setperf-current">
+                    {g.performer_name}
+                  </span>
+                )}
+              </span>
+              <div className="grab-setperf-chips">
+                {(detail?.performer_suggestions ?? [])
+                  .filter((p) => p.name !== g.performer_name)
+                  .slice(0, 5)
+                  .map((p) => (
+                    <button
+                      key={p.stash_id}
+                      className="grab-setperf-chip"
+                      disabled={perfBusy}
+                      onClick={() => applyPerformer(p.name)}
+                      title={`File under ${p.name}`}
+                    >
+                      {p.favorite && <span className="grab-setperf-fav">★</span>}
+                      {p.name}
+                    </button>
+                  ))}
+                <input
+                  className="grab-setperf-search"
+                  type="text"
+                  value={perfQuery}
+                  placeholder="search…"
+                  spellCheck={false}
+                  disabled={perfBusy}
+                  onChange={(e) => setPerfQuery(e.target.value)}
+                />
+              </div>
+              {perfResults.length > 0 && (
+                <div className="grab-setperf-results">
+                  {perfResults
+                    .filter((p) => p.name !== g.performer_name)
+                    .map((p) => (
+                      <button
+                        key={p.stash_id}
+                        className="grab-setperf-result"
+                        disabled={perfBusy}
+                        onClick={() => applyPerformer(p.name)}
+                      >
+                        {p.name}
+                      </button>
+                    ))}
+                </div>
+              )}
+              {perfBusy && <span className="grab-setperf-busy">Re-filing…</span>}
+              {perfErr && <span className="grab-delete-err">{perfErr}</span>}
+            </div>
+          )}
+
           <div className="grab-actions">
             {/* Retry a failed grab from its stored download URL — for
                 transient failures (a tracker download cap will just fail

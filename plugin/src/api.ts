@@ -645,6 +645,14 @@ export interface GrabDetail {
   performers: { name: string; as?: string }[];
   local_scene_id?: string;
   stash_scene_url?: string;
+  // Ranked local-performer guesses from the release title — the one-click
+  // options for reassigning a mis-filed / Unsorted grab. Absent for packs.
+  performer_suggestions?: {
+    stash_id: string;
+    name: string;
+    scene_count: number;
+    favorite: boolean;
+  }[];
 }
 
 export function fetchGrabDetail(id: number): Promise<GrabDetail> {
@@ -674,6 +682,16 @@ export function matchGrab(id: number, stashdbId?: string): Promise<MatchResult> 
 // retryGrab re-attempts a failed grab from its stored download URL.
 export function retryGrab(id: number): Promise<{ ok: boolean }> {
   return postJSON<{ ok: boolean }>(`/grabs/${id}/retry`, {});
+}
+
+// setGrabPerformer reassigns a grab's performer folder and re-files the
+// (still-seeding) download into <library>/<performer>/, removing the old
+// library link. The fix for an Unsorted / mis-identified adopted grab.
+export function setGrabPerformer(
+  id: number,
+  performerName: string,
+): Promise<{ ok: boolean; performer_name: string; placed_path: string }> {
+  return postJSON(`/grabs/${id}/performer`, { performer_name: performerName });
 }
 
 export interface DeleteGrabResult {

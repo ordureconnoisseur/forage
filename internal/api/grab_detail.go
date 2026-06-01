@@ -38,6 +38,10 @@ type grabDetailResponse struct {
 	// StashDB image and the performer portrait — and crucially it exists
 	// even when the scene has no StashDB cross-id (adopted/manual grabs).
 	LocalSceneImageURL string `json:"local_scene_image_url,omitempty"`
+	// PerformerSuggestions ranks local performers whose name appears in the
+	// release title — the one-click options the card offers for reassigning
+	// a mis-filed / Unsorted grab to the right folder. Empty for packs.
+	PerformerSuggestions []suggestedPerformer `json:"performer_suggestions,omitempty"`
 }
 
 // getGrabDetail powers the expanded grab card.
@@ -132,6 +136,12 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 				resp.PerformerImageURL = "/img/performer/" + stashID
 			}
 		}
+	}
+
+	// Performer reassignment options (one-click chips on the card). Ranked
+	// guesses from the release title; not for packs (many performers).
+	if g.Kind != "pack" {
+		resp.PerformerSuggestions = s.suggestPerformers(r.Context(), g.ReleaseTitle)
 	}
 
 	writeJSON(w, http.StatusOK, resp)

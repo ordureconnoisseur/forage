@@ -114,3 +114,53 @@ func TestFreeSpace(t *testing.T) {
 		t.Fatal("expected an error from an unconfigured placer")
 	}
 }
+
+// TestReassignRefilesAndRemovesOld mirrors the file dance the
+// /grabs/{id}/performer endpoint performs: re-place the (still-present)
+// source under a new performer and remove the old library-side copy. Guards
+// against the two failure modes that matter — the file not landing in the
+// new folder, or the old folder keeping a stale duplicate.
+func TestReassignRefilesAndRemovesOld(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "scene.mkv")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+
+	// Initial (wrong) placement, as adoption would do under a bad guess.
+	first, err := p.Place(src, "Unsorted")
+	if err != nil {
+		t.Fatalf("first Place: %v", err)
+	}
+
+	// Reassign: re-file under the correct performer, then drop the old link.
+	second, err := p.Place(src, "Gracie Jane")
+	if err != nil {
+		t.Fatalf("reassign Place: %v", err)
+	}
+	if first.Path != second.Path {
+		if err := os.RemoveAll(first.Path); err != nil {
+			t.Fatalf("remove old placement: %v", err)
+		}
+	}
+
+	// New folder has the file; the seeding source is untouched; the old
+	// library copy is gone.
+	if _, err := os.Stat(second.Path); err != nil {
+		t.Errorf("file missing at new path %q: %v", second.Path, err)
+	}
+	if !filepath.HasPrefix(second.Path, filepath.Join(lib, "Gracie Jane")) {
+		t.Errorf("new path %q not under the new performer folder", second.Path)
+	}
+	if _, err := os.Stat(first.Path); !os.IsNotExist(err) {
+		t.Errorf("old placement %q should be gone, stat err = %v", first.Path, err)
+	}
+	if _, err := os.Stat(src); err != nil {
+		t.Errorf("source (seeding) must be untouched, got: %v", err)
+	}
+}

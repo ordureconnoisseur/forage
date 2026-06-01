@@ -2621,6 +2621,89 @@ code.grab-fact-v,
 }
 
 /* Action bar — full-width foot of the card. */
+/* Set / change performer — the re-file affordance for Unsorted or
+   mis-identified grabs. A quiet labelled row of guess-chips + a search
+   box; sits above the main actions, same pill language but lighter. */
+.grab-setperf {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding-top: 14px;
+  border-top: 1px solid var(--glass-border);
+}
+.grab-setperf-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: none;
+}
+.grab-setperf-current {
+  font-weight: 600;
+  color: var(--text);
+}
+.grab-setperf-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.grab-setperf-chip,
+.grab-setperf-result {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease, color 0.12s ease;
+}
+.grab-setperf-chip:hover,
+.grab-setperf-result:hover {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.grab-setperf-fav {
+  color: var(--status-downloading, #d4a14a);
+  font-size: 10px;
+}
+.grab-setperf-search {
+  width: 120px;
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text);
+}
+.grab-setperf-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.grab-setperf-results {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  width: 100%;
+}
+.grab-setperf-busy {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.grab-setperf-chip:disabled,
+.grab-setperf-result:disabled,
+.grab-setperf-search:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .grab-actions {
   display: flex;
   align-items: center;
