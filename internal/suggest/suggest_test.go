@@ -75,3 +75,55 @@ func TestTopFolderNoMatch(t *testing.T) {
 		t.Errorf("TopFolder = %q, want empty", got)
 	}
 }
+
+func TestConfidentTopFolder(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("full name auto-adopts", func(t *testing.T) {
+		db := newDB(t)
+		defer db.Close()
+		insert(t, db, "1", "Gracie Jane", `[]`, 20, 0)
+		if got := ConfidentTopFolder(ctx, db, "TransAngels Gracie Jane Sneaky Masseur 1080p"); got != "Gracie Jane" {
+			t.Errorf("got %q, want %q", got, "Gracie Jane")
+		}
+	})
+
+	t.Run("lone first name does NOT auto-adopt", func(t *testing.T) {
+		db := newDB(t)
+		defer db.Close()
+		// Only "Riley" (1 word) appears — the false-positive class. Must
+		// leave it Unsorted rather than guess.
+		insert(t, db, "1", "Riley", `[]`, 999, 1)
+		if got := ConfidentTopFolder(ctx, db, "Some Riley Scene XXX 1080p"); got != "" {
+			t.Errorf("got %q, want empty (lone first name must not auto-adopt)", got)
+		}
+		// TopFolder (interactive) still surfaces it — only the confident
+		// gate is strict.
+		if got := TopFolder(ctx, db, "Some Riley Scene XXX 1080p"); got != "Riley" {
+			t.Errorf("TopFolder got %q, want %q (picker still shows weak hits)", got, "Riley")
+		}
+	})
+
+	t.Run("two full names both fitting is ambiguous", func(t *testing.T) {
+		db := newDB(t)
+		defer db.Close()
+		insert(t, db, "1", "Gracie Jane", `[]`, 20, 0)
+		insert(t, db, "2", "Skye Blue", `[]`, 20, 0)
+		// Both two-word names appear → can't pick one safely.
+		if got := ConfidentTopFolder(ctx, db, "Skye Blue and Gracie Jane Festival Fling 2160p"); got != "" {
+			t.Errorf("got %q, want empty (two co-stars both match → ambiguous)", got)
+		}
+	})
+
+	t.Run("longer name wins over a contained shorter one", func(t *testing.T) {
+		db := newDB(t)
+		defer db.Close()
+		// "Hazel" (1 word) and "Hazel Moore" (2 words) — the 2-word match
+		// is strictly more specific, so it's unambiguous and adopts.
+		insert(t, db, "1", "Hazel", `[]`, 999, 1)
+		insert(t, db, "2", "Hazel Moore", `[]`, 10, 0)
+		if got := ConfidentTopFolder(ctx, db, "Studio Hazel Moore 1080p"); got != "Hazel Moore" {
+			t.Errorf("got %q, want %q", got, "Hazel Moore")
+		}
+	})
+}

@@ -20,6 +20,12 @@ type Performer struct {
 	Name       string
 	SceneCount int
 	Favorite   bool
+	// MatchLen is how many whole words of this performer's name/alias
+	// matched in the release name. Higher = more specific (a full
+	// "First Last" match is 2; a lone first name is 1). Callers that must
+	// avoid false positives (auto-adoption) gate on this; the interactive
+	// picker shows all candidates regardless.
+	MatchLen int
 }
 
 // Performers ranks local performers whose name (or an alias) appears as a
@@ -83,7 +89,9 @@ func Performers(ctx context.Context, db *sql.DB, name string) []Performer {
 	})
 	out := make([]Performer, 0, len(cands))
 	for _, c := range cands {
-		out = append(out, c.p)
+		p := c.p
+		p.MatchLen = c.matchLen
+		out = append(out, p)
 	}
 	return out
 }
@@ -93,6 +101,28 @@ func Performers(ctx context.Context, db *sql.DB, name string) []Performer {
 func TopFolder(ctx context.Context, db *sql.DB, name string) string {
 	ps := Performers(ctx, db, name)
 	if len(ps) == 0 {
+		return ""
+	}
+	return ps[0].Name
+}
+
+// ConfidentTopFolder is TopFolder for auto-adoption: it only returns a name
+// when the best match is a full multi-word performer name (MatchLen >= 2),
+// AND it's unambiguous (no second candidate matched the same number of
+// words — which would mean two performers both fit, e.g. co-stars or a
+// shared first name). Otherwise it returns "" so the caller leaves the
+// grab Unsorted rather than committing a likely-wrong folder. A lone
+// first-name / single-word hit (MatchLen 1) is exactly the false-positive
+// class that mis-filed adopted torrents, so single-word matches never
+// auto-adopt — even though the interactive picker still surfaces them.
+func ConfidentTopFolder(ctx context.Context, db *sql.DB, name string) string {
+	ps := Performers(ctx, db, name)
+	if len(ps) == 0 || ps[0].MatchLen < 2 {
+		return ""
+	}
+	// Ambiguous when a second candidate matched just as many words — two
+	// full names both fit the release, so we can't pick one safely.
+	if len(ps) > 1 && ps[1].MatchLen == ps[0].MatchLen {
 		return ""
 	}
 	return ps[0].Name

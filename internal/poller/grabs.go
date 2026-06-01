@@ -897,7 +897,12 @@ func (p *Poller) adoptOrphans(ctx context.Context) {
 		if kind == "pack" {
 			packFiles = videos
 		}
-		folder := suggest.TopFolder(ctx, p.db, t.Name)
+		// Confidence-gated: only auto-file under a performer when the match
+		// is a full, unambiguous multi-word name. A weak guess (lone first
+		// name, or two performers both fitting) returns "" and the grab
+		// lands in Unsorted — far easier to fix than a confidently wrong
+		// folder, which is what mis-filed a batch of adopted torrents.
+		folder := suggest.ConfidentTopFolder(ctx, p.db, t.Name)
 		id, err := p.repo.Insert(ctx, grabs.Grab{
 			ReleaseTitle:  t.Name,
 			Client:        "qbit",
