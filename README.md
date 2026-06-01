@@ -270,10 +270,10 @@ Reload plugins in Stash → a **Forage** button appears in the navbar. Click it:
 | `FORAGER_QBIT_URL` | _empty_ | qBit URL (torrent grab 503s if unset) |
 | `FORAGER_QBIT_USERNAME` | _empty_ | optional; blank if `bypass_local_auth` is on |
 | `FORAGER_QBIT_PASSWORD` | _empty_ | optional |
-| `FORAGER_QBIT_CATEGORY` | `manual` | must exist in qBit; save_path = staging dir |
+| `FORAGER_QBIT_CATEGORY` | `forage` | must exist in qBit; save_path = staging dir |
 | `FORAGER_SAB_URL` | _empty_ | SAB URL (usenet grab 503s if unset) |
 | `FORAGER_SAB_API_KEY` | _empty_ | SAB API key |
-| `FORAGER_SAB_CATEGORY` | `manual` | must exist in SAB; dir = staging dir |
+| `FORAGER_SAB_CATEGORY` | `forage` | must exist in SAB; dir = staging dir |
 | `FORAGER_LIBRARY_ROOT` | _empty_ | placement target; same filesystem as staging for hardlinks |
 | `FORAGER_POLL_INTERVAL` | `60s` | grabs poller cadence |
 | `FORAGER_ORPHAN_AFTER` | `6h` | how long a grab may sit `completed` before being marked `orphaned` |
