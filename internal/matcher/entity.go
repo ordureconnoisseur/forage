@@ -3,7 +3,39 @@ package matcher
 import (
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
+
+// fold strips combining marks: NFD decomposes a precomposed letter
+// (é → e + ◌́), then we drop the Mn (nonspacing-mark) runes. This makes the
+// matcher diacritic-insensitive. StashDB stores "Renée"/"José García", but
+// P2P release names overwhelmingly strip the accents ("Renee"/"Jose Garcia");
+// without folding the two sides tokenise to unequal tokens (corpus [ren, e]
+// vs release [renee]) and a large slice of accented performers silently never
+// matched. Applied to BOTH sides because it lives in Tokenize, the single
+// chokepoint. Limitation: only canonical-decomposition accents fold —
+// stroke/ligature letters (ø, ł, ß) have no NFD decomposition and pass
+// through unchanged, kept as whole tokens by the \p{Lo}/\p{Ll} alternatives
+// in caseAndDigitSplit.
+//
+// norm.NFD.String is safe for concurrent use (the matcher benches/runs
+// Tokenize from many goroutines); a shared transform.Transformer is NOT, so
+// we normalise + filter inline rather than reuse a Chain transformer.
+func fold(s string) string {
+	d := norm.NFD.String(s)
+	var b strings.Builder
+	b.Grow(len(d))
+	for _, r := range d {
+		if unicode.Is(unicode.Mn, r) {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
 
 // Entity is the shape the entity scanner matches against: an opaque ID
 // plus a canonical name and a list of aliases. Both performers and
@@ -25,21 +57,29 @@ var tokenSplit = regexp.MustCompile(`[._\-\s\[\]()!,@'"&+]+`)
 //     keeps JAV codes (`SNOS`, `OAE`) and other acronyms intact
 //     (`HTTP`, `USB`)
 //  3. CamelCase words (`Bang`, `Bros`)
-//  4. digit runs
+//  4. caseless-letter runs (CJK, Thai, …) — kept as whole tokens
+//  5. digit runs
+//
+// Uses Unicode letter classes (\p{Ll}/\p{Lu}/\p{Lo}) rather than [a-z]/[A-Z]
+// so letters that survive folding (ø, ß, CJK) aren't dropped — the ASCII
+// classes silently discarded them, shattering the surrounding token. For
+// pure-ASCII input the classes are exactly equivalent to the old ranges, so
+// existing behaviour is unchanged.
 //
 // Ordering matters: Go's RE2 uses leftmost-first alternation, so an
 // earlier alternative wins even if a later one would match longer.
 // The all-caps alternative MUST precede the single-uppercase one or
-// it never fires — `[A-Z][a-z]*` would match the first letter of
+// it never fires — `\p{Lu}\p{Ll}*` would match the first letter of
 // `SNOS` standalone and shatter the rest into [s n o s]. That was
 // the tokenizer bug that caused JAV release names to score against
 // the wrong StashDB scenes.
-var caseAndDigitSplit = regexp.MustCompile(`[a-z]+|[A-Z]+(?:[^a-z]|$)|[A-Z][a-z]*|\d+`)
+var caseAndDigitSplit = regexp.MustCompile(`\p{Ll}+|\p{Lu}+(?:[^\p{Ll}]|$)|\p{Lu}\p{Ll}*|\p{Lo}+|\d+`)
 
 // Tokenize splits s on punctuation/whitespace, then further splits each
 // piece on case and letter-digit boundaries. Output is lowercase, in
 // original order, with empties dropped.
 func Tokenize(s string) []string {
+	s = fold(s) // diacritic-insensitive: Renée and Renee tokenise alike
 	pieces := tokenSplit.Split(s, -1)
 	out := make([]string, 0, len(pieces))
 	for _, p := range pieces {
@@ -66,13 +106,19 @@ func Tokenize(s string) []string {
 	return out
 }
 
+// trimNonAlnumSuffix drops trailing runes that aren't letters or digits —
+// chiefly the single trailing non-lowercase char the all-caps alternative
+// (`\p{Lu}+(?:[^\p{Ll}]|$)`) may capture. Rune-aware (not byte-wise): a
+// sub-token can now end in a multi-byte letter (ø, CJK), which a byte-level
+// trim would corrupt; unicode.IsLetter/IsDigit keep those intact and only
+// strip genuine punctuation/symbol tails.
 func trimNonAlnumSuffix(s string) string {
 	for len(s) > 0 {
-		last := s[len(s)-1]
-		if (last >= 'a' && last <= 'z') || (last >= 'A' && last <= 'Z') || (last >= '0' && last <= '9') {
+		r, size := utf8.DecodeLastRuneInString(s)
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			return s
 		}
-		s = s[:len(s)-1]
+		s = s[:len(s)-size]
 	}
 	return s
 }
