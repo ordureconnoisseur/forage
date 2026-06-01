@@ -209,9 +209,9 @@ export default function MissingScenes({
           <div className="scene-view-toggle" role="tablist" aria-label="Scene filter">
             {(
               [
-                ["owned", "Owned", data.owned.length],
-                ["both", "Both", data.total_scenes],
                 ["missing", "Missing", data.missing.length],
+                ["both", "Both", data.total_scenes],
+                ["owned", "Owned", data.owned.length],
                 ["dupes", "Dupes", data.duplicates.length],
               ] as [SceneView, string, number][]
             ).map(([v, label, count]) => (
