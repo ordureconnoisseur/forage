@@ -16,6 +16,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/cache"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -210,6 +211,59 @@ func (s *Server) postConfigTest(w http.ResponseWriter, r *http.Request) {
 		"section": section,
 		"result":  results[section],
 	})
+}
+
+// postStashDBFromStash reads the user's StashDB connection (endpoint +
+// api_key) straight from their Stash so the setup wizard can pre-fill the
+// StashDB step instead of making them paste the key again — they've already
+// configured it in Stash. Takes the Stash URL + key in the body (the wizard
+// calls this right after the Stash test passes, before anything's saved).
+// Returns {found, url, api_key} for the StashDB box; found:false when Stash
+// has no stashdb.org box configured. The user still confirms before it's used.
+func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		StashURL    string `json:"stashUrl"`
+		StashAPIKey string `json:"stashApiKey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	// Fall back to the already-configured Stash if the body omits them
+	// (e.g. re-running setup on a configured daemon).
+	cfg := s.composedConfig()
+	url := strings.TrimSpace(body.StashURL)
+	if url == "" {
+		url = cfg.StashURL
+	}
+	key := body.StashAPIKey
+	if key == "" {
+		key = cfg.StashAPIKey
+	}
+	if url == "" || key == "" {
+		writeErr(w, http.StatusBadRequest, "stash url + api key required")
+		return
+	}
+	sc := stash.New(url, key)
+	boxes, err := sc.StashBoxConfigs(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "couldn't read stash config: "+err.Error())
+		return
+	}
+	for _, b := range boxes {
+		if strings.Contains(strings.ToLower(b.Endpoint), stash.StashDBEndpointHost) && b.APIKey != "" {
+			// Hand back the GraphQL endpoint's base (strip /graphql) as the
+			// URL the StashDB field expects, plus the key.
+			stashdbURL := strings.TrimSuffix(b.Endpoint, "/graphql")
+			writeJSON(w, http.StatusOK, map[string]any{
+				"found":   true,
+				"url":     stashdbURL,
+				"api_key": b.APIKey,
+			})
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"found": false})
 }
 
 // previewConfig returns what the composed Config would be if `patch`

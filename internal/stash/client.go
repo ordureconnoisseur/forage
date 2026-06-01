@@ -796,6 +796,35 @@ func (c *Client) StashBoxes(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// StashBox is a user's configured stash-box connection (endpoint + key),
+// as Stash itself stores it. forage reuses these so the setup wizard can
+// offer the StashDB credentials the user already configured in Stash
+// instead of making them paste the key a second time.
+type StashBox struct {
+	Endpoint string `json:"endpoint"`
+	Name     string `json:"name"`
+	APIKey   string `json:"api_key"`
+}
+
+// StashBoxConfigs returns the user's full stash-box configs (endpoint +
+// name + api_key). Distinct from StashBoxes() (endpoints-only, used by the
+// Identify task) because this carries the secret — only the setup flow
+// needs it, to pre-fill the StashDB step.
+func (c *Client) StashBoxConfigs(ctx context.Context) ([]StashBox, error) {
+	q := `{ configuration { general { stashBoxes { endpoint name api_key } } } }`
+	var resp struct {
+		Configuration struct {
+			General struct {
+				StashBoxes []StashBox `json:"stashBoxes"`
+			} `json:"general"`
+		} `json:"configuration"`
+	}
+	if err := c.do(ctx, q, nil, &resp); err != nil {
+		return nil, fmt.Errorf("stashBoxConfigs: %w", err)
+	}
+	return resp.Configuration.General.StashBoxes, nil
+}
+
 // MetadataIdentify enqueues Stash's Identify task scoped to the given
 // scene IDs, sourcing from the supplied stash-box endpoint. Used by
 // the poller right after a scene appears in Stash without a StashDB

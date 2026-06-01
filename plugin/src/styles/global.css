@@ -4675,6 +4675,14 @@ code.grab-fact-v,
   display: block;
   margin-bottom: 14px;
 }
+/* "filled from your Stash" confirmation under an auto-populated field. */
+.setup-autofill-note {
+  display: block;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--accent-bright, #22c55e);
+}
 .setup-field > span {
   display: block;
   font-size: 13px;

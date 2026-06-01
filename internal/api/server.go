@@ -204,6 +204,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/config", s.getConfig)
 		r.Post("/config", s.postConfig)
 		r.Post("/config/test/{section}", s.postConfigTest)
+		r.Post("/config/stashdb-from-stash", s.postStashDBFromStash)
 	})
 	return r
 }

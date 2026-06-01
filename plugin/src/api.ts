@@ -938,6 +938,25 @@ export async function testSection(
   return body.result as ProbeResult;
 }
 
+// stashDBFromStash reads the user's StashDB connection (endpoint + api key)
+// straight from their Stash, so the setup wizard can pre-fill the StashDB
+// step instead of making them paste the key again. Pass the Stash URL +
+// key being set up (before they're saved). Returns found:false when Stash
+// has no stashdb.org box configured.
+export async function stashDBFromStash(
+  stashUrl: string,
+  stashApiKey: string,
+): Promise<{ found: boolean; url?: string; api_key?: string }> {
+  const r = await fetch(foragerBase() + "/config/stashdb-from-stash", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    credentials: "include",
+    body: JSON.stringify({ stashUrl, stashApiKey }),
+  });
+  if (!r.ok) return { found: false };
+  return r.json();
+}
+
 // ── Collection jobs (server-side multi-scene grabs) ────────────────────
 
 export type JobSceneStatus =

@@ -9,6 +9,7 @@ import {
   saveConfig,
   setAdminToken,
   setForagerBase,
+  stashDBFromStash,
   testSection,
 } from "../api";
 import AcornIcon from "../AcornIcon";
@@ -154,6 +155,9 @@ export default function Setup({
   const [stashdbKey, setStashdbKey] = useState("");
   const [stashTest, setStashTest] = useState<Test>({ kind: "idle" });
   const [stashdbTest, setStashdbTest] = useState<Test>({ kind: "idle" });
+  // Set when we auto-filled StashDB creds from Stash, so the UI can show a
+  // "pulled from your Stash" note instead of looking like the user typed it.
+  const [stashdbAutoFilled, setStashdbAutoFilled] = useState(false);
   const [credErr, setCredErr] = useState<string | null>(null);
   const [savingCreds, setSavingCreds] = useState(false);
 
@@ -263,6 +267,26 @@ export default function Setup({
           ? { kind: "ok", detail: r.message || "Stash reachable" }
           : { kind: "err", detail: r.message || "Couldn't reach Stash" },
       );
+      // Stash works → try to pull the StashDB creds the user already
+      // configured in Stash, so they don't paste the key again. Only
+      // pre-fill when the StashDB key field is still empty (never clobber
+      // something they typed), and surface it as an auto-fill they confirm.
+      if (r.ok && !stashdbKey.trim()) {
+        try {
+          const sb = await stashDBFromStash(stashUrl, stashKey);
+          if (sb.found && sb.api_key) {
+            if (sb.url) setStashdbUrl(sb.url);
+            setStashdbKey(sb.api_key);
+            setStashdbAutoFilled(true);
+            setStashdbTest({
+              kind: "ok",
+              detail: "Pulled from your Stash — confirm or replace",
+            });
+          }
+        } catch {
+          // Best-effort — the user can still enter StashDB manually.
+        }
+      }
     } catch (e) {
       setStashTest({ kind: "err", detail: (e as Error).message });
     }
@@ -622,8 +646,17 @@ export default function Setup({
                 spellCheck={false}
                 autoComplete="off"
                 placeholder="stashdb.org → Account → API key"
-                onChange={(e) => setStashdbKey(e.target.value)}
+                onChange={(e) => {
+                  setStashdbKey(e.target.value);
+                  setStashdbAutoFilled(false); // user is editing it themselves
+                }}
               />
+              {stashdbAutoFilled && (
+                <span className="setup-autofill-note">
+                  ✓ Filled from your Stash’s StashDB connection — no need to
+                  paste it again. Test to confirm, or replace above.
+                </span>
+              )}
             </label>
             <div className="setup-inline-test">
               <button
