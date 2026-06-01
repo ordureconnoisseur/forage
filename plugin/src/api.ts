@@ -230,6 +230,27 @@ export interface MissingScene {
   watch_status?: string;
 }
 
+// OwnedScene is a scene already in the library, annotated with the current
+// best copy's quality so the performer page can flag upgrade candidates.
+export interface OwnedScene {
+  stashdb_id: string;
+  title: string;
+  date?: string;
+  studio?: string;
+  studio_id?: string;
+  performers: MissingPerformer[];
+  url?: string;
+  image_url?: string;
+  // Current best copy: resolution label ("480p"/"1080p"/"2160p"), raw pixel
+  // height (sort key), and file size in bytes. Empty/zero if Stash had no
+  // dimensions.
+  resolution?: string;
+  height?: number;
+  size?: number;
+  // In-flight upgrade grab status for this scene, if any.
+  grab_status?: string;
+}
+
 export interface MissingResponse {
   performer: {
     local_id: string;
@@ -239,6 +260,7 @@ export interface MissingResponse {
   total_scenes: number;
   owned_count: number;
   missing: MissingScene[];
+  owned: OwnedScene[];
 }
 
 export function fetchMissing(localPerformerID: string): Promise<MissingResponse> {

@@ -20,6 +20,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -59,6 +60,15 @@ type Server struct {
 	ownedMu      sync.Mutex
 	ownedSet     map[string]bool
 	ownedFetched time.Time
+
+	// ownedCopies memoises StashDB scene id → the local copies the user owns,
+	// each carrying resolution/size (via the enriched FindAllSceneStashDBIDs
+	// sweep). Backs the performer page's "owned scenes" upgrade view, which
+	// shows the current quality per scene. Same TTL + lock-across-sweep
+	// coalescing as ownedSet.
+	ownedCopiesMu      sync.Mutex
+	ownedCopies        map[string][]stash.SceneRef
+	ownedCopiesFetched time.Time
 
 	// filmoCache memoises each performer's full StashDB filmography
 	// (QueryAllScenes), keyed by StashDB performer id. The query paginates
@@ -272,6 +282,30 @@ func (s *Server) ownedStashDBSet(ctx context.Context) (map[string]bool, error) {
 	s.ownedSet = set
 	s.ownedFetched = time.Now()
 	return set, nil
+}
+
+// ownedSceneCopies returns StashDB scene id → the local copies the user owns,
+// each with resolution/size, memoised for ownedTTL. Heavier than
+// ownedStashDBSet (it carries file metadata), so it's a separate memo used
+// only by the performer page's owned-scenes view. The lock is held across the
+// sweep so concurrent loads coalesce onto one fetch.
+func (s *Server) ownedSceneCopies(ctx context.Context) (map[string][]stash.SceneRef, error) {
+	s.ownedCopiesMu.Lock()
+	defer s.ownedCopiesMu.Unlock()
+	if s.ownedCopies != nil && time.Since(s.ownedCopiesFetched) < ownedTTL {
+		return s.ownedCopies, nil
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		return nil, errNotConfigured("stash")
+	}
+	copies, err := sc.FindAllSceneStashDBIDs(ctx)
+	if err != nil {
+		return nil, err
+	}
+	s.ownedCopies = copies
+	s.ownedCopiesFetched = time.Now()
+	return s.ownedCopies, nil
 }
 
 // filmoTTL is how long a performer's cached StashDB filmography is reused.

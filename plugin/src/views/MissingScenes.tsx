@@ -4,9 +4,25 @@ import {
   fetchMissing,
   type MissingResponse,
   type MissingScene,
+  type OwnedScene,
   type WatchTarget,
 } from "../api";
 import WatchControl from "../WatchControl";
+
+// SceneView is the Owned · Both · Missing filter on the performer page.
+type SceneView = "owned" | "both" | "missing";
+
+// resTierFromLabel maps a resolution label ("480p"/"1080p"/"2160p") to a
+// quality tier class, so the owned badge can tint low-res scenes (the best
+// upgrade candidates) warm and high-res ones cool.
+function resTierFromLabel(label?: string): string {
+  if (!label) return "";
+  const n = parseInt(label, 10) || 0;
+  if (n >= 2160) return "uhd";
+  if (n >= 1080) return "fhd";
+  if (n >= 720) return "hd";
+  return "sd";
+}
 
 // grabStatusLabel maps a raw grab status to a short card badge label.
 function grabStatusLabel(status: string): string {
@@ -52,6 +68,18 @@ export default function MissingScenes({
   const [watchPicking, setWatchPicking] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
+  // Owned · Both · Missing filter. Persisted so the choice sticks across
+  // performers and sessions; defaults to Missing (the original behaviour).
+  const [view, setView] = useState<SceneView>(() => {
+    const v = localStorage.getItem("forage.sceneView");
+    return v === "owned" || v === "both" ? v : "missing";
+  });
+  useEffect(() => {
+    localStorage.setItem("forage.sceneView", view);
+    // Multi-select is a missing-only action — drop it when leaving that view.
+    setSelecting(false);
+    setSelected(new Set());
+  }, [view]);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +154,34 @@ export default function MissingScenes({
   const allIds = data.missing.map((s) => s.stashdb_id);
   const allSelected = selected.size === allIds.length && allIds.length > 0;
 
+  // The cards to show for the current view. Owned scenes are tagged so the
+  // card can show a resolution badge and route to the upgrade (release-search)
+  // flow; missing scenes behave as before.
+  type Entry =
+    | { kind: "owned"; s: OwnedScene }
+    | { kind: "missing"; s: MissingScene };
+  let entries: Entry[];
+  if (view === "owned") {
+    // Worst quality first — those are the best upgrade candidates.
+    entries = [...data.owned]
+      .sort((a, b) => (a.height ?? 0) - (b.height ?? 0))
+      .map((s) => ({ kind: "owned", s }));
+  } else if (view === "both") {
+    // The whole filmography, newest first, each badged owned/missing.
+    entries = [
+      ...data.owned.map((s) => ({ kind: "owned" as const, s })),
+      ...data.missing.map((s) => ({ kind: "missing" as const, s })),
+    ].sort((a, b) => (b.s.date ?? "").localeCompare(a.s.date ?? ""));
+  } else {
+    entries = data.missing.map((s) => ({ kind: "missing", s }));
+  }
+  const emptyMessage =
+    view === "owned"
+      ? "You don't own any of this performer's StashDB scenes yet."
+      : view === "both"
+        ? "No StashDB scenes found for this performer."
+        : "You have every StashDB scene for this performer in your library.";
+
   return (
     <div>
       <div className="page-header page-header-row">
@@ -135,8 +191,29 @@ export default function MissingScenes({
             {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
             <strong>{data.missing.length} missing</strong>
           </div>
+          <div className="scene-view-toggle" role="tablist" aria-label="Scene filter">
+            {(
+              [
+                ["owned", "Owned", data.owned.length],
+                ["both", "Both", data.total_scenes],
+                ["missing", "Missing", data.missing.length],
+              ] as [SceneView, string, number][]
+            ).map(([v, label, count]) => (
+              <button
+                key={v}
+                role="tab"
+                aria-selected={view === v}
+                className={"scene-view-tab" + (view === v ? " active" : "")}
+                onClick={() => setView(v)}
+              >
+                {label}
+                <span className="scene-view-count">{count}</span>
+              </button>
+            ))}
+          </div>
         </div>
-        {data.missing.length > 0 &&
+        {view === "missing" &&
+          data.missing.length > 0 &&
           (selecting ? (
             <div className="ms-select-actions">
               <button
@@ -168,30 +245,30 @@ export default function MissingScenes({
             </div>
           ))}
       </div>
-      {data.missing.length === 0 ? (
-        <div className="empty">
-          You have every StashDB scene for this performer in your library.
-        </div>
+      {entries.length === 0 ? (
+        <div className="empty">{emptyMessage}</div>
       ) : (
         <div className="scene-grid">
-          {data.missing.map((s) => (
+          {entries.map((e) => (
             <SceneCard
-              key={s.stashdb_id}
-              s={s}
+              key={e.s.stashdb_id}
+              s={e.s}
               performerName={data.performer.name}
               performerId={data.performer.local_id}
               selecting={selecting}
-              selected={selected.has(s.stashdb_id)}
+              selected={selected.has(e.s.stashdb_id)}
+              owned={e.kind === "owned"}
+              resolution={e.kind === "owned" ? e.s.resolution : undefined}
               onPick={() =>
-                selecting
-                  ? toggleSelected(s.stashdb_id)
-                  : onPickScene(s.stashdb_id, data.performer.name)
+                selecting && e.kind === "missing"
+                  ? toggleSelected(e.s.stashdb_id)
+                  : onPickScene(e.s.stashdb_id, data.performer.name)
               }
             />
           ))}
         </div>
       )}
-      {selecting && (
+      {view === "missing" && selecting && (
         <div className="ms-select-bar">
           <span className="ms-select-count">{selected.size} selected</span>
           {watchPicking ? (
@@ -246,6 +323,8 @@ function SceneCard({
   performerId,
   selecting,
   selected,
+  owned,
+  resolution,
   onPick,
 }: {
   s: MissingScene;
@@ -253,6 +332,11 @@ function SceneCard({
   performerId: string;
   selecting: boolean;
   selected: boolean;
+  // owned marks an already-in-library scene: show its current resolution and
+  // route clicks to the upgrade (release-search) flow instead of offering a
+  // Watch control (you don't watch what you already have).
+  owned?: boolean;
+  resolution?: string;
   onPick: () => void;
 }) {
 
@@ -261,7 +345,8 @@ function SceneCard({
       className={
         "scene-card" +
         (selecting ? " selectable" : "") +
-        (selected ? " selected" : "")
+        (selected ? " selected" : "") +
+        (owned ? " owned" : "")
       }
       role="button"
       tabIndex={0}
@@ -270,6 +355,7 @@ function SceneCard({
         if (e.key === "Enter" || e.key === " ") onPick();
       }}
       aria-pressed={selecting ? selected : undefined}
+      title={owned ? `In your library at ${resolution || "unknown quality"} — click to find a better release` : undefined}
     >
       {selecting && (
         <span className="scene-check" aria-hidden="true">
@@ -287,6 +373,14 @@ function SceneCard({
             }}
           />
         ) : null}
+        {owned && resolution && (
+          <span
+            className={"scene-res-badge res-" + resTierFromLabel(resolution)}
+            title={`You have this at ${resolution}`}
+          >
+            {resolution}
+          </span>
+        )}
         {s.grab_status && (
           <span
             className={"scene-grab-badge gs-" + s.grab_status}
@@ -296,8 +390,8 @@ function SceneCard({
           </span>
         )}
         {/* Watch control — hidden in select mode (the card toggles
-            selection then, not navigation). */}
-        {!selecting && (
+            selection then) and for owned scenes (nothing to wait for). */}
+        {!selecting && !owned && (
           <WatchControl
             scene={{
               stashdb_id: s.stashdb_id,

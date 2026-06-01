@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
 
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
@@ -40,6 +42,29 @@ type missingPerformer struct {
 	Aliases []string `json:"aliases,omitempty"`
 }
 
+// ownedScene is a StashDB scene the user already has, annotated with the
+// current best copy's quality — the signal for "is this worth upgrading?".
+// Clicking it routes to the same release-search page as a missing scene, just
+// framed as finding a better release.
+type ownedScene struct {
+	StashDBID  string             `json:"stashdb_id"`
+	Title      string             `json:"title"`
+	Date       string             `json:"date,omitempty"`
+	Studio     string             `json:"studio,omitempty"`
+	StudioID   string             `json:"studio_id,omitempty"`
+	Performers []missingPerformer `json:"performers"`
+	URL        string             `json:"url,omitempty"`
+	ImageURL   string             `json:"image_url,omitempty"`
+	// Resolution is the user's current best copy as a label ("1080p",
+	// "2160p", …); Height is the raw pixel height (sort key); Size is the
+	// file's bytes. Empty/zero when Stash reported no dimensions.
+	Resolution string `json:"resolution,omitempty"`
+	Height     int    `json:"height,omitempty"`
+	Size       int64  `json:"size,omitempty"`
+	// GrabStatus flags an in-flight upgrade grab for this scene.
+	GrabStatus string `json:"grab_status,omitempty"`
+}
+
 type missingResponse struct {
 	Performer struct {
 		LocalID   string `json:"local_id"`
@@ -49,6 +74,7 @@ type missingResponse struct {
 	TotalScenes int            `json:"total_scenes"`
 	OwnedCount  int            `json:"owned_count"`
 	Missing     []missingScene `json:"missing"`
+	Owned       []ownedScene   `json:"owned"`
 }
 
 // getMissingScenes returns the StashDB scenes featuring the given
@@ -110,7 +136,11 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 	// otherwise it falsely shows as "missing". Same library-wide cross-id
 	// basis as the scene cache's card count, so card and page agree.
 	// Memoised (ownedTTL) so this load doesn't re-sweep the whole library.
-	ownedSet, err := s.ownedStashDBSet(r.Context())
+	// Owned copies (with resolution/size) keyed by StashDB scene id. A scene
+	// you own anywhere — even if never tagged with this performer — counts as
+	// owned. The copies carry quality so the owned-scenes view can show what
+	// you currently hold (the upgrade signal). Memoised (ownedTTL).
+	ownedCopies, err := s.ownedSceneCopies(r.Context())
 	if err != nil {
 		s.log.Error("stash owned scene sweep", "err", err)
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
@@ -148,12 +178,19 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		scenes = kept
 	}
 
-	// 5. Diff. Anything in `scenes` whose ID isn't in `ownedSet`. A scene
-	// with an in-flight grab is still "missing" (not in the library yet)
-	// but carries its grab status so the UI can flag it.
+	// 5. Split the filmography into owned vs missing by library membership.
+	// A scene with an in-flight grab is still "missing" (not landed yet) but
+	// carries its grab status; an owned scene carries its current best-copy
+	// quality + any in-flight upgrade grab.
 	missing := make([]missingScene, 0, len(scenes))
+	owned := make([]ownedScene, 0)
 	for _, sc := range scenes {
-		if ownedSet[sc.ID] {
+		if copies := ownedCopies[sc.ID]; len(copies) > 0 {
+			os := toOwnedScene(sc, bestCopy(copies))
+			if st, ok := grabStatus[sc.ID]; ok {
+				os.GrabStatus = st
+			}
+			owned = append(owned, os)
 			continue
 		}
 		ms := toMissingScene(sc)
@@ -168,8 +205,9 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 
 	out := missingResponse{
 		TotalScenes: len(scenes),
-		OwnedCount:  len(scenes) - len(missing),
+		OwnedCount:  len(owned),
 		Missing:     missing,
+		Owned:       owned,
 	}
 	out.Performer.LocalID = perf.StashID
 	out.Performer.StashDBID = stashDBPerformerID
@@ -221,6 +259,63 @@ func sceneHasExcludedTag(sc stashdb.Scene, excluded map[string]bool) bool {
 		}
 	}
 	return false
+}
+
+// bestCopy returns the highest-resolution local copy of a scene — what the
+// owned view shows, since the user cares about the best quality they hold.
+func bestCopy(refs []stash.SceneRef) stash.SceneRef {
+	best := refs[0]
+	for _, r := range refs[1:] {
+		if r.Height > best.Height {
+			best = r
+		}
+	}
+	return best
+}
+
+// resolutionLabel buckets a pixel height into the label users think in.
+func resolutionLabel(h int) string {
+	switch {
+	case h >= 2160:
+		return "2160p"
+	case h >= 1440:
+		return "1440p"
+	case h >= 1080:
+		return "1080p"
+	case h >= 720:
+		return "720p"
+	case h >= 480:
+		return "480p"
+	case h > 0:
+		return fmt.Sprintf("%dp", h)
+	default:
+		return ""
+	}
+}
+
+func toOwnedScene(s stashdb.Scene, copy stash.SceneRef) ownedScene {
+	out := ownedScene{
+		StashDBID:  s.ID,
+		Title:      s.Title,
+		Date:       s.Date,
+		Resolution: resolutionLabel(copy.Height),
+		Height:     copy.Height,
+		Size:       copy.Size,
+	}
+	if s.Studio != nil {
+		out.Studio = s.Studio.Name
+		out.StudioID = s.Studio.ID
+	}
+	for _, p := range s.Performers {
+		out.Performers = append(out.Performers, missingPerformer{Name: p.Name, As: p.As})
+	}
+	if len(s.URLs) > 0 {
+		out.URL = s.URLs[0].URL
+	}
+	if len(s.Images) > 0 {
+		out.ImageURL = s.Images[0].URL
+	}
+	return out
 }
 
 func toMissingScene(s stashdb.Scene) missingScene {
