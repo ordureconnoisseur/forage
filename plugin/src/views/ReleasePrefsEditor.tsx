@@ -1,8 +1,7 @@
 import { ReactNode, useState } from "react";
 import {
-  ALL_RESOLUTIONS,
   compileRules,
-  defaultPrefs,
+  parsePrefs,
   ProtocolPref,
   ReleasePrefs,
   Resolution,
@@ -22,30 +21,6 @@ const RES_META: Record<Resolution, { label: string; cls: string }> = {
   "720p": { label: "720p", cls: "res-720" },
   "480p": { label: "480p / SD", cls: "res-480" },
 };
-
-// parsePrefs reads the stored prefs JSON, reconciling it against the fixed
-// resolution set so a partial/older blob still renders all four tiers in a
-// sensible order. Falls back to defaults on empty/garbage.
-function parsePrefs(json: string): ReleasePrefs {
-  const d = defaultPrefs();
-  if (!json.trim()) return d;
-  try {
-    const p = JSON.parse(json) as Partial<ReleasePrefs>;
-    const order = (p.resolutionOrder ?? []).filter((r): r is Resolution =>
-      ALL_RESOLUTIONS.includes(r as Resolution),
-    );
-    for (const r of ALL_RESOLUTIONS) if (!order.includes(r)) order.push(r);
-    return {
-      resolutionOrder: order,
-      resolutionFloor: (p.resolutionFloor ?? "") as ResolutionFloor,
-      indexerOrder: Array.isArray(p.indexerOrder) ? p.indexerOrder : [],
-      blockedIndexers: Array.isArray(p.blockedIndexers) ? p.blockedIndexers : [],
-      protocolPref: (p.protocolPref ?? "usenet") as ProtocolPref,
-    };
-  } catch {
-    return d;
-  }
-}
 
 function arrayMove<T>(arr: T[], from: number, to: number): T[] {
   const next = [...arr];

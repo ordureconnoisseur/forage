@@ -4030,6 +4030,29 @@ code.grab-fact-v,
 }
 
 /* ── Friendly release-prefs editor (Settings) ──────────────────────── */
+.prefs-mode-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 4px;
+}
+.prefs-mode-toggle {
+  padding: 4px 12px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.prefs-mode-toggle:hover:not(:disabled) {
+  border-color: var(--glass-border-bright);
+  color: var(--text);
+}
+.prefs-mode-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 .prefs-editor {
   display: flex;
   flex-direction: column;

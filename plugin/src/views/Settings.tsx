@@ -6,8 +6,10 @@ import {
   ConfigFieldsResponse,
   ConfigPatch,
   fetchConfig,
+  fetchIndexers,
   foragerBase,
   Health,
+  IndexerInfo,
   login,
   mixedContentBlocked,
   ProbeResult,
@@ -16,7 +18,25 @@ import {
   setForagerBase,
   testSection,
 } from "../api";
+import { compileRules, parsePrefs } from "../releasePrefs";
 import ReleaseRulesEditor from "./ReleaseRulesEditor";
+import ReleasePrefsEditor from "./ReleasePrefsEditor";
+
+// initialReleaseMode decides whether the Release-preferences section opens
+// in friendly or advanced mode. An explicit saved releaseAdvanced flag
+// (source "json") wins. Otherwise the existing-data guard: a daemon with
+// hand-set releaseRules but no friendly releasePrefs (e.g. mini's current
+// state) opens in ADVANCED so we never silently overwrite those rules with
+// friendly defaults — the user opts into friendly when ready.
+function initialReleaseMode(d: ConfigFieldsResponse): boolean {
+  const adv = d.fields["releaseAdvanced"];
+  if (adv && adv.source === "json") return adv.value === true;
+  const prefs = d.fields["releasePrefs"]?.value;
+  const rules = d.fields["releaseRules"]?.value;
+  const prefsStr = typeof prefs === "string" ? prefs.trim() : "";
+  const rulesStr = typeof rules === "string" ? rules.trim() : "";
+  return !!rulesStr && !prefsStr;
+}
 
 // Forage Settings — connection details (browser-side, localStorage)
 // plus daemon configuration (POSTed to forage /config and persisted
@@ -69,6 +89,10 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   const [data, setData] = useState<ConfigFieldsResponse | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
   const [patch, setPatch] = useState<ConfigPatch>({});
+  // Friendly release-prefs UI: the user's Prowlarr indexers + which mode the
+  // Release-preferences section is in (null = not yet decided from /config).
+  const [indexers, setIndexers] = useState<IndexerInfo[]>([]);
+  const [releaseAdvanced, setReleaseAdvanced] = useState<boolean | null>(null);
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
@@ -104,6 +128,32 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
     // saving connection settings, the user wants to see config from
     // the new daemon).
   }, [apiURL, token]);
+
+  // Load the user's Prowlarr indexers for the friendly release-prefs editor.
+  // Best-effort: an empty list (Prowlarr unconfigured / unreachable) just
+  // hides the indexer section.
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndexers()
+      .then((r) => {
+        if (!cancelled) setIndexers(r);
+      })
+      .catch(() => {
+        if (!cancelled) setIndexers([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [apiURL, token]);
+
+  // Decide the Release-preferences mode once /config has loaded. Only seeds
+  // it while undecided, so a later refetch (e.g. after a save) never yanks
+  // the user out of a mode they switched into this session.
+  useEffect(() => {
+    if (data && releaseAdvanced === null) {
+      setReleaseAdvanced(initialReleaseMode(data));
+    }
+  }, [data, releaseAdvanced]);
 
   const blocked = mixedContentBlocked();
 
@@ -176,6 +226,38 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         [section]: { ok: false, message: (e as Error).message },
       }));
     }
+  }
+
+  // Release-mode switch ─────────────────────────────────────────────
+
+  // goAdvanced reveals the raw rule editor. It compiles the current friendly
+  // prefs into releaseRules first, so the advanced view opens showing the
+  // friendly-equivalent rules to hand-tune (not stale/empty), then flags the
+  // rules as advanced so they stop auto-recompiling from prefs.
+  function goAdvanced() {
+    const prefs = parsePrefs(
+      displayValue("releasePrefs", data?.fields["releasePrefs"]),
+    );
+    setField("releaseRules", JSON.stringify(compileRules(prefs)));
+    setField("releaseAdvanced", true);
+    setReleaseAdvanced(true);
+  }
+
+  // backToSimple recompiles releaseRules from the saved friendly prefs,
+  // discarding any manual edits (confirmed first), and clears the advanced
+  // flag so prefs drive the rules again.
+  function backToSimple() {
+    const ok = window.confirm(
+      "Rebuild rules from your simple preferences? This discards any manual edits to the advanced rules.",
+    );
+    if (!ok) return;
+    const prefs = parsePrefs(
+      displayValue("releasePrefs", data?.fields["releasePrefs"]),
+    );
+    setField("releasePrefs", JSON.stringify(prefs));
+    setField("releaseRules", JSON.stringify(compileRules(prefs)));
+    setField("releaseAdvanced", false);
+    setReleaseAdvanced(false);
   }
 
   // Save handlers ──────────────────────────────────────────────────
@@ -663,10 +745,43 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           isOpen={open.releases}
           onToggle={() => setOpen((o) => ({ ...o, releases: !o.releases }))}
         >
-          <ReleaseRulesEditor
-            value={displayValue("releaseRules", data?.fields["releaseRules"])}
-            onChange={(json) => setField("releaseRules", json)}
-          />
+          <div className="prefs-mode-bar">
+            {releaseAdvanced ? (
+              <button
+                type="button"
+                className="prefs-mode-toggle"
+                onClick={backToSimple}
+              >
+                ← Back to simple
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="prefs-mode-toggle"
+                onClick={goAdvanced}
+                disabled={releaseAdvanced === null}
+              >
+                Advanced ⚙
+              </button>
+            )}
+          </div>
+          {releaseAdvanced === null ? (
+            <p className="settings-tip">Loading preferences…</p>
+          ) : releaseAdvanced ? (
+            <ReleaseRulesEditor
+              value={displayValue("releaseRules", data?.fields["releaseRules"])}
+              onChange={(json) => setField("releaseRules", json)}
+            />
+          ) : (
+            <ReleasePrefsEditor
+              value={displayValue("releasePrefs", data?.fields["releasePrefs"])}
+              indexers={indexers}
+              onChange={(prefsJSON, rulesJSON) => {
+                setField("releasePrefs", prefsJSON);
+                setField("releaseRules", rulesJSON);
+              }}
+            />
+          )}
         </Section>
 
         <Section

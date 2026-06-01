@@ -51,6 +51,31 @@ export function defaultPrefs(): ReleasePrefs {
   };
 }
 
+// parsePrefs reads a stored prefs JSON string, reconciling it against the
+// fixed resolution set so a partial/older blob still yields all four tiers
+// in a sensible order. Falls back to defaults on empty/garbage. Pure — used
+// by both the friendly editor and the "back to simple" recompile path.
+export function parsePrefs(json: string): ReleasePrefs {
+  const d = defaultPrefs();
+  if (!json.trim()) return d;
+  try {
+    const p = JSON.parse(json) as Partial<ReleasePrefs>;
+    const order = (p.resolutionOrder ?? []).filter((r): r is Resolution =>
+      ALL_RESOLUTIONS.includes(r as Resolution),
+    );
+    for (const r of ALL_RESOLUTIONS) if (!order.includes(r)) order.push(r);
+    return {
+      resolutionOrder: order,
+      resolutionFloor: (p.resolutionFloor ?? "") as ResolutionFloor,
+      indexerOrder: Array.isArray(p.indexerOrder) ? p.indexerOrder : [],
+      blockedIndexers: Array.isArray(p.blockedIndexers) ? p.blockedIndexers : [],
+      protocolPref: (p.protocolPref ?? "usenet") as ProtocolPref,
+    };
+  } catch {
+    return d;
+  }
+}
+
 // ── Point scheme (keep these in sync with assertSpacingInvariants) ────────
 
 // Resolution tiers are 40 apart, centred so the top tier is +100:
