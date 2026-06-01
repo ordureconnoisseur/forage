@@ -101,6 +101,11 @@ function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
       if (ga !== gb) return ga ? -1 : 1;
     }
     if (sort === "quality") {
+      // Lead with the preference SCORE (resolution + indexer + protocol
+      // rules), so this reflects the user's full ranking — not resolution
+      // alone. Fall back to resolution for releases the scorer didn't touch.
+      const sd = (b.score ?? 0) - (a.score ?? 0);
+      if (sd !== 0) return sd;
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
       if (b.size !== a.size) return b.size - a.size; // bigger encode wins
@@ -108,7 +113,9 @@ function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
     }
     if (sort === "match") {
       if (b.confidence !== a.confidence) return b.confidence - a.confidence;
-      // tie on match → prefer higher quality, then bitrate, then availability
+      // tie on match → prefer the user's score, then bitrate, then availability
+      const sd = (b.score ?? 0) - (a.score ?? 0);
+      if (sd !== 0) return sd;
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
       if (b.size !== a.size) return b.size - a.size;

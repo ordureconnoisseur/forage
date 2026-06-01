@@ -9,7 +9,7 @@ func TestScoreAdditive(t *testing.T) {
 		{Label: "480p", On: OnTitle, Pattern: `480p`, Points: -50},
 	})
 	// Only 1080p matches → 100.
-	r := s.Score("Studio.Scene.1080p-GRP", "PornoLab")
+	r := s.Score("Studio.Scene.1080p-GRP", "PornoLab", "")
 	if r.Score != 100 {
 		t.Errorf("score = %d, want 100", r.Score)
 	}
@@ -28,25 +28,43 @@ func TestIndexerRule(t *testing.T) {
 		{Label: "avoid 1337x", On: OnIndexer, Pattern: `1337x`, Points: -30},
 	})
 	// Indexer rule matches the indexer field, not the title.
-	r := s.Score("Scene 1080p", "PornoLab")
+	r := s.Score("Scene 1080p", "PornoLab", "")
 	if r.Score != 150 { // 1080p(100) + PornoLab(50)
 		t.Errorf("score = %d, want 150", r.Score)
 	}
-	r2 := s.Score("Scene 1080p", "1337x")
+	r2 := s.Score("Scene 1080p", "1337x", "")
 	if r2.Score != 70 { // 1080p(100) - 1337x(30)
 		t.Errorf("score = %d, want 70", r2.Score)
 	}
 	// An indexer pattern must NOT match against the title.
 	s2 := New([]Rule{{Label: "lab", On: OnIndexer, Pattern: `pornolab`, Points: 99}})
-	if s2.Score("PornoLab in the title", "1337x").Score != 0 {
+	if s2.Score("PornoLab in the title", "1337x", "").Score != 0 {
 		t.Error("indexer rule should match indexer field, not title")
+	}
+}
+
+func TestProtocolRule(t *testing.T) {
+	s := New([]Rule{
+		{Label: "1080p", On: OnTitle, Pattern: `1080p`, Points: 100},
+		{Label: "prefer usenet", On: OnProtocol, Pattern: `usenet`, Points: 40},
+	})
+	if got := s.Score("Scene 1080p", "NZBFinder", "usenet").Score; got != 140 {
+		t.Errorf("usenet score = %d, want 140", got)
+	}
+	if got := s.Score("Scene 1080p", "PornoLab", "torrent").Score; got != 100 {
+		t.Errorf("torrent score = %d, want 100", got)
+	}
+	// A protocol pattern must NOT match the title or indexer field.
+	s2 := New([]Rule{{Label: "p", On: OnProtocol, Pattern: `usenet`, Points: 9}})
+	if s2.Score("usenet in the title", "usenet-indexer", "torrent").Score != 0 {
+		t.Error("protocol rule should match the protocol field only")
 	}
 }
 
 func TestOnDefaultsToTitle(t *testing.T) {
 	// On omitted → title.
 	s := New([]Rule{{Label: "1080p", Pattern: `1080p`, Points: 80}})
-	if s.Score("x 1080p", "idx").Score != 80 {
+	if s.Score("x 1080p", "idx", "").Score != 80 {
 		t.Error("empty On should default to title match")
 	}
 }
@@ -56,7 +74,7 @@ func TestReject(t *testing.T) {
 		{Label: "1080p", On: OnTitle, Pattern: `1080p`, Points: 80},
 		{Label: "ban indexer", On: OnIndexer, Pattern: `badtracker`, Points: 0, Reject: true},
 	})
-	r := s.Score("Movie 1080p", "BadTracker")
+	r := s.Score("Movie 1080p", "BadTracker", "")
 	if !r.Rejected {
 		t.Error("a matched reject rule must set Rejected")
 	}
@@ -67,7 +85,7 @@ func TestReject(t *testing.T) {
 
 func TestNoMatchZero(t *testing.T) {
 	s := New(DefaultRules())
-	r := s.Score("Performer SiteRip", "SomeIndexer") // no resolution token
+	r := s.Score("Performer SiteRip", "SomeIndexer", "") // no resolution token
 	if r.Score != 0 || r.Rejected || len(r.Hits) != 0 {
 		t.Errorf("expected empty result, got %+v", r)
 	}
@@ -78,7 +96,7 @@ func TestInvalidRegexSkipped(t *testing.T) {
 		{Label: "bad", Pattern: `(unclosed`, Points: 999},
 		{Label: "1080p", Pattern: `1080p`, Points: 80},
 	})
-	if s.Score("Movie 1080p", "idx").Score != 80 {
+	if s.Score("Movie 1080p", "idx", "").Score != 80 {
 		t.Error("bad rule must be skipped, not crash or match")
 	}
 }
@@ -96,7 +114,7 @@ func TestDefaultsResolution(t *testing.T) {
 		{"Performer SiteRip", 0},
 	}
 	for _, c := range cases {
-		if got := s.Score(c.title, "idx").Score; got != c.want {
+		if got := s.Score(c.title, "idx", "").Score; got != c.want {
 			t.Errorf("%q: score=%d want %d", c.title, got, c.want)
 		}
 	}

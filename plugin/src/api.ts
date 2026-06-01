@@ -787,7 +787,7 @@ export interface ConfigFieldsResponse {
 // resolution lives) or the indexer/source name.
 export interface ReleaseRule {
   label: string;
-  on?: "title" | "indexer";
+  on?: "title" | "indexer" | "protocol";
   pattern: string;
   points: number;
   reject?: boolean;

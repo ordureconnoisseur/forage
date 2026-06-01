@@ -63,8 +63,9 @@ export default function ReleaseRulesEditor({
         (negative to penalise). Highest-scoring verified release wins; ties
         break by seeders/grabs. A <b>reject</b> rule hard-excludes any release
         it matches. Match against the release <b>title</b> (where resolution
-        lives) or the <b>indexer</b>/source name. Scoring is additive, not
-        tiered — order is cosmetic.
+        lives), the <b>indexer</b>/source name, or the <b>protocol</b>
+        (<code>torrent</code> / <code>usenet</code> — e.g. prefer nzb).
+        Scoring is additive, not tiered — order is cosmetic.
       </p>
       <div className="rules-list">
         <div className="rule-row rule-head">
@@ -87,11 +88,14 @@ export default function ReleaseRulesEditor({
               className="rule-on"
               value={r.on ?? "title"}
               onChange={(e) =>
-                update(i, { on: e.target.value as "title" | "indexer" })
+                update(i, {
+                  on: e.target.value as "title" | "indexer" | "protocol",
+                })
               }
             >
               <option value="title">title</option>
               <option value="indexer">indexer</option>
+              <option value="protocol">protocol</option>
             </select>
             <input
               className="rule-pattern"

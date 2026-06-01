@@ -56,8 +56,9 @@ func Resolution(title string) string {
 type On string
 
 const (
-	OnTitle   On = "title"   // default; matches the release title (resolution lives here)
-	OnIndexer On = "indexer" // matches the indexer/source name (PornoLab, 1337x, …)
+	OnTitle    On = "title"    // default; matches the release title (resolution lives here)
+	OnIndexer  On = "indexer"  // matches the indexer/source name (PornoLab, 1337x, …)
+	OnProtocol On = "protocol" // matches the source protocol ("torrent" / "usenet")
 )
 
 // Rule is one user preference. Pattern is matched (case-insensitive) as a
@@ -67,7 +68,7 @@ const (
 type Rule struct {
 	// Label is a human name for the rule, shown in the score breakdown.
 	Label string `json:"label"`
-	// On is the field to match: "title" (default) or "indexer".
+	// On is the field to match: "title" (default), "indexer", or "protocol".
 	On On `json:"on,omitempty"`
 	// Pattern is a (case-insensitive) regexp matched against the On field.
 	// Invalid patterns are skipped (never match) — a bad rule can't crash
@@ -118,18 +119,21 @@ func New(rules []Rule) *Scorer {
 }
 
 // Score evaluates one release against the rules. title is the release
-// title (resolution etc.); indexer is the structured source name. Score
-// is the sum of matched points; Rejected is true if any matched rule has
-// Reject.
-func (s *Scorer) Score(title, indexer string) Result {
+// title (resolution etc.); indexer is the structured source name; protocol
+// is "torrent" / "usenet". Score is the sum of matched points; Rejected is
+// true if any matched rule has Reject.
+func (s *Scorer) Score(title, indexer, protocol string) Result {
 	var res Result
 	for _, c := range s.rules {
 		if c.re == nil {
 			continue
 		}
 		subject := title
-		if c.rule.On == OnIndexer {
+		switch c.rule.On {
+		case OnIndexer:
 			subject = indexer
+		case OnProtocol:
+			subject = protocol
 		}
 		if !c.re.MatchString(subject) {
 			continue
