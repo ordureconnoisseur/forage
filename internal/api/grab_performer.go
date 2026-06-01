@@ -51,52 +51,61 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 	// from /match, which applies one scene's metadata and genuinely can't
 	// represent a many-scene pack.)
 
-	pl := s.pool.Placer()
-	if !pl.Configured() {
-		writeErr(w, http.StatusUnprocessableEntity,
-			"library root not configured — can't re-file (set it in Settings)")
-		return
-	}
+	// State-aware. Re-placing a file is only valid once the grab has
+	// actually been placed (has a placed_path). For a grab that hasn't
+	// landed yet (queued/downloading), there's no finished file to move —
+	// we ONLY update the performer name, and the poller files it into the
+	// right folder when the download completes. (Placing mid-download would
+	// hardlink a partial file into the library and trip the poller's
+	// placed→scanned heal, which is the bug this guards against.)
+	alreadyPlaced := g.PlacedPath != ""
 
-	// Resolve the live source path from the download client (the seeding
-	// content), the same path the poller places from.
-	src := s.grabSourcePath(r.Context(), g.Client, g.ClientID)
-	if src == "" {
-		writeErr(w, http.StatusUnprocessableEntity,
-			"the download is no longer in the client, so there's nothing to re-file")
-		return
-	}
-
-	res, err := pl.Place(src, performer)
-	if err != nil {
-		writeErr(w, http.StatusBadGateway, "re-file failed: "+err.Error())
-		return
-	}
-
-	// Remove the OLD library-side placement if it moved. Library hardlink
-	// only — never the seeding source. Best-effort: a stale leftover is
-	// cosmetic (Stash drops it on the next scan), so we don't fail here.
-	oldPath := g.PlacedPath
-	if oldPath != "" && oldPath != res.Path {
-		if rerr := os.RemoveAll(oldPath); rerr != nil {
-			s.log.Warn("set performer: remove old placement", "id", gid, "path", oldPath, "err", rerr)
+	if alreadyPlaced {
+		pl := s.pool.Placer()
+		if !pl.Configured() {
+			writeErr(w, http.StatusUnprocessableEntity,
+				"library root not configured — can't re-file (set it in Settings)")
+			return
 		}
+		src := s.grabSourcePath(r.Context(), g.Client, g.ClientID)
+		if src == "" {
+			writeErr(w, http.StatusUnprocessableEntity,
+				"the download is no longer in the client, so there's nothing to re-file")
+			return
+		}
+		res, err := pl.Place(src, performer)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway, "re-file failed: "+err.Error())
+			return
+		}
+		// Remove the OLD library-side placement if it moved. Library
+		// hardlink only — never the seeding source. Best-effort: a stale
+		// leftover is cosmetic (Stash drops it on the next scan).
+		oldPath := g.PlacedPath
+		if oldPath != "" && oldPath != res.Path {
+			if rerr := os.RemoveAll(oldPath); rerr != nil {
+				s.log.Warn("set performer: remove old placement", "id", gid, "path", oldPath, "err", rerr)
+			}
+		}
+		g.PlacedPath = res.Path
+		s.log.Info("grab performer reassigned (re-filed)", "id", gid, "performer", performer,
+			"placed", res.Path, "mode", res.Mode)
+	} else {
+		// Not placed yet: just retarget the folder for when it lands.
+		s.log.Info("grab performer set (not yet placed)", "id", gid, "performer", performer)
 	}
 
 	g.PerformerName = performer
-	g.PlacedPath = res.Path
 	g.PlaceError = ""
 	g.Reason = "performer set manually"
 	if err := s.grabs.Update(r.Context(), *g); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
-	s.log.Info("grab performer reassigned", "id", gid, "performer", performer,
-		"placed", res.Path, "mode", res.Mode)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
 		"performer_name": performer,
-		"placed_path":    res.Path,
+		"placed_path":    g.PlacedPath,
 	})
 }
 
