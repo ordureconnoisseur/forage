@@ -957,6 +957,20 @@ button {
   color: var(--accent-bright);
   border-color: rgba(var(--accent-rgb), 0.6);
 }
+/* Active state — the "Different name" toggle when the panel's open or an
+   alias is in effect; reads as engaged without shouting. */
+.deep-search-btn.on {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.6);
+  background: var(--accent-tint, rgba(var(--accent-rgb), 0.12));
+}
+/* The two search pills (Different name + Deep search) grouped on the
+   right of the controls row. */
+.release-controls-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 /* In the empty-state hint it reads as an inline link, not a pill. */
 .empty-hint .deep-search-btn {
   border: 0;
@@ -1017,16 +1031,25 @@ button {
 .alias-chip.clear {
   color: var(--text-muted);
 }
+/* The "+ other" pill — a quieter, dashed affordance to reveal the
+   free-text field for a spelling not in the suggestions. */
+.alias-chip.other {
+  color: var(--text-muted);
+  border-style: dashed;
+}
 .alias-input {
-  flex: 1;
-  min-width: 140px;
-  padding: 5px 10px;
+  width: 160px;
+  padding: 4px 11px;
   border-radius: var(--radius-pill, 999px);
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--accent);
   background: var(--bg-0);
   color: var(--text);
   font: inherit;
   font-size: 13px;
+}
+.alias-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-tint, rgba(var(--accent-rgb), 0.12));
 }
 .empty-hint {
   margin-top: 8px;

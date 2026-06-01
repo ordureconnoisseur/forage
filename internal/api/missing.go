@@ -33,6 +33,11 @@ type missingScene struct {
 type missingPerformer struct {
 	Name string `json:"name"`
 	As   string `json:"as,omitempty"`
+	// Aliases are alternate spellings from the user's local Stash performer
+	// record — a tracker may have indexed the release under one of these.
+	// Populated only where the UI offers an alias-retry (scene releases);
+	// omitted elsewhere.
+	Aliases []string `json:"aliases,omitempty"`
 }
 
 type missingResponse struct {

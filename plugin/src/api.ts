@@ -206,6 +206,10 @@ export function fetchDiscover(opts?: {
 export interface MissingPerformer {
   name: string;
   as?: string;
+  // Alternate spellings from the user's local Stash record — a tracker may
+  // have listed the release under one of these. Populated for scene-release
+  // alias retries; absent elsewhere.
+  aliases?: string[];
 }
 
 export interface MissingScene {

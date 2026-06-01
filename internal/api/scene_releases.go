@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"net/http"
 	"sort"
 	"strconv"
@@ -189,11 +190,45 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, p := range scene.Performers {
 		resp.Scene.Performers = append(resp.Scene.Performers, missingPerformer{
-			Name: p.Name,
-			As:   p.As,
+			Name:    p.Name,
+			As:      p.As,
+			Aliases: s.performerAliases(r.Context(), p.Name),
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// performerAliases returns alternate spellings for a performer from the
+// user's local Stash record (performer_cache.aliases), matched by name.
+// These power the scene-release alias-retry chips — a tracker may have
+// indexed the release under any of them. The performer's own name is
+// excluded (it's already the primary). Best-effort: nil on miss/error.
+func (s *Server) performerAliases(ctx context.Context, name string) []string {
+	if name == "" {
+		return nil
+	}
+	var aliasesJSON sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT aliases FROM performer_cache WHERE name = ? COLLATE NOCASE LIMIT 1`,
+		name).Scan(&aliasesJSON)
+	if err != nil || !aliasesJSON.Valid || aliasesJSON.String == "" {
+		return nil
+	}
+	var aliases []string
+	if json.Unmarshal([]byte(aliasesJSON.String), &aliases) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(aliases))
+	for _, a := range aliases {
+		a = strings.TrimSpace(a)
+		if a != "" && !strings.EqualFold(a, name) {
+			out = append(out, a)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // maxPerformerNames caps how many spellings of the browsed performer we

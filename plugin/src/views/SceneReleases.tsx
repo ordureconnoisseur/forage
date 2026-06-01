@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   fetchSceneReleases,
   postGrab,
+  type MissingPerformer,
   type SceneRelease,
   type SceneReleasesResponse,
 } from "../api";
@@ -155,6 +156,9 @@ export default function SceneReleases({
   // many more queries, so it's opt-in for when lean comes up short. The
   // component is keyed by sceneId in App, so this resets per scene.
   const [deep, setDeep] = useState(false);
+  // Whether the alias-retry panel is expanded (its trigger lives in the
+  // controls row, next to Deep search).
+  const [aliasOpen, setAliasOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
@@ -305,16 +309,55 @@ export default function SceneReleases({
         </div>
       </div>
 
-      <AliasRetry
-        active={alias}
-        performers={data.scene.performers.map((p) => p.name)}
-        onSearch={(a) => {
-          setAlias(a || null);
-          // An explicit alias retry means the user is digging — go deep so
-          // the alias is searched across every term, not just the lean pair.
-          if (a) setDeep(true);
-        }}
-      />
+      {/* Controls row — always present. Sort only when there are results
+          to sort; the two search affordances (alias retry + deep) sit
+          together on the right, same pill styling. */}
+      <div className="release-controls">
+        {(verified.length > 0 || unverified.length > 0) && (
+          <select
+            className="sort-select"
+            value={sort}
+            onChange={(e) => setSort(e.target.value as ReleaseSort)}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>
+                Sort: {o.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <div className="release-controls-search">
+          <button
+            className={"deep-search-btn" + (aliasOpen || alias ? " on" : "")}
+            onClick={() => setAliasOpen((v) => !v)}
+            title="Trackers sometimes list a release under a different name spelling — retry under another name"
+          >
+            {alias ? `Name: ${alias}` : "Different name"}
+          </button>
+          {!deep && (
+            <button
+              className="deep-search-btn"
+              onClick={() => setDeep(true)}
+              title="Run the full multi-tracker fan-out — slower, but catches releases the quick search misses"
+            >
+              Deep search ↻
+            </button>
+          )}
+        </div>
+      </div>
+
+      {aliasOpen && (
+        <AliasRetry
+          active={alias}
+          performers={data.scene.performers}
+          onSearch={(a) => {
+            setAlias(a || null);
+            // An explicit alias retry means the user is digging — go deep so
+            // the alias is searched across every term, not just the lean pair.
+            if (a) setDeep(true);
+          }}
+        />
+      )}
 
       {verified.length === 0 && unverified.length === 0 ? (
         <div className="empty">
@@ -325,41 +368,19 @@ export default function SceneReleases({
               <button className="deep-search-btn" onClick={() => setDeep(true)}>
                 Deep search all trackers ↻
               </button>{" "}
-              to cast a wider net, or try another alias above.
+              to cast a wider net, or try a different name above.
             </div>
           ) : (
             !alias && (
               <div className="empty-hint">
-                Trackers sometimes list a different name spelling — try
-                searching another alias above.
+                Trackers sometimes list a different name spelling — try the
+                “Different name” button above.
               </div>
             )
           )}
         </div>
       ) : (
         <>
-          <div className="release-controls">
-            <select
-              className="sort-select"
-              value={sort}
-              onChange={(e) => setSort(e.target.value as ReleaseSort)}
-            >
-              {SORT_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
-                  Sort: {o.label}
-                </option>
-              ))}
-            </select>
-            {!deep && (
-              <button
-                className="deep-search-btn"
-                onClick={() => setDeep(true)}
-                title="Run the full multi-tracker fan-out — slower, but catches releases the quick search misses"
-              >
-                Deep search ↻
-              </button>
-            )}
-          </div>
           {verified.length > 0 && (
             <section>
               <h3 className="section-header">Verified ({verified.length})</h3>
@@ -391,60 +412,86 @@ export default function SceneReleases({
   );
 }
 
-// AliasRetry lets the user re-run the release search under a specific
-// name spelling — for when a tracker indexed the release under an alias
-// the automatic names (library name + StashDB spellings) didn't cover.
-// Offers the scene's own performer names as one-click chips, plus a free
-// text field.
+// AliasRetry lets the user re-run the release search under a specific name
+// spelling — for when a tracker indexed the release under an alias the
+// automatic names (library name + StashDB spellings) didn't cover. Offers
+// the scene's performer names AND each performer's Stash aliases as
+// one-click chips, plus a small free-text pill for anything not listed.
 function AliasRetry({
   active,
   performers,
   onSearch,
 }: {
   active: string | null;
-  performers: string[];
+  performers: MissingPerformer[];
   onSearch: (alias: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
   const [text, setText] = useState("");
+  const [typing, setTyping] = useState(false);
 
-  if (!open && !active) {
-    return (
-      <div className="alias-retry">
-        <button className="alias-toggle" onClick={() => setOpen(true)}>
-          Search a different name…
-        </button>
-      </div>
-    );
-  }
+  // Build the suggestion list: each performer's name, then their aliases,
+  // de-duplicated (case-insensitive) preserving order. Names lead because
+  // they're the most likely spellings.
+  const seen = new Set<string>();
+  const suggestions: string[] = [];
+  const push = (s: string) => {
+    const v = s.trim();
+    const k = v.toLowerCase();
+    if (v && !seen.has(k)) {
+      seen.add(k);
+      suggestions.push(v);
+    }
+  };
+  performers.forEach((p) => push(p.name));
+  performers.forEach((p) => (p.aliases ?? []).forEach(push));
 
   return (
     <div className="alias-retry open">
       <div className="alias-row">
         <span className="alias-label">Search as:</span>
-        {performers.map((p) => (
+        {suggestions.map((s) => (
           <button
-            key={p}
-            className={"alias-chip" + (active === p ? " sel" : "")}
-            onClick={() => onSearch(p)}
+            key={s}
+            className={"alias-chip" + (active === s ? " sel" : "")}
+            onClick={() => onSearch(s)}
           >
-            {p}
+            {s}
           </button>
         ))}
-        <input
-          className="alias-input"
-          placeholder="other spelling…"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && text.trim()) onSearch(text.trim());
-          }}
-        />
+        {/* Free-text pill for a spelling none of the suggestions cover. */}
+        {typing ? (
+          <input
+            className="alias-input"
+            placeholder="other spelling…"
+            autoFocus
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && text.trim()) onSearch(text.trim());
+              if (e.key === "Escape") {
+                setTyping(false);
+                setText("");
+              }
+            }}
+            onBlur={() => {
+              if (!text.trim()) setTyping(false);
+            }}
+          />
+        ) : (
+          <button
+            className="alias-chip other"
+            onClick={() => setTyping(true)}
+            title="Type a spelling that isn't listed"
+          >
+            + other
+          </button>
+        )}
         {active && (
           <button
             className="alias-chip clear"
             onClick={() => {
               setText("");
+              setTyping(false);
               onSearch("");
             }}
           >
