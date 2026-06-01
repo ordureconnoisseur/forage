@@ -67,6 +67,56 @@ func (p *Placer) FreeSpace() (uint64, error) {
 	return uint64(st.Bavail) * uint64(st.Bsize), nil
 }
 
+// HardlinkResult reports whether placement from a given download dir into
+// the library would hardlink (cheap, no extra space, seeds keep working) or
+// fall back to a copy (different filesystem → double storage), or fail.
+type HardlinkResult struct {
+	OK       bool   // a probe ran to a conclusion (Hardlink known either way)
+	Hardlink bool   // true = same filesystem, real hardlink; false = cross-device copy
+	Reason   string // human explanation, esp. on !OK
+}
+
+// HardlinkProbe tests whether a file in downloadDir can be hardlinked into
+// the library root — the real question behind "will placement work without
+// doubling my storage?". It writes a tiny temp file in downloadDir, tries
+// os.Link into the library, and reports the outcome. Both temp files are
+// cleaned up. downloadDir is the client's complete/save path AS FORAGE SEES
+// IT (same mount namespace), so this answers the question for forage's own
+// placement, not the client's view.
+func (p *Placer) HardlinkProbe(downloadDir string) HardlinkResult {
+	if !p.Configured() {
+		return HardlinkResult{Reason: "library root not set"}
+	}
+	if strings.TrimSpace(downloadDir) == "" {
+		return HardlinkResult{Reason: "no download path to test against"}
+	}
+	if _, err := os.Stat(downloadDir); err != nil {
+		return HardlinkResult{Reason: "download path not found from forage: " + downloadDir +
+			" (is the client's save dir mounted into forage at this path?)"}
+	}
+	src := filepath.Join(downloadDir, ".forage-hardlink-probe")
+	if err := os.WriteFile(src, []byte("probe"), 0o644); err != nil {
+		return HardlinkResult{Reason: "download path not writable from forage: " + err.Error()}
+	}
+	defer os.Remove(src)
+	dst := filepath.Join(p.libraryRoot, ".forage-hardlink-probe")
+	_ = os.Remove(dst) // clear any stale probe
+	err := os.Link(src, dst)
+	if err == nil {
+		os.Remove(dst)
+		return HardlinkResult{OK: true, Hardlink: true,
+			Reason: "same filesystem — placement will hardlink (no extra space)"}
+	}
+	// Link failed: distinguish cross-device (copy fallback, still works) from
+	// a real error (e.g. library not writable).
+	var linkErr *os.LinkError
+	if errors.As(err, &linkErr) && errors.Is(linkErr.Err, syscall.EXDEV) {
+		return HardlinkResult{OK: true, Hardlink: false,
+			Reason: "download dir and library are on different filesystems — placement will COPY (uses double the space). Put both on one mount for hardlinks."}
+	}
+	return HardlinkResult{Reason: "couldn't link into the library: " + err.Error()}
+}
+
 // Place lands the source file (or folder) into
 // <libraryRoot>/<performer>/<basename>. Returns the final path.
 // Idempotent — re-running after a previous success returns the

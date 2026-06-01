@@ -194,6 +194,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
 		r.Get("/discover", s.getDiscover)
 		r.Get("/indexers", s.getIndexers)
+		r.Get("/download-setup", s.getDownloadSetup)
 		r.Get("/notifications", s.getNotifications)
 		// Stash image proxy — performer portraits + scene screenshots,
 		// fetched server-side with the stored Stash API key so the browser

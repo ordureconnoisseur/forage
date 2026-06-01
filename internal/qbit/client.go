@@ -433,6 +433,35 @@ func (c *Client) ListTorrents(ctx context.Context, opts ListOpts) ([]Torrent, er
 	return out, nil
 }
 
+// Category is a qBit category: its name and the save path downloads under
+// it land in.
+type Category struct {
+	Name     string `json:"name"`
+	SavePath string `json:"savePath"`
+}
+
+// Categories returns the client's configured categories keyed by name.
+// Read-only; used by the setup-check to verify the forage category exists
+// and points where forage expects.
+func (c *Client) Categories(ctx context.Context) (map[string]Category, error) {
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/torrents/categories", nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("qbit categories %d: %s", resp.StatusCode, body)
+	}
+	var out map[string]Category
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode categories: %w", err)
+	}
+	return out, nil
+}
+
 // TorrentInfo returns a single torrent by hash, or nil if qBit doesn't
 // know about it (deleted, never added, race). Wraps ListTorrents with
 // a single-result filter rather than hitting /torrents/properties,

@@ -1,8 +1,10 @@
 import { useState } from "react";
 import {
   adminToken,
+  type ClientCheck,
   ConfigPatch,
   fetchConfig,
+  fetchDownloadSetup,
   fetchHealth,
   foragerBase,
   Health,
@@ -184,6 +186,10 @@ export default function Setup({
 
   // Library step
   const [libraryRoot, setLibraryRoot] = useState("");
+  // Download-client setup check (category + hardlink), run on the library
+  // step where both clients and the library root are known.
+  const [dlChecks, setDlChecks] = useState<ClientCheck[] | null>(null);
+  const [dlChecking, setDlChecking] = useState(false);
   const [stashPathMapping, setStashPathMapping] = useState("");
   const [placementTest, setPlacementTest] = useState<Test>({ kind: "idle" });
   const [libraryErr, setLibraryErr] = useState<string | null>(null);
@@ -466,6 +472,36 @@ export default function Setup({
       );
     } catch (e) {
       setPlacementTest({ kind: "err", detail: (e as Error).message });
+    }
+  }
+
+  // verifyDownloadSetup saves the library root first (so the server-side
+  // hardlink probe runs against the real root), then asks the daemon to
+  // inspect each client: does the forage category exist, and will a file in
+  // its save path hardlink into the library? Read-only — fixes nothing,
+  // tells you what to fix.
+  async function verifyDownloadSetup() {
+    setDlChecking(true);
+    try {
+      if (libraryRoot.trim()) {
+        await saveConfig({ libraryRoot: libraryRoot.trim() }, { force: true });
+      }
+      const r = await fetchDownloadSetup();
+      setDlChecks(r.checks);
+    } catch (e) {
+      setDlChecks([
+        {
+          client: "",
+          category: "",
+          category_exists: false,
+          hardlink_checked: false,
+          hardlink_ok: false,
+          detail: (e as Error).message,
+          status: "error",
+        },
+      ]);
+    } finally {
+      setDlChecking(false);
     }
   }
 
@@ -961,6 +997,52 @@ export default function Setup({
                     Test library
                   </button>
                   <TestLabel test={placementTest} />
+                </div>
+                {/* Download-client setup check — verifies the forage
+                    category exists and that placement will actually hardlink
+                    (not silently copy) from the client's save dir into this
+                    library. Read-only; tells you what to fix. */}
+                <div className="setup-dlcheck">
+                  <button
+                    className="setup-secondary small"
+                    onClick={verifyDownloadSetup}
+                    disabled={dlChecking}
+                    title="Check your download clients: forage category + whether placement will hardlink"
+                  >
+                    {dlChecking ? "Checking…" : "Verify download setup"}
+                  </button>
+                  {dlChecks && dlChecks.length === 0 && (
+                    <div className="setup-dlcheck-note">
+                      No download clients configured to check.
+                    </div>
+                  )}
+                  {dlChecks && dlChecks.length > 0 && (
+                    <ul className="setup-dlcheck-list">
+                      {dlChecks.map((c, i) => (
+                        <li key={i} className={"setup-dlcheck-row " + c.status}>
+                          <span className="setup-dlcheck-icon">
+                            {c.status === "ok"
+                              ? "✓"
+                              : c.status === "warn"
+                                ? "!"
+                                : "✗"}
+                          </span>
+                          <span className="setup-dlcheck-body">
+                            <strong>
+                              {c.client === "qbit"
+                                ? "qBittorrent"
+                                : c.client === "sab"
+                                  ? "SABnzbd"
+                                  : "Client"}
+                            </strong>
+                            <span className="setup-dlcheck-detail">
+                              {c.detail}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                 </div>
                 {libraryErr && <div className="setup-err">{libraryErr}</div>}
                 <div className="setup-actions">

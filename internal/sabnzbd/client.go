@@ -248,6 +248,45 @@ func (c *Client) History(ctx context.Context, limit int) ([]Item, error) {
 
 // get is the shared GET path. SAB demands `apikey` + `output=json`
 // on every request; everything else is mode-specific.
+// Category is a SAB category: its name and the dir downloads under it land
+// in (SAB's "dir" — may be relative to the global complete dir).
+type Category struct {
+	Name string
+	Dir  string
+}
+
+// Categories returns SAB's configured categories (name + dir). Read-only;
+// used by the setup-check to verify the forage category exists and its dir
+// is where forage expects. The "*" default category is skipped.
+func (c *Client) Categories(ctx context.Context) ([]Category, error) {
+	q := url.Values{}
+	q.Set("mode", "get_config")
+	q.Set("section", "categories")
+	body, err := c.get(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Config struct {
+			Categories []struct {
+				Name string `json:"name"`
+				Dir  string `json:"dir"`
+			} `json:"categories"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, fmt.Errorf("decode categories: %w", err)
+	}
+	out := make([]Category, 0, len(resp.Config.Categories))
+	for _, c := range resp.Config.Categories {
+		if c.Name == "" || c.Name == "*" {
+			continue
+		}
+		out = append(out, Category{Name: c.Name, Dir: c.Dir})
+	}
+	return out, nil
+}
+
 func (c *Client) get(ctx context.Context, q url.Values) ([]byte, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("sab base URL not configured")

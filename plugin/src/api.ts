@@ -957,6 +957,31 @@ export async function stashDBFromStash(
   return r.json();
 }
 
+// ── Download-client setup check (read-only diagnostic) ─────────────────
+
+export interface ClientCheck {
+  client: string; // "qbit" | "sab"
+  category: string;
+  category_exists: boolean;
+  save_path?: string;
+  hardlink_checked: boolean;
+  hardlink_ok: boolean;
+  detail: string;
+  status: "ok" | "warn" | "error";
+}
+
+export interface DownloadSetup {
+  library_root: string;
+  checks: ClientCheck[];
+}
+
+// fetchDownloadSetup inspects the configured download clients: does forage's
+// category exist, where does it save, and will placement hardlink into the
+// library? Read-only — it never changes the client, just reports what to fix.
+export function fetchDownloadSetup(): Promise<DownloadSetup> {
+  return get<DownloadSetup>("/download-setup");
+}
+
 // ── Collection jobs (server-side multi-scene grabs) ────────────────────
 
 export type JobSceneStatus =
