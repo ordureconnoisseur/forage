@@ -4029,6 +4029,202 @@ code.grab-fact-v,
   border-color: var(--glass-border-bright);
 }
 
+/* ── Friendly release-prefs editor (Settings) ──────────────────────── */
+.prefs-editor {
+  display: flex;
+  flex-direction: column;
+}
+.prefs-head {
+  margin: 16px 0 2px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.prefs-sub {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.prefs-noindexers {
+  font-style: italic;
+}
+.reorder-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.reorder-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-0);
+  cursor: grab;
+}
+.reorder-row.dragging {
+  opacity: 0.5;
+  border-color: var(--accent);
+}
+.reorder-grip {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+.reorder-rank {
+  width: 16px;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.prefs-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+.idx-name {
+  font-size: 13px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reorder-move {
+  display: flex;
+  gap: 3px;
+  margin-left: auto;
+}
+.reorder-move button {
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.reorder-move button:hover:not(:disabled) {
+  border-color: var(--glass-border-bright);
+  color: var(--text);
+}
+.reorder-move button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+.idx-proto {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+.idx-proto-usenet {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.45);
+}
+.idx-block {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  opacity: 0.55;
+  padding: 2px 4px;
+}
+.idx-block:hover {
+  opacity: 1;
+}
+.prefs-floor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.prefs-floor select {
+  padding: 5px 8px;
+  border-radius: var(--radius-sm, 6px);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-0);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+.prefs-blocked {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.prefs-blocked-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.idx-blocked-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 10px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  background: var(--bg-0);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.idx-blocked-chip button {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+}
+.idx-blocked-chip button:hover {
+  color: var(--danger, #f87171);
+}
+.prefs-seg {
+  display: flex;
+  gap: 0;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  overflow: hidden;
+  width: fit-content;
+}
+.prefs-seg-btn {
+  padding: 7px 16px;
+  border: none;
+  border-right: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.prefs-seg-btn:last-child {
+  border-right: none;
+}
+.prefs-seg-btn:hover:not(.active) {
+  color: var(--text);
+}
+.prefs-seg-btn.active {
+  background: rgba(var(--accent-rgb), 0.18);
+  color: var(--accent-bright);
+}
+
 /* ─── Watch control ──────────────────────────────────────────────────
    Lives in the bottom strip of a missing-scene thumb. Idle, it's a small
    bookmark chip at bottom-left; on click it expands INLINE into a
