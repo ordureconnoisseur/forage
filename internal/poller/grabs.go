@@ -578,8 +578,16 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		// dedup). Best-effort — a failure still lets the pack confirm.
 		keep := p.pool.Settings().PackDedupKeep
 		if keep != "both" {
+			// coverageVerified gates the only irreversible dedup branch
+			// (keep="pack", which deletes pre-existing library copies). A
+			// magnet/manual pack has PackFiles==0, for which
+			// packScanCoverageOK returns true vacuously — so we must treat
+			// an unknown expected count as UNverified, not as "100% covered".
+			// This is what stops the orphan-backstop / post-restart partial
+			// confirm from destroying originals against an incomplete set.
+			coverageVerified := g.PackFiles > 0 && packScanCoverageOK(found, g.PackFiles)
 			endpoint, _ := p.identifyEndpoint(ctx, sc)
-			if deduped, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep); err != nil {
+			if deduped, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep, coverageVerified); err != nil {
 				p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
 			} else if deduped > 0 {
 				g.PackDeduped += deduped
@@ -626,7 +634,25 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 // destroyed twice. Destroy removes the Stash scene + its file; the torrent
 // keeps seeding from the download client's own (separate) hardlink.
 // Returns the count removed.
-func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, endpoint, keep string) (int, error) {
+func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab, packScenes []stash.SceneMatch, endpoint, keep string, coverageVerified bool) (int, error) {
+	// keep="pack" is the only mode that deletes copies that were already in
+	// the library (the "external" copies below). That deletion is
+	// irreversible (SceneDestroy(deleteFile=true)), so we refuse it whenever
+	// the pack scan isn't verifiably complete — a magnet/manual pack
+	// (PackFiles==0), a partial scan that confirmed via the orphan backstop,
+	// or a daemon restart that reset the in-memory settle high-water. In
+	// those cases the pack set is not trustworthy as "everything that
+	// landed," and acting on it could strand the user without an original.
+	// Skipping leaves the pack's own copy in place and destroys nothing; the
+	// duplicate simply goes unreconciled (the review path handles it
+	// deliberately). keep="existing" is always safe — it only ever drops the
+	// pack's freshly-downloaded copy — so it is not gated.
+	if keep == "pack" && !coverageVerified {
+		p.log.Warn("pack dedup: keep=pack skipped — scan coverage unverified, originals preserved",
+			"id", g.ID, "packFiles", g.PackFiles, "scanned", len(packScenes))
+		return 0, nil
+	}
+
 	packIDs := make(map[string]bool, len(packScenes))
 	for _, ps := range packScenes {
 		packIDs[ps.ID] = true

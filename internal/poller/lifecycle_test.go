@@ -19,6 +19,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
 // Happy-path smoke tests that drive a grab through the poller's state
@@ -97,6 +98,7 @@ type fakeScene struct {
 type fakeStash struct {
 	mu     sync.Mutex
 	scenes []fakeScene
+	reqs   int // total GraphQL requests served (lets a test prove a code path made no calls)
 }
 
 func (f *fakeStash) set(scenes []fakeScene) {
@@ -105,9 +107,18 @@ func (f *fakeStash) set(scenes []fakeScene) {
 	f.scenes = scenes
 }
 
+func (f *fakeStash) reqCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reqs
+}
+
 func (f *fakeStash) handler() http.Handler {
 	const stashDBEndpoint = "https://stashdb.org/graphql"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.reqs++
+		f.mu.Unlock()
 		body, _ := io.ReadAll(r.Body)
 		q := string(body)
 		switch {
@@ -493,4 +504,55 @@ func sameFile(t *testing.T, a, b string) bool {
 		t.Fatalf("stat %s: %v", b, err)
 	}
 	return os.SameFile(ai, bi)
+}
+
+// TestDedupPackGateBlocksUnverified pins the data-loss safety property:
+// the irreversible keep="pack" branch (which deletes copies that were
+// ALREADY in the library) must not run when the pack scan isn't verifiably
+// complete. Here PackFiles==0 — the magnet/manual case where
+// packScanCoverageOK is vacuously true — so coverageVerified is false. The
+// gate returns before any Stash lookup, so a zero request delta proves it
+// neither queried for external copies nor destroyed anything. Remove the
+// gate and dedupPack would call FindSceneRefsByStashID (a request), failing
+// this test — which is exactly what makes the gate load-bearing.
+func TestDedupPackGateBlocksUnverified(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	if sc == nil {
+		t.Fatal("rig stash client is nil")
+	}
+	g := &grabs.Grab{ID: 1, PackFiles: 0} // 0 ⇒ coverage unverifiable
+	packScenes := []stash.SceneMatch{{ID: "pack-1", StashDBID: "sdb-abc"}}
+
+	before := r.stash.reqCount()
+	deduped, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", false)
+	if err != nil {
+		t.Fatalf("dedupPack: %v", err)
+	}
+	if deduped != 0 {
+		t.Fatalf("gate should block all destruction, got deduped=%d", deduped)
+	}
+	if got := r.stash.reqCount() - before; got != 0 {
+		t.Fatalf("blocked keep=pack must make zero Stash calls, made %d", got)
+	}
+}
+
+// TestDedupPackVerifiedQueriesStash is the positive control for the gate:
+// with coverage verified (PackFiles>0) the keep="pack" path proceeds and
+// must look up external copies in Stash. The empty scene set means nothing
+// is actually destroyed, but the non-zero request delta proves the gate is
+// the ONLY thing suppressing the destructive path in the test above.
+func TestDedupPackVerifiedQueriesStash(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	g := &grabs.Grab{ID: 1, PackFiles: 10}
+	packScenes := []stash.SceneMatch{{ID: "pack-1", StashDBID: "sdb-abc"}}
+
+	before := r.stash.reqCount()
+	if _, err := r.poller.dedupPack(context.Background(), sc, g, packScenes, "https://stashdb.org/graphql", "pack", true); err != nil {
+		t.Fatalf("dedupPack: %v", err)
+	}
+	if got := r.stash.reqCount() - before; got == 0 {
+		t.Fatalf("verified keep=pack should query Stash for external copies, made 0 requests")
+	}
 }
