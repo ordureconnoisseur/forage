@@ -80,6 +80,14 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
+	// Reconcile first: drop any watch whose scene forage has since grabbed
+	// (by any path — Discover, missing-scenes, a release search — not just
+	// the Watching tab's own grab button). Without this a watched scene you
+	// obtained elsewhere lingers in Watching forever, since only
+	// postWatchGrab removed watches before. Clears the existing backlog the
+	// moment the tab loads.
+	s.reconcileWatches(r.Context())
+
 	ws, err := s.watches.List(r.Context())
 	if err != nil {
 		s.log.Error("watch list", "err", err)
@@ -90,6 +98,30 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 		ws = []watches.Watch{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"watches": ws})
+}
+
+// reconcileWatches deletes watches for scenes forage already has a grab for
+// (queued → confirmed, the same set Discover hides). A watch's job is "tell
+// me when I can get this scene"; once a grab exists for it, that job is done
+// regardless of where the grab came from. Best-effort: logs and moves on.
+func (s *Server) reconcileWatches(ctx context.Context) {
+	grabbed := s.grabbedSceneSet(ctx)
+	if len(grabbed) == 0 {
+		return
+	}
+	list, err := s.watches.List(ctx)
+	if err != nil {
+		return
+	}
+	for _, wt := range list {
+		if grabbed[wt.StashDBID] {
+			if err := s.watches.Delete(ctx, wt.StashDBID); err != nil {
+				s.log.Warn("watch reconcile delete", "scene", wt.StashDBID, "err", err)
+				continue
+			}
+			s.log.Info("watch resolved — scene already grabbed", "scene", wt.StashDBID)
+		}
+	}
 }
 
 func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {

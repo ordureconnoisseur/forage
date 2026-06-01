@@ -44,6 +44,10 @@ func (s *Server) RunWatchLoop(ctx context.Context) {
 
 // watchTick claims and re-checks one auto-sized batch.
 func (s *Server) watchTick(ctx context.Context) {
+	// First drop any watch whose scene has since been grabbed (by any path),
+	// so the Watching tab self-cleans even between visits. Independent of
+	// Prowlarr/StashDB — runs even when re-search can't.
+	s.reconcileWatches(ctx)
 	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
 		return
 	}
