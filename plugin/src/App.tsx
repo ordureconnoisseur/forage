@@ -432,7 +432,12 @@ export default function App() {
             <span className="coll-spinner" />
           </div>
         )}
-        {needsLogin && <Login onAuthed={() => setAuthOk(true)} />}
+        {needsLogin && (
+          <Login
+            onAuthed={() => setAuthOk(true)}
+            passwordSet={!!health?.passwordSet}
+          />
+        )}
         {needsSetup && (
           <Setup
             health={health}

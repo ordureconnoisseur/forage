@@ -345,6 +345,24 @@ export async function establishSession(): Promise<void> {
   }
 }
 
+// login posts username+password to the daemon's POST /login. On success
+// the daemon sets the forage_token cookie (a server-side session id, NOT
+// the password) and we're authenticated by that cookie thereafter — no
+// localStorage involved. Throws ApiError(401) on bad credentials, which
+// the Login view renders as "incorrect username or password".
+export async function login(username: string, password: string): Promise<void> {
+  const r = await fetch(foragerBase() + "/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+    credentials: "include",
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({ error: r.statusText }));
+    throw new ApiError(r.status, e.error || `HTTP ${r.status}`);
+  }
+}
+
 // verifyToken probes a gated endpoint to confirm the stored token (Bearer
 // header + cookie) is currently accepted. Returns true on 200, false on a
 // 401 (or unreachable). Deliberately does NOT fire the global unauthorized
@@ -704,7 +722,13 @@ export interface Health {
   placerConfigured: boolean;
   libraryRoot: string;
   unconfigured: boolean;
+  // True when a credential is configured (password OR API key) and the UI
+  // must show a login gate.
   adminAuthRequired: boolean;
+  // True when a username+password is set — the UI shows the password login
+  // form; false (with adminAuthRequired) means a token-only daemon, so the
+  // UI falls back to the API-key field.
+  passwordSet: boolean;
 }
 
 export function fetchHealth(): Promise<Health> {
@@ -774,10 +798,16 @@ export interface ConfigPatch {
   orphanAfter?: string;
   cacheRefresh?: string;
   allowedOrigin?: string;
-  // Shared secret gating every API route. Empty clears it (auth off).
-  // Stored server-side in config.json; the plugin adopts it into
-  // localStorage after a successful save so it keeps authenticating.
+  // API key gating programmatic clients. Empty clears it. Stored
+  // server-side in config.json; the plugin adopts it into localStorage
+  // after a successful save so it keeps authenticating.
   adminToken?: string;
+  // Web-UI login name. Paired with `password`.
+  username?: string;
+  // Write-only plaintext password — the daemon bcrypt-hashes it; the hash
+  // never round-trips back. Empty string clears it (turns password login
+  // off). Omit to leave unchanged.
+  password?: string;
 }
 
 export interface ProbeResult {

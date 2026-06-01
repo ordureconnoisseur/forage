@@ -8,6 +8,7 @@ import {
   fetchConfig,
   foragerBase,
   Health,
+  login,
   mixedContentBlocked,
   ProbeResult,
   saveConfig,
@@ -72,6 +73,9 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  // Confirm-password field (local only — never sent; the daemon receives
+  // just `password` once it matches).
+  const [pwConfirm, setPwConfirm] = useState("");
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     connection: true,
     stash: true,
@@ -198,16 +202,33 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
       setSaveMsg("nothing to save");
       return;
     }
+    // A new password must match its confirmation before we send it.
+    // (Clearing it — empty string — needs no confirm.)
+    if (patch.password && patch.password !== pwConfirm) {
+      setSaveFailed(true);
+      setSaveMsg("passwords don't match");
+      return;
+    }
     setSaving(true);
     setSaveMsg(null);
     setSaveFailed(false);
     try {
-      // Capture a token change before the patch is cleared. The save
-      // POST authenticates with the CURRENT (old) token; once it
-      // succeeds the daemon requires the new one, so this browser must
-      // adopt it — otherwise its next request would 401. Clearing it
-      // ("") turns auth off and removes the stored token.
+      // Capture an API-key change before the patch is cleared. The save
+      // POST authenticates with the CURRENT (old) key; once it succeeds
+      // the daemon requires the new one, so this browser must adopt it —
+      // otherwise its next request would 401. Clearing it ("") turns the
+      // key off and removes the stored value.
       const tokenChange = patch.adminToken;
+      // A new password sets the daemon's password login. Auth is
+      // cookie-based, so to keep this browser authenticated after the save
+      // we log in with the just-entered credentials (establishing the
+      // session cookie) before the refetch — otherwise the gated
+      // fetchConfig below would 401.
+      const pwChange = patch.password;
+      const userForLogin =
+        patch.username !== undefined
+          ? patch.username
+          : ((data?.fields["username"]?.value as string) || "");
       const r = await saveConfig(patch, { force });
       if (r.results) setProbes(r.results);
       if (!r.ok) {
@@ -218,10 +239,24 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           setAdminToken(tokenChange);
           setToken(tokenChange); // keep the Connection field in sync
         }
+        if (pwChange) {
+          try {
+            await login(userForLogin, pwChange);
+          } catch {
+            // Couldn't auto-establish the session — the user can re-login
+            // from the gate. The refetch below may 401 and bounce there.
+          }
+        }
         // Server reloaded; clear the patch and refetch (now authenticated
-        // with the new token, if one was set).
+        // with the new key/cookie, if one was set).
         setPatch({});
-        setSaveMsg(tokenChange !== undefined ? "saved — token updated" : "saved");
+        setPwConfirm("");
+        const note = pwChange
+          ? "saved — password updated"
+          : tokenChange !== undefined
+            ? "saved — API key updated"
+            : "saved";
+        setSaveMsg(note);
         const fresh = await fetchConfig();
         setData(fresh);
       }
@@ -270,11 +305,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             />
           </Field>
           {health?.adminAuthRequired && (
-            <Field label="Admin token">
+            <Field label="API key">
               <SecretInput
                 value={token}
                 onChange={setToken}
-                placeholder="Bearer token for /config endpoints"
+                placeholder="Bearer API key (clients/scripts)"
               />
             </Field>
           )}
@@ -666,7 +701,48 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           isOpen={open.security}
           onToggle={() => setOpen((o) => ({ ...o, security: !o.security }))}
         >
-          <Field label="Admin token">
+          <h4 className="settings-subhead">Login (username + password)</h4>
+          <Field label="Username">
+            <input
+              type="text"
+              value={displayValue("username", data?.fields["username"])}
+              onChange={(e) => setField("username", e.target.value)}
+              placeholder="username"
+              spellCheck={false}
+              autoComplete="username"
+            />
+            <SourceBadge field={data?.fields["username"]} />
+          </Field>
+          <Field label="Password">
+            <SecretInput
+              value={patch.password ?? ""}
+              onChange={(v) => setField("password", v)}
+              placeholder={
+                data?.fields["passwordHash"]?.hasSecret
+                  ? "•••••••• (set; leave blank to keep)"
+                  : "no password — set one to enable login"
+              }
+            />
+          </Field>
+          <Field label="Confirm password">
+            <SecretInput
+              value={pwConfirm}
+              onChange={setPwConfirm}
+              placeholder="re-enter password"
+            />
+          </Field>
+          <p className="settings-tip">
+            The username + password you sign in with — the normal web login.
+            The daemon stores only a bcrypt hash, never the password itself.
+            Leave the password blank to keep the current one; clear it (type
+            a space then delete, then save with the field empty) only via{" "}
+            <strong>Save changes</strong>. After setting a password this
+            browser stays signed in automatically; other devices sign in
+            with the same credentials.
+          </p>
+
+          <h4 className="settings-subhead">API key</h4>
+          <Field label="API key">
             <div className="token-row">
               <SecretInput
                 value={displayValue("adminToken", data?.fields["adminToken"])}
@@ -674,14 +750,14 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
                 placeholder={
                   hasSecretPlaceholder("adminToken", data?.fields["adminToken"])
                     ? "•••••••• (set; leave blank to keep)"
-                    : "no token — API is open"
+                    : "no key — programmatic access open"
                 }
               />
               <button
                 type="button"
                 className="settings-test"
                 onClick={() => setField("adminToken", randomToken())}
-                title="Generate a strong random token"
+                title="Generate a strong random key"
               >
                 Generate
               </button>
@@ -689,16 +765,16 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             <SourceBadge field={data?.fields["adminToken"]} />
           </Field>
           <p className="settings-tip">
-            A shared secret that every client must send to reach the API —
-            like an *arr API key. While it's blank, anyone who can reach
-            the daemon can browse your library and submit grabs, so set one
-            if forage is reachable beyond a trusted network.{" "}
-            <strong>Generate</strong> → <strong>Save changes</strong> and
-            this browser adopts the new token automatically; other devices
-            enter it under Connection. Clear the field to turn auth off.
-            Recover a lost token from <code>data/config.json</code> on the
-            daemon host. An env <code>FORAGER_ADMIN_TOKEN</code> still
-            applies when this is blank.
+            A shared secret for programmatic clients and scripts, sent as{" "}
+            <code>Authorization: Bearer &lt;key&gt;</code> — like an *arr API
+            key. Separate from the web login above. While both it and the
+            password are blank, anyone who can reach the daemon can browse
+            your library and submit grabs, so set a login if forage is
+            reachable beyond a trusted network. <strong>Generate</strong> →{" "}
+            <strong>Save changes</strong> and this browser adopts the new key
+            automatically. Recover a lost key from{" "}
+            <code>data/config.json</code> on the daemon host. An env{" "}
+            <code>FORAGER_ADMIN_TOKEN</code> still applies when this is blank.
           </p>
           {health?.adminAuthRequired && (
             <>

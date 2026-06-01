@@ -1,26 +1,70 @@
 import { useState } from "react";
-import { adminToken, clearSession, establishSession, setAdminToken, verifyToken } from "../api";
+import {
+  adminToken,
+  clearSession,
+  establishSession,
+  login,
+  setAdminToken,
+  verifyToken,
+} from "../api";
 import AcornIcon from "../AcornIcon";
 
 // Login gate — shown when the daemon reports adminAuthRequired but this
-// browser doesn't hold a valid token (the *arr login page). Distinct from
-// the setup wizard: the wizard configures an *unconfigured* daemon; this
-// unlocks a *configured but locked* one. Reuses the .setup-* styling so it
-// looks of a piece with onboarding.
+// browser isn't authenticated. Distinct from the setup wizard: the wizard
+// configures an *unconfigured* daemon; this unlocks a *configured but
+// locked* one. Reuses the .setup-* styling so it looks of a piece with
+// onboarding.
 //
-// On submit we store the token, establish the forage_token cookie (so
-// <img> loads authenticate), then verify against a gated endpoint before
-// declaring success — a stored-but-wrong token stays on the gate with an
-// inline "Token rejected" message rather than entering a 401-ing app.
-export default function Login({ onAuthed }: { onAuthed: () => void }) {
+// Two login paths, matching the daemon's two-credential model:
+//   - Username + password (the default; `passwordSet`) → POST /login,
+//     which sets the forage_token session cookie. On success we're authed
+//     by that cookie — no localStorage involved.
+//   - API key (the admin token) → the fallback for a token-only daemon, or
+//     for a client that only holds the key. Stores the token, establishes
+//     the cookie, and verifies against a gated endpoint before entering.
+export default function Login({
+  onAuthed,
+  passwordSet,
+}: {
+  onAuthed: () => void;
+  passwordSet: boolean;
+}) {
+  // Default to the password form when the daemon has one; otherwise the
+  // only way in is the API key.
+  const [mode, setMode] = useState<"password" | "apikey">(
+    passwordSet ? "password" : "apikey",
+  );
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [token, setToken] = useState(adminToken());
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function submit() {
+  async function submitPassword() {
+    if (!username.trim() || !password) {
+      setErr("Enter your username and password");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await login(username.trim(), password);
+      // The session cookie is set; we're in.
+      onAuthed();
+    } catch (e) {
+      const msg = (e as Error & { status?: number }).status
+        ? "Incorrect username or password"
+        : "Couldn't reach the daemon — try again";
+      setErr(msg);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitToken() {
     const t = token.trim();
     if (!t) {
-      setErr("Enter your admin token");
+      setErr("Enter your API key");
       return;
     }
     setBusy(true);
@@ -31,11 +75,11 @@ export default function Login({ onAuthed }: { onAuthed: () => void }) {
       if (await verifyToken()) {
         onAuthed();
       } else {
-        // Reject cleanly: drop the bad token + cookie so a reload doesn't
+        // Reject cleanly: drop the bad key + cookie so a reload doesn't
         // resurrect a half-authenticated state.
         setAdminToken("");
         await clearSession();
-        setErr("Token rejected — check it and try again");
+        setErr("API key rejected — check it and try again");
       }
     } catch {
       setErr("Couldn't reach the daemon — try again");
@@ -51,33 +95,103 @@ export default function Login({ onAuthed }: { onAuthed: () => void }) {
           <AcornIcon className="setup-acorn" />
           <h1>forage</h1>
           <p className="setup-tagline">
-            🔒 This forage is locked. Enter your admin token to continue.
+            🔒 This forage is locked. {mode === "password"
+              ? "Sign in to continue."
+              : "Enter your API key to continue."}
           </p>
         </div>
         <div className="setup-step">
-          <label className="setup-field">
-            <span>Admin token</span>
-            <input
-              type="password"
-              value={token}
-              spellCheck={false}
-              autoComplete="off"
-              autoFocus
-              placeholder="admin token"
-              onChange={(e) => setToken(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && !busy && submit()}
-            />
-          </label>
-          {err && <div className="setup-err">{err}</div>}
-          <div className="setup-actions">
-            <button
-              className="setup-primary"
-              onClick={submit}
-              disabled={busy || !token.trim()}
-            >
-              {busy ? "Checking…" : "Log in"}
-            </button>
-          </div>
+          {mode === "password" ? (
+            <>
+              <label className="setup-field">
+                <span>Username</span>
+                <input
+                  type="text"
+                  value={username}
+                  spellCheck={false}
+                  autoComplete="username"
+                  autoFocus
+                  placeholder="username"
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && !busy && submitPassword()
+                  }
+                />
+              </label>
+              <label className="setup-field">
+                <span>Password</span>
+                <input
+                  type="password"
+                  value={password}
+                  spellCheck={false}
+                  autoComplete="current-password"
+                  placeholder="password"
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={(e) =>
+                    e.key === "Enter" && !busy && submitPassword()
+                  }
+                />
+              </label>
+              {err && <div className="setup-err">{err}</div>}
+              <div className="setup-actions">
+                <button
+                  className="setup-primary"
+                  onClick={submitPassword}
+                  disabled={busy || !username.trim() || !password}
+                >
+                  {busy ? "Signing in…" : "Sign in"}
+                </button>
+              </div>
+              <button
+                type="button"
+                className="setup-link"
+                onClick={() => {
+                  setErr(null);
+                  setMode("apikey");
+                }}
+              >
+                Use an API key instead
+              </button>
+            </>
+          ) : (
+            <>
+              <label className="setup-field">
+                <span>API key</span>
+                <input
+                  type="password"
+                  value={token}
+                  spellCheck={false}
+                  autoComplete="off"
+                  autoFocus
+                  placeholder="API key"
+                  onChange={(e) => setToken(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && !busy && submitToken()}
+                />
+              </label>
+              {err && <div className="setup-err">{err}</div>}
+              <div className="setup-actions">
+                <button
+                  className="setup-primary"
+                  onClick={submitToken}
+                  disabled={busy || !token.trim()}
+                >
+                  {busy ? "Checking…" : "Log in"}
+                </button>
+              </div>
+              {passwordSet && (
+                <button
+                  type="button"
+                  className="setup-link"
+                  onClick={() => {
+                    setErr(null);
+                    setMode("password");
+                  }}
+                >
+                  Sign in with username + password
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
