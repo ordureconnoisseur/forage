@@ -519,6 +519,12 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// directory. Re-fire it, throttled, until scenes appear.
 	if found == 0 {
 		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) {
+			// Surface a persistent miss: if this keeps logging after the pack
+			// has landed + Stash scanned, `needle` doesn't match how Stash
+			// indexed the files (a path-mapping issue) — and identify never
+			// fires because we return here before it.
+			p.log.Info("pack: no scenes indexed under path yet, re-scanning",
+				"id", g.ID, "needle", needle, "placed", g.PlacedPath)
 			p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
 		}
 		return dirty, nil
