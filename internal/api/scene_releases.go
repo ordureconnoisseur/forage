@@ -404,6 +404,35 @@ func seedTier(r sceneRelease) int {
 // /scenes/{id}/releases endpoint and the collection-job worker so the
 // verify/badge logic — and the stored candidate list a job exposes for
 // re-pick — is identical to the interactive view.
+// javCodeConf is the confidence assigned to a release verified purely by a
+// matching JAV code — same floor the matcher uses for a code auto-verify.
+const javCodeConf = 0.85
+
+// javCodeMatches reports whether the release title and the target scene title
+// share a JAV code (e.g. release "OAE302" and scene "OAE-302" → "oae-302").
+// A code uniquely identifies a JAV scene, so a shared code is a definitive
+// match — the basis for accepting bare-code indexer results (OneJAV).
+func javCodeMatches(relTitle, sceneTitle string) bool {
+	rel := matcher.ExtractJAVCodes(relTitle)
+	if len(rel) == 0 {
+		return false
+	}
+	scene := matcher.ExtractJAVCodes(sceneTitle)
+	if len(scene) == 0 {
+		return false
+	}
+	have := make(map[string]bool, len(scene))
+	for _, c := range scene {
+		have[c] = true
+	}
+	for _, c := range rel {
+		if have[c] {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID, sceneTitle string, releases []prowlarr.Release) []sceneRelease {
 	scorer := s.releaseScorer()
 	titles := make([]string, len(releases))
@@ -433,6 +462,20 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 				bestOtherTitle = top.Scene.Title
 				bestOtherConf = top.Confidence
 			}
+		}
+		// JAV-code shortcut. Some indexers (OneJAV) title results as the bare
+		// code with no performer/studio/date ("OAE302"), so the matcher
+		// gathers no candidate scenes and can't verify them — they'd vanish.
+		// But a JAV code uniquely identifies the scene: if the release's code
+		// matches the target scene's, it IS this scene. Verify directly. (The
+		// code extractor normalises "OAE302" and "OAE-302" to the same form.)
+		if !verified && javCodeMatches(rel.Title, sceneTitle) {
+			verified = true
+			if conf < javCodeConf {
+				conf = javCodeConf
+			}
+			reasons = append(reasons, "jav code matches scene")
+			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
 		}
 		sc := scorer.Score(rel.Title, rel.Indexer, rel.Protocol)
 		out[res.Index] = sceneRelease{

@@ -21,3 +21,26 @@ func TestReleaseContentKey(t *testing.T) {
 		t.Error("different size/title should produce a different content key")
 	}
 }
+
+// TestJavCodeMatches: a bare-code OneJAV title verifies against a
+// hyphenated/decorated scene title sharing the same code, and a different
+// code doesn't.
+func TestJavCodeMatches(t *testing.T) {
+	cases := []struct {
+		rel, scene string
+		want       bool
+	}{
+		{"OAE302", "OAE-302", true},                              // OneJAV bare vs scene hyphenated
+		{"OAE302", "瀬戸環奈 OAE-302 (ボール・ドッド) 2026 WEB-DL", true}, // code inside a decorated title
+		{"+++ [FHD] SSIS-858 …", "SSIS-858", true},               // decorated release vs bare scene code
+		{"OAE302", "OAE-308", false},                             // different number
+		{"OAE302", "SSIS-302", false},                            // different studio prefix
+		{"Some WEB-DL 1080p release", "OAE-302", false},          // no code in release
+		{"OAE302", "Performer Scene Title", false},               // no code in scene
+	}
+	for _, c := range cases {
+		if got := javCodeMatches(c.rel, c.scene); got != c.want {
+			t.Errorf("javCodeMatches(%q, %q) = %v, want %v", c.rel, c.scene, got, c.want)
+		}
+	}
+}
