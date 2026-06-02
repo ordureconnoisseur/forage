@@ -290,7 +290,13 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 	// the file stays in the download client's complete dir and Stash
 	// confirmation works against that location instead.
 	pl := p.pool.Placer()
-	if g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" {
+	if g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" &&
+		p.grabStillExists(ctx, g.ID) {
+		// grabStillExists is re-checked immediately before the side-effecting
+		// place: a concurrent delete during the tick's earlier I/O would
+		// otherwise have us hardlink a file into the library for a grab being
+		// torn down, leaving an orphaned untracked copy. (Shrinks the race to
+		// the Get→Place gap; the deleted grab's later CAS write is a no-op.)
 		res, err := pl.Place(srcPath, g.PerformerName)
 		if err != nil {
 			// Don't flip status — stay in "completed" so we retry next
@@ -1221,6 +1227,18 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		dirty = true
 	}
 	return dirty, "", nil
+}
+
+// grabStillExists reports whether the grab row is still present — checked
+// right before placement so a delete that purged it mid-tick stops us
+// creating an orphaned library file. A read error is treated as "exists" (we
+// don't want a transient DB hiccup to skip a legitimate placement).
+func (p *Poller) grabStillExists(ctx context.Context, id int64) bool {
+	g, err := p.repo.Get(ctx, id)
+	if err != nil {
+		return true
+	}
+	return g != nil
 }
 
 func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {

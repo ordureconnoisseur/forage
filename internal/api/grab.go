@@ -104,6 +104,26 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 		return grabResponse{}, grabError{http.StatusBadRequest,
 			"download_url must be an http(s) or magnet URL"}
 	}
+	// Idempotency: if a non-failed grab for this exact URL already exists,
+	// return it instead of creating a second. Stops a double-click — or two
+	// job-review "grab" requests racing on the same suggestion — from
+	// duplicating the download. A FAILED prior grab doesn't block: re-grabbing
+	// the same URL is a legitimate fresh attempt. (MaxOpenConns(1) serialises
+	// the check+insert, so sequential clicks are caught; a truly simultaneous
+	// pair has a tiny residual window, acceptable vs a download_url unique
+	// index that would forbid post-failure re-grabs.)
+	if s.grabs != nil {
+		if existing, err := s.grabs.ByDownloadURL(ctx, req.DownloadURL); err == nil &&
+			existing != nil && existing.Status != "failed" {
+			s.log.Info("grab deduped: non-failed grab for this URL exists",
+				"grab_id", existing.ID, "status", existing.Status, "release", req.ReleaseTitle)
+			return grabResponse{
+				OK: true, Client: existing.Client, Category: existing.Category,
+				GrabID: existing.ID, ClientID: existing.ClientID,
+			}, nil
+		}
+	}
+
 	protocol := req.Protocol
 	if protocol == "" {
 		protocol = inferProtocol(req.DownloadURL)
