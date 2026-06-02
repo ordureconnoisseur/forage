@@ -9,6 +9,7 @@ package poller
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -468,7 +469,19 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 	}
 
 	if dirty {
-		return p.repo.Update(ctx, *g)
+		// The tick loaded this grab via Active() at the top of tickOnce, then
+		// did seconds of network I/O. If an API mutation (reassign, match,
+		// retry, delete) committed in that window, our snapshot is stale —
+		// the CAS in Update rejects it. Treat that as benign: drop this
+		// tick's write so we don't revert the user's change; the next tick
+		// re-loads the fresh row and re-derives state.
+		if err := p.repo.Update(ctx, *g); err != nil {
+			if errors.Is(err, grabs.ErrStaleUpdate) {
+				p.log.Info("grab changed under tick; skipping stale write", "id", g.ID)
+				return nil
+			}
+			return err
+		}
 	}
 	return nil
 }

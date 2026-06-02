@@ -92,7 +92,12 @@ CREATE TABLE IF NOT EXISTS grabs (
   -- download-progress tracking for stalled detection (qBit torrents):
   -- progress is 0..1; progress_at is the unix time it last increased.
   progress              REAL NOT NULL DEFAULT 0,
-  progress_at           INTEGER NOT NULL DEFAULT 0
+  progress_at           INTEGER NOT NULL DEFAULT 0,
+  -- optimistic-lock version: bumped on every Update; the WHERE clause
+  -- matches on it so a stale writer (poller tick vs concurrent API edit)
+  -- loses instead of clobbering. MUST stay the last column so SELECT *
+  -- column order matches the ALTER-appended column on migrated DBs.
+  rev                   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_grabs_status     ON grabs(status);
 CREATE INDEX IF NOT EXISTS idx_grabs_client_id  ON grabs(client_id);

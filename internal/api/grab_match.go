@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -130,11 +131,14 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grab.ActualStashDBID = target
-	grab.Status = "confirmed"
-	grab.Reason = "manually matched to StashDB"
-	grab.ConfirmedAt = nowUnix()
-	if err := s.grabs.Update(r.Context(), *grab); err != nil {
+	// CAS-retry so a poller tick mid-request can't revert the manual match
+	// (or be reverted by it).
+	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
+		fresh.ActualStashDBID = target
+		fresh.Status = "confirmed"
+		fresh.Reason = "manually matched to StashDB"
+		fresh.ConfirmedAt = nowUnix()
+	}); err != nil {
 		s.log.Error("grab match update", "id", gid, "err", err)
 	}
 	s.log.Info("grab manually matched", "id", gid, "stashdb", target,

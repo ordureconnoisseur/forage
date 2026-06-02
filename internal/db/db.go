@@ -176,6 +176,25 @@ func migrateGrabsColumns(db *sql.DB) error {
 		}
 	}
 
+	// 2026-06-02 optimistic-lock migration: a monotonic rev, bumped on every
+	// Update, used as a compare-and-set guard so the poller tick can't
+	// clobber a concurrent API write (performer reassign, manual match) it
+	// held a stale snapshot across — and vice versa.
+	revCols := []struct{ col, decl string }{
+		{"rev", `ALTER TABLE grabs ADD COLUMN rev INTEGER NOT NULL DEFAULT 0`},
+	}
+	for _, c := range revCols {
+		exists, err := has(c.col)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := db.Exec(c.decl); err != nil {
+				return fmt.Errorf("add %s column: %w", c.col, err)
+			}
+		}
+	}
+
 	// 2026-05-26 discover migration: per-performer aggregates that
 	// power /performers sort=last_release|missing_count. The new
 	// recent_scene_cache table is created by schema.sql itself

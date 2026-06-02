@@ -228,11 +228,14 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 	// recent-additions — and a recovered duplicate links straight to the
 	// already-present download instead of being lost.
 	if hash != "" && s.grabs != nil {
-		if g, gerr := s.grabs.Get(ctx, grabID); gerr == nil && g != nil && g.ClientID == "" {
-			g.ClientID = hash
-			if uerr := s.grabs.Update(ctx, *g); uerr != nil {
-				s.log.Warn("link grab hash", "grab_id", grabID, "err", uerr)
+		// Link only if the poller hasn't already linked it (pickRecent) —
+		// CAS-retry so a concurrent tick write doesn't make us lose the hash.
+		if uerr := s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
+			if g.ClientID == "" {
+				g.ClientID = hash
 			}
+		}); uerr != nil {
+			s.log.Warn("link grab hash", "grab_id", grabID, "err", uerr)
 		}
 	}
 	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash)
@@ -359,6 +362,32 @@ func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("retry all failed", "retried", retried, "skipped", skipped)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retried": retried, "skipped": skipped})
+}
+
+// applyGrabUpdate loads the grab fresh, runs apply (which sets the handler's
+// final fields), and persists it with the optimistic-lock retry. If a
+// concurrent poller tick bumped the row between our Get and Update, the CAS
+// rejects the write (ErrStaleUpdate) and we re-Get + re-apply once more, so
+// an API mutation never spuriously fails — or clobbers — because the tick
+// happened to write in the same instant. apply MUST be idempotent (it re-runs
+// on a fresh row).
+func (s *Server) applyGrabUpdate(ctx context.Context, id int64, apply func(*grabs.Grab)) error {
+	for attempt := 0; attempt < 3; attempt++ {
+		g, err := s.grabs.Get(ctx, id)
+		if err != nil {
+			return err
+		}
+		if g == nil {
+			return fmt.Errorf("grab %d not found", id)
+		}
+		apply(g)
+		err = s.grabs.Update(ctx, *g)
+		if errors.Is(err, grabs.ErrStaleUpdate) {
+			continue // someone wrote between Get and Update — reload + retry
+		}
+		return err
+	}
+	return grabs.ErrStaleUpdate
 }
 
 // humanBytes formats a byte count as a compact GB/MB string for grab

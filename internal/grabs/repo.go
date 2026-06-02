@@ -10,9 +10,18 @@ package grabs
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
+
+// ErrStaleUpdate is returned by Update when the row changed since the caller
+// loaded it (optimistic-lock miss on updated_at). The poller's tick holds a
+// grab snapshot across seconds of network I/O before writing; this lets a
+// concurrent API mutation (performer reassign, manual match) win instead of
+// being silently clobbered by the stale tick write. The poller treats it as
+// benign (re-loads next tick); API handlers re-Get + reapply + retry once.
+var ErrStaleUpdate = errors.New("grabs: update lost optimistic lock (row changed since load)")
 
 // Grab is the in-memory shape; columns map 1:1 onto the SQLite schema.
 // All optional fields are pointer-or-zero so they can be NULL on disk.
@@ -65,6 +74,10 @@ type Grab struct {
 	// surfaced. Torrent-only; SAB grabs leave these at 0.
 	Progress   float64
 	ProgressAt int64
+	// Rev is the optimistic-lock version, bumped by Update. Carry the value
+	// you loaded back into Update; if the row's rev advanced meanwhile (a
+	// concurrent write), Update returns ErrStaleUpdate rather than clobber.
+	Rev int64
 }
 
 // Repo is the persistence boundary. One per *sql.DB.
@@ -124,9 +137,16 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 // Update writes the mutable fields back to disk and bumps updated_at.
 // The poller calls this after each tick's status transition. Caller is
 // responsible for setting reason / timestamps before calling.
+// Update writes the full grab row, optimistically locked on rev: the WHERE
+// matches only if the row's rev still equals the one the caller loaded, and
+// the update bumps rev. A concurrent write (the poller tick holding a
+// snapshot across seconds of I/O vs an API mutation) advances rev, so the
+// loser matches 0 rows and gets ErrStaleUpdate instead of silently
+// overwriting the winner's columns. rev is monotonic (not time-based), so
+// even writes within the same instant are distinguished.
 func (r *Repo) Update(ctx context.Context, g Grab) error {
 	now := time.Now().Unix()
-	_, err := r.db.ExecContext(ctx, `
+	res, err := r.db.ExecContext(ctx, `
 		UPDATE grabs SET
 		  client_id = ?, client_name = ?, status = ?,
 		  actual_stashdb_id = ?, reason = ?,
@@ -136,8 +156,9 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  placed_at = COALESCE(?, placed_at),
 		  confirmed_at = COALESCE(?, confirmed_at),
 		  pack_files = ?, pack_identified = ?, pack_deduped = ?,
-		  progress = ?, progress_at = ?
-		WHERE id = ?`,
+		  progress = ?, progress_at = ?,
+		  rev = rev + 1
+		WHERE id = ? AND rev = ?`,
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
@@ -145,10 +166,13 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.PackFiles, g.PackIdentified, g.PackDeduped,
 		g.Progress, g.ProgressAt,
-		g.ID,
+		g.ID, g.Rev,
 	)
 	if err != nil {
 		return fmt.Errorf("grabs update id=%d: %w", g.ID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrStaleUpdate
 	}
 	return nil
 }
@@ -329,7 +353,7 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		kind, pack_files, pack_identified, pack_deduped,
-		progress, progress_at`
+		progress, progress_at, rev`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -364,7 +388,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
 		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
-		&g.Progress, &g.ProgressAt)
+		&g.Progress, &g.ProgressAt, &g.Rev)
 	if err != nil {
 		return g, err
 	}

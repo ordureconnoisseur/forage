@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
 type setPerformerRequest struct {
@@ -98,10 +99,16 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 		s.log.Info("grab performer set (not yet placed)", "id", gid, "performer", performer)
 	}
 
-	g.PerformerName = performer
-	g.PlaceError = ""
-	g.Reason = "performer set manually"
-	if err := s.grabs.Update(r.Context(), *g); err != nil {
+	// Persist the reassignment with the optimistic-lock retry so a poller
+	// tick mid-request can't clobber it (or be clobbered by it). The placed
+	// path may have changed above when we re-filed.
+	finalPlaced := g.PlacedPath
+	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
+		fresh.PerformerName = performer
+		fresh.PlaceError = ""
+		fresh.Reason = "performer set manually"
+		fresh.PlacedPath = finalPlaced
+	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
