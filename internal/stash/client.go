@@ -693,7 +693,14 @@ func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]Scen
 	if needle == "" {
 		return nil, nil
 	}
-	pattern := regexp.QuoteMeta(needle)
+	// Anchor to a directory boundary: a pack's files live INSIDE the placed
+	// dir, so require a path separator immediately after the needle. This
+	// stops the bare substring from matching a sibling that merely shares the
+	// name as a prefix (e.g. needle "comatozze" matching "comatozze (2)" or a
+	// file "...comatozze....mp4"), which would pull unrelated, cross-id-less
+	// scenes into the pack's identify/dedup set. (Trailing separators on the
+	// needle are trimmed so the anchor doesn't require two.)
+	pattern := regexp.QuoteMeta(strings.TrimRight(needle, `/\`)) + `[\\/]`
 	const perPage = 1000
 	var out []SceneMatch
 	for page := 1; ; page++ {
