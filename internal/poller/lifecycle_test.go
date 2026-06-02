@@ -506,6 +506,48 @@ func sameFile(t *testing.T, a, b string) bool {
 	return os.SameFile(ai, bi)
 }
 
+// TestPartialDownloadNotCompleted pins that progress — not the qBit state
+// name — governs completion. A torrent stopped mid-download (qBit v5
+// "stoppedDL") at 80% must stay "downloading" and NOT be placed/scanned. The
+// old classifyQbitState default mapped unrecognized states to "completed",
+// so a stoppedDL/transient state triggered a premature placement + Stash scan
+// of a half-downloaded pack (the Sara Diamante symptom).
+func TestPartialDownloadNotCompleted(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	const (
+		hash     = "partialhash"
+		fileName = "Sara.Diamante.Pack.2160p.mkv"
+	)
+	src := r.stageFile(t, fileName)
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Sara Diamante - Pack",
+		Client:       "qbit",
+		ClientID:     hash,
+		Category:     "forager",
+		Status:       "downloading",
+		Kind:         "pack",
+		GrabbedAt:    time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Stopped mid-download at 80% — the v5 state name the old default would
+	// have read as completed.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "stoppedDL", Progress: 0.8, ContentPath: src,
+	}})
+	r.tick(t)
+	g := r.get(t, id)
+	if g.Status != "downloading" {
+		t.Fatalf("partial (0.8) stoppedDL: status=%q, want downloading", g.Status)
+	}
+	if g.PlacedPath != "" {
+		t.Fatalf("partial download must not be placed, got placed_path=%q", g.PlacedPath)
+	}
+}
+
 // TestDedupPackGateBlocksUnverified pins the data-loss safety property:
 // the irreversible keep="pack" branch (which deletes copies that were
 // ALREADY in the library) must not run when the pack scan isn't verifiably

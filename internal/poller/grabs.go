@@ -938,6 +938,17 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 	}
 
 	newStatus := classifyQbitState(t.State)
+	// Progress is the authority for completion, not the state name. qBit
+	// reports transient mid-download states — v5's "stoppedDL" (paused),
+	// "checkingResumeData", "moving" — that classifyQbitState's default would
+	// otherwise read as "completed", triggering a premature placement + Stash
+	// scan of a half-downloaded pack. A torrent that isn't 100% is still
+	// downloading no matter what its state string says. (The self-heal below
+	// undoes a placement that slipped through; this stops it at the source so
+	// no premature scan fires in the first place.)
+	if newStatus == "completed" && t.Progress < 1 {
+		newStatus = "downloading"
+	}
 	// Don't downgrade post-completed states (placed/scanned/etc.)
 	// back to "completed" just because qBit still reports the torrent
 	// as seeding (the most common case). qBit's view is limited to
@@ -1275,14 +1286,20 @@ func isPostCompleted(status string) bool {
 // vocabulary handled in advanceSab.
 func classifyQbitState(state string) string {
 	switch state {
-	case "downloading", "stalledDL", "metaDL", "queuedDL", "checkingDL", "forcedDL", "allocating":
+	// Download-side states. qBit v5 renamed "pausedDL" → "stoppedDL"; both
+	// mean stopped mid-download, so they must read as in-progress, not done.
+	case "downloading", "stalledDL", "metaDL", "queuedDL", "checkingDL", "forcedDL",
+		"allocating", "pausedDL", "stoppedDL":
 		return "downloading"
-	case "uploading", "stalledUP", "queuedUP", "checkingUP", "forcedUP", "pausedUP":
+	// Seed-side / done states. v5 renamed "pausedUP" → "stoppedUP".
+	case "uploading", "stalledUP", "queuedUP", "checkingUP", "forcedUP", "pausedUP", "stoppedUP":
 		return "completed"
 	case "missingFiles", "error":
 		return "failed"
 	}
-	// "completed" and other terminal-success states.
+	// "completed" and other terminal/transient states (moving,
+	// checkingResumeData, …). The caller gates "completed" on progress >= 1,
+	// so a transient state on a partial torrent can't slip through as done.
 	return "completed"
 }
 
