@@ -41,6 +41,7 @@ type Server struct {
 	watches   *watches.Repo // never nil
 	log       *slog.Logger
 	version   string
+	adoptNow  func(context.Context) int // force-adopt callback (poller.AdoptNow); may be nil
 
 	refreshMu sync.Mutex
 
@@ -127,6 +128,10 @@ type Options struct {
 	Watches   *watches.Repo
 	Log       *slog.Logger
 	Version   string
+	// AdoptNow force-adopts untracked forage-category download-client
+	// torrents immediately (poller.AdoptNow), bypassing the adoption grace.
+	// Backs the Grabs "scan for new downloads" button. Returns the count.
+	AdoptNow func(context.Context) int
 }
 
 func New(opts Options) *Server {
@@ -139,6 +144,7 @@ func New(opts Options) *Server {
 		watches:   opts.Watches,
 		log:       opts.Log,
 		version:   opts.Version,
+		adoptNow:  opts.AdoptNow,
 		jobs:      newJobStore(),
 	}
 }
@@ -185,6 +191,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grab/torrent", s.postGrabTorrent)
 		r.Post("/grab/torrent/inspect", s.postGrabTorrentInspect)
 		r.Get("/grabs", s.getGrabs)
+		r.Post("/grabs/adopt", s.postAdopt)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
 		r.Post("/grabs/{id}/match", s.postGrabMatch)
 		r.Post("/grabs/{id}/performer", s.postGrabPerformer)

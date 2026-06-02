@@ -121,6 +121,24 @@ func isPlaceFailing(g grabs.Grab) bool {
 		g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > placeFailingAfter
 }
 
+// postAdopt force-adopts every untracked forage-category download-client
+// torrent immediately, bypassing the 5-minute adoption grace.
+//
+//	POST /grabs/adopt
+//
+// Backs the Grabs "scan for new downloads" button — for when you've
+// bulk-added torrents to the client manually and don't want to wait out the
+// grace. Safe: forage won't re-adopt a torrent it already tracks.
+func (s *Server) postAdopt(w http.ResponseWriter, r *http.Request) {
+	if s.adoptNow == nil {
+		writeErr(w, http.StatusServiceUnavailable, "adoption unavailable (no poller)")
+		return
+	}
+	n := s.adoptNow(r.Context())
+	s.log.Info("manual adopt", "adopted", n)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "adopted": n})
+}
+
 // getGrabs returns the most-recent grabs with status totals for the
 // UI's Grabs tab. Filterable by status; defaults to "any".
 func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {

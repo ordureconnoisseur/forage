@@ -676,6 +676,13 @@ export interface GrabsResponse {
   totals: Partial<Record<GrabStatus, number>>;
 }
 
+// adoptDownloads force-adopts forage-category torrents the user added to the
+// download client manually, immediately (bypassing the 5-min adoption grace).
+// Returns how many new grabs were created.
+export function adoptDownloads(): Promise<{ ok: boolean; adopted: number }> {
+  return postJSON("/grabs/adopt", {});
+}
+
 export function fetchGrabs(opts?: {
   status?: GrabStatus | "any";
   limit?: number;

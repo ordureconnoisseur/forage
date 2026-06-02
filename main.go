@@ -96,6 +96,7 @@ func main() {
 		Watches:   watchesRepo,
 		Log:       log.With("component", "api"),
 		Version:   Version,
+		AdoptNow:  p.AdoptNow,
 	})
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-

@@ -10,6 +10,7 @@ import {
 import { humanSize } from "../format";
 import {
   ACTIVE_STATUSES,
+  adoptDownloads,
   deleteGrab,
   DeleteGrabResult,
   fetchGrabDetail,
@@ -85,6 +86,7 @@ export default function GrabsList({
   const [q, setQ] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
+  const [adopting, setAdopting] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addFile, setAddFile] = useState<File | null>(null);
   const [addInspect, setAddInspect] = useState<TorrentInspect | null>(null);
@@ -105,6 +107,27 @@ export default function GrabsList({
       /* next poll tick will recover */
     }
   }, []);
+
+  // Force-adopt torrents added to the download client manually, now —
+  // bypassing the 5-minute grace, so a bulk manual add shows up immediately
+  // instead of after the wait.
+  async function scanForDownloads() {
+    if (adopting) return;
+    setAdopting(true);
+    try {
+      const res = await adoptDownloads();
+      setNotice(
+        res.adopted > 0
+          ? `Adopted ${res.adopted} new download${res.adopted === 1 ? "" : "s"}`
+          : "No new downloads to adopt",
+      );
+      await refresh();
+    } catch (e) {
+      setNotice("Scan failed: " + (e as Error).message);
+    } finally {
+      setAdopting(false);
+    }
+  }
 
   // Clear the add form back to empty — deselects the file, drops the
   // inspect result, and clears the folder. (Does not close the form.)
@@ -432,6 +455,16 @@ export default function GrabsList({
             />
           ))}
         </div>
+
+        {/* Force-adopt torrents added to the client manually, right now. */}
+        <button
+          className="grab-adopt-btn"
+          onClick={scanForDownloads}
+          disabled={adopting}
+          title="Adopt torrents you added to the download client manually — skips the 5-minute wait"
+        >
+          {adopting ? "Scanning…" : "↻ Scan for downloads"}
+        </button>
       </div>
 
       {notice && (

@@ -46,6 +46,11 @@ type Poller struct {
 	identifyMu       sync.Mutex
 	stashBoxEndpoint string
 
+	// adoptMu serialises orphan adoption so the periodic tick and a
+	// manual force-adopt (AdoptNow) can't race the known-id check and
+	// double-insert the same torrent.
+	adoptMu sync.Mutex
+
 	// lastScan throttles per-grab metadataScan retries. The initial
 	// post-placement scan can be coalesced by Stash with a concurrent
 	// one (e.g. several grabs placed into the same folder in one tick)
@@ -162,7 +167,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	// Adopt any forager-category qBit torrents we aren't tracking yet,
 	// before loading active grabs so a freshly-adopted one is processed
 	// this same tick.
-	p.adoptOrphans(ctx)
+	p.adoptOrphans(ctx, adoptionGrace)
 	active, err := p.repo.Active(ctx)
 	if err != nil {
 		return err
@@ -996,36 +1001,51 @@ const adoptionGrace = 5 * time.Minute
 // adopted torrent is treated as a pack. Keep in sync with that const.
 const adoptMinVideos = 3
 
+// AdoptNow force-adopts every untracked forage-category torrent
+// immediately, bypassing the adoption grace — for the Grabs "scan for new
+// downloads" button, where the user has bulk-added torrents manually and
+// there's no UI grab to race. Returns how many were adopted. Safe to call
+// alongside the periodic tick: adoptOrphans serialises on adoptMu and the
+// known-id check prevents double-adoption.
+func (p *Poller) AdoptNow(ctx context.Context) int {
+	return p.adoptOrphans(ctx, 0)
+}
+
 // adoptOrphans creates grab rows for torrents the user added directly to
-// qBit under the configured forager category that forage isn't tracking
+// qBit under the configured forage category that forage isn't tracking
 // yet, so they flow through the normal place → scan → identify → dedup
 // pipeline exactly like a UI add. Scoped strictly to that category;
 // other categories (the *arr stack, ad-hoc qBit use) are never touched.
-// qBit *tags* are ignored — only the category matches.
-func (p *Poller) adoptOrphans(ctx context.Context) {
+// qBit *tags* are ignored — only the category matches. minAge skips
+// torrents added more recently than it (the periodic tick passes
+// adoptionGrace; a manual force-adopt passes 0). Returns the count adopted.
+func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
+	p.adoptMu.Lock()
+	defer p.adoptMu.Unlock()
 	qb := p.pool.Qbit()
 	if qb == nil {
-		return
+		return 0
 	}
 	cat := p.pool.Settings().QbitCategory
 	if cat == "" {
-		return // never adopt uncategorised torrents
+		return 0 // never adopt uncategorised torrents
 	}
 	ts, err := qb.ListTorrents(ctx, qbit.ListOpts{Category: cat, Filter: "all"})
 	if err != nil {
 		p.log.Warn("adopt: list torrents", "err", err)
-		return
+		return 0
 	}
 	if len(ts) == 0 {
-		return
+		return 0
 	}
 	known, err := p.repo.KnownClientIDs(ctx)
 	if err != nil {
 		p.log.Warn("adopt: known client ids", "err", err)
-		return
+		return 0
 	}
+	adopted := 0
 	now := time.Now().Unix()
-	graceSecs := int64(adoptionGrace / time.Second)
+	graceSecs := int64(minAge / time.Second)
 	for i := range ts {
 		t := &ts[i]
 		if t.Hash == "" || known[t.Hash] {
@@ -1063,9 +1083,11 @@ func (p *Poller) adoptOrphans(ctx context.Context) {
 			p.log.Warn("adopt: insert", "hash", t.Hash, "name", t.Name, "err", err)
 			continue
 		}
+		adopted++
 		p.log.Info("adopted qbit torrent", "id", id, "name", t.Name,
 			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder)
 	}
+	return adopted
 }
 
 // classifyTorrent counts a torrent's video files via qBit's metainfo file

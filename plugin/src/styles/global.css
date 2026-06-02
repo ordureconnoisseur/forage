@@ -5786,3 +5786,28 @@ code.grab-fact-v,
   opacity: 0.6;
   cursor: default;
 }
+
+/* "Scan for downloads" — force-adopt button at the end of the Grabs filter
+   strip. Quiet glass chip; accent on hover. */
+.grab-adopt-btn {
+  margin-left: auto;
+  flex: none;
+  padding: 5px 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.grab-adopt-btn:hover:not(:disabled) {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+}
+.grab-adopt-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
