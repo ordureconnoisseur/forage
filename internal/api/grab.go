@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -225,11 +226,77 @@ func (s *Server) insertGrab(ctx context.Context, req grabRequest, client, client
 	return id
 }
 
-// addTorrentAsync fetches the .torrent and hands it to qBit off the
-// request path. On failure it marks the grab failed so the row doesn't
-// sit "queued" forever. Uses a fresh background context with a generous
-// timeout (the request's ctx is already gone — the response returned).
+// Bounds for auto-retrying a rate-limited .torrent fetch (indexer HTTP
+// 429/503). Backoff is exponential off the base, capped — so a bulk batch
+// that trips the indexer's limit fills in on its own instead of a wall of
+// fails. minFetchInterval spaces fetches so the burst doesn't 429 to begin
+// with.
+const (
+	addMaxAttempts   = 5
+	addBackoffBase   = 20 * time.Second
+	addBackoffCap    = 3 * time.Minute
+	minFetchInterval = 2 * time.Second
+)
+
+// fetchGate spaces out .torrent fetches. Each caller reserves the next slot
+// (>= minFetchInterval after the previous) and waits for it, so concurrent
+// bulk adds/retries trickle to the indexer instead of bursting.
+type fetchGate struct {
+	mu   sync.Mutex
+	next time.Time
+}
+
+func (g *fetchGate) wait(ctx context.Context) {
+	g.mu.Lock()
+	at := g.next
+	if now := time.Now(); at.Before(now) {
+		at = now
+	}
+	g.next = at.Add(minFetchInterval)
+	g.mu.Unlock()
+	d := time.Until(at)
+	if d <= 0 {
+		return
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-t.C:
+	case <-ctx.Done():
+	}
+}
+
+// isTransientFetchErr reports whether a torrent-add failure is a transient
+// indexer rate-limit / unavailability (HTTP 429 / 503) worth auto-retrying,
+// vs a permanent problem (bad torrent, qbit declined) that should fail now.
+func isTransientFetchErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	s := strings.ToLower(err.Error())
+	return strings.Contains(s, "429") ||
+		strings.Contains(s, "503") ||
+		strings.Contains(s, "too many requests") ||
+		strings.Contains(s, "rate limit")
+}
+
+func addBackoff(attempt int) time.Duration {
+	d := addBackoffBase << (attempt - 1)
+	if d <= 0 || d > addBackoffCap {
+		d = addBackoffCap
+	}
+	return d
+}
+
+// addTorrentAsync fetches the .torrent and hands it to qBit off the request
+// path. A transient indexer error (429/503) is auto-retried with backoff
+// (the grab stays queued); a permanent error fails the grab so the row
+// doesn't sit "queued" forever.
 func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, 1)
+}
+
+func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	qb := s.pool.Qbit()
@@ -237,19 +304,40 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 		s.failGrab(ctx, grabID, "qbit not configured")
 		return
 	}
+	// On a re-attempt, bail if the grab is gone or no longer queued — deleted,
+	// retried by the user, or already linked — so we don't double-add.
+	if attempt > 1 && s.grabs != nil {
+		if g, _ := s.grabs.Get(ctx, grabID); g == nil || g.Status != "queued" {
+			return
+		}
+	}
+	s.torrentGate.wait(ctx) // throttle so a bulk batch doesn't burst into 429s
 	hash, err := qb.AddTorrent(ctx, downloadURL, category)
 	if err != nil {
-		s.log.Error("async torrent add", "release", releaseTitle, "grab_id", grabID, "err", err)
-		s.failGrab(ctx, grabID, "torrent add: "+err.Error())
+		if isTransientFetchErr(err) && attempt < addMaxAttempts {
+			d := addBackoff(attempt)
+			s.log.Warn("torrent add rate-limited; auto-retrying",
+				"grab_id", grabID, "attempt", attempt, "retry_in", d.String(), "err", err)
+			if s.grabs != nil {
+				_ = s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
+					if g.Status == "queued" {
+						g.Reason = fmt.Sprintf("indexer rate-limited — auto-retrying (%d/%d)", attempt, addMaxAttempts)
+					}
+				})
+			}
+			time.AfterFunc(d, func() {
+				s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, attempt+1)
+			})
+			return
+		}
+		s.log.Error("async torrent add", "release", releaseTitle, "grab_id", grabID, "attempt", attempt, "err", err)
+		s.failGrab(context.Background(), grabID, "torrent add: "+err.Error())
 		return
 	}
-	// Link the grab to its qBit torrent by info-hash when we have it
-	// (fetched .torrent), so the poller doesn't have to guess via
-	// recent-additions — and a recovered duplicate links straight to the
-	// already-present download instead of being lost.
+	// Link the grab to its qBit torrent by info-hash when we have it, only if
+	// the poller hasn't already linked it (pickRecent) — CAS-retry so a
+	// concurrent tick write doesn't make us lose the hash.
 	if hash != "" && s.grabs != nil {
-		// Link only if the poller hasn't already linked it (pickRecent) —
-		// CAS-retry so a concurrent tick write doesn't make us lose the hash.
 		if uerr := s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
 			if g.ClientID == "" {
 				g.ClientID = hash
@@ -258,7 +346,7 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 			s.log.Warn("link grab hash", "grab_id", grabID, "err", uerr)
 		}
 	}
-	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash)
+	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash, "attempt", attempt)
 }
 
 // postGrabRetry re-attempts a failed grab using its stored download URL —

@@ -43,6 +43,11 @@ type Server struct {
 	version   string
 	adoptNow  func(context.Context) int // force-adopt callback (poller.AdoptNow); may be nil
 
+	// torrentGate spaces out .torrent fetches (addTorrentAsync) so a bulk
+	// grab or bulk-retry doesn't burst the indexer into HTTP 429s. Zero value
+	// is ready to use.
+	torrentGate fetchGate
+
 	refreshMu sync.Mutex
 
 	// Lazy-constructed matcher — needs a populated cache, so we wait
