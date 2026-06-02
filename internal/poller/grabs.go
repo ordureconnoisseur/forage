@@ -1001,14 +1001,21 @@ const adoptionGrace = 5 * time.Minute
 // adopted torrent is treated as a pack. Keep in sync with that const.
 const adoptMinVideos = 3
 
-// AdoptNow force-adopts every untracked forage-category torrent
-// immediately, bypassing the adoption grace — for the Grabs "scan for new
-// downloads" button, where the user has bulk-added torrents manually and
-// there's no UI grab to race. Returns how many were adopted. Safe to call
-// alongside the periodic tick: adoptOrphans serialises on adoptMu and the
-// known-id check prevents double-adoption.
+// manualAdoptGrace is the (short) minimum age the "scan for new downloads"
+// button honours — far below the periodic adoptionGrace, but non-zero so it
+// can't adopt one of forage's OWN just-added torrents (a fresh grab or a
+// retry) before that grab has linked its info-hash, which would create a
+// duplicate adopted row.
+const manualAdoptGrace = 90 * time.Second
+
+// AdoptNow force-adopts untracked forage-category torrents for the Grabs
+// "scan for new downloads" button — much sooner than the 5-minute periodic
+// grace, but still skipping torrents added in the last 90s so it can't race
+// forage's own in-flight adds. Returns how many were adopted. Safe alongside
+// the periodic tick: adoptOrphans serialises on adoptMu and the known-id
+// check prevents double-adoption.
 func (p *Poller) AdoptNow(ctx context.Context) int {
-	return p.adoptOrphans(ctx, 0)
+	return p.adoptOrphans(ctx, manualAdoptGrace)
 }
 
 // adoptOrphans creates grab rows for torrents the user added directly to

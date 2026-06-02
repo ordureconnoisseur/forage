@@ -281,12 +281,15 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 		return grabError{http.StatusUnprocessableEntity, "grab has no download URL to retry"}
 	}
 	settings := s.pool.Settings()
-	// Reset: clear the prior failure + client link so the poller re-links a
-	// fresh add.
+	// Reset the failure, but KEEP the client link: a torrent's info-hash
+	// doesn't change on retry, and clearing g.ClientID would drop the
+	// torrent out of KnownClientIDs — so a still-present qBit torrent (with
+	// its original, often past-grace AddedOn) gets adopted as a DUPLICATE
+	// grab. addTorrentAsync re-adds idempotently and links the hash only if
+	// we don't already have one.
 	g.Status = "queued"
 	g.Reason = "retry requested"
 	g.PlaceError = ""
-	g.ClientID = ""
 
 	switch g.Client {
 	case "qbit":
@@ -298,7 +301,9 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 			cat = settings.QbitCategory
 		}
 		g.Category = cat
-		g.ClientID = magnetInfoHash(g.DownloadURL) // pin hash for magnets
+		if g.ClientID == "" {
+			g.ClientID = magnetInfoHash(g.DownloadURL) // pin magnet hash when we have none
+		}
 		if err := s.grabs.Update(ctx, *g); err != nil {
 			return err
 		}
