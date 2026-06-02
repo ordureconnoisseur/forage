@@ -218,7 +218,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		// forager item can be buried fast. Too small a window and a
 		// legitimately-completed grab scrolls out before the poller
 		// sees it land, leaving it stuck mid-pipeline.
-		sabHistory, err = sb.History(ctx, 200)
+		sabHistory, err = sb.History(ctx, 200, p.pool.Settings().SabCategory)
 		if err != nil {
 			p.log.Warn("sab history fetch", "err", err)
 		}

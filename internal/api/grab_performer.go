@@ -73,9 +73,17 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 		}
 		src := s.grabSourcePath(r.Context(), g.Client, g.ClientID)
 		if src == "" {
-			writeErr(w, http.StatusUnprocessableEntity,
-				"the download is no longer in the client, so there's nothing to re-file")
-			return
+			// The client source is gone (usenet auto-deleted after place, or
+			// the torrent was removed). We can still re-file from the existing
+			// library placement — hardlink/copy it into the new performer
+			// folder. Only give up when there's nothing on disk either.
+			if g.PlacedPath != "" {
+				src = g.PlacedPath
+			} else {
+				writeErr(w, http.StatusUnprocessableEntity,
+					"the download is no longer in the client and nothing is placed, so there's nothing to re-file")
+				return
+			}
 		}
 		res, err := pl.Place(src, performer)
 		if err != nil {
@@ -136,7 +144,7 @@ func (s *Server) grabSourcePath(ctx context.Context, client, clientID string) st
 		}
 	case "sabnzbd":
 		if sb := s.pool.Sab(); sb != nil {
-			if items, err := sb.History(ctx, 0); err == nil {
+			if items, err := sb.History(ctx, 0, ""); err == nil { // lookup by nzo id — search all categories
 				for _, it := range items {
 					if it.NzoID == clientID {
 						return it.Path

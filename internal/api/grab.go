@@ -455,9 +455,19 @@ func (s *Server) failGrab(ctx context.Context, grabID int64, reason string) {
 	if err != nil || g == nil {
 		return
 	}
+	// Only fail a grab still sitting in 'queued'. If the poller has already
+	// advanced it (downloading/placed/…), the add "failure" was a false alarm
+	// — the client accepted the torrent but our add-response read tripped —
+	// and regressing a live download to failed would be wrong. (The CAS in
+	// Update covers a poller write that lands AFTER our Get; this covers the
+	// case where we loaded the already-advanced row.)
+	if g.Status != "queued" {
+		s.log.Info("skip fail: grab already advanced past queued", "grab_id", grabID, "status", g.Status)
+		return
+	}
 	g.Status = "failed"
 	g.Reason = reason
-	if err := s.grabs.Update(ctx, *g); err != nil {
+	if err := s.grabs.Update(ctx, *g); err != nil && !errors.Is(err, grabs.ErrStaleUpdate) {
 		s.log.Warn("mark grab failed", "grab_id", grabID, "err", err)
 	}
 }

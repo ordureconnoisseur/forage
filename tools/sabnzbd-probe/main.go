@@ -54,7 +54,7 @@ func main() {
 		}
 	}
 
-	h, err := client.History(ctx, 5)
+	h, err := client.History(ctx, 5, "")
 	if err != nil {
 		log.Error("history", "err", err)
 	} else {

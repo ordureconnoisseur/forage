@@ -142,7 +142,7 @@ func main() {
 
 	if sabC != nil {
 		fmt.Fprintf(os.Stderr, "pulling SAB history (download names — unrepresentative)…\n")
-		history, err := sabC.History(ctx, 1000)
+		history, err := sabC.History(ctx, 1000, "")
 		if err != nil {
 			warn("sab history: %v", err)
 		} else {

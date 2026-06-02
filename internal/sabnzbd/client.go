@@ -205,17 +205,25 @@ func parseTimeLeft(s string) int64 {
 	return total
 }
 
-// History returns the most-recently-completed items, newest first.
-// Used by the poller to detect "completed" state and recover the
-// final on-disk filename for Stash matching.
-func (c *Client) History(ctx context.Context, limit int) ([]Item, error) {
+// History returns the most-recently-completed items, newest first. Used by
+// the poller to detect "completed" state and recover the final on-disk
+// filename for Stash matching. When category is non-empty SAB scopes the
+// result to it — important for the poller's fixed-size window: otherwise a
+// burst of OTHER-category jobs on a busy SAB can push a forage job out of the
+// limit before the poller sees it complete, and the not-found branch then
+// falsely fails the (actually done) grab.
+func (c *Client) History(ctx context.Context, limit int, category string) ([]Item, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	body, err := c.get(ctx, url.Values{
+	v := url.Values{
 		"mode":  {"history"},
 		"limit": {strconv.Itoa(limit)},
-	})
+	}
+	if category != "" {
+		v.Set("category", category)
+	}
+	body, err := c.get(ctx, v)
 	if err != nil {
 		return nil, err
 	}
