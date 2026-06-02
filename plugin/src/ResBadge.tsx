@@ -9,7 +9,8 @@ export function resolution(
   const t = title.toLowerCase();
   // 4K is named both by height (2160p) and width (3840p) in the wild.
   if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return { label: "4K", cls: "res-4k" };
-  if (/\b1080p?\b/.test(t)) return { label: "1080p", cls: "res-1080" };
+  // FHD / FHDC (JAV/sukebei "Full HD") are 1080p.
+  if (/\b(1080p?|fhdc?)\b/.test(t)) return { label: "1080p", cls: "res-1080" };
   if (/\b720p?\b/.test(t)) return { label: "720p", cls: "res-720" };
   if (/\b480p?\b/.test(t)) return { label: "480p", cls: "res-480" };
   return null;

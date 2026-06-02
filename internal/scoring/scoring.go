@@ -29,13 +29,29 @@ var (
 	re1080 = regexp.MustCompile(`(?i)\b1080p?\b`)
 	re720  = regexp.MustCompile(`(?i)\b720p?\b`)
 	re480  = regexp.MustCompile(`(?i)\b(480p?|360p?)\b`)
+	// fhdToken matches the JAV/sukebei "Full HD" labels FHD and FHDC — both
+	// are 1080p. JAV releases use these instead of "1080p", so without
+	// canonicalizing them a 1080p rule (and the resolution classifier) misses
+	// them entirely and the release scores as no-resolution.
+	fhdToken = regexp.MustCompile(`(?i)\bfhdc?\b`)
 )
+
+// CanonicalizeResolution rewrites resolution synonyms in a release title to
+// the standard token rules key off — currently FHD/FHDC → 1080p. Applied
+// before OnTitle rule matching and inside Resolution(), so a user's existing
+// `\b1080p?\b` rule catches JAV Full-HD releases without re-saving anything.
+// Like the matcher's diacritic folding: a normalization layer, not magic
+// scoring — the rules stay clean and synonym-agnostic.
+func CanonicalizeResolution(title string) string {
+	return fhdToken.ReplaceAllString(title, "1080p")
+}
 
 // Resolution classifies a release title into its highest resolution tier
 // (4K wins over 1080 if both appear, which happens in dual-version
 // releases). Returns ResNone when no resolution token is present — the
 // common bare-SiteRip case. Used by the watch loop's exact-match target.
 func Resolution(title string) string {
+	title = CanonicalizeResolution(title)
 	switch {
 	case re4k.MatchString(title):
 		return Res4K
@@ -146,7 +162,9 @@ func (s *Scorer) Score(title, indexer, protocol string) Result {
 		if c.re == nil {
 			continue
 		}
-		subject := title
+		// Title rules match against a resolution-canonicalized title so JAV
+		// synonyms (FHD/FHDC → 1080p) hit the user's standard rules.
+		subject := CanonicalizeResolution(title)
 		switch c.rule.On {
 		case OnIndexer:
 			subject = indexer

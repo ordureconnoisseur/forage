@@ -486,6 +486,11 @@ func (s *Server) processJobScene(ctx context.Context, m *matcher.Matcher, job *c
 		if cands[a].Score != cands[b].Score {
 			return cands[a].Score > cands[b].Score
 		}
+		// Prefer healthier seeds within equal score (mirrors the interactive
+		// release ranking) so suggestions aren't barely-seeded torrents.
+		if ta, tb := seedTier(cands[a]), seedTier(cands[b]); ta != tb {
+			return ta > tb
+		}
 		return cands[a].Popularity > cands[b].Popularity
 	})
 

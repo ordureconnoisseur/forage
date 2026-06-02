@@ -170,8 +170,15 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		if out[i].Score != out[j].Score {
 			return out[i].Score > out[j].Score
 		}
-		// Within equal score (same resolution/indexer), the larger file is
-		// the better encode — prefer it over an over-compressed sibling.
+		// Seed health before file size: a marginally-larger file mustn't
+		// promote a barely-seeded release over a well-seeded one of equal
+		// score (the "picked the 1-seeder over the 49-seeder" bug). Tiers are
+		// coarse, so a real encode-size edge still breaks a same-health tie.
+		if ti, tj := seedTier(out[i]), seedTier(out[j]); ti != tj {
+			return ti > tj
+		}
+		// Within equal score + seed health, the larger file is the better
+		// encode — prefer it over an over-compressed sibling.
 		if out[i].Size != out[j].Size {
 			return out[i].Size > out[j].Size
 		}
@@ -369,6 +376,26 @@ func releaseContentKey(r prowlarr.Release) string {
 // it's always considered grabbable.
 func grabbable(r sceneRelease) bool {
 	return !(r.Protocol == "torrent" && r.Seeders == 0)
+}
+
+// seedTier buckets torrent seed health so a marginal file-size edge can't
+// promote a barely-seeded release over a well-seeded one of equal score:
+// 0 = dead, 1 = risky (1-4), 2 = ok (5-19), 3 = healthy (20+). Usenet has no
+// seeders, so it's treated as healthy — its deliverability doesn't decay.
+func seedTier(r sceneRelease) int {
+	if r.Protocol != "torrent" {
+		return 3
+	}
+	switch {
+	case r.Seeders >= 20:
+		return 3
+	case r.Seeders >= 5:
+		return 2
+	case r.Seeders >= 1:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // verifyReleases runs the matcher over a set of Prowlarr releases and

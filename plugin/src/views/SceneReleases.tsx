@@ -61,9 +61,22 @@ function resolutionRank(title: string): number {
   const t = title.toLowerCase();
   // 4K named by height (2160p) or width (3840p).
   if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return 2160;
-  if (/\b1080p?\b/.test(t)) return 1080;
+  // FHD / FHDC are JAV/sukebei labels for Full HD = 1080p.
+  if (/\b(1080p?|fhdc?)\b/.test(t)) return 1080;
   if (/\b720p?\b/.test(t)) return 720;
   if (/\b480p?\b/.test(t)) return 480;
+  return 0;
+}
+
+// seedTier buckets torrent seed health (mirrors the backend) so a marginal
+// file-size edge can't promote a barely-seeded release over a well-seeded one
+// of equal score. Usenet has no seeders → treated as healthy.
+function seedTier(r: SceneRelease): number {
+  if (r.protocol !== "torrent") return 3;
+  const s = r.seeders ?? 0;
+  if (s >= 20) return 3;
+  if (s >= 5) return 2;
+  if (s >= 1) return 1;
   return 0;
 }
 
@@ -108,6 +121,8 @@ function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
       if (sd !== 0) return sd;
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
+      const ht = seedTier(b) - seedTier(a); // healthier seeds before size
+      if (ht !== 0) return ht;
       if (b.size !== a.size) return b.size - a.size; // bigger encode wins
       return b.popularity - a.popularity;
     }
@@ -118,6 +133,8 @@ function sortReleases(rels: SceneRelease[], sort: ReleaseSort): SceneRelease[] {
       if (sd !== 0) return sd;
       const d = resolutionRank(b.title) - resolutionRank(a.title);
       if (d !== 0) return d;
+      const ht = seedTier(b) - seedTier(a);
+      if (ht !== 0) return ht;
       if (b.size !== a.size) return b.size - a.size;
       return b.popularity - a.popularity;
     }

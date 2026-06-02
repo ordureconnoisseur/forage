@@ -120,6 +120,31 @@ func TestDefaultsResolution(t *testing.T) {
 	}
 }
 
+// TestFHDScoresAs1080p: JAV/sukebei "FHD"/"FHDC" labels must score and
+// classify as 1080p via canonicalization, so the user's existing
+// `\b1080p?\b` rule catches them without a rule edit (the OAE-302 bug —
+// FHD/FHDC releases scoring as no-resolution).
+func TestFHDScoresAs1080p(t *testing.T) {
+	s := New([]Rule{{Label: "1080p", On: OnTitle, Pattern: `\b1080p?\b`, Points: 100}})
+	for _, title := range []string{
+		"+++ [FHD] OAE-302",
+		"+++ [FHDC] OAE-302",
+		"OAE-302 fhd",
+	} {
+		if got := s.Score(title, "", "").Score; got != 100 {
+			t.Errorf("Score(%q)=%d, want 100 (FHD→1080p)", title, got)
+		}
+		if r := Resolution(title); r != Res1080 {
+			t.Errorf("Resolution(%q)=%q, want %q", title, r, Res1080)
+		}
+	}
+	// A real "1080p" still works, and an unrelated word containing "fhd" as a
+	// substring (not a token) must NOT trigger.
+	if got := s.Score("Scene 1080p", "", "").Score; got != 100 {
+		t.Errorf("plain 1080p should still score 100, got %d", got)
+	}
+}
+
 func TestDefaultUsenetPreference(t *testing.T) {
 	s := New(DefaultRules())
 	// Same resolution: usenet wins the tie (+25).
