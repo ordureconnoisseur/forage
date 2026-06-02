@@ -257,18 +257,32 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "grab not found")
 		return
 	}
-	if g.Status != "failed" {
-		writeErr(w, http.StatusUnprocessableEntity, "only failed grabs can be retried")
+	if err := s.retryGrab(r.Context(), g); err != nil {
+		var ge grabError
+		if errors.As(err, &ge) {
+			writeErr(w, ge.status, ge.msg)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// retryGrab re-queues one failed grab: clears the prior failure + client
+// link and re-adds to the download client (async for qBit, sync for SAB).
+// Returns a grabError carrying an HTTP status for the typed failures.
+// Shared by the single-retry endpoint and the bulk retry-all-failed.
+func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
+	if g.Status != "failed" {
+		return grabError{http.StatusUnprocessableEntity, "only failed grabs can be retried"}
 	}
 	if g.DownloadURL == "" {
-		writeErr(w, http.StatusUnprocessableEntity, "grab has no download URL to retry")
-		return
+		return grabError{http.StatusUnprocessableEntity, "grab has no download URL to retry"}
 	}
-
 	settings := s.pool.Settings()
-	// Reset: clear the prior failure + client link so the poller re-links
-	// a fresh add.
+	// Reset: clear the prior failure + client link so the poller re-links a
+	// fresh add.
 	g.Status = "queued"
 	g.Reason = "retry requested"
 	g.PlaceError = ""
@@ -277,8 +291,7 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 	switch g.Client {
 	case "qbit":
 		if s.pool.Qbit() == nil {
-			writeErr(w, http.StatusServiceUnavailable, "qbit not configured")
-			return
+			return grabError{http.StatusServiceUnavailable, "qbit not configured"}
 		}
 		cat := g.Category
 		if cat == "" {
@@ -286,33 +299,61 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 		}
 		g.Category = cat
 		g.ClientID = magnetInfoHash(g.DownloadURL) // pin hash for magnets
-		_ = s.grabs.Update(r.Context(), *g)
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			return err
+		}
 		go s.addTorrentAsync(g.DownloadURL, cat, g.ReleaseTitle, g.ID)
 	case "sabnzbd":
 		sb := s.pool.Sab()
 		if sb == nil {
-			writeErr(w, http.StatusServiceUnavailable, "sab not configured")
-			return
+			return grabError{http.StatusServiceUnavailable, "sab not configured"}
 		}
 		cat := g.Category
 		if cat == "" {
 			cat = settings.SabCategory
 		}
-		clientID, aerr := sb.AddURL(r.Context(), g.DownloadURL, cat)
+		clientID, aerr := sb.AddURL(ctx, g.DownloadURL, cat)
 		if aerr != nil {
-			s.failGrab(r.Context(), g.ID, "retry add: "+aerr.Error())
-			writeErr(w, http.StatusBadGateway, "sabnzbd: "+aerr.Error())
-			return
+			s.failGrab(ctx, g.ID, "retry add: "+aerr.Error())
+			return grabError{http.StatusBadGateway, "sabnzbd: " + aerr.Error()}
 		}
 		g.Category = cat
 		g.ClientID = clientID
-		_ = s.grabs.Update(r.Context(), *g)
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			return err
+		}
 	default:
-		writeErr(w, http.StatusUnprocessableEntity, "unknown client; can't retry")
-		return
+		return grabError{http.StatusUnprocessableEntity, "unknown client; can't retry"}
 	}
 	s.log.Info("grab retry", "id", g.ID, "client", g.Client, "release", g.ReleaseTitle)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
+}
+
+// postRetryAllFailed re-queues every failed grab that has a download URL —
+// the bulk recovery after a collection-job batch where many grabs failed.
+// Grabs with no URL (or another client issue) are skipped, not fatal.
+func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
+	if s.grabs == nil {
+		writeErr(w, http.StatusServiceUnavailable, "grabs unavailable")
+		return
+	}
+	failed, err := s.grabs.List(r.Context(), "failed", 500, 0)
+	if err != nil {
+		s.log.Error("retry-all list", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	retried, skipped := 0, 0
+	for i := range failed {
+		g := failed[i]
+		if rerr := s.retryGrab(r.Context(), &g); rerr != nil {
+			skipped++
+			continue
+		}
+		retried++
+	}
+	s.log.Info("retry all failed", "retried", retried, "skipped", skipped)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retried": retried, "skipped": skipped})
 }
 
 // humanBytes formats a byte count as a compact GB/MB string for grab

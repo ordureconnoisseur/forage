@@ -5787,10 +5787,15 @@ code.grab-fact-v,
   cursor: default;
 }
 
-/* "Scan for downloads" — force-adopt button at the end of the Grabs filter
-   strip. Quiet glass chip; accent on hover. */
-.grab-adopt-btn {
+/* List-level action buttons (Retry failed, Scan for downloads), right-
+   aligned at the end of the Grabs filter strip. Quiet glass chips. */
+.grab-filter-actions {
   margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.grab-adopt-btn {
   flex: none;
   padding: 5px 12px;
   border-radius: var(--radius-pill);

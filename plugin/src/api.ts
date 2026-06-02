@@ -683,6 +683,16 @@ export function adoptDownloads(): Promise<{ ok: boolean; adopted: number }> {
   return postJSON("/grabs/adopt", {});
 }
 
+// retryFailedGrabs re-queues every failed grab that has a download URL (bulk
+// recovery after a collection-job batch). Returns retried + skipped counts.
+export function retryFailedGrabs(): Promise<{
+  ok: boolean;
+  retried: number;
+  skipped: number;
+}> {
+  return postJSON("/grabs/retry-failed", {});
+}
+
 export function fetchGrabs(opts?: {
   status?: GrabStatus | "any";
   limit?: number;

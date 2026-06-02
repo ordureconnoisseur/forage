@@ -11,6 +11,7 @@ import { humanSize } from "../format";
 import {
   ACTIVE_STATUSES,
   adoptDownloads,
+  retryFailedGrabs,
   deleteGrab,
   DeleteGrabResult,
   fetchGrabDetail,
@@ -87,6 +88,7 @@ export default function GrabsList({
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
+  const [retryingAll, setRetryingAll] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [addFile, setAddFile] = useState<File | null>(null);
   const [addInspect, setAddInspect] = useState<TorrentInspect | null>(null);
@@ -126,6 +128,25 @@ export default function GrabsList({
       setNotice("Scan failed: " + (e as Error).message);
     } finally {
       setAdopting(false);
+    }
+  }
+
+  // Re-queue every failed grab at once — bulk recovery after a batch where
+  // many failed.
+  async function retryAllFailed() {
+    if (retryingAll) return;
+    setRetryingAll(true);
+    try {
+      const res = await retryFailedGrabs();
+      setNotice(
+        `Retrying ${res.retried} failed grab${res.retried === 1 ? "" : "s"}` +
+          (res.skipped ? ` (${res.skipped} skipped — no URL)` : ""),
+      );
+      await refresh();
+    } catch (e) {
+      setNotice("Retry failed: " + (e as Error).message);
+    } finally {
+      setRetryingAll(false);
     }
   }
 
@@ -456,15 +477,28 @@ export default function GrabsList({
           ))}
         </div>
 
-        {/* Force-adopt torrents added to the client manually, right now. */}
-        <button
-          className="grab-adopt-btn"
-          onClick={scanForDownloads}
-          disabled={adopting}
-          title="Adopt torrents you added to the download client manually — skips the 5-minute wait"
-        >
-          {adopting ? "Scanning…" : "↻ Scan for downloads"}
-        </button>
+        {/* List-level actions, right-aligned. */}
+        <span className="grab-filter-actions">
+          {(totals.failed ?? 0) > 0 && (
+            <button
+              className="grab-adopt-btn"
+              onClick={retryAllFailed}
+              disabled={retryingAll}
+              title="Re-queue every failed grab that still has a download URL"
+            >
+              {retryingAll ? "Retrying…" : `↻ Retry ${totals.failed} failed`}
+            </button>
+          )}
+          {/* Force-adopt torrents added to the client manually, right now. */}
+          <button
+            className="grab-adopt-btn"
+            onClick={scanForDownloads}
+            disabled={adopting}
+            title="Adopt torrents you added to the download client manually — skips the 5-minute wait"
+          >
+            {adopting ? "Scanning…" : "↻ Scan for downloads"}
+          </button>
+        </span>
       </div>
 
       {notice && (

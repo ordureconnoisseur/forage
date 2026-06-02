@@ -192,6 +192,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grab/torrent/inspect", s.postGrabTorrentInspect)
 		r.Get("/grabs", s.getGrabs)
 		r.Post("/grabs/adopt", s.postAdopt)
+		r.Post("/grabs/retry-failed", s.postRetryAllFailed)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
 		r.Post("/grabs/{id}/match", s.postGrabMatch)
 		r.Post("/grabs/{id}/performer", s.postGrabPerformer)
