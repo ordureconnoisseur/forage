@@ -235,12 +235,16 @@ export default function SceneReleases({
     sort,
   );
 
-  // The recommended grab: the top verified, non-rejected, grabbable
-  // release in the server's (deliverability-aware) order — flagged so you
-  // don't have to compare, regardless of how the list is currently sorted.
-  const best = data.releases.find(
-    (r) => r.verified && !r.rejected && grabbable(r),
-  );
+  // The recommended grab: the QUALITY-ranked top among verified,
+  // non-rejected, grabbable releases — computed with the same seed-health-
+  // aware ranking the list uses, so the pick never disagrees with the order
+  // and a marginally-larger file can't beat a far-better-seeded one. Fixed to
+  // "quality" regardless of the user's current display sort, so the
+  // recommendation is stable.
+  const best = sortReleases(
+    data.releases.filter((r) => r.verified && !r.rejected && grabbable(r)),
+    "quality",
+  )[0];
   const bestKey = best ? releaseKey(best) : null;
 
   // grab queues a release. sceneIdOverride lets the user grab an
