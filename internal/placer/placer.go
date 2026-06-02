@@ -199,39 +199,56 @@ func sanitise(name string) string {
 	return out
 }
 
-// linkOrCopy tries os.Link first (cheap, preserves seeding) and falls
-// back to a copy on cross-device error. Any other failure propagates.
+// linkOrCopy tries os.Link first (cheap, preserves seeding) and falls back to
+// an atomic copy when the hardlink can't be made — cross-device (EXDEV), too
+// many links (EMLINK), or a filesystem that doesn't support hardlinks at all
+// (many CIFS/SMB and FUSE mounts). Rather than enumerate errnos, any link
+// failure attempts the copy and only errors if the copy ALSO fails.
 func linkOrCopy(src, dest string) (string, error) {
-	err := os.Link(src, dest)
-	if err == nil {
+	if err := os.Link(src, dest); err == nil {
 		return "hardlink", nil
 	}
-	var linkErr *os.LinkError
-	if errors.As(err, &linkErr) && errors.Is(linkErr.Err, syscall.EXDEV) {
-		if err := copyFile(src, dest); err != nil {
-			return "", err
-		}
-		return "copy", nil
+	if err := copyFile(src, dest); err != nil {
+		return "", fmt.Errorf("hardlink and copy fallback both failed: %w", err)
 	}
-	return "", fmt.Errorf("link: %w", err)
+	return "copy", nil
 }
 
+// copyFile copies src to dest ATOMICALLY: write to a temp sibling in dest's
+// directory, fsync, then rename into place. A crash mid-copy (SIGKILL, OOM,
+// power loss) leaves only the temp — never a truncated file at the final
+// path that mirrorTree's os.Stat skip or collisionSuffix would mistake for a
+// complete copy. The temp shares dest's directory so the rename stays on one
+// filesystem (atomic).
 func copyFile(src, dest string) error {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer in.Close()
-	out, err := os.Create(dest)
+	tmp, err := os.CreateTemp(filepath.Dir(dest), ".forage-copy-*.partial")
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		_ = os.Remove(dest)
+	tmpName := tmp.Name()
+	cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpName) }
+	if _, err := io.Copy(tmp, in); err != nil {
+		cleanup()
 		return err
 	}
-	return out.Close()
+	if err := tmp.Sync(); err != nil {
+		cleanup()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, dest); err != nil {
+		_ = os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 // mirrorTree walks src and hardlinks every file into the matching dest
