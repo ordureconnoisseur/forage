@@ -165,7 +165,13 @@ func (s *Server) getCollectionJobs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
 }
 
-// deleteCollectionJob cancels a running job (and drops it from the list).
+// deleteCollectionJob cancels a running job AND drops it from the list
+// immediately — "cancel" in the UI means gone, not "linger as cancelled for
+// the 2h retention". Cancelling the context stops the crawl goroutine; the
+// already-queued grabs persist in the grabs table regardless. Removing the
+// entry here is safe even while the worker is still unwinding: it holds its
+// own *collectionJob pointer, and cleanupJobLater's later delete is a no-op
+// on an already-removed id.
 func (s *Server) deleteCollectionJob(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	s.jobs.mu.Lock()
@@ -174,10 +180,7 @@ func (s *Server) deleteCollectionJob(w http.ResponseWriter, r *http.Request) {
 		if j.cancel != nil {
 			j.cancel()
 		}
-		if j.State == "running" {
-			j.State = "cancelled"
-			j.FinishedAt = time.Now().Unix()
-		}
+		delete(s.jobs.jobs, id)
 	}
 	s.jobs.mu.Unlock()
 	if j == nil {

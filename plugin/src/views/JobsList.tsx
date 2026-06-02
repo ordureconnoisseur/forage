@@ -21,6 +21,8 @@ export default function JobsList({
 }) {
   const [jobs, setJobs] = useState<CollectionJob[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumped on cancel to refetch immediately (don't wait out the 15s poll).
+  const [reloadNonce, setReloadNonce] = useState(0);
   const timer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function JobsList({
       cancelled = true;
       if (timer.current) clearTimeout(timer.current);
     };
-  }, []);
+  }, [reloadNonce]);
 
   if (error && !jobs)
     return <div className="empty error">Failed to load jobs: {error}</div>;
@@ -75,6 +77,7 @@ export default function JobsList({
             job={j}
             onPickPerformer={onPickPerformer}
             onReview={onReview}
+            onChanged={() => setReloadNonce((n) => n + 1)}
           />
         ))}
       </ul>
@@ -86,10 +89,14 @@ function JobCard({
   job,
   onPickPerformer,
   onReview,
+  onChanged,
 }: {
   job: CollectionJob;
   onPickPerformer: (id: string) => void;
   onReview: (jobId: string, performerId: string) => void;
+  // Triggers an immediate list refetch (after a cancel) instead of waiting
+  // for the next poll.
+  onChanged: () => void;
 }) {
   const [cancelling, setCancelling] = useState(false);
   const pct = job.total > 0 ? (job.done / job.total) * 100 : 0;
@@ -98,6 +105,7 @@ function JobCard({
     setCancelling(true);
     try {
       await cancelCollectionJob(job.id);
+      onChanged(); // refetch now — the job is gone from the server
     } catch {
       setCancelling(false);
     }
