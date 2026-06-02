@@ -293,6 +293,15 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	g.Status = "queued"
 	g.Reason = "retry requested"
 	g.PlaceError = ""
+	// A retry is a fresh add to the client, so re-arm every clock keyed on
+	// GrabbedAt — the SAB register grace (else the first tick can't find the
+	// new nzo and re-fails it), the qBit link timeout, and pickRecent's
+	// window — and reset the stall baseline so the restarted download isn't
+	// instantly badged stalled off the old progress timestamp.
+	now := time.Now().Unix()
+	g.GrabbedAt = now
+	g.Progress = 0
+	g.ProgressAt = now
 
 	switch g.Client {
 	case "qbit":
