@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type Placer struct {
@@ -142,6 +143,7 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("mkdir dest: %w", err)
 	}
+	p.sweepStalePartials(destDir)
 
 	destPath := filepath.Join(destDir, filepath.Base(srcPath))
 
@@ -425,6 +427,34 @@ func dirMirrors(dest, src string) (bool, error) {
 
 func isPartialTemp(name string) bool {
 	return strings.HasPrefix(name, ".forage-copy-") && strings.HasSuffix(name, ".partial")
+}
+
+// stalePartialAge is how old a ".forage-copy-*.partial" temp must be
+// before the sweep collects it. An in-flight copy's temp keeps a fresh
+// mtime (io.Copy is appending to it), so an hour-old one can only be the
+// leftover of a crashed copy (SIGKILL, OOM, power loss). copyFile cleans
+// its temp on every in-process failure, but nothing else ever would:
+// retries mint fresh CreateTemp names, Stash ignores the extension, and
+// multi-GB strands would otherwise sit in the library forever.
+const stalePartialAge = time.Hour
+
+// sweepStalePartials best-effort removes crashed copies' temp files
+// under dir (the performer folder, so pack subdirectories are covered).
+func (p *Placer) sweepStalePartials(dir string) {
+	cutoff := time.Now().Add(-stalePartialAge)
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() || !isPartialTemp(d.Name()) {
+			return nil
+		}
+		info, err := d.Info()
+		if err != nil || info.ModTime().After(cutoff) {
+			return nil
+		}
+		if err := os.Remove(path); err == nil && p.log != nil {
+			p.log.Info("swept stale copy temp", "path", path, "size", info.Size())
+		}
+		return nil
+	})
 }
 
 // singleFileTarget picks the destination for a single-file placement by
