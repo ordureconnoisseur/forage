@@ -42,3 +42,6 @@ tools/matcher-bench/*.matcher.failures.csv
 *.swo
 .vscode/
 .idea/
+
+# local analysis scratch (holds corpus copies with real scene ids)
+.claude-work/
