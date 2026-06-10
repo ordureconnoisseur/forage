@@ -341,7 +341,7 @@ const findScenesByPerformerQuery = `
 query ForagerScenesByPerformer($performerID: ID!, $page: Int!, $perPage: Int!) {
   findScenes(
     scene_filter: { performers: { value: [$performerID], modifier: INCLUDES } }
-    filter: { page: $page, per_page: $perPage }
+    filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }
   ) {
     count
     scenes {
@@ -398,7 +398,7 @@ func (c *Client) FindScenesByPerformer(ctx context.Context, localPerformerID str
 
 const findAllOwnedScenesQuery = `
 query ForagerAllOwnedScenes($page: Int!, $perPage: Int!) {
-  findScenes(filter: { page: $page, per_page: $perPage }) {
+  findScenes(filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }) {
     count
     scenes {
       id
@@ -449,7 +449,7 @@ func (c *Client) FindAllOwnedStashDBSceneIDs(ctx context.Context) ([]string, err
 
 const findAllScenesWithPathsQuery = `
 query ForagerAllScenesWithPaths($page: Int!, $perPage: Int!) {
-  findScenes(filter: { page: $page, per_page: $perPage }) {
+  findScenes(filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }) {
     scenes {
       id
       title
