@@ -109,20 +109,72 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
 			return
 		}
-		// Build the destroy set from the chosen side.
-		var targets []string
+		// The review row is a snapshot from pack-dedup time, and the library
+		// may have changed since — the performer page's dupes view (or a grab
+		// purge) can destroy either copy without touching this row. Re-resolve
+		// the scene's CURRENT copies and only destroy when the kept side still
+		// exists; otherwise this resolve would delete the last remaining copy.
+		endpoint := s.stashDBEndpoint(r.Context(), sc)
+		refs, ferr := sc.FindSceneRefsByStashID(r.Context(), endpoint, dup.StashDBID)
+		if ferr != nil {
+			s.log.Warn("duplicate resolve revalidate", "dup", id, "err", ferr)
+			writeErr(w, http.StatusBadGateway, "stash: "+ferr.Error())
+			return
+		}
+		if len(refs) == 0 {
+			// The dedup that recorded this row may have matched copies via the
+			// endpoint-agnostic whole-library sweep (poller dedup does exactly
+			// that when no stash-box is configured), so an endpoint-filtered
+			// miss isn't proof the copies are gone. Re-check the same way
+			// before concluding anything was deleted.
+			sweep, serr := sc.FindAllSceneStashDBIDs(r.Context())
+			if serr != nil {
+				s.log.Warn("duplicate resolve revalidate sweep", "dup", id, "err", serr)
+				writeErr(w, http.StatusBadGateway, "stash: "+serr.Error())
+				return
+			}
+			refs = sweep[dup.StashDBID]
+		}
+		alive := map[string]bool{}
+		for _, ref := range refs {
+			alive[ref.SceneID] = true
+		}
+
+		// Build the destroy set from the chosen side, and the kept set from
+		// the other.
+		var targets, kept []string
 		switch req.Keep {
 		case "existing":
 			targets = append(targets, dup.Pack.SceneID)
+			for _, e := range dup.Existing {
+				kept = append(kept, e.SceneID)
+			}
 		case "pack":
 			for _, e := range dup.Existing {
 				if e.SceneID != "" {
 					targets = append(targets, e.SceneID)
 				}
 			}
+			kept = append(kept, dup.Pack.SceneID)
+		}
+		keptAlive := false
+		for _, sid := range kept {
+			if sid != "" && alive[sid] {
+				keptAlive = true
+				break
+			}
+		}
+		if !keptAlive {
+			writeErr(w, http.StatusConflict,
+				"the copy you chose to keep no longer exists in Stash — refusing to delete the other side; dismiss with keep=\"both\" if this review is stale")
+			return
 		}
 		for _, sid := range targets {
 			if sid == "" {
+				continue
+			}
+			if !alive[sid] {
+				// Already gone (destroyed via another surface) — nothing to do.
 				continue
 			}
 			if derr := sc.SceneDestroy(r.Context(), sid, true, true); derr != nil {
@@ -131,6 +183,12 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			out.Removed = append(out.Removed, "scene "+sid)
+		}
+		if len(out.Removed) > 0 {
+			// Same as postDestroyScene: the performer page's owned/duplicates
+			// memo must not keep listing the destroyed copy for ownedTTL and
+			// invite a second destroy against the survivor.
+			s.invalidateOwned()
 		}
 		// Don't mark resolved if anything failed — leave it pending so the
 		// user can retry without losing the rest of the decision.
