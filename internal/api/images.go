@@ -59,9 +59,35 @@ func (s *Server) proxyStashImage(w http.ResponseWriter, r *http.Request, stashPa
 }
 
 func (s *Server) getPerformerImage(w http.ResponseWriter, r *http.Request) {
-	s.proxyStashImage(w, r, "/performer/"+chi.URLParam(r, "id")+"/image")
+	id, ok := numericID(chi.URLParam(r, "id"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	s.proxyStashImage(w, r, "/performer/"+id+"/image")
 }
 
 func (s *Server) getSceneScreenshot(w http.ResponseWriter, r *http.Request) {
-	s.proxyStashImage(w, r, "/scene/"+chi.URLParam(r, "id")+"/screenshot")
+	id, ok := numericID(chi.URLParam(r, "id"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	s.proxyStashImage(w, r, "/scene/"+id+"/screenshot")
+}
+
+// numericID constrains a path param that gets concatenated into a
+// Stash-side URL to a plain integer (Stash ids are integers). The proxy
+// attaches the stored ApiKey, so the id must not be able to steer the
+// request anywhere but the two image endpoints.
+func numericID(s string) (string, bool) {
+	if s == "" {
+		return "", false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return "", false
+		}
+	}
+	return s, true
 }
