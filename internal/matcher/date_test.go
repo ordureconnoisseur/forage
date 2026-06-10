@@ -55,6 +55,31 @@ func TestAllDatesUSOnly(t *testing.T) {
 	}
 }
 
+// TestAllDatesUSFourDigitYear: the 4-digit-year family had no month-first
+// reading at all — "10.28.2023" extracted NOTHING (28 fails as a month for
+// dd.mm.yyyy) even though the 2-digit branch handles "10.28.23" fine.
+func TestAllDatesUSFourDigitYear(t *testing.T) {
+	got := AllDates("BrazzersExxtra.10.28.2023.Angela.White.Title")
+	if !dateContains(got, "2023-10-28") {
+		t.Fatalf("expected 2023-10-28 (MM.DD.YYYY only); got %v", got)
+	}
+}
+
+// TestAllDatesAmbiguousFourDigitYear: when both readings are calendar-valid
+// both must be emitted (the candidate's own date disambiguates), and TopDate
+// keeps preferring the EU reading on ties.
+func TestAllDatesAmbiguousFourDigitYear(t *testing.T) {
+	got := AllDates("Studio.05.06.2024.Title")
+	for _, want := range []string{"2024-06-05" /*DD.MM.YYYY*/, "2024-05-06" /*MM.DD.YYYY*/} {
+		if !dateContains(got, want) {
+			t.Errorf("AllDates missing %s; got %v", want, got)
+		}
+	}
+	if top := TopDate("Studio.05.06.2024.Title"); top != "2024-06-05" {
+		t.Errorf("TopDate = %s, want EU reading 2024-06-05 on ties", top)
+	}
+}
+
 // TestBestDateProximityPicksMatchingReading: the candidate scene's own date
 // selects the correct interpretation of an ambiguous release date.
 func TestBestDateProximityPicksMatchingReading(t *testing.T) {

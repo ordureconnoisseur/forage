@@ -103,22 +103,40 @@ func ExtractDates(s string) []ExtractedDate {
 			pos := m[2]
 
 			if !dp.twoYY {
-				// 4-digit-year forms: one interpretation. yearLast=true
-				// means year is in group 3 (DD.MM.YYYY); otherwise
-				// group 1 holds the year (YYYY.MM.DD).
+				// 4-digit-year forms. yearLast=true means year is in
+				// group 3 (the DD.MM.YYYY family); otherwise group 1
+				// holds the year (YYYY.MM.DD).
 				y, mo, d := a, b, c
 				if dp.yearLast {
 					d, mo, y = a, b, c
 				}
-				if !validYMD(y, mo, d) {
-					continue
+				if validYMD(y, mo, d) {
+					emit(ExtractedDate{
+						Date:   fmt.Sprintf("%04d-%02d-%02d", y, mo, d),
+						Match:  match,
+						Pos:    pos,
+						Format: dp.label,
+					})
 				}
-				emit(ExtractedDate{
-					Date:   fmt.Sprintf("%04d-%02d-%02d", y, mo, d),
-					Match:  match,
-					Pos:    pos,
-					Format: dp.label,
-				})
+				// MM.DD.YYYY — US month-first with a 4-digit year
+				// ("Brazzers.10.28.2023.Title"). The dd.mm.yyyy reading
+				// alone extracted NOTHING when the day exceeds 12 (28
+				// fails as a month), and only the EU reading when
+				// ambiguous — while the 2-digit-year branch already emits
+				// the US reading (mm.dd.yy) for exactly this reason. Same
+				// contract: the matcher scores every reading against each
+				// candidate's own scene date and keeps the closest, and
+				// TopDate prefers the EU reading on ties (it's emitted
+				// first; dateBetter falls through to position).
+				if dp.yearLast && validYMD(c, a, b) {
+					sep := string(dp.label[2]) // '.', '-', or '_'
+					emit(ExtractedDate{
+						Date:   fmt.Sprintf("%04d-%02d-%02d", c, a, b),
+						Match:  match,
+						Pos:    pos,
+						Format: "mm" + sep + "dd" + sep + "yyyy",
+					})
+				}
 				continue
 			}
 
