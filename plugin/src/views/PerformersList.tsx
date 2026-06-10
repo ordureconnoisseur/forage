@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchPerformers,
   PerformerSort,
   performerImageURL,
+  refreshPerformers,
   type Performer,
 } from "../api";
 
@@ -32,32 +33,56 @@ export default function PerformersList({
   const [favOnly, setFavOnly] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<PerformerSort>(loadSort);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
   }, [sort]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetchPerformers({ sort })
-      .then((r) => {
-        if (cancelled) return;
+  // Re-fetch the cached performer list. Returns a promise so the manual
+  // refresh can await it before clearing its spinner. loadSeq guards
+  // against out-of-order responses: two quick sort changes fire two
+  // loads, and without the guard the slower (stale) response would win
+  // and display the old sort's data. Only the latest call may commit.
+  const loadSeq = useRef(0);
+  const load = useCallback(
+    async (showSpinner = true) => {
+      const seq = ++loadSeq.current;
+      if (showSpinner) setLoading(true);
+      try {
+        const r = await fetchPerformers({ sort });
+        if (seq !== loadSeq.current) return;
         setPerformers(r.performers);
         setError(null);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        setError(e.message);
-      })
-      .finally(() => {
-        if (cancelled) return;
-        setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [sort]);
+      } catch (e) {
+        if (seq !== loadSeq.current) return;
+        setError((e as Error).message);
+      } finally {
+        if (showSpinner && seq === loadSeq.current) setLoading(false);
+      }
+    },
+    [sort],
+  );
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // Force an immediate server-side re-sync of the performer cache from Stash
+  // (the fast pull) so a just-added performer shows up without waiting for
+  // the 6h cache tick — mirrors the Grabs "Scan for downloads" button.
+  async function refreshNow() {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshPerformers();
+      await load(false);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -70,7 +95,12 @@ export default function PerformersList({
   }, [performers, favOnly, q]);
 
   if (loading) return <div className="empty">Loading performers…</div>;
-  if (error) return <div className="empty error">Failed to load: {error}</div>;
+  // Full-screen error only when there's nothing to show — a failed
+  // refresh or re-sort against an already-loaded grid keeps the grid and
+  // surfaces inline below the controls instead, so the user keeps the
+  // Refresh button (their retry path).
+  if (error && performers.length === 0)
+    return <div className="empty error">Failed to load: {error}</div>;
 
   return (
     <div>
@@ -103,7 +133,18 @@ export default function PerformersList({
         <span className="count">
           {filtered.length} / {performers.length}
         </span>
+        <button
+          className="grab-adopt-btn"
+          onClick={refreshNow}
+          disabled={refreshing}
+          title="Re-sync the performer list from Stash now — picks up newly added performers"
+        >
+          {refreshing ? "Refreshing…" : "↻ Refresh"}
+        </button>
       </div>
+      {error && (
+        <div className="perf-list-err">Refresh failed: {error}</div>
+      )}
       <div className="performer-grid">
         {filtered.map((p) => (
           <PerformerCard

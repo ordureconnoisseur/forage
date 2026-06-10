@@ -306,6 +306,14 @@ button {
 
 /* ── PerformersList ─────────────────────────────────────────── */
 
+/* Inline failure banner for a refresh/re-sort that failed AFTER the grid
+   loaded — the grid (and the Refresh button, the retry path) stay up. */
+.perf-list-err {
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: var(--red);
+}
+
 .performer-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
