@@ -282,6 +282,10 @@ func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "stash url + api key required")
 		return
 	}
+	if err := checkProbeURL(url); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	sc := stash.New(url, key)
 	boxes, err := sc.StashBoxConfigs(r.Context())
 	if err != nil {

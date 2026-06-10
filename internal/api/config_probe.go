@@ -6,6 +6,8 @@ package api
 
 import (
 	"context"
+	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync"
@@ -19,6 +21,23 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
+
+// checkProbeURL rejects probe targets that aren't plain http(s) URLs with a
+// host. Probing user-supplied INTERNAL urls is this feature's whole job (the
+// admin is telling us where their Prowlarr/qBit live), so this is not an
+// SSRF allowlist — it just refuses scheme smuggling and garbage before we
+// build a client around it. Anything beyond that (who may reach these
+// endpoints at all) is the auth middleware's problem.
+func checkProbeURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return errors.New("not a valid url")
+	}
+	if (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return errors.New("url must be http(s) with a host")
+	}
+	return nil
+}
 
 type probeResult struct {
 	OK      bool   `json:"ok"`
@@ -60,6 +79,9 @@ func (s *Server) probeOne(ctx context.Context, cfg config.Config, section string
 		if cfg.StashURL == "" || cfg.StashAPIKey == "" {
 			return probeResult{OK: false, Message: "url or api key missing"}
 		}
+		if err := checkProbeURL(cfg.StashURL); err != nil {
+			return probeResult{OK: false, Message: err.Error()}
+		}
 		c := stash.New(cfg.StashURL, cfg.StashAPIKey)
 		v, err := c.Version(ctx)
 		if err != nil {
@@ -69,6 +91,11 @@ func (s *Server) probeOne(ctx context.Context, cfg config.Config, section string
 	case "stashdb":
 		if cfg.StashDBAPIKey == "" {
 			return probeResult{OK: false, Message: "api key missing"}
+		}
+		if cfg.StashDBURL != "" {
+			if err := checkProbeURL(cfg.StashDBURL); err != nil {
+				return probeResult{OK: false, Message: err.Error()}
+			}
 		}
 		c := stashdb.New(cfg.StashDBURL, cfg.StashDBAPIKey)
 		user, err := c.Me(ctx)
@@ -80,6 +107,9 @@ func (s *Server) probeOne(ctx context.Context, cfg config.Config, section string
 		if cfg.ProwlarrURL == "" || cfg.ProwlarrAPIKey == "" {
 			return probeResult{OK: false, Message: "url or api key missing"}
 		}
+		if err := checkProbeURL(cfg.ProwlarrURL); err != nil {
+			return probeResult{OK: false, Message: err.Error()}
+		}
 		c := prowlarr.New(cfg.ProwlarrURL, cfg.ProwlarrAPIKey)
 		v, err := c.Status(ctx)
 		if err != nil {
@@ -90,6 +120,9 @@ func (s *Server) probeOne(ctx context.Context, cfg config.Config, section string
 		if cfg.QbitURL == "" {
 			return probeResult{OK: false, Message: "url missing"}
 		}
+		if err := checkProbeURL(cfg.QbitURL); err != nil {
+			return probeResult{OK: false, Message: err.Error()}
+		}
 		c := qbit.New(cfg.QbitURL, cfg.QbitUsername, cfg.QbitPassword)
 		v, err := c.Version(ctx)
 		if err != nil {
@@ -99,6 +132,9 @@ func (s *Server) probeOne(ctx context.Context, cfg config.Config, section string
 	case "sab":
 		if cfg.SabURL == "" || cfg.SabAPIKey == "" {
 			return probeResult{OK: false, Message: "url or api key missing"}
+		}
+		if err := checkProbeURL(cfg.SabURL); err != nil {
+			return probeResult{OK: false, Message: err.Error()}
 		}
 		c := sabnzbd.New(cfg.SabURL, cfg.SabAPIKey)
 		v, err := c.Version(ctx)
