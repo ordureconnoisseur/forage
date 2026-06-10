@@ -16,6 +16,7 @@
 package clientpool
 
 import (
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
@@ -36,6 +37,11 @@ type Pool struct {
 	qbit     atomic.Pointer[qbit.Client]
 	sab      atomic.Pointer[sabnzbd.Client]
 	placer   atomic.Pointer[placer.Placer]
+
+	// placerLog is the logger every constructed placer carries, wired
+	// once at boot via SetPlacerLogger and reused by each Reload's
+	// reconstruction.
+	placerLog atomic.Pointer[slog.Logger]
 
 	// snapshot of the categories + library root the clients were
 	// built from. Cheap to copy under reads; held atomically alongside
@@ -112,9 +118,11 @@ func (p *Pool) Reload(cfg config.Config) {
 	}
 	// Placer is unusual — it has no remote endpoint, so its "client" is
 	// always constructed; the LibraryRoot field decides whether
-	// placer.Configured() returns true. Pass a nil logger here; main.go
-	// can wire a real one via SetPlacer if it wants logs.
-	p.placer.Store(placer.New(cfg.LibraryRoot, nil))
+	// placer.Configured() returns true. The logger wired at boot via
+	// SetPlacerLogger survives every reconstruction; this used to pass a
+	// hard nil, silently discarding main.go's logger on the first Reload
+	// despite SetPlacer's documented contract.
+	p.placer.Store(placer.New(cfg.LibraryRoot, p.placerLog.Load()))
 
 	p.settings.Store(&Settings{
 		QbitCategory:        cfg.QbitCategory,
@@ -128,12 +136,12 @@ func (p *Pool) Reload(cfg config.Config) {
 	})
 }
 
-// SetPlacer overrides the placer the Pool constructs by default,
-// allowing the caller to pass a logger-equipped instance. Reload()
-// then keeps this same instance updated by reconstructing — call
-// SetPlacer once at boot if you want named logging from the placer.
-func (p *Pool) SetPlacer(pl *placer.Placer) {
-	p.placer.Store(pl)
+// SetPlacerLogger wires the logger every constructed placer carries —
+// both the one stored immediately and every reconstruction a later
+// Reload performs. Call once at boot, before the first Reload.
+func (p *Pool) SetPlacerLogger(root string, log *slog.Logger) {
+	p.placerLog.Store(log)
+	p.placer.Store(placer.New(root, log))
 }
 
 // Stash returns the current Stash client, or nil if unconfigured.

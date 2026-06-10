@@ -20,7 +20,6 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
-	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/poller"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -51,11 +50,10 @@ func main() {
 
 	// Pool owns every outbound client. Reload swaps the live refs
 	// atomically; consumers read from accessors per-use so hot-swaps
-	// propagate without restart. SetPlacer threads a named logger into
-	// the placer; subsequent Reload calls preserve the logger via the
-	// new placer instance (the placer ctor takes a logger param).
+	// propagate without restart. SetPlacerLogger threads a named logger
+	// into the placer; every Reload reconstruction carries it forward.
 	pool := clientpool.New()
-	pool.SetPlacer(placer.New(cfg.LibraryRoot, log.With("component", "placer")))
+	pool.SetPlacerLogger(cfg.LibraryRoot, log.With("component", "placer"))
 	pool.Reload(cfg)
 
 	probeCtx, probeCancel := context.WithTimeout(context.Background(), 10*time.Second)
