@@ -30,7 +30,22 @@ import "regexp"
 // `\d{3,5}`, and a shared code is treated as scene IDENTITY downstream
 // (javCodeFloor, release verification), so truncation made distinct
 // sequential FC2 scenes "verified" matches of each other.
-var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,7})(\d*)`)
+var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,7})(\d*)([pPiI])?`)
+
+// javMarkerWords are release-name quality/codec tokens that satisfy the
+// letter-block shape and sit right next to resolution-sized numbers —
+// "XXX.1080p" → xxx-1080, "WEB-DL.1080p" → dl-1080, "FHD-1080" →
+// fhd-1080. A shared code is treated as scene IDENTITY downstream
+// (javCodeFloor, release verification at 0.85 with no other signal), so
+// these pseudo-codes let two unrelated releases "verify" each other
+// whenever both carry the same marker. None of these collide with real
+// JAV label prefixes.
+var javMarkerWords = map[string]bool{
+	"xxx": true, "web": true, "dl": true, "webdl": true, "rip": true,
+	"fhd": true, "uhd": true, "qhd": true, "fullhd": true, "hd": true, "sd": true, "hq": true,
+	"avc": true, "hevc": true, "xvid": true, "divx": true, "mp": true,
+	"bdrip": true, "webrip": true, "dvdrip": true, "hdrip": true, "hdtv": true, "bluray": true,
+}
 
 // ExtractJAVCodes returns normalized codes ("snos-233" form) found
 // in s. De-duplicated, preserves first-occurrence order, returns nil
@@ -59,12 +74,15 @@ func ExtractJAVCodes(s string) []string {
 		// m[4] = digit overflow past the 7-digit cap (non-empty → reject:
 		//        the run is too long to be a JAV id, and emitting a
 		//        truncated code would collide distinct scenes)
-		if m[4] != "" {
+		// m[5] = a p/i straight after the digits — "1080p"/"1080i": a
+		//        resolution token, not a JAV id (chapter markers like
+		//        "302ch" use other letters and stay matchable)
+		if m[4] != "" || m[5] != "" {
 			continue
 		}
 		letters := lowercaseASCII(m[2])
 		digits := m[3]
-		if letters == "" || digits == "" {
+		if letters == "" || digits == "" || javMarkerWords[letters] {
 			continue
 		}
 		bare := letters + "-" + digits
@@ -72,6 +90,9 @@ func ExtractJAVCodes(s string) []string {
 		if m[1] != "" {
 			emit(m[1] + bare)
 		}
+	}
+	if len(out) == 0 {
+		return nil // documented contract; also when every match was rejected
 	}
 	return out
 }
