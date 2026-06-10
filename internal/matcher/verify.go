@@ -68,6 +68,55 @@ type VerifyResult struct {
 	Confidence float64
 }
 
+// rivalTitleOverlap measures how well a RIVAL candidate's title matches
+// the release, EXCLUDING tokens from the rival's own cast names. The
+// rival-title-margin guard exists to detect "the title is discriminating
+// between same-cast siblings" — but a rival titled after its performer
+// ("Paris Lincoln Solo 4", the solo/intro catalog shape) matches any
+// release that names the shared performer, which is cast coincidence,
+// not title discrimination. With raw TitleOverlap those rivals
+// systematically blocked the strong-match path for title-less releases
+// (site.date.performer.mp4 — the dominant scene-release form), where the
+// true scene sits at #1 with an exact date and identity-level confidence.
+// Same Jaccard shape as titleOverlap, minus the floor (a rival with no
+// non-cast signal contributes 0, not minTitleScore).
+func rivalTitleOverlap(c Candidate, releaseTokens map[string]bool) float64 {
+	if c.Scene.Title == "" || len(releaseTokens) == 0 {
+		return 0
+	}
+	cast := map[string]bool{}
+	for _, p := range c.Scene.Performers {
+		for _, t := range Tokenize(p.Name) {
+			cast[t] = true
+		}
+		if p.As != "" {
+			for _, t := range Tokenize(p.As) {
+				cast[t] = true
+			}
+		}
+	}
+	sceneTokens := map[string]bool{}
+	for _, t := range filterTitleStopwords(Tokenize(c.Scene.Title)) {
+		if !cast[t] {
+			sceneTokens[t] = true
+		}
+	}
+	if len(sceneTokens) == 0 {
+		return 0
+	}
+	inter := 0
+	for t := range sceneTokens {
+		if releaseTokens[t] {
+			inter++
+		}
+	}
+	union := len(sceneTokens) + len(releaseTokens) - inter
+	if union == 0 {
+		return 0
+	}
+	return float64(inter) / float64(union)
+}
+
 // Verify decides whether the release (whose matcher candidates are
 // `cands`) is the scene identified by sceneID/sceneTitle. Two
 // independent signals, either sufficient:
@@ -83,7 +132,8 @@ type VerifyResult struct {
 func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
 	var conf, overlap float64
 	found := false
-	var rivalMaxOverlap float64 // highest title overlap among OTHER candidates
+	var relTokens map[string]bool // lazily built for rival overlap
+	var rivalMaxOverlap float64   // highest CAST-STRIPPED title overlap among OTHER candidates
 	for i := range cands {
 		if cands[i].Scene.ID == sceneID {
 			conf = cands[i].Confidence
@@ -91,8 +141,11 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			found = true
 			continue
 		}
-		if cands[i].TitleOverlap > rivalMaxOverlap {
-			rivalMaxOverlap = cands[i].TitleOverlap
+		if relTokens == nil {
+			relTokens = tokenSet(filterTitleStopwords(Tokenize(releaseName)))
+		}
+		if ov := rivalTitleOverlap(cands[i], relTokens); ov > rivalMaxOverlap {
+			rivalMaxOverlap = ov
 		}
 	}
 

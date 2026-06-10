@@ -69,6 +69,42 @@ func TestVerifyStrongMatchBlockedByTitleRival(t *testing.T) {
 	}
 }
 
+// TestVerifyStrongMatchNotBlockedByCastNamedRival: the rival-title guard
+// must ignore overlap that comes purely from the rival's own cast names.
+// Solo/intro catalog scenes are titled after their performer ("Paris
+// Lincoln Solo 4"), so they "match" any release naming that performer —
+// cast coincidence, not the title discriminating between siblings. This
+// systematically blocked the strong-match path for the dominant
+// title-less release shape (site.date.performer.mp4) whose true scene
+// sits at #1 with an exact date. Mirrors corpus case
+// gotfilled.26.03.20.paris.lincoln.mp4.
+func TestVerifyStrongMatchNotBlockedByCastNamedRival(t *testing.T) {
+	expected := "the-scene"
+	cands := []Candidate{
+		{
+			Scene: stashdb.Scene{ID: expected, Title: "In The Ass Of Paris", Date: "2026-03-20",
+				Performers: []stashdb.ScenePerformer{{Name: "Paris Lincoln"}, {Name: "Romeo Mancini"}}},
+			Confidence:   0.72, // performer + exact date + cast agree
+			TitleOverlap: 0.08,
+		},
+		{
+			Scene: stashdb.Scene{ID: "solo-4", Title: "Paris Lincoln Solo 4",
+				Performers: []stashdb.ScenePerformer{{Name: "Paris Lincoln"}}},
+			Confidence:   0.57,
+			TitleOverlap: 0.33, // inflated purely by the cast name
+		},
+	}
+	release := "gotfilled.26.03.20.paris.lincoln.mp4"
+	vr := Verify(cands, expected, "In The Ass Of Paris", release)
+	if !vr.Verified {
+		t.Errorf("cast-name-only rival overlap must not block the strong-match path")
+	}
+	// And the rival itself must still not verify.
+	if Verify(cands, "solo-4", "Paris Lincoln Solo 4", release).Verified {
+		t.Errorf("the cast-named rival must not verify")
+	}
+}
+
 // TestVerifyStrongMatchOnlyForTop confirms the strong-match path only
 // applies to the #1 candidate — a high-conf scene ranked below the top
 // pick shouldn't verify off conf alone.
