@@ -584,9 +584,6 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 // one Stash-side task (a directory rescan while nothing's indexed yet,
 // then a batched identify once scenes appear).
 func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stash.Client) (bool, error) {
-	if g.PlacedPath == "" {
-		return false, nil
-	}
 	// Identify pack scenes by their full placed-directory path, not just
 	// its basename — the pack often lands at <performer>/<pack-name>
 	// where <pack-name> can equal the performer (e.g.
@@ -595,9 +592,24 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// corrupting both the count and the dedup decision. Translate to the
 	// Stash-side path so the substring is specific; fall back to the
 	// basename only when no path mapping is configured.
-	needle := pathmap.Translate(g.PlacedPath, p.pool.Settings().StashPathMapping)
+	//
+	// With placement disabled there is no placed path at all — but the
+	// grab is still confirmable (completed && !placer.Configured()), so
+	// match on the client-reported name (the download's directory in the
+	// client's save path), the same fallback the single-scene path uses.
+	// Returning early instead left such packs in Active() forever: never
+	// confirmed, never orphaned, polled for the daemon's lifetime.
+	var needle string
+	if g.PlacedPath != "" {
+		needle = pathmap.Translate(g.PlacedPath, p.pool.Settings().StashPathMapping)
+		if needle == "" {
+			needle = pathmap.Base(g.PlacedPath)
+		}
+	} else {
+		needle = g.ClientName
+	}
 	if needle == "" {
-		needle = pathmap.Base(g.PlacedPath)
+		return false, nil
 	}
 	scenes, err := sc.FindScenesUnderPath(ctx, needle)
 	if err != nil {
