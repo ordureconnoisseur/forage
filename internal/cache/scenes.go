@@ -176,14 +176,20 @@ func RefreshSceneCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 	}
 	defer tx.Rollback()
 
-	// Zero out aggregates first so performers we couldn't query (or
-	// performers that have dropped out of StashDB) don't carry stale
-	// values into the next sort.
+	// Zero out aggregates only for performers that can never receive an
+	// update this pass — rows with no StashDB cross-id. Everyone queried
+	// successfully gets overwritten below (a performer who dropped out of
+	// StashDB comes back as a successful 0-scene query, so they zero
+	// naturally), and a performer whose QUERY FAILED keeps the previous
+	// pass's correct values. The old blanket zero wiped the failed
+	// minority's counts and sort position for up to 12h every time StashDB
+	// rate-limited a slice of the ~900 queries below the >50% abort guard.
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE performer_cache
 		   SET total_stashdb_scenes = 0,
 		       owned_scenes_count   = 0,
 		       last_release_unix    = 0
+		 WHERE stashdb_id IS NULL OR stashdb_id = ''
 	`); err != nil {
 		return fmt.Errorf("reset aggregates: %w", err)
 	}
@@ -241,9 +247,28 @@ func RefreshSceneCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 	// Prune: rows older than the window, or rows not seen this pass
 	// (cached_at < start) — covers scenes that fell off StashDB or
 	// dropped out of their performer's filmography.
-	pruneRes, err := tx.ExecContext(ctx,
-		`DELETE FROM recent_scene_cache WHERE release_unix < ? OR cached_at < ?`,
-		cutoff, start)
+	//
+	// Trending rows are exempt: they live on the hourly RefreshTrending
+	// cadence, legitimately sit outside the recency window (a classic
+	// scene can re-trend), can be dateless (release_unix 0), and aren't
+	// re-seen by this pass unless a tracked performer carries them — the
+	// old prune deleted them every 12h, punching holes in the Discover
+	// list until the next hourly refresh. RefreshTrending zeroes ranks it
+	// drops, so an ex-trending row becomes prunable here next pass.
+	//
+	// When some performer queries failed this pass, their scenes were
+	// never re-stamped through no fault of their own; skip the
+	// not-seen-this-pass clause so their (correct) rows survive until a
+	// clean pass can judge them.
+	pruneSQL := `DELETE FROM recent_scene_cache
+	             WHERE (release_unix < ? OR cached_at < ?) AND trending_rank <= 0`
+	pruneArgs := []any{cutoff, start}
+	if queryErrors > 0 {
+		pruneSQL = `DELETE FROM recent_scene_cache
+		            WHERE release_unix < ? AND trending_rank <= 0`
+		pruneArgs = []any{cutoff}
+	}
+	pruneRes, err := tx.ExecContext(ctx, pruneSQL, pruneArgs...)
 	if err != nil {
 		return fmt.Errorf("prune stale scenes: %w", err)
 	}
