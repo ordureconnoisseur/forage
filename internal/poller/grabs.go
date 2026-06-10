@@ -1038,6 +1038,17 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		g.Progress = t.Progress
 		g.ProgressAt = time.Now().Unix()
 		dirty = true
+	} else if t.Progress < g.Progress && !qbitProgressUnreliable(t.State) &&
+		classifyQbitState(t.State) == "downloading" {
+		// Genuine regression: a recheck found lost or corrupt pieces and the
+		// torrent is downloading again below its old high-water mark. A pure
+		// ratchet would freeze progress/progress_at at the old peak — the
+		// stalled badge then fires on an actively-downloading grab, and a
+		// ratcheted Progress >= 1 masks the stall check entirely for the
+		// re-download.
+		g.Progress = t.Progress
+		g.ProgressAt = time.Now().Unix()
+		dirty = true
 	}
 
 	// Self-heal a PREMATURE placement: a placed_path set while qBit still
