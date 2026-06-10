@@ -37,12 +37,27 @@ func Translate(foragerPath, mapping string) string {
 	if idx <= 0 || idx == len(mapping)-1 {
 		return ""
 	}
-	foragerPrefix := mapping[:idx]
-	stashPrefix := mapping[idx+1:]
+	// Tolerate trailing separators on either side of the mapping: the
+	// seam below always joins with the path's own separator, so
+	// "/data/media/:Z:\Media" must not produce "Z:\MediaHazel\...".
+	foragerPrefix := strings.TrimRight(mapping[:idx], "/")
+	stashPrefix := strings.TrimRight(mapping[idx+1:], `/\`)
+	if foragerPrefix == "" || stashPrefix == "" {
+		return ""
+	}
 	if !strings.HasPrefix(foragerPath, foragerPrefix) {
 		return ""
 	}
 	suffix := foragerPath[len(foragerPrefix):]
+	// The match must end on a path boundary: prefix "/data/media" covers
+	// "/data/media/..." (and the prefix itself), NOT "/data/media2/...".
+	// A bare HasPrefix would translate sibling mounts into plausible but
+	// nonexistent Stash paths, silently mis-scoping scans and the purge
+	// path's scene lookups instead of falling back via the documented
+	// empty return.
+	if suffix != "" && suffix[0] != '/' {
+		return ""
+	}
 	if strings.ContainsRune(stashPrefix, '\\') {
 		// Windows-style target — flip forward slashes in the suffix to
 		// backslashes so the joined path is well-formed.
