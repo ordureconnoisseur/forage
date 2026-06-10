@@ -221,10 +221,24 @@ func sanitise(name string) string {
 // an atomic copy when the hardlink can't be made — cross-device (EXDEV), too
 // many links (EMLINK), or a filesystem that doesn't support hardlinks at all
 // (many CIFS/SMB and FUSE mounts). Rather than enumerate errnos, any link
-// failure attempts the copy and only errors if the copy ALSO fails.
+// failure attempts the copy and only errors if the copy ALSO fails — except
+// EEXIST, which is not a "can't hardlink here" condition: the destination
+// appeared between the caller's exists-check and the link (a poller tick and
+// the re-file API endpoint can place concurrently). Falling through to the
+// copy would let its rename replace the file the other placement just made.
 func linkOrCopy(src, dest string) (string, error) {
-	if err := os.Link(src, dest); err == nil {
+	err := os.Link(src, dest)
+	if err == nil {
 		return "hardlink", nil
+	}
+	if errors.Is(err, fs.ErrExist) {
+		si, serr := os.Stat(src)
+		di, derr := os.Stat(dest)
+		if serr == nil && derr == nil && (os.SameFile(si, di) || si.Size() == di.Size()) {
+			// The concurrent placement put the same content here — done.
+			return "hardlink", nil
+		}
+		return "", fmt.Errorf("destination %s appeared during placement with different content, refusing to overwrite it", dest)
 	}
 	if err := copyFile(src, dest); err != nil {
 		return "", fmt.Errorf("hardlink and copy fallback both failed: %w", err)
@@ -269,6 +283,15 @@ func copyFile(src, dest string) error {
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
 		return err
+	}
+	// os.Rename replaces an existing dest silently. The caller checked dest
+	// was free before starting, but on copy-only filesystems (where the
+	// EEXIST hardlink guard can't run) a concurrent placement may have landed
+	// in the meantime; re-check just before the rename to shrink that window
+	// from the whole copy's duration to an instant.
+	if _, err := os.Lstat(dest); err == nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("destination %s appeared during copy, refusing to overwrite it", dest)
 	}
 	if err := os.Rename(tmpName, dest); err != nil {
 		_ = os.Remove(tmpName)
