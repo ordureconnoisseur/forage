@@ -152,11 +152,12 @@ func (p *Poller) Run(ctx context.Context) {
 // tickOnce advances every active grab by one step.
 //
 // Step 1 — Enrich qbit_hash for grabs that don't yet have one. We
-// look at qBit's recent additions (filtered by our category) and
-// match against the grab's title-token signature + add-time window.
+// match against the tick's shared torrent list by category +
+// add-time window + title-token signature (pickRecent).
 //
-// Step 2 — Refresh qBit state for any tracked grab. Status updates:
-// downloading | completed | failed (when qBit no longer knows about it).
+// Step 2 — Refresh qBit state for any tracked grab, looked up by hash
+// in the same shared list. Status updates: downloading | completed |
+// failed (when qBit no longer knows about it).
 //
 // Step 3 — For completed grabs without an actual_stashdb_id yet,
 // query Stash by filename. If Stash has indexed the file and has a
@@ -177,23 +178,35 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		return nil
 	}
 
-	// Step 1: enrich qBit grabs without client_ids (qBit's add API
-	// doesn't return the info_hash; we match by recent-additions).
-	// SAB grabs already have client_id set synchronously at /grab time.
-	needsQbitEnrichment := false
+	// One full qBit torrent list per tick serves BOTH the info-hash
+	// enrichment (Step 1) and every tracked grab's state refresh (Step 2).
+	// advanceQbit used to call TorrentInfo per grab, and TorrentInfo
+	// fetches + scans the whole list anyway, so N tracked grabs (orphaned
+	// ones included, indefinitely) cost N full-list downloads every tick.
+	//
+	// qbitListOK mirrors sabListsOK below: a missing entry in qbitByHash
+	// is advanceQbit's "qBit no longer tracks this torrent" failure
+	// signal, so a failed fetch must skip the qBit refresh for the tick
+	// rather than present an empty list that fails every live grab.
+	needsQbit := false
 	for _, g := range active {
-		if g.Client == "qbit" && g.ClientID == "" {
-			needsQbitEnrichment = true
+		if g.Client == "qbit" {
+			needsQbit = true
 			break
 		}
 	}
-	var recentQbit []qbit.Torrent
-	if qb := p.pool.Qbit(); needsQbitEnrichment && qb != nil {
-		recentQbit, err = qb.ListTorrents(ctx, qbit.ListOpts{
-			Filter: "all", Sort: "added_on", Reverse: true, Limit: 50,
-		})
+	var qbitTorrents []qbit.Torrent
+	qbitByHash := map[string]*qbit.Torrent{}
+	qbitListOK := false
+	if qb := p.pool.Qbit(); needsQbit && qb != nil {
+		qbitTorrents, err = qb.ListTorrents(ctx, qbit.ListOpts{Filter: "all"})
 		if err != nil {
-			p.log.Warn("list torrents for enrichment", "err", err)
+			p.log.Warn("qbit list torrents", "err", err)
+		} else {
+			qbitListOK = true
+			for i := range qbitTorrents {
+				qbitByHash[strings.ToLower(qbitTorrents[i].Hash)] = &qbitTorrents[i]
+			}
 		}
 	}
 
@@ -245,7 +258,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	}
 
 	for i := range active {
-		if err := p.advance(ctx, &active[i], recentQbit, claimed, sabQueue, sabHistory, sabListsOK); err != nil {
+		if err := p.advance(ctx, &active[i], qbitTorrents, qbitByHash, qbitListOK, claimed, sabQueue, sabHistory, sabListsOK); err != nil {
 			p.log.Warn("advance grab", "id", active[i].ID, "err", err)
 		}
 	}
@@ -254,7 +267,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	return nil
 }
 
-func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment []qbit.Torrent, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item, sabListsOK bool) error {
+func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit.Torrent, qbitByHash map[string]*qbit.Torrent, qbitListOK bool, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item, sabListsOK bool) error {
 	dirty := false
 	// srcPath is the live full filesystem path the client reports for
 	// this grab — qBit's ContentPath, SAB's history Path. Used by the
@@ -265,10 +278,14 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 	// ── Steps 1 + 2 — client-specific enrichment + state refresh.
 	switch g.Client {
 	case "qbit":
-		d, sp, err := p.advanceQbit(ctx, g, recentForEnrichment, claimed)
-		if err != nil {
-			return err
+		// Skip the client refresh when this tick's torrent-list fetch
+		// failed (or qBit is unconfigured): a missing hash is the failure
+		// signal, and an empty-because-unfetched list would fail every
+		// live grab. The Stash-side steps below still run.
+		if !qbitListOK {
+			break
 		}
+		d, sp := p.advanceQbit(g, qbitTorrents, qbitByHash, claimed)
 		dirty = dirty || d
 		srcPath = sp
 	case "sabnzbd":
@@ -899,19 +916,16 @@ func (p *Poller) markScanAttempt(grabID int64) {
 }
 
 // advanceQbit handles the qBit-specific enrichment + state-refresh
-// steps. Returns (dirty, contentPath). contentPath is qBit's full
-// filesystem path for the torrent — passed to the placer when status
-// flips to "completed".
-func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.Torrent, claimed map[string]bool) (bool, string, error) {
+// steps, working entirely off the tick's shared torrent list (ts, plus
+// its byHash index) — no network calls of its own. Returns (dirty,
+// contentPath). contentPath is qBit's full filesystem path for the
+// torrent — passed to the placer when status flips to "completed".
+func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string]*qbit.Torrent, claimed map[string]bool) (bool, string) {
 	dirty := false
-	qb := p.pool.Qbit()
-	if qb == nil {
-		return false, "", nil
-	}
 	// Link the info_hash if we don't have it yet (qBit doesn't return
 	// it from /torrents/add).
 	if g.ClientID == "" {
-		if t := pickRecent(recent, g, claimed); t != nil {
+		if t := pickRecent(ts, g, claimed); t != nil {
 			g.ClientID = t.Hash
 			g.ClientName = t.Name
 			g.Reason = "enriched from qBit recent-additions"
@@ -928,14 +942,11 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout {
 			g.Status = "failed"
 			g.Reason = "never linked to a qBit torrent (add likely failed)"
-			return true, "", nil
+			return true, ""
 		}
-		return dirty, "", nil
+		return dirty, ""
 	}
-	t, err := qb.TorrentInfo(ctx, g.ClientID)
-	if err != nil {
-		return dirty, "", err
-	}
+	t := byHash[strings.ToLower(g.ClientID)]
 	if t == nil {
 		// A still-queued grab pins its info-hash at insert/retry time, but
 		// the actual qBit add runs asynchronously behind the fetch gate —
@@ -948,14 +959,14 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		// really does mean the torrent was removed.
 		if g.Status == "queued" && g.GrabbedAt > 0 &&
 			time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout {
-			return dirty, "", nil
+			return dirty, ""
 		}
 		if g.Status != "failed" {
 			g.Status = "failed"
 			g.Reason = "qbit no longer tracks this torrent"
 			dirty = true
 		}
-		return dirty, "", nil
+		return dirty, ""
 	}
 	if t.Name != "" && t.Name != g.ClientName {
 		g.ClientName = t.Name
@@ -1007,7 +1018,7 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		dirty = true
 		p.log.Info("heal: cleared premature placement",
 			"id", g.ID, "path", bad, "progress", t.Progress)
-		return dirty, t.ContentPath, nil
+		return dirty, t.ContentPath
 	}
 
 	newStatus := classifyQbitState(t.State)
@@ -1035,7 +1046,7 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		g.Reason = "qbit state=" + t.State
 		dirty = true
 	}
-	return dirty, t.ContentPath, nil
+	return dirty, t.ContentPath
 }
 
 // sabRegisterGrace is how long after grabbing we tolerate a SAB

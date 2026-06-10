@@ -780,7 +780,7 @@ func TestSabCompletedWedgeFailsWhenHistoryGone(t *testing.T) {
 	g := r.get(t, id)
 
 	// Lists fetched fine this tick, entry just isn't in them any more.
-	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, true); err != nil {
+	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, true); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	got := r.get(t, id)
@@ -807,7 +807,7 @@ func TestSabCompletedFreshSurvivesHistoryBlip(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	g := r.get(t, id)
-	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, true); err != nil {
+	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, true); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if got := r.get(t, id); got.Status != "completed" {
@@ -832,7 +832,7 @@ func TestSabFetchErrorFreezesGrabs(t *testing.T) {
 		t.Fatalf("insert: %v", err)
 	}
 	g := r.get(t, id)
-	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, false); err != nil {
+	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, false); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
 	if got := r.get(t, id); got.Status != "downloading" {
