@@ -417,9 +417,12 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"qbitCategory":         settings.QbitCategory,
 		"sabConfigured":        s.pool.Sab() != nil,
 		"sabCategory":          settings.SabCategory,
-		"placerConfigured":     s.pool.Placer().Configured(),
-		"libraryRoot":          s.pool.Placer().LibraryRoot(),
-		"unconfigured":         !config.IsConfigured(cfg),
+		// No libraryRoot here: /healthz is deliberately unauthenticated (the
+		// UI probes it pre-login) and a host filesystem path is more than an
+		// anonymous caller should learn. The UI never read it from here; the
+		// authenticated /config carries it for Settings/Setup.
+		"placerConfigured": s.pool.Placer().Configured(),
+		"unconfigured":     !config.IsConfigured(cfg),
 		// adminAuthRequired is true when EITHER a password or an API key
 		// (admin token) is set — the UI keys its login gate off this.
 		"adminAuthRequired": s.authRequired(),

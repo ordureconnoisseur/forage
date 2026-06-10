@@ -849,7 +849,6 @@ export interface Health {
   sabConfigured: boolean;
   sabCategory: string;
   placerConfigured: boolean;
-  libraryRoot: string;
   unconfigured: boolean;
   // True when a credential is configured (password OR API key) and the UI
   // must show a login gate.
