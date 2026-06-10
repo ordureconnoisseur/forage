@@ -101,6 +101,96 @@ func TestPlaceDirFresh(t *testing.T) {
 	}
 }
 
+// TestPlaceDirCollisionSuffixes is the directory analogue of the
+// single-file collision guarantee: a DIFFERENT release whose folder has
+// the same name (pack folders are routinely just the performer's name)
+// must not be merged into the existing placement — merging would let a
+// later purge of either grab sweep the other's files. The newcomer gets
+// "name (2)", and its own retries reclaim that suffixed dir.
+func TestPlaceDirCollisionSuffixes(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	srcA := filepath.Join(root, "dl", "Amouranth")
+	srcB := filepath.Join(root, "dl2", "Amouranth")
+	for src, files := range map[string][]string{
+		srcA: {"a.mkv", "shared.mkv"},
+		srcB: {"b.mkv", "shared.mkv"},
+	} {
+		for _, n := range files {
+			if err := os.MkdirAll(src, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			// "shared.mkv" exists in both packs with different content and
+			// size — the same-name-different-file merge hazard.
+			if err := os.WriteFile(filepath.Join(src, n), []byte(src+n), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	p := New(lib, discardLogger())
+
+	resA, err := p.Place(srcA, "Amouranth")
+	if err != nil {
+		t.Fatalf("Place A: %v", err)
+	}
+	resB, err := p.Place(srcB, "Amouranth")
+	if err != nil {
+		t.Fatalf("Place B: %v", err)
+	}
+	if resB.Path == resA.Path {
+		t.Fatalf("pack B merged into pack A's directory %q", resA.Path)
+	}
+	want := filepath.Join(lib, "Amouranth", "Amouranth (2)")
+	if resB.Path != want {
+		t.Errorf("pack B path = %q, want %q", resB.Path, want)
+	}
+	// Pack A's copy of shared.mkv is untouched.
+	gotA, err := os.ReadFile(filepath.Join(resA.Path, "shared.mkv"))
+	if err != nil || string(gotA) != srcA+"shared.mkv" {
+		t.Errorf("pack A shared.mkv corrupted: %q err=%v", gotA, err)
+	}
+
+	// Retries of each pack reclaim their own directory.
+	resA2, err := p.Place(srcA, "Amouranth")
+	if err != nil || resA2.Path != resA.Path || resA2.Mode != "" {
+		t.Errorf("re-place A = (%q, %q, %v), want (%q, idempotent, nil)", resA2.Path, resA2.Mode, err, resA.Path)
+	}
+	resB2, err := p.Place(srcB, "Amouranth")
+	if err != nil || resB2.Path != resB.Path || resB2.Mode != "" {
+		t.Errorf("re-place B = (%q, %q, %v), want (%q, idempotent, nil)", resB2.Path, resB2.Mode, err, resB.Path)
+	}
+}
+
+// TestPlaceDirIgnoresStrandedPartial: a crashed copy-fallback strands a
+// ".forage-copy-*.partial" temp in our own placement dir; that's ours,
+// not foreign content, and must not push the retry to "name (2)".
+func TestPlaceDirIgnoresStrandedPartial(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "MyPack")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "a.mkv"), []byte("data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(lib, "Performer", "MyPack")
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, ".forage-copy-123.partial"), []byte("half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := New(lib, discardLogger()).Place(src, "Performer")
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if res.Path != dest {
+		t.Errorf("path = %q, want reclaimed %q", res.Path, dest)
+	}
+}
+
 // TestPlaceSingleFileIdempotent guards the re-place path: a placement
 // whose grab update was lost (crash between place and the DB write, or a
 // stale-CAS dropped poller tick) re-runs Place with the file already in

@@ -154,6 +154,17 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		// aborting the walk) COMPLETES on the next call instead of being
 		// mistaken for a finished placement. A re-run where everything is
 		// already linked places nothing and reports idempotent (Mode "").
+		//
+		// Like singleFileTarget for files, dirTarget distinguishes "our own
+		// earlier (possibly partial) mirror" from a DIFFERENT release whose
+		// folder happens to share the name (pack folders are routinely just
+		// the performer's name) — merging those would interleave two
+		// releases under one path, and a later purge of either grab would
+		// sweep the other's files.
+		destPath, err = p.dirTarget(destPath, srcPath)
+		if err != nil {
+			return Result{}, err
+		}
 		mode, placed, err := p.mirrorTree(srcPath, destPath)
 		if err != nil {
 			return Result{}, err
@@ -308,6 +319,89 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 		return "", 0, fmt.Errorf("mirror tree: %w", err)
 	}
 	return mode, placed, nil
+}
+
+// dirTarget picks the destination directory for a tree placement by
+// walking the "name", "name (2)", ... sequence, the directory analogue
+// of singleFileTarget. A candidate is reused when everything in it
+// mirrors the source (see dirMirrors) — that's a prior, possibly
+// interrupted, placement of this same tree, and reusing it preserves
+// mirrorTree's resume behaviour. A candidate holding anything else
+// belongs to a different release and is skipped.
+func (p *Placer) dirTarget(path, src string) (string, error) {
+	try := path
+	for i := 2; i <= 1000; i++ {
+		di, err := os.Stat(try)
+		if errors.Is(err, fs.ErrNotExist) {
+			return try, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("stat dest dir: %w", err)
+		}
+		if di.IsDir() {
+			ours, err := dirMirrors(try, src)
+			if err != nil {
+				return "", err
+			}
+			if ours {
+				return try, nil
+			}
+		}
+		try = fmt.Sprintf("%s (%d)", path, i)
+	}
+	return "", fmt.Errorf("no free directory name for %s after 1000 tries", path)
+}
+
+// errDirConflict signals dirMirrors found content that isn't ours.
+var errDirConflict = errors.New("dir holds foreign content")
+
+// dirMirrors reports whether everything under dest mirrors the same
+// relative path in src — by inode (an earlier hardlink) or size (an
+// earlier copy; the relative path already matches, so an equal-size
+// different file at the exact same nested name is not a realistic
+// collision). An empty directory mirrors trivially (an interrupted run
+// that only got as far as MkdirAll). Stranded ".forage-copy-*.partial"
+// temps are ours (a crashed copy fallback), not foreign content.
+func dirMirrors(dest, src string) (bool, error) {
+	err := filepath.WalkDir(dest, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if isPartialTemp(d.Name()) {
+			return nil
+		}
+		rel, err := filepath.Rel(dest, path)
+		if err != nil {
+			return err
+		}
+		si, err := os.Stat(filepath.Join(src, rel))
+		if err != nil {
+			// dest holds a file the source tree doesn't have.
+			return errDirConflict
+		}
+		di, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if os.SameFile(si, di) || si.Size() == di.Size() {
+			return nil
+		}
+		return errDirConflict
+	})
+	if errors.Is(err, errDirConflict) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect dest dir %s: %w", dest, err)
+	}
+	return true, nil
+}
+
+func isPartialTemp(name string) bool {
+	return strings.HasPrefix(name, ".forage-copy-") && strings.HasSuffix(name, ".partial")
 }
 
 // singleFileTarget picks the destination for a single-file placement by
