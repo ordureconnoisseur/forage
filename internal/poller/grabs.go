@@ -440,16 +440,23 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		}
 	}
 	stashC := p.pool.Stash()
+	// A confirm-step error must NOT return before the Update below. Steps
+	// 1-3 may have done irreversible work this tick — the file hardlinked
+	// into the library, SabDeleteAfterPlace removing the history entry —
+	// whose record lives only in g until the write. Returning early dropped
+	// that state: the next tick saw completed-with-no-placement, the client
+	// entry already gone, and failed a grab whose file was in the library
+	// (a retry then re-downloaded a duplicate). Stash the error and return
+	// it AFTER the persist.
+	var confirmErr error
 	if g.Kind == "pack" {
 		// Pack grabs have their own confirm path — enumerate every placed
 		// file's scene, drive identify across all of them, dedup, then
 		// confirm. Distinct from the single-scene match below.
 		if confirmable && stashC != nil {
 			d, err := p.advancePackConfirm(ctx, g, stashC)
-			if err != nil {
-				return err
-			}
 			dirty = dirty || d
+			confirmErr = err
 		}
 	} else if confirmable && g.ActualStashDBID == "" && stashC != nil {
 		needle := g.ClientName
@@ -461,9 +468,12 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		if needle != "" {
 			scene, err := stashC.FindSceneByPathContains(ctx, needle)
 			if err != nil {
-				return err
+				confirmErr = err
+				scene = nil
 			}
 			switch {
+			case confirmErr != nil:
+				// Lookup failed — change nothing; retry next tick.
 			case scene != nil && scene.StashDBID != "":
 				g.ActualStashDBID = scene.StashDBID
 				g.ConfirmedAt = time.Now().Unix()
@@ -558,7 +568,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 			return err
 		}
 	}
-	return nil
+	return confirmErr
 }
 
 // advancePackConfirm drives a pack grab from placed → confirmed. Unlike
