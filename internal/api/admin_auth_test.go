@@ -273,8 +273,15 @@ func TestSessionTokenStateless(t *testing.T) {
 		t.Fatal("freshly minted token should verify")
 	}
 
-	// Tampered signature.
-	if s.sessionValid(good[:len(good)-1] + "0") {
+	// Tampered signature. Replace the last character with one that is
+	// GUARANTEED different — a fixed "0" made the test a 1-in-64 flake,
+	// since a genuine signature ending in '0' produced an identical,
+	// untampered token that (correctly) verified.
+	flip := "0"
+	if good[len(good)-1] == '0' {
+		flip = "1"
+	}
+	if s.sessionValid(good[:len(good)-1] + flip) {
 		t.Error("token with a flipped signature byte should be rejected")
 	}
 	// Tampered payload (bump the expiry without re-signing).
