@@ -26,6 +26,16 @@ const GRAB_CONCURRENCY = 3;
 // Below the floor the scene waits for manual review.
 const AUTO_PICK_FLOOR = 0.5;
 
+// releaseKey is a stable per-release identity for React keys + pick
+// state, same rule as SceneReleases. download_url alone isn't safe:
+// magnet-only indexers (TPB) can share an empty download_url, which
+// rendered every such row selected at once, gave them duplicate React
+// keys, and made a pick of one silently resolve to (or be skipped as)
+// another at grab time.
+function releaseKey(r: SceneRelease): string {
+  return r.download_url || r.info_url || r.title;
+}
+
 // pickBest chooses the auto-pick release for a scene the same way the
 // single-scene page does: among VERIFIED, non-rejected, grabbable
 // (seeders>0 for torrents) releases clearing the confidence floor, take the
@@ -34,7 +44,7 @@ const AUTO_PICK_FLOOR = 0.5;
 // by encode size then availability. Previously this ranked by raw
 // resolution alone, ignoring indexer/protocol prefs entirely (and a 720p
 // could beat a 2160p on confidence). Returns the chosen release's
-// download_url, or null when nothing qualifies.
+// releaseKey, or null when nothing qualifies.
 function pickBest(releases: SceneRelease[]): string | null {
   const candidates = releases.filter(
     (r) =>
@@ -51,7 +61,7 @@ function pickBest(releases: SceneRelease[]): string | null {
     if (b.size !== a.size) return b.size - a.size;
     return b.popularity - a.popularity;
   });
-  return candidates[0].download_url;
+  return releaseKey(candidates[0]);
 }
 
 type RowStatus =
@@ -66,7 +76,7 @@ type GrabState = "idle" | "queued" | "error";
 interface RowState {
   status: RowStatus;
   releases: SceneRelease[];
-  // download_url of the chosen release, or null = nothing picked.
+  // releaseKey of the chosen release, or null = nothing picked.
   pickedURL: string | null;
   // grab lifecycle for the picked release, once the user fires it.
   grab: GrabState;
@@ -207,10 +217,16 @@ export default function CollectionMode({
           for (const sc of job.scenes) {
             ms.push({ stashdb_id: sc.stashdb_id, title: sc.title, performers: [] });
             const releases = sc.candidates || [];
+            // The server stores the pick as a download_url; translate to
+            // our releaseKey identity (falls back to the raw value when
+            // the release isn't in the stored candidates).
+            const pickedRel = sc.picked_url
+              ? releases.find((r) => r.download_url === sc.picked_url)
+              : undefined;
             hydrated[sc.stashdb_id] = {
               status: releases.length > 0 ? "done" : sceneStatusFromJob(sc.status),
               releases,
-              pickedURL: sc.picked_url || null,
+              pickedURL: pickedRel ? releaseKey(pickedRel) : sc.picked_url || null,
               autoPicked: !!sc.picked_url,
               grab: sc.status === "grabbed" ? "queued" : "idle",
             };
@@ -406,7 +422,7 @@ export default function CollectionMode({
           !row.pickedURL
         )
           return null;
-        const rel = row.releases.find((r) => r.download_url === row.pickedURL);
+        const rel = row.releases.find((r) => releaseKey(r) === row.pickedURL);
         return rel ? { scene: s, rel } : null;
       })
       .filter((t): t is { scene: MissingScene; rel: SceneRelease } => !!t);
@@ -455,12 +471,8 @@ export default function CollectionMode({
     setRows((r) => {
       const row = r[s.stashdb_id] || blankRow();
       if (row.status === "inflight") return r; // already grabbing — not selectable
-      const next =
-        row.pickedURL != null
-          ? null
-          : (row.releases.find((x) => x.verified)?.download_url ??
-            row.releases[0]?.download_url ??
-            null);
+      const first = row.releases.find((x) => x.verified) ?? row.releases[0];
+      const next = row.pickedURL != null ? null : first ? releaseKey(first) : null;
       return { ...r, [s.stashdb_id]: { ...row, pickedURL: next } };
     });
 
@@ -493,7 +505,10 @@ export default function CollectionMode({
       return next;
     });
   const selectAllVerified = () =>
-    bulkSet((row) => row.releases.find((x) => x.verified)?.download_url ?? null);
+    bulkSet((row) => {
+      const v = row.releases.find((x) => x.verified);
+      return v ? releaseKey(v) : null;
+    });
   const clearAll = () => bulkSet(() => null);
 
   return (
@@ -734,10 +749,10 @@ function CollectionRow({
   expanded: boolean;
   onToggle: () => void;
   onExpand: () => void;
-  onPick: (downloadURL: string) => void;
+  onPick: (key: string) => void;
   onRetry: () => void;
 }) {
-  const picked = row.releases.find((r) => r.download_url === row.pickedURL);
+  const picked = row.releases.find((r) => releaseKey(r) === row.pickedURL);
   const selectable = row.status === "done";
   const canExpand = row.status === "done" && row.releases.length > 0;
 
@@ -891,17 +906,17 @@ function CollectionRow({
         <div className="coll-cands">
           {row.releases.map((rel) => (
             <label
-              key={rel.download_url}
+              key={releaseKey(rel)}
               className={
                 "coll-cand" +
-                (rel.download_url === row.pickedURL ? " sel" : "")
+                (releaseKey(rel) === row.pickedURL ? " sel" : "")
               }
             >
               <input
                 type="radio"
                 name={"pick-" + scene.stashdb_id}
-                checked={rel.download_url === row.pickedURL}
-                onChange={() => onPick(rel.download_url)}
+                checked={releaseKey(rel) === row.pickedURL}
+                onChange={() => onPick(releaseKey(rel))}
               />
               <span
                 className={
