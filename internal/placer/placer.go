@@ -164,9 +164,16 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		return Result{Path: destPath, Mode: mode}, nil
 	}
 
-	// Single file release. Suffix on collision so a re-grab with a
-	// different indexer doesn't silently overwrite the existing copy.
-	destPath = collisionSuffix(destPath)
+	// Single file release. Re-running after a placement whose grab update
+	// was lost (a crash between place and the DB write, or a stale-CAS
+	// dropped tick) must reclaim the existing copy, not mint "name (2).ext"
+	// on every pass. A genuinely different file at the name still gets the
+	// collision suffix so a re-grab from another indexer can't silently
+	// overwrite the existing copy.
+	destPath, already := singleFileTarget(destPath, info)
+	if already {
+		return Result{Path: destPath}, nil
+	}
 	mode, err := linkOrCopy(srcPath, destPath)
 	if err != nil {
 		return Result{}, err
@@ -217,7 +224,7 @@ func linkOrCopy(src, dest string) (string, error) {
 // copyFile copies src to dest ATOMICALLY: write to a temp sibling in dest's
 // directory, fsync, then rename into place. A crash mid-copy (SIGKILL, OOM,
 // power loss) leaves only the temp — never a truncated file at the final
-// path that mirrorTree's os.Stat skip or collisionSuffix would mistake for a
+// path that mirrorTree's os.Stat skip or singleFileTarget would mistake for a
 // complete copy. The temp shares dest's directory so the rename stays on one
 // filesystem (atomic).
 func copyFile(src, dest string) error {
@@ -295,21 +302,29 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 	return mode, placed, nil
 }
 
-// collisionSuffix returns an unused filename by appending " (N)" to
-// the stem if the original exists. Stops at 1000 to avoid infinite
-// loops on pathological inputs; the caller surfaces any subsequent
-// write failure as a place_error.
-func collisionSuffix(path string) string {
-	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
-		return path
-	}
+// singleFileTarget picks the destination for a single-file placement by
+// walking the "name.ext", "name (2).ext", ... sequence. An existing entry
+// that is already the source counts as a prior placement and is reclaimed
+// as the idempotent result: os.SameFile catches an earlier hardlink, and an
+// equal size catches an earlier copy (the basename already matches, so an
+// equal-size different release at this exact name is not a realistic
+// collision). Returns (path, true) for a prior placement to reuse, or
+// (path, false) for a free name to place into. Stops at 1000 to avoid
+// unbounded scans on pathological inputs; the caller surfaces any
+// subsequent write failure as a place_error.
+func singleFileTarget(path string, src os.FileInfo) (string, bool) {
 	ext := filepath.Ext(path)
 	stem := strings.TrimSuffix(path, ext)
-	for i := 2; i < 1000; i++ {
-		try := fmt.Sprintf("%s (%d)%s", stem, i, ext)
-		if _, err := os.Stat(try); errors.Is(err, fs.ErrNotExist) {
-			return try
+	try := path
+	for i := 2; i <= 1000; i++ {
+		di, err := os.Stat(try)
+		if errors.Is(err, fs.ErrNotExist) {
+			return try, false
 		}
+		if err == nil && (os.SameFile(src, di) || di.Size() == src.Size()) {
+			return try, true
+		}
+		try = fmt.Sprintf("%s (%d)%s", stem, i, ext)
 	}
-	return path
+	return try, false
 }

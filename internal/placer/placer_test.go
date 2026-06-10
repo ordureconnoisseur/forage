@@ -101,6 +101,91 @@ func TestPlaceDirFresh(t *testing.T) {
 	}
 }
 
+// TestPlaceSingleFileIdempotent guards the re-place path: a placement
+// whose grab update was lost (crash between place and the DB write, or a
+// stale-CAS dropped poller tick) re-runs Place with the file already in
+// the library. It must reclaim the existing copy, not mint "name (2).ext"
+// on every retry.
+func TestPlaceSingleFileIdempotent(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "scene.mkv")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("video bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+
+	first, err := p.Place(src, "Hazel Moore")
+	if err != nil {
+		t.Fatalf("first Place: %v", err)
+	}
+	second, err := p.Place(src, "Hazel Moore")
+	if err != nil {
+		t.Fatalf("second Place: %v", err)
+	}
+	if second.Path != first.Path {
+		t.Errorf("re-place minted a new path %q, want existing %q", second.Path, first.Path)
+	}
+	if second.Mode != "" {
+		t.Errorf("re-place Mode = %q, want \"\" (idempotent)", second.Mode)
+	}
+	entries, err := os.ReadDir(filepath.Dir(first.Path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("performer folder has %d entries, want 1: %v", len(entries), entries)
+	}
+}
+
+// TestPlaceSingleFileCollisionStillSuffixes keeps the original guarantee:
+// a DIFFERENT file already at the destination name (a re-grab from another
+// indexer) is never overwritten or reclaimed; the new file gets " (2)".
+// And a third run of the same source reclaims that suffixed copy instead
+// of minting " (3)".
+func TestPlaceSingleFileCollisionStillSuffixes(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "scene.mkv")
+	if err := os.MkdirAll(filepath.Dir(src), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte("new release bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+
+	// A pre-existing, different file (different size) at the same name.
+	other := filepath.Join(lib, "Hazel Moore", "scene.mkv")
+	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("a much longer pre-existing copy of something else"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := p.Place(src, "Hazel Moore")
+	if err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	want := filepath.Join(lib, "Hazel Moore", "scene (2).mkv")
+	if res.Path != want {
+		t.Errorf("path = %q, want %q", res.Path, want)
+	}
+
+	// Re-place reclaims the suffixed copy rather than walking to " (3)".
+	res2, err := p.Place(src, "Hazel Moore")
+	if err != nil {
+		t.Fatalf("re-Place: %v", err)
+	}
+	if res2.Path != want || res2.Mode != "" {
+		t.Errorf("re-place = (%q, mode %q), want (%q, idempotent)", res2.Path, res2.Mode, want)
+	}
+}
+
 func TestFreeSpace(t *testing.T) {
 	p := New(t.TempDir(), nil)
 	free, err := p.FreeSpace()
