@@ -996,6 +996,29 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 			time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout {
 			return dirty, ""
 		}
+		// The torrent vanishing does NOT undo what already happened on disk.
+		// Once the file is placed (or beyond), losing the qBit entry just
+		// means seeding stopped — a seed-ratio auto-remove or a manual
+		// delete of a finished torrent. Failing those grabs re-downloads
+		// files the library already has; mirror advanceSab and leave
+		// post-completed states alone so the Stash-side steps keep going.
+		if isPostCompleted(g.Status) {
+			return dirty, ""
+		}
+		if g.Status == "completed" {
+			if g.PlacedPath == "" && p.pool.Placer().Configured() {
+				// Completed but never placed, and the torrent entry (the only
+				// source of the download's on-disk location) is gone —
+				// placement can never succeed now. Fail for a clean retry,
+				// like advanceSab's purged-history branch.
+				g.Status = "failed"
+				g.Reason = "qbit removed the torrent before placement could finish; retry to re-download"
+				return true, ""
+			}
+			// Placement disabled (or already placed): confirmation matches on
+			// ClientName / the placed file and needs nothing from qBit.
+			return dirty, ""
+		}
 		if g.Status != "failed" {
 			g.Status = "failed"
 			g.Reason = "qbit no longer tracks this torrent"
