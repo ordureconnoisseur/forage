@@ -164,6 +164,15 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Snapshot the PRE-save composed config: the stashChanged comparison
+	// below must be old-vs-new. `preview` is useless for that — it is
+	// already oldStored+patch, which is exactly what the store holds after
+	// Set, so comparing it against the post-save compose was always false
+	// and a Stash/StashDB credential change never invalidated the matcher:
+	// every matcher-backed path kept clients built from the old key until
+	// the daemon restarted.
+	oldCfg := s.composedConfig()
+
 	if err := s.store.Set(patch); err != nil {
 		s.log.Error("config save", "err", err)
 		writeErr(w, http.StatusInternalServerError, "save failed: "+err.Error())
@@ -192,8 +201,8 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	// avoids needlessly trashing a heavy-to-build matcher when the
 	// user is just editing intervals.
 	newCfg := s.composedConfig()
-	stashChanged := preview.StashURL != newCfg.StashURL || preview.StashAPIKey != newCfg.StashAPIKey ||
-		preview.StashDBURL != newCfg.StashDBURL || preview.StashDBAPIKey != newCfg.StashDBAPIKey
+	stashChanged := oldCfg.StashURL != newCfg.StashURL || oldCfg.StashAPIKey != newCfg.StashAPIKey ||
+		oldCfg.StashDBURL != newCfg.StashDBURL || oldCfg.StashDBAPIKey != newCfg.StashDBAPIKey
 	s.pool.Reload(newCfg)
 	if stashChanged {
 		s.invalidateMatcher()
