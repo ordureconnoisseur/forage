@@ -437,6 +437,58 @@ func TestLifecycleOrphanAdoption(t *testing.T) {
 	// existence keyed on the torrent hash is the adoption assertion.
 }
 
+// TestLifecycleAdoptionDeferredWithoutFileList: a magnet whose metadata
+// hasn't resolved exposes no file list, so pack-vs-single can't be
+// classified yet. Adoption must defer (kind is decided once and never
+// revisited — guessing "single" routed packs down the single-scene
+// confirm path forever), then adopt with the right kind once the file
+// list exists.
+func TestLifecycleAdoptionDeferredWithoutFileList(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const hash = "metadlhash000"
+	addedOn := time.Now().Add(-10 * time.Minute).Unix()
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: "Some Performer Siterip", Category: "forager",
+		State: "metaDL", Progress: 0, AddedOn: addedOn,
+	}})
+	// No file list — metadata still resolving.
+
+	r.tick(t)
+	known, err := r.repo.KnownClientIDs(ctx)
+	if err != nil {
+		t.Fatalf("known: %v", err)
+	}
+	if known[hash] {
+		t.Fatalf("adopted despite missing file list — would have classified blind")
+	}
+
+	// Metadata lands: 5 videos → a pack.
+	r.qbit.files[hash] = []qbit.TorrentFile{
+		{Name: "a.mp4", Size: 1}, {Name: "b.mp4", Size: 1}, {Name: "c.mp4", Size: 1},
+		{Name: "d.mp4", Size: 1}, {Name: "e.mp4", Size: 1},
+	}
+	r.tick(t)
+	active, err := r.repo.Active(ctx)
+	if err != nil {
+		t.Fatalf("active: %v", err)
+	}
+	var adopted *grabs.Grab
+	for i := range active {
+		if active[i].ClientID == hash {
+			adopted = &active[i]
+			break
+		}
+	}
+	if adopted == nil {
+		t.Fatalf("not adopted after file list appeared")
+	}
+	if adopted.Kind != "pack" || adopted.PackFiles != 5 {
+		t.Fatalf("adopted kind=%q packFiles=%d, want pack/5", adopted.Kind, adopted.PackFiles)
+	}
+}
+
 // TestLifecyclePrematurePlacementHeal guards the recent self-heal fix: a
 // grab carrying a placed_path while qBit still reports the torrent
 // incomplete (progress < 1) must have the premature library copy removed

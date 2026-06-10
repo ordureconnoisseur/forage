@@ -1226,7 +1226,18 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 		if now-t.AddedOn < graceSecs {
 			continue
 		}
-		kind, videos := p.classifyTorrent(ctx, qb, t.Hash)
+		kind, videos, ok := p.classifyTorrent(ctx, qb, t.Hash)
+		if !ok {
+			// The file list isn't available yet — a magnet still resolving
+			// its metadata (or a transient API error). Kind is classified
+			// exactly once, at adoption, and nothing re-evaluates it, so
+			// guessing "single" here permanently routed packs down the
+			// single-scene confirm path (one arbitrary scene matched, no
+			// settle window, no batch identify, no dedup). Defer; a later
+			// pass adopts once the metadata exists.
+			p.log.Info("adopt: deferred, file list not available yet", "hash", t.Hash, "name", t.Name)
+			continue
+		}
 		packFiles := 0
 		if kind == "pack" {
 			packFiles = videos
@@ -1263,22 +1274,23 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 
 // classifyTorrent counts a torrent's video files via qBit's metainfo file
 // list (available regardless of download progress) to decide pack vs
-// single. Defaults to "single" when the file list isn't available yet.
-func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash string) (string, int) {
+// single. ok is false when the file list isn't available yet (a magnet
+// whose metadata hasn't resolved, or a transient API error) — callers
+// must not classify then, since kind is decided once and never revisited.
+func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash string) (kind string, videos int, ok bool) {
 	files, err := qb.TorrentFiles(ctx, hash)
 	if err != nil || len(files) == 0 {
-		return "single", 0
+		return "", 0, false
 	}
-	videos := 0
 	for _, f := range files {
 		if torrentmeta.IsVideo(f.Name) {
 			videos++
 		}
 	}
 	if videos >= adoptMinVideos {
-		return "pack", videos
+		return "pack", videos, true
 	}
-	return "single", videos
+	return "single", videos, true
 }
 
 // advanceSab handles SAB tracking. SAB grabs already have client_id
