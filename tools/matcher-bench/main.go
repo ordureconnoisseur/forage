@@ -57,6 +57,8 @@ func main() {
 		maxFailures = flag.Int("max-failures", 0, "cap rows per CSV (0 = no cap)")
 		corpusPath  = flag.String("corpus", "", "YAML corpus path; when set, runs against the corpus instead of the Stash library")
 		verify      = flag.Bool("verify", false, "verification mode: per entry assert the expected scene verifies (recall) and other candidates do NOT (precision) — exercises matcher.Verify, the release-page badge logic")
+		explain     = flag.String("explain", "", "match ONE release string and dump every candidate (rank, conf, title overlap, reasons, verify outcome) — the failure-CSV microscope")
+		expectID    = flag.String("expect", "", "with --explain: the expected StashDB scene id, highlighted and verify-checked")
 	)
 	flag.Parse()
 
@@ -88,6 +90,11 @@ func main() {
 		os.Exit(1)
 	}
 	log.Info("matcher ready", "setup", time.Since(t0))
+
+	if *explain != "" {
+		runExplain(ctx, m, *explain, *expectID)
+		return
+	}
 
 	if err := os.MkdirAll(*outputDir, 0o755); err != nil {
 		log.Error("mkdir output", "err", err)
@@ -547,6 +554,37 @@ type verifyFailure struct {
 	// alone couldn't attribute per-class.
 	ExpectedWasCandidate bool
 	ExpectedConf         float64 // candidate's confidence when present
+}
+
+// runExplain matches one release string and dumps every candidate — the
+// microscope for failure-CSV rows. Shows per-candidate confidence, title
+// overlap, reasons, cast, and what matcher.Verify would say for each, so
+// guard trips (isTop, rival-title-margin) are directly visible.
+func runExplain(ctx context.Context, m *matcher.Matcher, release, expectID string) {
+	cands, err := m.Match(ctx, release)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "match: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("release: %s\ncandidates: %d\n\n", release, len(cands))
+	tw := tabwriter.NewWriter(os.Stdout, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "rank\tconf\toverlap\tverified\tid\tdate\ttitle\tcast\treasons")
+	for i, c := range cands {
+		v := matcher.Verify(cands, c.Scene.ID, c.Scene.Title, release)
+		mark := ""
+		if c.Scene.ID == expectID {
+			mark = " <== EXPECTED"
+		}
+		var cast []string
+		for _, p := range c.Scene.Performers {
+			cast = append(cast, p.Name)
+		}
+		fmt.Fprintf(tw, "%d%s\t%.3f\t%.3f\t%v\t%s\t%s\t%s\t%s\t%s\n",
+			i+1, mark, c.Confidence, c.TitleOverlap, v.Verified,
+			c.Scene.ID, c.Scene.Date, c.Scene.Title,
+			strings.Join(cast, ", "), strings.Join(c.Reasons, "; "))
+	}
+	tw.Flush()
 }
 
 func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int) *verifyResult {
