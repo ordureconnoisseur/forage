@@ -324,6 +324,15 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		// (the grab links to the existing download), not a failure.
 		if hash != "" {
 			if t, terr := c.TorrentInfo(ctx, hash); terr == nil && t != nil {
+				// The grab now rides a torrent added outside forage, which
+				// may be categorised elsewhere or sitting paused at 0% —
+				// linked as-is it would never complete, with no hint why.
+				// Adopt it properly: move it into the forage category and
+				// start it. Best-effort — the link is the success either way.
+				if category != "" && t.Category != category {
+					_ = c.SetCategory(ctx, hash, category)
+				}
+				_ = c.Resume(ctx, hash)
 				return hash, nil
 			}
 		}
@@ -550,6 +559,56 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 		return fmt.Errorf("qbit delete %d: %s", resp.StatusCode, body)
 	}
 	return nil
+}
+
+// postForm sends a one-shot form POST to a torrents endpoint and checks
+// for 200. Shared by the small mutation calls (setCategory, start).
+func (c *Client) postForm(ctx context.Context, path string, form url.Values) error {
+	enc := form.Encode()
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, strings.NewReader(enc))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Header.Set("Referer", c.baseURL)
+		return req, nil
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("qbit %s %d: %s", path, resp.StatusCode, body)
+	}
+	return nil
+}
+
+// SetCategory moves a torrent into the given category.
+func (c *Client) SetCategory(ctx context.Context, hash, category string) error {
+	if hash == "" {
+		return fmt.Errorf("hash is empty")
+	}
+	form := url.Values{}
+	form.Set("hashes", hash)
+	form.Set("category", category)
+	return c.postForm(ctx, "/api/v2/torrents/setCategory", form)
+}
+
+// Resume starts a stopped/paused torrent. qBit v5 renamed the endpoint
+// to /torrents/start; older versions use /torrents/resume — try the new
+// name first and fall back.
+func (c *Client) Resume(ctx context.Context, hash string) error {
+	if hash == "" {
+		return fmt.Errorf("hash is empty")
+	}
+	form := url.Values{}
+	form.Set("hashes", hash)
+	if err := c.postForm(ctx, "/api/v2/torrents/start", form); err == nil {
+		return nil
+	}
+	return c.postForm(ctx, "/api/v2/torrents/resume", form)
 }
 
 func (c *Client) postAdd(ctx context.Context, body *bytes.Buffer, contentType string) error {
