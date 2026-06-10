@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -131,9 +132,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 // kill the poller.
 func (p *Poller) Run(ctx context.Context) {
 	p.log.Info("poller starting", "interval", p.interval, "orphan_after", p.orphan)
-	if err := p.tickOnce(ctx); err != nil {
-		p.log.Error("initial tick", "err", err)
-	}
+	p.safeTick(ctx)
 	t := time.NewTicker(p.interval)
 	defer t.Stop()
 	for {
@@ -142,10 +141,23 @@ func (p *Poller) Run(ctx context.Context) {
 			p.log.Info("poller stopping")
 			return
 		case <-t.C:
-			if err := p.tickOnce(ctx); err != nil {
-				p.log.Error("tick", "err", err)
-			}
+			p.safeTick(ctx)
 		}
+	}
+}
+
+// safeTick runs one tick, converting a panic into a logged error. The tick
+// chews qBit/SAB/Stash/StashDB responses whose shapes we don't control; a
+// nil-field panic must cost one tick, not the daemon (main starts Run as a
+// bare goroutine with nothing above it to recover).
+func (p *Poller) safeTick(ctx context.Context) {
+	defer func() {
+		if r := recover(); r != nil {
+			p.log.Error("panic in poller tick", "panic", r, "stack", string(debug.Stack()))
+		}
+	}()
+	if err := p.tickOnce(ctx); err != nil {
+		p.log.Error("tick", "err", err)
 	}
 }
 

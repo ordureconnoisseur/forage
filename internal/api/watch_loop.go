@@ -37,7 +37,12 @@ func (s *Server) RunWatchLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			s.watchTick(ctx)
+			// One panicking tick (release-data-driven matching inside
+			// checkWatch) must not kill the daemon or the loop.
+			func() {
+				defer s.recoverPanic("watch loop tick")
+				s.watchTick(ctx)
+			}()
 		}
 	}
 }

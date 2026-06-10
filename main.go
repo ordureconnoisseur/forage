@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"syscall"
 	"time"
 
@@ -181,11 +182,24 @@ func logBootProbes(ctx context.Context, pool *clientpool.Pool, log *slog.Logger)
 	}
 }
 
+// recoverTo logs a panic instead of crashing the daemon. The cache
+// refreshers run as bare goroutines and chew Stash/StashDB responses
+// whose shapes we don't control; a panic should cost one refresh pass,
+// not the process. (The api and poller packages carry their own
+// equivalents for their loops.)
+func recoverTo(log *slog.Logger, label string) {
+	if r := recover(); r != nil {
+		log.Error("panic in background goroutine",
+			"in", label, "panic", r, "stack", string(debug.Stack()))
+	}
+}
+
 // maybeRefreshOnBoot refreshes performer + studio + scene caches if
 // any has never been populated or is older than the configured
 // interval. Scenes piggy-back on the same interval; if it gets too
 // slow we can split it into its own cadence later.
 func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sql.DB, log *slog.Logger, interval time.Duration) {
+	defer recoverTo(log, "boot cache refresh")
 	sc := pool.Stash()
 	if sc == nil {
 		return // daemon is unconfigured — refresh will retry on next interval tick
@@ -221,6 +235,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 func runTrendingTicker(ctx context.Context, pool *clientpool.Pool, database *sql.DB, log *slog.Logger) {
 	const interval = 1 * time.Hour
 	tick := func() {
+		defer recoverTo(log, "trending refresh")
 		sdb := pool.StashDB()
 		if sdb == nil {
 			return
@@ -254,23 +269,26 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			sc := pool.Stash()
-			if sc == nil {
-				continue
-			}
-			if err := cache.RefreshPerformers(ctx, sc, database, log.With("op", "performers")); err != nil {
-				log.Error("ticker performer refresh failed", "err", err)
-			}
-			if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
-				log.Error("ticker studio refresh failed", "err", err)
-			}
-			// Scene cache piggy-backs on the same tick. Needs StashDB
-			// too — skip the run when it's not configured.
-			if sdb := pool.StashDB(); sdb != nil {
-				if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
-					log.Error("ticker scene refresh failed", "err", err)
+			func() {
+				defer recoverTo(log, "ticker cache refresh")
+				sc := pool.Stash()
+				if sc == nil {
+					return
 				}
-			}
+				if err := cache.RefreshPerformers(ctx, sc, database, log.With("op", "performers")); err != nil {
+					log.Error("ticker performer refresh failed", "err", err)
+				}
+				if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
+					log.Error("ticker studio refresh failed", "err", err)
+				}
+				// Scene cache piggy-backs on the same tick. Needs StashDB
+				// too — skip the run when it's not configured.
+				if sdb := pool.StashDB(); sdb != nil {
+					if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
+						log.Error("ticker scene refresh failed", "err", err)
+					}
+				}
+			}()
 		}
 	}
 }

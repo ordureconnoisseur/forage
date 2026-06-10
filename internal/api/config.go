@@ -209,6 +209,7 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		// Kick a background cache refresh so the matcher rebuilds
 		// against fresh data on next request.
 		go func() {
+			defer s.recoverPanic("config-save cache refresh")
 			ctx, cancel := context.WithTimeout(context.Background(), 5*60*1e9)
 			defer cancel()
 			if sc := s.pool.Stash(); sc != nil {

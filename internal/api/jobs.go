@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"sync"
@@ -393,6 +394,16 @@ func (s *Server) startCollectionJob(performerID string, sceneIDs []string, upgra
 // verified release for each. Bounded concurrency; updates job state in
 // place under the store lock so /jobs reflects live progress.
 func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, performerName string) {
+	// Backstop for panics outside the per-scene recovery (channel plumbing,
+	// matcher construction): log and close the job out rather than crashing
+	// the daemon or leaving the job "running" forever.
+	defer func() {
+		if r := recover(); r != nil {
+			s.log.Error("panic in collection job", "job", job.ID,
+				"panic", r, "stack", string(debug.Stack()))
+			s.finishJob(job, "done")
+		}
+	}()
 	m, err := s.Matcher(ctx)
 	if err != nil {
 		s.finishJob(job, "done")
@@ -409,7 +420,22 @@ func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, perfo
 			if ctx.Err() != nil {
 				return
 			}
-			s.processJobScene(ctx, m, job, i, performerName)
+			// Per-scene recovery: a panic in matching/scoring one scene
+			// (release-data-driven code) marks that scene errored and the
+			// worker moves on. Without it the panic killed the whole
+			// daemon — and even a recovered worker exiting would leave
+			// the feeder blocked on an unread queue.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						s.log.Error("panic processing job scene",
+							"job", job.ID, "scene", job.Scenes[i].StashDBID,
+							"panic", r, "stack", string(debug.Stack()))
+						s.setJobScene(job, i, jobSceneError, "", nil, "")
+					}
+				}()
+				s.processJobScene(ctx, m, job, i, performerName)
+			}()
 		}
 	}
 	for w := 0; w < jobSearchConcurrency; w++ {
