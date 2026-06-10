@@ -144,13 +144,22 @@ func classifyPacks(releases []prowlarr.Release) []packCandidate {
 // "186 videos", "26 vid", "50 clips".
 var packCountRe = regexp.MustCompile(`(?i)(\d{1,5})\s*(?:ролик|клип|videos?|vids?|clips?|scenes?)`)
 
+// parsePackCount returns the title's stated video count, or 0 when none.
+// Year-like numbers are ignored: "Siterip 2019 Videos 1080p (87 роликов)"
+// reads "2019 Videos" before the real count, and that 2019 became the
+// grab's PackFiles — making the scan-coverage gate unreachable (the pack
+// sat at scanned for the whole orphan window and keep="pack" dedup never
+// ran with verified coverage). A four-digit count that IS real loses only
+// the stated-count fast path; the settle window still confirms the pack.
 func parsePackCount(title string) int {
-	m := packCountRe.FindStringSubmatch(title)
-	if m == nil {
-		return 0
+	for _, m := range packCountRe.FindAllStringSubmatch(title, -1) {
+		n, _ := strconv.Atoi(m[1])
+		if n >= 1950 && n <= 2035 {
+			continue // a year followed by the keyword, not a count
+		}
+		return n
 	}
-	n, _ := strconv.Atoi(m[1])
-	return n
+	return 0
 }
 
 // searchPackIndexers runs the performer-name search across every
