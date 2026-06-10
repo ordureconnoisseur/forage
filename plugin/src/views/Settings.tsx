@@ -949,7 +949,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               type="text"
               value={displayValue("allowedOrigin", data?.fields["allowedOrigin"])}
               onChange={(e) => setField("allowedOrigin", e.target.value)}
-              placeholder="*"
+              placeholder="same-origin only (empty)"
             />
             <SourceBadge field={data?.fields["allowedOrigin"]} />
           </Field>

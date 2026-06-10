@@ -155,7 +155,7 @@ Every API route except `/` (the app), `/healthz` (liveness), and `/session` (coo
 
 - Keep forager on a trusted network (Tailscale, LAN). Don't expose it to the internet without a token.
 - The token rides in a header/cookie, so it's only as private as the transport — put forager behind HTTPS (Tailscale Serve, Cloudflare Tunnel, a reverse proxy). The app is now the front door, so this matters more than ever.
-- Lock `FORAGER_ALLOWED_ORIGIN` as defense-in-depth.
+- Cross-origin browser access is off by default (no CORS headers, so the API is same-origin only). Set `FORAGER_ALLOWED_ORIGIN` to your Stash origin only if you load the UI from inside Stash; `*` opens the API to scripts on any website a browser on your network visits.
 
 See [Configuration reference](#configuration-reference) for the token's precedence (UI value overrides env). A lost token can be recovered from `data/config.json` on the daemon host.
 
@@ -278,7 +278,7 @@ Reload plugins in Stash → a **Forage** button appears in the navbar. Click it:
 | `FORAGER_POLL_INTERVAL` | `60s` | grabs poller cadence |
 | `FORAGER_ORPHAN_AFTER` | `6h` | how long a grab may sit `completed` before being marked `orphaned` |
 | `FORAGER_CACHE_REFRESH` | `6h` | performer + studio + scene cache refresh cadence (trending is hardcoded to 1h) |
-| `FORAGER_ALLOWED_ORIGIN` | `*` | CORS allowlist; set to your Stash origin to lock down |
+| `FORAGER_ALLOWED_ORIGIN` | _empty_ | CORS allowlist; empty = same-origin only (no CORS headers). Set your Stash origin for the in-Stash plugin mode, or `*` to allow any origin |
 | `FORAGER_ADMIN_TOKEN` | _empty_ | shared secret gating every route except `/` and `/healthz` |
 | `FORAGER_LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 

@@ -90,7 +90,14 @@ type Config struct {
 	OrphanAfter       time.Duration
 	CacheRefresh      time.Duration
 	LogLevel          slog.Level
-	AllowedOrigin     string
+	// AllowedOrigin is the CORS allowlist: empty (the default) emits no
+	// CORS headers at all, so browsers hold the API to same-origin — the
+	// right shape for the daemon-served UI. Set an origin (the old
+	// coupled-plugin mode, where the Stash origin called the API
+	// directly) or "*" to open it up. "*" used to be the default, but
+	// combined with open mode (no admin token) it let any website a LAN
+	// browser visited drive destructive POSTs cross-origin.
+	AllowedOrigin string
 	// AdminToken gates every API route except / and /healthz when set
 	// (UI-managed via config.json, or FORAGER_ADMIN_TOKEN). Empty = open.
 	// Now demoted to "the API key" — the programmatic-client credential —
@@ -164,7 +171,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
 	b.LogLevel = envLogLevel("FORAGER_LOG_LEVEL", slog.LevelInfo)
-	b.AllowedOrigin = b.envOr("FORAGER_ALLOWED_ORIGIN", "*", "allowedOrigin")
+	b.AllowedOrigin = b.envOr("FORAGER_ALLOWED_ORIGIN", "", "allowedOrigin")
 	b.AdminToken = os.Getenv("FORAGER_ADMIN_TOKEN")
 	b.Username = b.envOr("FORAGER_USERNAME", "", "username")
 	b.PasswordHash = b.envOr("FORAGER_PASSWORD_HASH", "", "passwordHash")
@@ -265,7 +272,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.PollInterval = dur("pollInterval", stored.PollInterval, b.PollInterval, 60*time.Second)
 	out.OrphanAfter = dur("orphanAfter", stored.OrphanAfter, b.OrphanAfter, 6*time.Hour)
 	out.CacheRefresh = dur("cacheRefresh", stored.CacheRefresh, b.CacheRefresh, 6*time.Hour)
-	out.AllowedOrigin = str("allowedOrigin", stored.AllowedOrigin, b.AllowedOrigin, "*")
+	out.AllowedOrigin = str("allowedOrigin", stored.AllowedOrigin, b.AllowedOrigin, "")
 	out.AdminToken = str("adminToken", stored.AdminToken, b.AdminToken, "")
 	out.Username = str("username", stored.Username, b.Username, "")
 	out.PasswordHash = str("passwordHash", stored.PasswordHash, b.PasswordHash, "")
