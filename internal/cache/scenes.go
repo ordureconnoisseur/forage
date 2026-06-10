@@ -157,6 +157,18 @@ func RefreshSceneCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 	close(jobs)
 	wg.Wait()
 
+	// A failing StashDB (outage, expired key, rate limiting) surfaces
+	// here as per-performer query errors, which the workers log-and-skip.
+	// Step 4 zeroes EVERY aggregate and prunes every cache row not
+	// re-seen this pass, so committing a mostly-failed pass would wipe
+	// Discover and all performer counts until the next successful refresh
+	// up to 12h later. Keep the previous pass's data instead: abort
+	// without touching the DB when a majority of queries failed.
+	if len(performers) > 0 && queryErrors*2 > len(performers) {
+		return fmt.Errorf("scene cache refresh aborted: %d/%d performer queries failed, keeping previous cache",
+			queryErrors, len(performers))
+	}
+
 	// ── Step 4 — DB writes (single tx) ───────────────────────────
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
