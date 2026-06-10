@@ -259,7 +259,7 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) {
 			if rel.InfoURL == "" || seenURLs[rel.InfoURL] {
 				continue
 			}
-			if minSeeders > 0 && rel.Popularity < minSeeders {
+			if seedersBelow(rel, minSeeders) {
 				continue
 			}
 			seenURLs[rel.InfoURL] = true
@@ -294,7 +294,7 @@ func (s *Server) getSearch(w http.ResponseWriter, r *http.Request) {
 func filterReleases(releases []prowlarr.Release, minSeeders, limit int) []prowlarr.Release {
 	out := make([]prowlarr.Release, 0, len(releases))
 	for _, rel := range releases {
-		if minSeeders > 0 && rel.Popularity < minSeeders {
+		if seedersBelow(rel, minSeeders) {
 			continue
 		}
 		out = append(out, rel)
@@ -303,6 +303,16 @@ func filterReleases(releases []prowlarr.Release, minSeeders, limit int) []prowla
 		}
 	}
 	return out
+}
+
+// seedersBelow reports whether a release fails the min-seeders floor.
+// The floor means "can this actually download right now": for torrents
+// that's the live seeder count. Popularity is max(seeders, grabs) — a
+// ranking signal — so filtering on it waved through dead torrents whose
+// historical grabs cleared the floor. Usenet has no swarm; the floor
+// doesn't apply there.
+func seedersBelow(rel prowlarr.Release, minSeeders int) bool {
+	return minSeeders > 0 && rel.Protocol != "usenet" && rel.Seeders < minSeeders
 }
 
 // isRefinableTitle filters out titles too generic to make useful
