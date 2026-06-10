@@ -220,6 +220,8 @@ func (s *Server) postConfigTest(w http.ResponseWriter, r *http.Request) {
 // calls this right after the Stash test passes, before anything's saved).
 // Returns {found, url, api_key} for the StashDB box; found:false when Stash
 // has no stashdb.org box configured. The user still confirms before it's used.
+// api_key is only included when the caller supplied the Stash credentials in
+// the body — see callerHasStashKey below.
 func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		StashURL    string `json:"stashUrl"`
@@ -236,6 +238,15 @@ func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 	if url == "" {
 		url = cfg.StashURL
 	}
+	// callerHasStashKey: the caller supplied the Stash key themselves
+	// (first-run wizard), proving they hold Stash access — anyone with the
+	// Stash key can read the StashDB key out of Stash's own config anyway,
+	// so echoing it back adds nothing. The fallback path instead runs on
+	// the daemon's SAVED credentials, where echoing would convert plain
+	// forage access (possibly open-mode) into a plaintext StashDB key —
+	// the one hole in the secrets-are-masked rule. There the response
+	// omits api_key and the wizard simply skips the pre-fill.
+	callerHasStashKey := body.StashAPIKey != ""
 	key := body.StashAPIKey
 	if key == "" {
 		key = cfg.StashAPIKey
@@ -253,13 +264,16 @@ func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 	for _, b := range boxes {
 		if strings.Contains(strings.ToLower(b.Endpoint), stash.StashDBEndpointHost) && b.APIKey != "" {
 			// Hand back the GraphQL endpoint's base (strip /graphql) as the
-			// URL the StashDB field expects, plus the key.
+			// URL the StashDB field expects, plus the key when permitted.
 			stashdbURL := strings.TrimSuffix(b.Endpoint, "/graphql")
-			writeJSON(w, http.StatusOK, map[string]any{
-				"found":   true,
-				"url":     stashdbURL,
-				"api_key": b.APIKey,
-			})
+			resp := map[string]any{
+				"found": true,
+				"url":   stashdbURL,
+			}
+			if callerHasStashKey {
+				resp["api_key"] = b.APIKey
+			}
+			writeJSON(w, http.StatusOK, resp)
 			return
 		}
 	}
