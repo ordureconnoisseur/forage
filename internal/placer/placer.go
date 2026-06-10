@@ -239,6 +239,14 @@ func copyFile(src, dest string) error {
 	}
 	tmpName := tmp.Name()
 	cleanup := func() { _ = tmp.Close(); _ = os.Remove(tmpName) }
+	// CreateTemp opens the file 0600 and that mode survives the rename into
+	// place, which left copy-fallback placements unreadable to a Stash
+	// running as a different uid (hardlinks were unaffected, since they
+	// share the source's mode). Open up to the conventional 0644.
+	if err := tmp.Chmod(0o644); err != nil {
+		cleanup()
+		return err
+	}
 	if _, err := io.Copy(tmp, in); err != nil {
 		cleanup()
 		return err

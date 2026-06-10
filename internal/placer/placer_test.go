@@ -186,6 +186,28 @@ func TestPlaceSingleFileCollisionStillSuffixes(t *testing.T) {
 	}
 }
 
+// TestCopyFileWorldReadable: the copy fallback must not inherit
+// CreateTemp's 0600, which made library copies unreadable to a Stash
+// running as a different uid.
+func TestCopyFileWorldReadable(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src.mkv")
+	dest := filepath.Join(root, "dest.mkv")
+	if err := os.WriteFile(src, []byte("bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := copyFile(src, dest); err != nil {
+		t.Fatalf("copyFile: %v", err)
+	}
+	info, err := os.Stat(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o644 {
+		t.Errorf("copied file mode = %o, want 644", perm)
+	}
+}
+
 func TestFreeSpace(t *testing.T) {
 	p := New(t.TempDir(), nil)
 	free, err := p.FreeSpace()
