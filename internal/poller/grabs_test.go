@@ -58,6 +58,19 @@ func TestPickRecentSingleCandidate(t *testing.T) {
 	}
 }
 
+// TestPickRecentWindowAnchoredToGrab guards against the stuck-grab claim:
+// the window must close 120s after GrabbedAt rather than tracking the wall
+// clock, so a grab whose add died can't link a torrent the user added to
+// the category minutes later.
+func TestPickRecentWindowAnchoredToGrab(t *testing.T) {
+	const at = int64(1780168872)
+	ts := []qbit.Torrent{{Hash: "deadbeef", Category: "forager", AddedOn: at + 600, Name: "users own torrent"}}
+	g := &grabs.Grab{ReleaseTitle: "stuck grab whose add never landed", GrabbedAt: at, Category: "forager"}
+	if got := pickRecent(ts, g, map[string]bool{}); got != nil {
+		t.Fatalf("grab claimed a torrent added 10 min after it: %v", got)
+	}
+}
+
 // TestPackScanCoverageOK guards the floor that stops a pack confirming
 // against a half-scanned directory after a restart re-seeds the
 // in-memory settle window at a partial count.

@@ -345,6 +345,21 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 		}); uerr != nil {
 			s.log.Warn("link grab hash", "grab_id", grabID, "err", uerr)
 		}
+	} else if hash == "" && grabID != 0 && s.grabs != nil {
+		// No hash to link (a magnet whose URI hash we couldn't parse): the
+		// poller links it via pickRecent, whose claim window is anchored on
+		// GrabbedAt. This add may have landed minutes after the row was
+		// inserted (fetch-gate queueing, 429 backoff), so re-stamp GrabbedAt
+		// to the actual add time or the window can't contain the torrent's
+		// AddedOn. Only while still queued and unlinked, so an already
+		// linked or user-mutated grab keeps its clocks.
+		if uerr := s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
+			if g.ClientID == "" && g.Status == "queued" {
+				g.GrabbedAt = time.Now().Unix()
+			}
+		}); uerr != nil {
+			s.log.Warn("re-stamp grab add time", "grab_id", grabID, "err", uerr)
+		}
 	}
 	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash, "attempt", attempt)
 }

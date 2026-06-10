@@ -1427,7 +1427,14 @@ func pickRecent(ts []qbit.Torrent, g *grabs.Grab, claimed map[string]bool) *qbit
 		return nil
 	}
 	windowStart := g.GrabbedAt - 120
-	windowEnd := time.Now().Unix() + 120
+	// Anchored to the grab's add time, not the tick's wall clock. The old
+	// now+120 end re-opened the window every tick, so a grab whose async
+	// add silently died kept widening its claim and would link ANY torrent
+	// the user later added under the category (wrong-content link, filed
+	// under the wrong performer). GrabbedAt is re-stamped when a hashless
+	// add actually lands (addTorrentAttempt), so an add delayed by the
+	// fetch gate or 429 backoff still falls inside this window.
+	windowEnd := g.GrabbedAt + 120
 	// Gather every unclaimed torrent in the time window + category.
 	var cands []*qbit.Torrent
 	for i := range ts {
