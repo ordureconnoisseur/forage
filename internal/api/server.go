@@ -96,14 +96,18 @@ type Server struct {
 	scorer    *scoring.Scorer
 	scorerSrc string // the ReleaseRules JSON the cached scorer was built from
 
-	// sessions holds valid web-login session ids → expiry. Populated by
-	// POST /login (and the API-key→cookie POST /session), checked by the
-	// auth middleware for the forage_token cookie, dropped by DELETE
-	// /session. In-memory: sessions don't survive a daemon restart, so a
-	// restart logs everyone out and they re-login — conventional and fine
-	// for a single-user daemon. Guarded by sessionMu.
-	sessionMu sync.Mutex
-	sessions  map[string]time.Time
+	// sessionKey signs the stateless forage_token cookie (HMAC-SHA256).
+	// Persisted in the meta table and loaded on boot, so cookies stay valid
+	// across daemon restarts — a redeploy no longer logs everyone out. This
+	// mirrors the *arrs' ASP.NET Data-Protection model: there's no
+	// server-side session table; a cookie is trusted iff its signature
+	// verifies against this key and its embedded expiry is in the future.
+	// 32 bytes of CSPRNG; rotating it (or losing the DB) invalidates every
+	// outstanding cookie at once — rotateSessionKey does exactly that when
+	// a login credential changes. Guarded by sessionKeyMu (read on every
+	// gated request, swapped on rotation).
+	sessionKeyMu sync.RWMutex
+	sessionKey   []byte
 
 	// sceneTitles memoises StashDB scene id → display title, so the Grabs
 	// list can label a scene-attempt group with its real title instead of a
@@ -141,16 +145,17 @@ type Options struct {
 
 func New(opts Options) *Server {
 	return &Server{
-		db:        opts.DB,
-		pool:      opts.Pool,
-		bootstrap: opts.Bootstrap,
-		store:     opts.Store,
-		grabs:     opts.Grabs,
-		watches:   opts.Watches,
-		log:       opts.Log,
-		version:   opts.Version,
-		adoptNow:  opts.AdoptNow,
-		jobs:      newJobStore(),
+		db:         opts.DB,
+		pool:       opts.Pool,
+		bootstrap:  opts.Bootstrap,
+		store:      opts.Store,
+		grabs:      opts.Grabs,
+		watches:    opts.Watches,
+		log:        opts.Log,
+		version:    opts.Version,
+		adoptNow:   opts.AdoptNow,
+		jobs:       newJobStore(),
+		sessionKey: loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 }
 

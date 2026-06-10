@@ -1,13 +1,20 @@
 package api
 
 import (
+	"bytes"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"github.com/ordureconnoisseur/forager/internal/db"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -210,7 +217,11 @@ func TestPostLogin(t *testing.T) {
 // TestLogoutInvalidatesSession proves logout drops the session SERVER-SIDE:
 // after DELETE /session, replaying the old cookie value is rejected by the
 // gate (not merely cleared from the browser).
-func TestLogoutInvalidatesSession(t *testing.T) {
+// TestLogoutClearsCookie: with stateless tokens, logout's job is to strip
+// the credential from the browser by emitting an expiring Set-Cookie. It
+// no longer revokes server-side (that's the documented trade-off), so we
+// assert the clearing cookie rather than token invalidation.
+func TestLogoutClearsCookie(t *testing.T) {
 	store, err := configstore.Open(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -223,9 +234,6 @@ func TestLogoutInvalidatesSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !s.sessionValid(id) {
-		t.Fatal("fresh session should be valid")
-	}
 	req := httptest.NewRequest(http.MethodDelete, "/session", nil)
 	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: id})
 	rec := httptest.NewRecorder()
@@ -233,19 +241,129 @@ func TestLogoutInvalidatesSession(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("code = %d, want 200", rec.Code)
 	}
-	if s.sessionValid(id) {
-		t.Error("session still valid after logout — server-side drop failed")
+	var cleared *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == sessionCookieName {
+			cleared = c
+		}
 	}
-	// And the gate now rejects the replayed cookie.
-	h := s.adminAuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	greq := httptest.NewRequest(http.MethodGet, "/performers", nil)
-	greq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: id})
-	grec := httptest.NewRecorder()
-	h.ServeHTTP(grec, greq)
-	if grec.Code != http.StatusUnauthorized {
-		t.Errorf("replayed cookie status = %d, want 401", grec.Code)
+	if cleared == nil {
+		t.Fatal("logout did not emit a forage_token cookie")
+	}
+	if cleared.MaxAge >= 0 || cleared.Value != "" {
+		t.Errorf("logout cookie should expire the credential: MaxAge=%d value=%q",
+			cleared.MaxAge, cleared.Value)
+	}
+}
+
+// TestSessionTokenStateless covers the signed-cookie primitive: a genuine
+// token verifies, a tampered/foreign/expired one doesn't, and — the whole
+// point of this change — a token survives being re-checked under a server
+// rebuilt with the SAME signing key (i.e. across a daemon restart), while
+// a different key rejects it.
+func TestSessionTokenStateless(t *testing.T) {
+	key := make([]byte, 32)
+	for i := range key {
+		key[i] = byte(i + 1)
+	}
+	s := &Server{sessionKey: key}
+
+	good, _ := s.newSession()
+	if !s.sessionValid(good) {
+		t.Fatal("freshly minted token should verify")
+	}
+
+	// Tampered signature.
+	if s.sessionValid(good[:len(good)-1] + "0") {
+		t.Error("token with a flipped signature byte should be rejected")
+	}
+	// Tampered payload (bump the expiry without re-signing).
+	payload, sig, _ := strings.Cut(good, ".")
+	exp, _ := strconv.ParseInt(payload, 10, 64)
+	forged := strconv.FormatInt(exp+86400, 10) + "." + sig
+	if s.sessionValid(forged) {
+		t.Error("token with an unsigned, extended expiry should be rejected")
+	}
+	// Malformed shapes.
+	for _, bad := range []string{"", "nopayload", ".sig", "payload.", "a.b.c"} {
+		if s.sessionValid(bad) {
+			t.Errorf("malformed token %q should be rejected", bad)
+		}
+	}
+	// Expired but correctly signed.
+	if s.sessionValid(s.signSession(time.Now().Add(-time.Minute))) {
+		t.Error("expired token should be rejected")
+	}
+
+	// Restart survival: a server with the same persisted key still trusts
+	// the cookie; a server with a different key does not.
+	same := &Server{sessionKey: key}
+	if !same.sessionValid(good) {
+		t.Error("token should survive a restart that reloads the same signing key")
+	}
+	other := &Server{sessionKey: append([]byte{0xff}, key[1:]...)}
+	if other.sessionValid(good) {
+		t.Error("token must not verify under a different signing key")
+	}
+}
+
+// TestLoadOrCreateSessionKey: the key is generated once and then stable
+// across reloads from the same DB (so cookies persist), and two distinct
+// DBs get distinct keys.
+func TestLoadOrCreateSessionKey(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "k.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	k1 := loadOrCreateSessionKey(d, nil)
+	if len(k1) != 32 {
+		t.Fatalf("key length = %d, want 32", len(k1))
+	}
+	k2 := loadOrCreateSessionKey(d, nil)
+	if !bytes.Equal(k1, k2) {
+		t.Error("reloading the same DB should return the identical persisted key")
+	}
+	d2, err := db.Open(filepath.Join(t.TempDir(), "k2.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d2.Close()
+	if bytes.Equal(k1, loadOrCreateSessionKey(d2, nil)) {
+		t.Error("a separate DB should get its own key")
+	}
+}
+
+// TestRotateSessionKeyRevokesSessions: rotating the signing key (what a
+// credential change triggers via postConfig) must invalidate every
+// previously-minted cookie, keep newly-minted ones working, and persist
+// the rotated key so the revocation survives a restart.
+func TestRotateSessionKeyRevokesSessions(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "rot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	s := &Server{
+		db:         d,
+		log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
+		sessionKey: loadOrCreateSessionKey(d, nil),
+	}
+
+	old, _ := s.newSession()
+	if !s.sessionValid(old) {
+		t.Fatal("pre-rotation cookie should verify")
+	}
+	s.rotateSessionKey()
+	if s.sessionValid(old) {
+		t.Error("pre-rotation cookie must be revoked by the rotation")
+	}
+	fresh, _ := s.newSession()
+	if !s.sessionValid(fresh) {
+		t.Error("post-rotation cookie should verify")
+	}
+	if !bytes.Equal(s.currentSessionKey(), loadOrCreateSessionKey(d, nil)) {
+		t.Error("rotated key was not persisted (a restart would un-revoke)")
 	}
 }
 

@@ -16,11 +16,17 @@
 package api
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,59 +113,150 @@ func (s *Server) requestAuthorized(r *http.Request) bool {
 	return false
 }
 
-// ── Session store ───────────────────────────────────────────────────
+// ── Stateless signed sessions ───────────────────────────────────────
 //
-// A web login issues a cryptographically-random session id, tracked here
-// with a 7-day expiry. The forage_token cookie carries this id (NOT the
-// password or token). In-memory: a daemon restart drops every session and
-// users re-login — conventional and acceptable for a single-user daemon.
+// A web login issues a self-contained, HMAC-signed token of the form
+// "<expiryUnix>.<hex(mac)>", where mac = HMAC-SHA256(sessionKey, domain +
+// expiryUnix). The forage_token cookie carries this token (NOT the
+// password or admin token). There is no server-side session table: a
+// cookie is trusted iff its signature verifies and its embedded expiry is
+// still in the future. Because sessionKey is persisted in the DB and
+// reloaded on boot, cookies survive a daemon restart — a redeploy no
+// longer logs everyone out. This is the *arrs' Data-Protection model.
+//
+// Trade-off vs the old in-memory map: there's no per-session revocation,
+// so logout clears the cookie but can't forcibly kill a token that was
+// already captured — it stays valid until its expiry. For a single-user
+// private-tailnet daemon that's the standard stateless-cookie posture
+// (it's how JWT/Data-Protection auth behaves too). The revocation lever
+// is rotating sessionKey (rotateSessionKey), which kills every
+// outstanding cookie at once; the daemon does that automatically when a
+// login credential changes (postConfig).
 
-// newSession mints a random session id, records its expiry, and returns
-// the id (hex). 32 bytes of CSPRNG → 64 hex chars, unguessable.
-func (s *Server) newSession() (string, error) {
+// sessionDomain separates this HMAC's input from any other use of the
+// same key, so a signature minted here can't be replayed in another
+// context.
+const sessionDomain = "forage-session.v1:"
+
+// loadOrCreateSessionKey returns the persisted cookie-signing key from the
+// meta table, generating and storing a fresh 32-byte CSPRNG key on first
+// run. On any DB error it falls back to an ephemeral in-process key and
+// logs a warning: auth still works, but cookies won't survive a restart
+// (the pre-existing behaviour), which is strictly no worse than before.
+// sessionKeyMetaKey is the meta-table row holding the signing key.
+const sessionKeyMetaKey = "session_signing_key"
+
+func loadOrCreateSessionKey(db *sql.DB, log *slog.Logger) []byte {
+	var stored string
+	err := db.QueryRow(`SELECT value FROM meta WHERE key = ?`, sessionKeyMetaKey).Scan(&stored)
+	if err == nil {
+		if b, derr := hex.DecodeString(stored); derr == nil && len(b) == 32 {
+			return b
+		}
+		// Corrupt/short value — fall through and mint a fresh one.
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		// Read FAILED (locked, I/O) — distinct from "no key yet". Don't
+		// fall through: minting would overwrite a possibly-good stored key
+		// and log every session out over a transient error. Degrade to an
+		// ephemeral key for this process instead.
+		if log != nil {
+			log.Warn("could not read session signing key; using ephemeral key", "err", err)
+		}
+		return ephemeralSessionKey()
+	}
+
+	b := make([]byte, 32)
+	if _, rerr := rand.Read(b); rerr != nil {
+		if log != nil {
+			log.Warn("could not generate session signing key", "err", rerr)
+		}
+		return ephemeralSessionKey()
+	}
+	if _, werr := db.Exec(`
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, sessionKeyMetaKey, hex.EncodeToString(b)); werr != nil && log != nil {
+		log.Warn("could not persist session signing key; using ephemeral key", "err", werr)
+	}
+	return b
+}
+
+// ephemeralSessionKey mints a process-lifetime key for the degraded path
+// where the DB can't store one. Cookies signed with it die on restart.
+func ephemeralSessionKey() []byte {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return b
+}
+
+// currentSessionKey reads the signing key under the rotation lock.
+func (s *Server) currentSessionKey() []byte {
+	s.sessionKeyMu.RLock()
+	defer s.sessionKeyMu.RUnlock()
+	return s.sessionKey
+}
+
+// rotateSessionKey mints + persists a fresh signing key and swaps it in,
+// which invalidates every outstanding session cookie at once — the
+// revocation lever for stateless sessions. Called when a login credential
+// changes (password set/cleared, API key changed) so a credential rotation
+// also revokes existing logins. Keeps the old key if a new one can't be
+// generated; if persisting fails the in-memory swap still happens (the
+// revocation takes effect now) but a restart reverts to the stored key.
+func (s *Server) rotateSessionKey() {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	id := hex.EncodeToString(b)
-	s.sessionMu.Lock()
-	if s.sessions == nil {
-		s.sessions = map[string]time.Time{}
-	}
-	s.sessions[id] = time.Now().Add(sessionTTL)
-	s.sessionMu.Unlock()
-	return id, nil
-}
-
-// sessionValid reports whether id names a live (unexpired) session,
-// pruning it if it has expired. Empty ids are never valid.
-func (s *Server) sessionValid(id string) bool {
-	if id == "" {
-		return false
-	}
-	s.sessionMu.Lock()
-	defer s.sessionMu.Unlock()
-	exp, ok := s.sessions[id]
-	if !ok {
-		return false
-	}
-	if time.Now().After(exp) {
-		delete(s.sessions, id)
-		return false
-	}
-	return true
-}
-
-// dropSession invalidates a session id server-side (logout). After this,
-// presenting the same cookie value gets 401 — the credential is gone, not
-// merely cleared from the browser.
-func (s *Server) dropSession(id string) {
-	if id == "" {
+		s.log.Warn("session key rotation failed; existing sessions remain valid", "err", err)
 		return
 	}
-	s.sessionMu.Lock()
-	delete(s.sessions, id)
-	s.sessionMu.Unlock()
+	if _, err := s.db.Exec(`
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, sessionKeyMetaKey, hex.EncodeToString(b)); err != nil {
+		s.log.Warn("could not persist rotated session key; revocation lasts until restart", "err", err)
+	}
+	s.sessionKeyMu.Lock()
+	s.sessionKey = b
+	s.sessionKeyMu.Unlock()
+	s.log.Info("session signing key rotated; all existing sessions invalidated")
+}
+
+// signSession returns the cookie value for an expiry: "<expUnix>.<hexmac>".
+func (s *Server) signSession(exp time.Time) string {
+	payload := strconv.FormatInt(exp.Unix(), 10)
+	mac := hmac.New(sha256.New, s.currentSessionKey())
+	mac.Write([]byte(sessionDomain + payload))
+	return payload + "." + hex.EncodeToString(mac.Sum(nil))
+}
+
+// newSession mints a signed token valid for sessionTTL. The (string,
+// error) signature is retained for its callers; with stateless tokens it
+// never errors.
+func (s *Server) newSession() (string, error) {
+	return s.signSession(time.Now().Add(sessionTTL)), nil
+}
+
+// sessionValid reports whether value is a well-formed, correctly-signed,
+// unexpired session token. Empty/malformed values are never valid.
+func (s *Server) sessionValid(value string) bool {
+	payload, sig, ok := strings.Cut(value, ".")
+	if !ok || payload == "" || sig == "" {
+		return false
+	}
+	provided, err := hex.DecodeString(sig)
+	if err != nil {
+		return false
+	}
+	mac := hmac.New(sha256.New, s.currentSessionKey())
+	mac.Write([]byte(sessionDomain + payload))
+	if !hmac.Equal(provided, mac.Sum(nil)) {
+		return false
+	}
+	exp, err := strconv.ParseInt(payload, 10, 64)
+	if err != nil {
+		return false
+	}
+	return time.Now().Before(time.Unix(exp, 0))
 }
 
 // setSessionCookie writes the forage_token cookie carrying a session id.
@@ -250,15 +347,14 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": true})
 }
 
-// deleteSession is logout: it invalidates the session id server-side (so
-// the old cookie value can never be replayed) AND overwrites the cookie
-// with an expired one (it's HttpOnly, so client JS can't clear it itself).
-// Public + unauthenticated: removing your own browser's credential is
-// harmless, and a locked-out client has nothing valid to present anyway.
+// deleteSession is logout: it overwrites the forage_token cookie with an
+// expired one (it's HttpOnly, so client JS can't clear it itself), which
+// removes the credential from the browser. With stateless tokens there's
+// no server-side record to delete; a token already captured stays valid
+// until its expiry (rotate sessionKey to revoke en masse). Public +
+// unauthenticated: removing your own browser's credential is harmless, and
+// a locked-out client has nothing valid to present anyway.
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(sessionCookieName); err == nil {
-		s.dropSession(c.Value)
-	}
 	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,

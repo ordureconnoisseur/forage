@@ -170,6 +170,23 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A login-credential change (password set/cleared, API key changed)
+	// rotates the session signing key so every outstanding cookie is
+	// revoked — the change wouldn't mean much if a session minted under
+	// the old credential kept working. The caller's own browser gets a
+	// fresh cookie in the same response so saving a new password doesn't
+	// dump them at the login screen; everyone else stays revoked. (The
+	// request was authorized by the middleware, so re-issuing is safe even
+	// if it authenticated by Bearer key.)
+	if body.Password != nil || patch.AdminToken != nil {
+		s.rotateSessionKey()
+		if c, cerr := r.Cookie(sessionCookieName); cerr == nil && c.Value != "" {
+			if id, serr := s.newSession(); serr == nil {
+				setSessionCookie(w, r, id)
+			}
+		}
+	}
+
 	// Pull the newly-saved config and reload the Pool. invalidate the
 	// matcher only when Stash or StashDB creds actually changed —
 	// avoids needlessly trashing a heavy-to-build matcher when the
