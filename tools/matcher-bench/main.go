@@ -35,6 +35,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -537,6 +538,15 @@ type verifyFailure struct {
 	FalseSceneID    string
 	FalseSceneTitle string
 	Conf            float64
+	// For recall_miss rows: whether the expected scene was among the
+	// candidates at all. Splits the misses into retrieval failures (the
+	// queries never surfaced the scene — fix Track A/B query construction
+	// or accept it's not on StashDB) and verification failures (the scene
+	// was RIGHT THERE and Verify declined it — fix signals/thresholds).
+	// The two need entirely different work, and the aggregate counter
+	// alone couldn't attribute per-class.
+	ExpectedWasCandidate bool
+	ExpectedConf         float64 // candidate's confidence when present
 }
 
 func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int) *verifyResult {
@@ -601,10 +611,12 @@ func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entrie
 			}
 			cands := rr.cands
 			var expTitle string
+			var expConf float64
 			expFound := false
 			for _, c := range cands {
 				if c.Scene.ID == e.StashDBID {
 					expTitle = c.Scene.Title
+					expConf = c.Confidence
 					expFound = true
 					break
 				}
@@ -619,7 +631,10 @@ func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entrie
 				if !expFound {
 					r.NoExpectedCand++
 				}
-				r.Failures = append(r.Failures, verifyFailure{Release: e.Basename, Kind: "recall_miss", ExpectedID: e.StashDBID})
+				r.Failures = append(r.Failures, verifyFailure{
+					Release: e.Basename, Kind: "recall_miss", ExpectedID: e.StashDBID,
+					ExpectedWasCandidate: expFound, ExpectedConf: expConf,
+				})
 			}
 			falseHere := 0
 			for _, c := range cands {
@@ -651,12 +666,13 @@ func writeVerifyFailures(path string, rows []verifyFailure, max int) error {
 	defer f.Close()
 	w := csv.NewWriter(bufio.NewWriter(f))
 	defer w.Flush()
-	_ = w.Write([]string{"kind", "release", "expected_id", "false_scene_id", "false_scene_title", "conf"})
+	_ = w.Write([]string{"kind", "release", "expected_id", "false_scene_id", "false_scene_title", "conf", "expected_was_candidate", "expected_conf"})
 	for i, row := range rows {
 		if max > 0 && i >= max {
 			break
 		}
-		_ = w.Write([]string{row.Kind, row.Release, row.ExpectedID, row.FalseSceneID, row.FalseSceneTitle, fmt.Sprintf("%.2f", row.Conf)})
+		_ = w.Write([]string{row.Kind, row.Release, row.ExpectedID, row.FalseSceneID, row.FalseSceneTitle,
+			fmt.Sprintf("%.2f", row.Conf), strconv.FormatBool(row.ExpectedWasCandidate), fmt.Sprintf("%.2f", row.ExpectedConf)})
 	}
 	return nil
 }
