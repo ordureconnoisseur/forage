@@ -140,7 +140,7 @@ func (s *Server) postCollectionJob(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "performer_id required")
 		return
 	}
-	job, err := s.startCollectionJob(req.PerformerID, req.SceneIDs, req.Upgrade)
+	job, err := s.startCollectionJob(r.Context(), req.PerformerID, req.SceneIDs, req.Upgrade)
 	if err != nil {
 		var ge grabError
 		status := http.StatusBadGateway
@@ -298,8 +298,13 @@ func (s *Server) postCollectionJobGrab(w http.ResponseWriter, r *http.Request) {
 
 // startCollectionJob resolves the target scene set and launches the
 // background crawl. Returns the job with its scene list populated.
-func (s *Server) startCollectionJob(performerID string, sceneIDs []string, upgrade bool) (*collectionJob, error) {
-	ctx := context.Background()
+//
+// ctx is the caller's (request) context: the setup below blocks the
+// handler on a full StashDB filmography pagination plus a library-wide
+// owned sweep, and with context.Background() a hung upstream pinned the
+// handler goroutine forever with no way for a client disconnect to cancel
+// it. Only the crawl itself runs on the job's own context.
+func (s *Server) startCollectionJob(ctx context.Context, performerID string, sceneIDs []string, upgrade bool) (*collectionJob, error) {
 	stashDBC := s.pool.StashDB()
 	if stashDBC == nil || s.pool.Prowlarr() == nil {
 		return nil, grabError{http.StatusServiceUnavailable, "prowlarr and stashdb must be configured"}
@@ -467,7 +472,7 @@ func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, perfo
 	s.finishJob(job, state)
 	s.log.Info("collection job finished", "id", job.ID, "state", state,
 		"grabbed", job.Grabbed, "total", job.Total)
-	go s.cleanupJobLater(job.ID)
+	go s.cleanupJobLater(ctx, job.ID)
 }
 
 // processJobScene SEARCHES one scene and stores its full verified
@@ -578,9 +583,18 @@ func (s *Server) finishJob(job *collectionJob, state string) {
 }
 
 // cleanupJobLater drops a finished job from the store after jobRetention.
-func (s *Server) cleanupJobLater(id string) {
+// ctx is the job's own context: a cancelled job was already removed from
+// the store by deleteCollectionJob, so its cleanup returns right away
+// instead of pinning a goroutine + timer for the full retention window
+// (create/cancel churn used to accumulate one such pair per cancelled
+// job, each parked for 2h).
+func (s *Server) cleanupJobLater(ctx context.Context, id string) {
 	timer := time.NewTimer(jobRetention)
-	<-timer.C
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+	case <-timer.C:
+	}
 	s.jobs.mu.Lock()
 	delete(s.jobs.jobs, id)
 	s.jobs.mu.Unlock()
