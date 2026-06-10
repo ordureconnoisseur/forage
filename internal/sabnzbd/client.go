@@ -186,23 +186,37 @@ func (c *Client) Queue(ctx context.Context) ([]Item, error) {
 	return out, nil
 }
 
-// parseTimeLeft converts SAB's "HH:MM:SS" (or "MM:SS") remaining-time
-// string to seconds. Returns 0 on anything unparseable.
+// parseTimeLeft converts SAB's remaining-time string to seconds: "MM:SS",
+// "HH:MM:SS", or "D:HH:MM:SS" for jobs over 24h (SAB's calc_timeleft adds
+// the day component). The day part is days, not a base-60 digit — folding
+// every component as base-60 counted each day as 60 hours and inflated
+// multi-day ETAs 2.5x per day. Returns 0 on anything unparseable.
 func parseTimeLeft(s string) int64 {
 	s = strings.TrimSpace(s)
 	if s == "" || s == "0:00:00" {
 		return 0
 	}
 	parts := strings.Split(s, ":")
-	var total int64
+	if len(parts) > 4 {
+		return 0
+	}
+	var days int64
+	if len(parts) == 4 {
+		var err error
+		if days, err = strconv.ParseInt(parts[0], 10, 64); err != nil {
+			return 0
+		}
+		parts = parts[1:]
+	}
+	var rest int64
 	for _, p := range parts {
 		n, err := strconv.ParseInt(p, 10, 64)
 		if err != nil {
 			return 0
 		}
-		total = total*60 + n
+		rest = rest*60 + n
 	}
-	return total
+	return days*86400 + rest
 }
 
 // History returns the most-recently-completed items, newest first. Used by
