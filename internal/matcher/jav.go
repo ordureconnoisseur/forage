@@ -54,6 +54,10 @@ var javMarkerWords = map[string]bool{
 // bare studio+number form (`fct-221`) are emitted — StashDB does
 // not consistently include the prefix, so we match on either.
 func ExtractJAVCodes(s string) []string {
+	// The regex is ASCII; fold first so fullwidth JAV titles
+	// (ＳＴＡＲＳ－６２９) extract the same code as their ASCII release
+	// names. No-op for already-ASCII input.
+	s = fold(s)
 	matches := javCodeRegex.FindAllStringSubmatch(s, -1)
 	if len(matches) == 0 {
 		return nil

@@ -79,3 +79,49 @@ func TestTokenizeCaselessKept(t *testing.T) {
 		t.Errorf("Tokenize dropped the CJK token: %v", got)
 	}
 }
+
+// TestTokenizeCaseSymmetricDigits: an uppercase letter run followed by
+// digits must tokenise exactly like its lowercase form. The all-caps
+// alternative used to consume one digit of the following run (SNOS233 →
+// [snos2 33], S01E02 → [s0 1 e0 2]) so the same episode/code tag on the
+// two sides of a match shared zero tokens whenever their casing differed.
+func TestTokenizeCaseSymmetricDigits(t *testing.T) {
+	cases := map[string][]string{
+		"SNOS233": {"snos", "233"},
+		"snos233": {"snos", "233"},
+		"S01E02":  {"s", "01", "e", "02"},
+		"s01e02":  {"s", "01", "e", "02"},
+		"USB2":    {"usb", "2"},
+		"usb2":    {"usb", "2"},
+	}
+	for in, want := range cases {
+		if got := Tokenize(in); !reflect.DeepEqual(got, want) {
+			t.Errorf("Tokenize(%q) = %v, want %v", in, got, want)
+		}
+	}
+}
+
+// TestTokenizeFullwidthFolds: JAV StashDB titles routinely carry fullwidth
+// (compatibility-form) letters and digits. NFD has no compatibility
+// decomposition, so ＳＴＡＲＳ－６２９ used to tokenise to fullwidth-only
+// tokens (digits silently dropped — Go's \d is ASCII-only) that could never
+// match the ASCII release name STARS-629.
+func TestTokenizeFullwidthFolds(t *testing.T) {
+	got := Tokenize("ＳＴＡＲＳ－６２９")
+	want := Tokenize("STARS-629")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Tokenize(fullwidth) = %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(want, []string{"stars", "629"}) {
+		t.Errorf("Tokenize(\"STARS-629\") = %v, want [stars 629]", want)
+	}
+}
+
+// TestExtractJAVCodesFullwidth: code identity must survive fullwidth
+// titles too — the regex is ASCII, so extraction folds first.
+func TestExtractJAVCodesFullwidth(t *testing.T) {
+	got := ExtractJAVCodes("ＳＴＡＲＳ－６２９ タイトル")
+	if len(got) != 1 || got[0] != "stars-629" {
+		t.Errorf("ExtractJAVCodes(fullwidth) = %v, want [stars-629]", got)
+	}
+}

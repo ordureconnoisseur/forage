@@ -9,23 +9,29 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-// fold strips combining marks: NFD decomposes a precomposed letter
+// fold strips combining marks: NFKD decomposes a precomposed letter
 // (é → e + ◌́), then we drop the Mn (nonspacing-mark) runes. This makes the
 // matcher diacritic-insensitive. StashDB stores "Renée"/"José García", but
 // P2P release names overwhelmingly strip the accents ("Renee"/"Jose Garcia");
 // without folding the two sides tokenise to unequal tokens (corpus [ren, e]
 // vs release [renee]) and a large slice of accented performers silently never
 // matched. Applied to BOTH sides because it lives in Tokenize, the single
-// chokepoint. Limitation: only canonical-decomposition accents fold —
-// stroke/ligature letters (ø, ł, ß) have no NFD decomposition and pass
-// through unchanged, kept as whole tokens by the \p{Lo}/\p{Ll} alternatives
-// in caseAndDigitSplit.
+// chokepoint.
 //
-// norm.NFD.String is safe for concurrent use (the matcher benches/runs
+// NFKD (not NFD) so COMPATIBILITY forms decompose too — JAV StashDB titles
+// routinely use fullwidth letters/digits/hyphens (ＳＴＡＲＳ－６２９), which
+// NFD leaves untouched: fullwidth digits match neither \d (ASCII-only in Go)
+// nor any letter class, so they were silently dropped and such scenes could
+// never token- or code-match an ASCII release name. Remaining limitation:
+// stroke/ligature letters (ø, ł, ß) have no decomposition in either form and
+// pass through unchanged, kept as whole tokens by the \p{Lo}/\p{Ll}
+// alternatives in caseAndDigitSplit.
+//
+// norm.NFKD.String is safe for concurrent use (the matcher benches/runs
 // Tokenize from many goroutines); a shared transform.Transformer is NOT, so
 // we normalise + filter inline rather than reuse a Chain transformer.
 func fold(s string) string {
-	d := norm.NFD.String(s)
+	d := norm.NFKD.String(s)
 	var b strings.Builder
 	b.Grow(len(d))
 	for _, r := range d {
@@ -73,7 +79,17 @@ var tokenSplit = regexp.MustCompile(`[._\-\s\[\]()!,@'"&+]+`)
 // `SNOS` standalone and shatter the rest into [s n o s]. That was
 // the tokenizer bug that caused JAV release names to score against
 // the wrong StashDB scenes.
-var caseAndDigitSplit = regexp.MustCompile(`\p{Ll}+|\p{Lu}+(?:[^\p{Ll}]|$)|\p{Lu}\p{Ll}*|\p{Lo}+|\d+`)
+//
+// The all-caps terminator excludes digits: with plain `[^\p{Ll}]` the
+// alternative consumed one digit of a following run (`SNOS233` →
+// [snos2 33], `S01E02` → [s0 1 e0 2]) while the lowercase forms split
+// cleanly (`snos233` → [snos 233]) — a case-dependent asymmetry that
+// made the same episode/code tag tokenise to disjoint tokens on the
+// two sides of a match. With `\d` excluded, the run before a digit
+// backtracks one letter and consumes it as the terminator (`SNOS233` →
+// [snos 233]), or falls to the single-uppercase alternative (`S01E02`
+// → [s 01 e 02]) — both now identical to their lowercase forms.
+var caseAndDigitSplit = regexp.MustCompile(`\p{Ll}+|\p{Lu}+(?:[^\p{Ll}\d]|$)|\p{Lu}\p{Ll}*|\p{Lo}+|\d+`)
 
 // Tokenize splits s on punctuation/whitespace, then further splits each
 // piece on case and letter-digit boundaries. Output is lowercase, in
