@@ -492,6 +492,119 @@ func TestLifecyclePrematurePlacementHeal(t *testing.T) {
 	}
 }
 
+// TestHealLeavesLegitimatePlacementAlone pins the two guards on the
+// premature-placement heal: a file placed from a download that completed
+// must survive (a) a force recheck, where qBit's progress is the
+// verification fraction and reads < 1 for a fully-placed torrent, and
+// (b) any later progress dip, because the placement was stamped at/after
+// the recorded completion. Without the guards a tick landing mid-recheck
+// RemoveAll'd the live library copy and regressed the grab.
+func TestHealLeavesLegitimatePlacementAlone(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	const (
+		hash      = "legit00hash"
+		performer = "Hazel Moore"
+		fileName  = "complete.mkv"
+	)
+	placedDir := filepath.Join(r.libRoot, performer)
+	if err := os.MkdirAll(placedDir, 0o755); err != nil {
+		t.Fatalf("mkdir placed: %v", err)
+	}
+	placedPath := filepath.Join(placedDir, fileName)
+	if err := os.WriteFile(placedPath, []byte("a whole file"), 0o644); err != nil {
+		t.Fatalf("write placed: %v", err)
+	}
+
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Hazel Moore - Release", Client: "qbit", ClientID: hash,
+		Category: "forager", Status: "placed", PlacedPath: placedPath,
+		// Placement happened AFTER the download was seen complete — the
+		// ordering that marks it legitimate.
+		CompletedAt: now - 60, PlacedAt: now - 30,
+		PerformerName: performer, Kind: "single",
+		Progress: 1, GrabbedAt: now - 120,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// (a) Mid-recheck: progress is the verification fraction.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "checkingUP", Progress: 0.4,
+	}})
+	r.tick(t)
+	g := r.get(t, id)
+	if g.PlacedPath != placedPath {
+		t.Fatalf("recheck: placed_path=%q, want untouched %q", g.PlacedPath, placedPath)
+	}
+	if _, err := os.Stat(placedPath); err != nil {
+		t.Fatalf("recheck: placed file removed: %v", err)
+	}
+
+	// (b) Recheck "finished" below 1 (lost pieces): the completed-then-
+	// placed ordering still protects the library copy.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "downloading", Progress: 0.4,
+	}})
+	r.tick(t)
+	g = r.get(t, id)
+	if g.PlacedPath != placedPath {
+		t.Fatalf("post-recheck: placed_path=%q, want untouched %q", g.PlacedPath, placedPath)
+	}
+	if _, err := os.Stat(placedPath); err != nil {
+		t.Fatalf("post-recheck: placed file removed: %v", err)
+	}
+}
+
+// TestQueuedGrabSurvivesHashNotYetInQbit pins the async-add grace: a
+// queued grab pins its info-hash at insert/retry time but the actual add
+// runs behind the fetch gate, so the hash being absent from qBit must
+// not fail the grab inside the link window (the add may still be in
+// flight; failing strands the torrent when it lands, since failed grabs
+// leave Active() and KnownClientIDs blocks adoption). Past the window it
+// fails as before. The second half also exercises grabbed_at
+// persistence through Repo.Update — the field used to be missing from
+// the SET list, so retry's re-arm was silently dropped.
+func TestQueuedGrabSurvivesHashNotYetInQbit(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Hazel Moore - Release", Client: "qbit",
+		ClientID: "notyetadded00hash", Category: "forager",
+		Status: "queued", Kind: "single", GrabbedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// qBit doesn't know the hash yet (empty torrent list) — fresh grab
+	// stays queued.
+	r.qbit.set(nil)
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "queued" {
+		t.Fatalf("inside grace: status=%q (reason=%q), want queued", g.Status, g.Reason)
+	}
+
+	// Age the grab past the link window (round-tripped through Update,
+	// which must persist grabbed_at for this to take effect) — now the
+	// missing hash means the add really died.
+	g := r.get(t, id)
+	g.GrabbedAt = time.Now().Add(-qbitLinkTimeout - time.Minute).Unix()
+	if err := r.repo.Update(ctx, *g); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "failed" {
+		t.Fatalf("past grace: status=%q (reason=%q), want failed", g.Status, g.Reason)
+	}
+}
+
 // sameFile reports whether two paths are hardlinks of the same inode.
 func sameFile(t *testing.T, a, b string) bool {
 	t.Helper()

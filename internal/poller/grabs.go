@@ -920,6 +920,19 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 		return dirty, "", err
 	}
 	if t == nil {
+		// A still-queued grab pins its info-hash at insert/retry time, but
+		// the actual qBit add runs asynchronously behind the fetch gate —
+		// the hash legitimately isn't visible in qBit yet. Give it the same
+		// window an unlinked grab gets before declaring the add dead;
+		// failing here instantly races the in-flight add, and a torrent
+		// that lands after the fail is stranded (failed grabs leave
+		// Active() and KnownClientIDs blocks adoption). A grab past
+		// "queued" was tracked by qBit before, so a missing hash there
+		// really does mean the torrent was removed.
+		if g.Status == "queued" && g.GrabbedAt > 0 &&
+			time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout {
+			return dirty, "", nil
+		}
 		if g.Status != "failed" {
 			g.Status = "failed"
 			g.Reason = "qbit no longer tracks this torrent"
@@ -949,9 +962,22 @@ func (p *Poller) advanceQbit(ctx context.Context, g *grabs.Grab, recent []qbit.T
 	// (which may already have been promoted past "downloading"). Undo it:
 	// remove the partial library copy, clear placement, reset to
 	// downloading so the place step re-files cleanly on real completion.
-	// The seeding source is untouched. Guarded to incomplete torrents, so a
-	// legitimately-placed, fully-downloaded seeding grab is never disturbed.
-	if g.PlacedPath != "" && t.Progress < 1 {
+	// The seeding source is untouched.
+	//
+	// Two guards keep the heal from deleting a LEGITIMATE library copy:
+	//   - progress < 1 is only meaningful in genuine download states.
+	//     During a force recheck (routine after an unclean qBit restart)
+	//     progress is the verification fraction, and during a move it can
+	//     dip — a tick landing mid-recheck would otherwise RemoveAll a
+	//     fully-placed file or pack directory.
+	//   - a placement stamped at/after a recorded completion was made from
+	//     a finished download and is never premature; completed_at is
+	//     COALESCE-persisted so a later recheck regressing progress can't
+	//     re-arm the heal against it. Premature placements have
+	//     CompletedAt == 0 (the download was never seen complete).
+	if g.PlacedPath != "" && t.Progress < 1 &&
+		!qbitProgressUnreliable(t.State) &&
+		(g.CompletedAt == 0 || (g.PlacedAt > 0 && g.PlacedAt < g.CompletedAt)) {
 		bad := g.PlacedPath
 		if rerr := os.RemoveAll(bad); rerr != nil {
 			p.log.Warn("heal: remove premature placement", "id", g.ID, "path", bad, "err", rerr)
@@ -1367,6 +1393,20 @@ func classifyQbitState(state string) string {
 	// checkingResumeData, …). The caller gates "completed" on progress >= 1,
 	// so a transient state on a partial torrent can't slip through as done.
 	return "completed"
+}
+
+// qbitProgressUnreliable reports states in which qBit's progress field
+// does not measure download completion: while (re)checking it is the
+// verification fraction climbing 0 → 1 over already-downloaded data, and
+// while moving it can transiently dip. Callers that treat progress < 1 as
+// "incomplete download" (the premature-placement heal) must skip these
+// states or they misread a routine recheck as a half-finished torrent.
+func qbitProgressUnreliable(state string) bool {
+	switch state {
+	case "checkingDL", "checkingUP", "checkingResumeData", "moving":
+		return true
+	}
+	return false
 }
 
 // pickRecent links a yet-to-be-enriched grab to a qBit torrent.
