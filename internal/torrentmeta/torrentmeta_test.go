@@ -65,6 +65,11 @@ func TestParseRejectsBadLengths(t *testing.T) {
 		"9223372036854775807:x",  // valid int64 but far exceeds the buffer
 		"5:ab",                   // length exceeds the bytes that follow
 		"i99999999999999999999e", // integer value overflows int64
+		// Negative file lengths: bencode integers may be negative, but a
+		// file length never is. Summing them silently understated
+		// TotalSize (or made it negative) for corrupt/hostile torrents.
+		"d4:infod6:lengthi-1e4:name9:movie.mp4ee",
+		"d4:infod5:filesld6:lengthi-9999999999e4:pathl5:a.mp4eeee4:name4:packee",
 	} {
 		if _, err := Parse([]byte(raw)); err == nil {
 			t.Errorf("expected error for %q, got nil", raw)

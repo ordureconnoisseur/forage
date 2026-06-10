@@ -90,6 +90,9 @@ func Parse(b []byte) (*Meta, error) {
 			}
 			m.FileCount++
 			if ln, ok := f["length"].(int64); ok {
+				if ln < 0 {
+					return nil, errors.New("torrent: negative file length")
+				}
 				m.TotalSize += ln
 			}
 			// Last path segment is the filename.
@@ -104,6 +107,9 @@ func Parse(b []byte) (*Meta, error) {
 
 	// Single-file: info.length + info.name is the file.
 	if ln, ok := info["length"].(int64); ok {
+		if ln < 0 {
+			return nil, errors.New("torrent: negative file length")
+		}
 		m.TotalSize = ln
 		m.FileCount = 1
 		if isVideo(m.Name) {
