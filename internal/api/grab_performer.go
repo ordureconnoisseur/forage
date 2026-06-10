@@ -109,13 +109,19 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 
 	// Persist the reassignment with the optimistic-lock retry so a poller
 	// tick mid-request can't clobber it (or be clobbered by it). The placed
-	// path may have changed above when we re-filed.
+	// path is only written when WE re-filed above: in the not-yet-placed
+	// branch the snapshot's empty placed_path must not be re-applied onto
+	// the fresh row — a poller placement landing between our Get and this
+	// CAS write would have its placed_path erased (the file sits in the old
+	// folder with no record, unfindable by confirm/heal/purge).
 	finalPlaced := g.PlacedPath
 	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
 		fresh.PerformerName = performer
 		fresh.PlaceError = ""
 		fresh.Reason = "performer set manually"
-		fresh.PlacedPath = finalPlaced
+		if alreadyPlaced {
+			fresh.PlacedPath = finalPlaced
+		}
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
