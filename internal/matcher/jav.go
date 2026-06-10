@@ -21,9 +21,16 @@ import "regexp"
 //
 // No trailing word-boundary: the `OAE-302ch` variant runs lowercase
 // letters straight after the digits, and `\b` between `2` and `c`
-// (both word characters) fails. Greedy `\d{3,5}` still bounds the
-// digit count.
-var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,5})`)
+// (both word characters) fails. The digit count is bounded instead by
+// the overflow group: greedy `\d{3,7}` covers everything up to FC2's
+// 7-digit IDs, and any digits left over land in the trailing `(\d*)`,
+// which ExtractJAVCodes treats as "not a JAV code at all". Without the
+// overflow check, a longer run would silently truncate — FC2-PPV-1234567
+// and FC2-PPV-1234599 both used to extract as `ppv-12345` under
+// `\d{3,5}`, and a shared code is treated as scene IDENTITY downstream
+// (javCodeFloor, release verification), so truncation made distinct
+// sequential FC2 scenes "verified" matches of each other.
+var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,7})(\d*)`)
 
 // ExtractJAVCodes returns normalized codes ("snos-233" form) found
 // in s. De-duplicated, preserves first-occurrence order, returns nil
@@ -49,6 +56,12 @@ func ExtractJAVCodes(s string) []string {
 		// m[1] = digit prefix (may be empty)
 		// m[2] = letter block
 		// m[3] = digit suffix
+		// m[4] = digit overflow past the 7-digit cap (non-empty → reject:
+		//        the run is too long to be a JAV id, and emitting a
+		//        truncated code would collide distinct scenes)
+		if m[4] != "" {
+			continue
+		}
 		letters := lowercaseASCII(m[2])
 		digits := m[3]
 		if letters == "" || digits == "" {

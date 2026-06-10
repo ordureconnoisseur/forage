@@ -35,6 +35,9 @@ func TestJavCodeMatches(t *testing.T) {
 		{"+++ [FHD] SSIS-858 …", "SSIS-858", true},               // decorated release vs bare scene code
 		{"OAE302", "OAE-308", false},                             // different number
 		{"OAE302", "SSIS-302", false},                            // different studio prefix
+		{"FC2-PPV-1234567", "FC2-PPV-1234567 Amateur", true},     // 7-digit FC2 id survives intact
+		{"FC2-PPV-1234567", "FC2-PPV-1234599", false},            // sequential FC2 ids: \d{3,5} truncated both to ppv-12345 and "verified" the wrong scene
+		{"ABCD123456789", "ABCD-1234567", false},                 // 8+ digit run is no JAV code at all (overflow reject, not a truncated collision)
 		{"Some WEB-DL 1080p release", "OAE-302", false},          // no code in release
 		{"OAE302", "Performer Scene Title", false},               // no code in scene
 	}
