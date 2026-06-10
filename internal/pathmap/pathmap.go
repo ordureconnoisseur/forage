@@ -61,3 +61,15 @@ func Base(path string) string {
 	}
 	return path
 }
+
+// Parent returns the segment directly above the last one (the directory
+// a file sits in — for placed files, the performer folder), handling
+// both separators. Empty when p has fewer than two segments.
+func Parent(path string) string {
+	for i := len(path) - 1; i >= 0; i-- {
+		if path[i] == '/' || path[i] == '\\' {
+			return Base(path[:i])
+		}
+	}
+	return ""
+}

@@ -240,6 +240,16 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 			scene, ferr := sc.FindSceneByPathContains(r.Context(), filepath.Base(g.PlacedPath))
 			if ferr != nil {
 				addErr("find stash scene", ferr)
+			} else if scene != nil && !sameParentDir(scene.FilePath, g.PlacedPath) {
+				// The lookup is keyed on basename, and even segment-anchored
+				// a generic name ("video.mp4") can resolve to a same-named
+				// file under ANOTHER performer's folder — destroying that
+				// would delete an unrelated scene's media. Skip the Stash
+				// destroy; the disk sweep below still removes the grab's own
+				// file and Stash drops the scene on its next scan.
+				addErr("find stash scene", fmt.Errorf(
+					"basename matched scene %s in a different directory (%s), refusing to destroy it",
+					scene.ID, scene.FilePath))
 			} else if scene != nil {
 				if derr := sc.SceneDestroy(r.Context(), scene.ID, true, true); derr != nil {
 					addErr("stash scene", derr)
@@ -306,4 +316,16 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 	out.OK = len(out.Errors) == 0
 	s.log.Info("grab purged", "id", id, "removed", out.Removed, "errors", out.Errors)
 	writeJSON(w, http.StatusOK, out)
+}
+
+// sameParentDir reports whether the Stash-side file and the forage-side
+// placed path sit in the same directory, compared by last directory
+// segment only (the performer folder), since the two sides see the same
+// file through different mounts/roots. Used to verify a basename-keyed
+// scene lookup before the irreversible SceneDestroy(delete_file). False
+// when either parent segment is missing — an unverifiable match is not
+// safe to destroy.
+func sameParentDir(stashPath, placedPath string) bool {
+	sp, pp := pathmap.Parent(stashPath), pathmap.Parent(placedPath)
+	return sp != "" && pp != "" && sp == pp
 }

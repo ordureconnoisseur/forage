@@ -620,16 +620,26 @@ query ForagerFindSceneByPath($value: String!) {
 }`
 
 // FindSceneByPathContains finds the most-recently-created scene whose
-// any-file path contains the needle substring. Used by the Phase B
-// poller to match a completed qBit download against the scene Stash
-// has scanned + scraped (which gives us the StashDB cross-id).
+// any-file path contains the needle as a complete path segment. Used by
+// the Phase B poller to match a completed qBit download against the
+// scene Stash has scanned + scraped (which gives us the StashDB
+// cross-id), and by the purge path to find the scene to destroy.
 //
 // Returns nil scene + nil err when no match (poller retries next tick).
 func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*SceneMatch, error) {
 	if needle == "" {
 		return nil, nil
 	}
-	pattern := regexp.QuoteMeta(needle)
+	// Anchor the needle as a complete path segment: directly after a
+	// separator, running to a separator or end-of-path. An unanchored
+	// substring lets a suffix-colliding basename match a DIFFERENT scene
+	// ("scene.mp4" is a substring of "myscene.mp4"), and with the
+	// newest-first sort that wrong scene wins — this lookup stamps the
+	// grab's cross-id on confirm and picks the SceneDestroy target on
+	// purge. Segment matching still covers both caller shapes: a placed
+	// file's basename and a client job name appearing as a directory
+	// component.
+	pattern := `[\\/]` + regexp.QuoteMeta(strings.TrimRight(needle, `/\`)) + `([\\/]|$)`
 	var resp struct {
 		FindScenes struct {
 			Count  int `json:"count"`
