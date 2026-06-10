@@ -297,21 +297,29 @@ func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, gra
 }
 
 func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
 	qb := s.pool.Qbit()
 	if qb == nil {
-		s.failGrab(ctx, grabID, "qbit not configured")
+		s.failGrab(context.Background(), grabID, "qbit not configured")
 		return
 	}
-	// On a re-attempt, bail if the grab is gone or no longer queued — deleted,
-	// retried by the user, or already linked — so we don't double-add.
-	if attempt > 1 && s.grabs != nil {
+	// Wait out the fetch-gate slot BEFORE starting the add's two-minute
+	// budget. The gate spaces fetches minFetchInterval apart, so the tail
+	// of a bulk batch queues behind it for minutes; with the deadline
+	// started first (the old order) that queueing burned the whole budget
+	// and every grab past ~60 in a batch hard-failed on a context deadline
+	// without a single fetch attempt, unretried (a deadline isn't a
+	// transient indexer error).
+	s.torrentGate.wait(context.Background())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	// After the (possibly long) gate wait, bail if the grab is gone or no
+	// longer queued: deleted, retried by the user, or already linked. Also
+	// what stops a backoff re-attempt from double-adding.
+	if grabID != 0 && s.grabs != nil {
 		if g, _ := s.grabs.Get(ctx, grabID); g == nil || g.Status != "queued" {
 			return
 		}
 	}
-	s.torrentGate.wait(ctx) // throttle so a bulk batch doesn't burst into 429s
 	hash, err := qb.AddTorrent(ctx, downloadURL, category)
 	if err != nil {
 		if isTransientFetchErr(err) && attempt < addMaxAttempts {
