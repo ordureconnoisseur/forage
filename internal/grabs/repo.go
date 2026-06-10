@@ -136,7 +136,10 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 
 // Update writes the mutable fields back to disk and bumps updated_at.
 // The poller calls this after each tick's status transition. Caller is
-// responsible for setting reason / timestamps before calling.
+// responsible for setting reason / timestamps before calling. grabbed_at
+// is in the SET list because retry re-arms it (the SAB register grace,
+// qBit link timeout, and pickRecent window are all keyed on it); every
+// caller round-trips a loaded row, so otherwise it writes back unchanged.
 // Update writes the full grab row, optimistically locked on rev: the WHERE
 // matches only if the row's rev still equals the one the caller loaded, and
 // the update bumps rev. A concurrent write (the poller tick holding a
@@ -151,6 +154,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  client_id = ?, client_name = ?, status = ?,
 		  actual_stashdb_id = ?, reason = ?,
 		  performer_name = ?, placed_path = ?, place_error = ?,
+		  grabbed_at = ?,
 		  updated_at = ?,
 		  completed_at = COALESCE(?, completed_at),
 		  placed_at = COALESCE(?, placed_at),
@@ -162,6 +166,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
+		g.GrabbedAt,
 		now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.PackFiles, g.PackIdentified, g.PackDeduped,
