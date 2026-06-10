@@ -4,12 +4,14 @@
 // a pack whose size the indexer didn't report).
 export function humanSize(b: number, zero = ""): string {
   if (!b) return zero;
-  const units = ["B", "K", "M", "G", "T"];
+  // units[0] is the bare byte case — appending the trailing "B" to it
+  // rendered sub-1KB sizes as "512.0BB".
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;
   let v = b;
   while (v >= 1024 && i < units.length - 1) {
     v /= 1024;
     i++;
   }
-  return v.toFixed(1) + units[i] + "B";
+  return (i === 0 ? String(v) : v.toFixed(1)) + units[i];
 }

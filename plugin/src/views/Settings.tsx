@@ -97,6 +97,13 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [saveFailed, setSaveFailed] = useState(false);
+  // Raw text of the Prowlarr categories input. The field parses to
+  // number[] in the patch on every keystroke, and rendering the parsed
+  // array back (displayValue joins it) ate a just-typed trailing comma:
+  // "6000," re-rendered as "6000" and the next digit concatenated, so
+  // multiple categories could only be entered by pasting. Keep what the
+  // user typed; the patch still carries the parsed array.
+  const [catsRaw, setCatsRaw] = useState<string | null>(null);
   // Confirm-password field (local only — never sent; the daemon receives
   // just `password` once it matches).
   const [pwConfirm, setPwConfirm] = useState("");
@@ -521,19 +528,23 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           <Field label="Categories (comma-separated)">
             <input
               type="text"
-              value={displayValue(
-                "prowlarrCategories",
-                data?.fields["prowlarrCategories"],
-              )}
-              onChange={(e) =>
+              value={
+                catsRaw ??
+                displayValue(
+                  "prowlarrCategories",
+                  data?.fields["prowlarrCategories"],
+                )
+              }
+              onChange={(e) => {
+                setCatsRaw(e.target.value);
                 setField(
                   "prowlarrCategories",
                   e.target.value
                     .split(",")
                     .map((s) => parseInt(s.trim(), 10))
                     .filter((n) => !isNaN(n)),
-                )
-              }
+                );
+              }}
               placeholder="6000,6010,6020,6030,6040"
               spellCheck={false}
             />

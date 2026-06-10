@@ -174,9 +174,17 @@ export default function App() {
   // Any API call returning 401 (token revoked/rotated, cookie expired)
   // fires this — even calls whose own error handling is silent — so a
   // mid-session lockout bounces to the Login gate instead of leaving
-  // broken/empty views. needsLogin (below) gates on authOk === false.
+  // broken/empty views. needsLogin (below) gates on authOk === false
+  // AND the health probe agreeing auth is required — and the cached
+  // health may still say it isn't (a password was set from another
+  // browser mid-session, rotating the session key). Re-probe health on
+  // 401 so the gate can actually engage; without it every view just
+  // showed errors until a full page reload.
   useEffect(() => {
-    setUnauthorizedHandler(() => setAuthOk(false));
+    setUnauthorizedHandler(() => {
+      setAuthOk(false);
+      setHealthNonce((n) => n + 1);
+    });
     return () => setUnauthorizedHandler(null);
   }, []);
 
