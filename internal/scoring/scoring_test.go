@@ -185,3 +185,25 @@ func TestResolution(t *testing.T) {
 		}
 	}
 }
+
+// TestResolutionHeight360 pins the upgrade-gate heights: a 360p release is
+// in the bottom TIER (Res480) but must report its real 360px height, or the
+// collection job's upgrade filter treats it as taller than an owned
+// 360-479px file and pre-selects a non-upgrade.
+func TestResolutionHeight360(t *testing.T) {
+	cases := map[string]int{
+		"Scene.Title.360p.mp4":  360,
+		"Scene.Title.480p.mp4":  480,
+		"Scene.Title.1080p.mp4": 1080,
+		"Scene.Title.FHD.mp4":   1080, // canonicalized synonym
+		"Scene.Title.mp4":       0,
+	}
+	for in, want := range cases {
+		if got := ResolutionHeight(in); got != want {
+			t.Errorf("ResolutionHeight(%q) = %d, want %d", in, got, want)
+		}
+	}
+	if Resolution("Scene.Title.360p.mp4") != Res480 {
+		t.Error("360p must stay in the 480p tier for rules/watch targets")
+	}
+}

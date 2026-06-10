@@ -29,6 +29,11 @@ var (
 	re1080 = regexp.MustCompile(`(?i)\b1080p?\b`)
 	re720  = regexp.MustCompile(`(?i)\b720p?\b`)
 	re480  = regexp.MustCompile(`(?i)\b(480p?|360p?)\b`)
+	// re480exact distinguishes a literal 480 within the lowest tier:
+	// 360p folds into the 480p TIER (rules and watch targets see one
+	// bottom bucket), but its real pixel height matters to the upgrade
+	// gate below.
+	re480exact = regexp.MustCompile(`(?i)\b480p?\b`)
 	// fhdToken matches the JAV/sukebei "Full HD" labels FHD and FHDC — both
 	// are 1080p. JAV releases use these instead of "1080p", so without
 	// canonicalizing them a 1080p rule (and the resolution classifier) misses
@@ -69,6 +74,11 @@ func Resolution(title string) string {
 // resolution tier (0 when none detected). Used to decide whether a release
 // is a genuine upgrade over a copy you already own — comparing the release's
 // tier against the owned file's reported height.
+//
+// Within the bottom tier, a 360p-labelled release reports its REAL height:
+// returning 480 made a 360p release look taller than an owned 360-479px
+// file, so the collection job's upgrade filter pre-selected a same-or-worse
+// resolution as an "upgrade".
 func ResolutionHeight(title string) int {
 	switch Resolution(title) {
 	case Res4K:
@@ -78,6 +88,9 @@ func ResolutionHeight(title string) int {
 	case Res720:
 		return 720
 	case Res480:
+		if !re480exact.MatchString(title) {
+			return 360 // tier matched via its 360p token only
+		}
 		return 480
 	}
 	return 0
