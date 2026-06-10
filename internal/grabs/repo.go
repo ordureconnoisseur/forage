@@ -140,6 +140,11 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 // is in the SET list because retry re-arms it (the SAB register grace,
 // qBit link timeout, and pickRecent window are all keyed on it); every
 // caller round-trips a loaded row, so otherwise it writes back unchanged.
+// The lifecycle timestamps follow the struct like every other column —
+// they used to be COALESCE-guarded (zero meant "keep"), which made them
+// impossible to CLEAR: a retry couldn't reset completed_at, so the new
+// attempt was judged against the previous attempt's completion clock and
+// the orphan window could elapse instantly.
 // Update writes the full grab row, optimistically locked on rev: the WHERE
 // matches only if the row's rev still equals the one the caller loaded, and
 // the update bumps rev. A concurrent write (the poller tick holding a
@@ -156,9 +161,9 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  performer_name = ?, placed_path = ?, place_error = ?,
 		  grabbed_at = ?,
 		  updated_at = ?,
-		  completed_at = COALESCE(?, completed_at),
-		  placed_at = COALESCE(?, placed_at),
-		  confirmed_at = COALESCE(?, confirmed_at),
+		  completed_at = ?,
+		  placed_at = ?,
+		  confirmed_at = ?,
 		  pack_files = ?, pack_identified = ?, pack_deduped = ?,
 		  progress = ?, progress_at = ?,
 		  rev = rev + 1

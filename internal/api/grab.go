@@ -428,11 +428,19 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	// GrabbedAt — the SAB register grace (else the first tick can't find the
 	// new nzo and re-fails it), the qBit link timeout, and pickRecent's
 	// window — and reset the stall baseline so the restarted download isn't
-	// instantly badged stalled off the old progress timestamp.
+	// instantly badged stalled off the old progress timestamp. The lifecycle
+	// timestamps reset too: a stale completed_at from the previous attempt
+	// would otherwise feed the orphan/identify-grace clocks, instantly
+	// orphaning the new attempt (or prematurely confirming a pack) when the
+	// retry happens later than the orphan window after the original
+	// completion.
 	now := time.Now().Unix()
 	g.GrabbedAt = now
 	g.Progress = 0
 	g.ProgressAt = now
+	g.CompletedAt = 0
+	g.PlacedAt = 0
+	g.ConfirmedAt = 0
 
 	switch g.Client {
 	case "qbit":
