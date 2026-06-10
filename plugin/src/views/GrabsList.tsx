@@ -1112,6 +1112,29 @@ function DupCard({
     (a, b) => (b.height ?? 0) - (a.height ?? 0),
   )[0];
   const others = dup.existing.length - 1;
+  // "Keep yours" destroys the pack's copy and "Keep pack" destroys your
+  // original(s) — both irreversible (file deleted server-side), so they use
+  // the same two-step arm as the grab delete button: first click flips the
+  // label to spell out what gets deleted, second click within 4s commits.
+  // "Keep both" destroys nothing and stays one click.
+  const [armed, setArmed] = useState<"existing" | "pack" | null>(null);
+  const armTimer = useRef<number | undefined>(undefined);
+  useEffect(() => {
+    return () => {
+      if (armTimer.current) clearTimeout(armTimer.current);
+    };
+  }, []);
+  function resolveArmed(keep: "existing" | "pack") {
+    if (armed !== keep) {
+      setArmed(keep);
+      if (armTimer.current) clearTimeout(armTimer.current);
+      armTimer.current = window.setTimeout(() => setArmed(null), 4000);
+      return;
+    }
+    if (armTimer.current) clearTimeout(armTimer.current);
+    setArmed(null);
+    onResolve(keep);
+  }
   return (
     <div className="grab-dup-card">
       <div className="grab-dup-title">
@@ -1129,18 +1152,28 @@ function DupCard({
       </div>
       <div className="grab-dup-actions">
         <button
-          className="grab-action"
+          className={
+            "grab-action" + (armed === "existing" ? " delete confirm" : "")
+          }
           disabled={disabled}
-          onClick={() => onResolve("existing")}
+          onClick={() => resolveArmed("existing")}
         >
-          {busy ? "…" : "Keep yours"}
+          {busy
+            ? "…"
+            : armed === "existing"
+              ? "Delete pack copy?"
+              : "Keep yours"}
         </button>
         <button
-          className="grab-action"
+          className={
+            "grab-action" + (armed === "pack" ? " delete confirm" : "")
+          }
           disabled={disabled}
-          onClick={() => onResolve("pack")}
+          onClick={() => resolveArmed("pack")}
         >
-          Keep pack
+          {armed === "pack"
+            ? `Delete your original${others > 0 ? "s" : ""}?`
+            : "Keep pack"}
         </button>
         <button
           className="grab-action ghost"
