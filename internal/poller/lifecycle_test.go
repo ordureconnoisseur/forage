@@ -758,3 +758,84 @@ func TestDedupPackReviewRecordsPending(t *testing.T) {
 		t.Fatalf("status = %q, want pending", d.Status)
 	}
 }
+
+// TestSabCompletedWedgeFailsWhenHistoryGone: a completed-but-unplaced SAB
+// grab whose history entry is gone can never be placed (the entry's Path
+// was the only source of the on-disk location), so past the registration
+// grace it must fail (retryable) instead of sitting at "completed" forever.
+func TestSabCompletedWedgeFailsWhenHistoryGone(t *testing.T) {
+	r := newRig(t, "") // rig's LibraryRoot makes the placer Configured()
+	ctx := context.Background()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Scene",
+		Client:       "sabnzbd",
+		ClientID:     "SABnzbd_nzo_x1",
+		Status:       "completed",
+		GrabbedAt:    time.Now().Add(-time.Hour).Unix(),
+		CompletedAt:  time.Now().Add(-10 * time.Minute).Unix(), // past sabRegisterGrace
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	g := r.get(t, id)
+
+	// Lists fetched fine this tick, entry just isn't in them any more.
+	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, true); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	got := r.get(t, id)
+	if got.Status != "failed" {
+		t.Fatalf("status = %q (reason %q), want failed", got.Status, got.Reason)
+	}
+}
+
+// TestSabCompletedFreshSurvivesHistoryBlip: within the registration grace a
+// missing history entry can be the queue->history handoff mid-flap, so a
+// just-completed grab must be left alone.
+func TestSabCompletedFreshSurvivesHistoryBlip(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Scene",
+		Client:       "sabnzbd",
+		ClientID:     "SABnzbd_nzo_x2",
+		Status:       "completed",
+		GrabbedAt:    time.Now().Unix(),
+		CompletedAt:  time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	g := r.get(t, id)
+	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, true); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := r.get(t, id); got.Status != "completed" {
+		t.Fatalf("status = %q, want completed (inside grace)", got.Status)
+	}
+}
+
+// TestSabFetchErrorFreezesGrabs: when the tick's SAB queue/history fetch
+// failed, the empty lists must NOT be read as "SAB lost the download" — the
+// grab is left untouched until a tick with good lists.
+func TestSabFetchErrorFreezesGrabs(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Scene",
+		Client:       "sabnzbd",
+		ClientID:     "SABnzbd_nzo_x3",
+		Status:       "downloading",
+		GrabbedAt:    time.Now().Add(-time.Hour).Unix(), // long past every grace
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	g := r.get(t, id)
+	if err := r.poller.advance(ctx, g, nil, nil, nil, nil, false); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := r.get(t, id); got.Status != "downloading" {
+		t.Fatalf("status = %q, want downloading (frozen on fetch error)", got.Status)
+	}
+}

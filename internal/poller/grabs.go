@@ -200,7 +200,14 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	// Pre-fetch SAB queue + history once per tick if we have any SAB
 	// grabs to advance. Both endpoints are cheap; one request each
 	// covers an unbounded number of active SAB grabs.
+	//
+	// sabListsOK records whether BOTH fetches succeeded. advanceSab reads
+	// absence from these lists as "SAB lost the download" and fails the
+	// grab, so a transient fetch error (SAB restarting, network blip) must
+	// skip the SAB refresh for the tick rather than hand advanceSab empty
+	// lists that misread every live grab as gone.
 	var sabQueue, sabHistory []sabnzbd.Item
+	sabListsOK := false
 	hasSabActive := false
 	for _, g := range active {
 		if g.Client == "sabnzbd" {
@@ -209,9 +216,11 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	if sb := p.pool.Sab(); hasSabActive && sb != nil {
+		sabListsOK = true
 		sabQueue, err = sb.Queue(ctx)
 		if err != nil {
 			p.log.Warn("sab queue fetch", "err", err)
+			sabListsOK = false
 		}
 		// Fetch a deep history slice: SAB history mixes forager
 		// downloads with everything else the user grabs, so a
@@ -221,6 +230,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		sabHistory, err = sb.History(ctx, 200, p.pool.Settings().SabCategory)
 		if err != nil {
 			p.log.Warn("sab history fetch", "err", err)
+			sabListsOK = false
 		}
 	}
 
@@ -235,7 +245,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	}
 
 	for i := range active {
-		if err := p.advance(ctx, &active[i], recentQbit, claimed, sabQueue, sabHistory); err != nil {
+		if err := p.advance(ctx, &active[i], recentQbit, claimed, sabQueue, sabHistory, sabListsOK); err != nil {
 			p.log.Warn("advance grab", "id", active[i].ID, "err", err)
 		}
 	}
@@ -244,7 +254,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	return nil
 }
 
-func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment []qbit.Torrent, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item) error {
+func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment []qbit.Torrent, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item, sabListsOK bool) error {
 	dirty := false
 	// srcPath is the live full filesystem path the client reports for
 	// this grab — qBit's ContentPath, SAB's history Path. Used by the
@@ -262,6 +272,13 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, recentForEnrichment
 		dirty = dirty || d
 		srcPath = sp
 	case "sabnzbd":
+		// Skip the client refresh when this tick's queue/history fetch
+		// failed (or SAB is unconfigured): absence from the lists is
+		// advanceSab's failure signal, and empty-because-unfetched lists
+		// would fail every live grab. The Stash-side steps below still run.
+		if !sabListsOK {
+			break
+		}
 		d, sp, err := p.advanceSab(g, sabQueue, sabHistory)
 		if err != nil {
 			return err
@@ -1244,6 +1261,28 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 	//
 	//   - Long absent: past the grace window and still unknown to SAB
 	//     means it genuinely failed to add or was removed. Mark failed.
+	if g.Status == "completed" && g.PlacedPath == "" && p.pool.Placer().Configured() {
+		// Completed but never placed, and the history entry is gone. That
+		// entry's Path is the ONLY source of the download's on-disk
+		// location (srcPath), so placement can never succeed now: the grab
+		// would sit at "completed" forever, with any place_error frozen in
+		// the UI. SAB purging history mid-pipeline (user cleanup, or
+		// history rotation past the fetch window) is unrecoverable here,
+		// so after the same registration grace (against a queue->history
+		// flap during post-processing) fail it; a retry re-downloads
+		// cleanly. With placement disabled this doesn't apply: the Stash
+		// confirm path matches on ClientName and needs no path.
+		ref := g.CompletedAt
+		if ref == 0 {
+			ref = g.GrabbedAt
+		}
+		if ref == 0 || time.Since(time.Unix(ref, 0)) > sabRegisterGrace {
+			g.Status = "failed"
+			g.Reason = "sab history entry removed before placement could finish; retry to re-download"
+			dirty = true
+		}
+		return dirty, "", nil
+	}
 	if g.Status != "completed" && g.Status != "placed" && g.Status != "scanned" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
 		if g.GrabbedAt > 0 && time.Since(time.Unix(g.GrabbedAt, 0)) < sabRegisterGrace {
 			return dirty, "", nil
