@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"sync"
@@ -12,6 +13,12 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
+
+// tiebreakerEpsilon is the confidence granularity below which two
+// candidates count as tied and fall through to the next sort key.
+// Component weights are coarse (0.05 steps), so 1e-6 separates any
+// genuinely different score while absorbing float noise.
+const tiebreakerEpsilon = 1e-6
 
 // Matcher orchestrates Phase A: takes a release-name-shaped string and
 // produces ranked StashDB scene candidates with confidence scores.
@@ -283,8 +290,24 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 	for _, c := range candidates {
 		out = append(out, *c)
 	}
+	// Deterministic ranking. Exact confidence ties are real and common —
+	// sibling scenes sharing performer/studio/date whose titles both floor
+	// at the minimum title score — and `out` is built from a map, so with
+	// confidence as the only key the top slot (which Verify's isTop and
+	// release verification's bestOther hang off) flipped run to run.
+	// Quantising by tiebreakerEpsilon keeps the comparator a strict weak
+	// ordering (a raw |a-b|<eps comparison isn't transitive); TitleOverlap
+	// breaks ties toward the title the release actually names, and the
+	// scene id pins whatever remains.
+	rank := func(v float64) int64 { return int64(math.Round(v / tiebreakerEpsilon)) }
 	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Confidence > out[j].Confidence
+		if ci, cj := rank(out[i].Confidence), rank(out[j].Confidence); ci != cj {
+			return ci > cj
+		}
+		if ti, tj := rank(out[i].TitleOverlap), rank(out[j].TitleOverlap); ti != tj {
+			return ti > tj
+		}
+		return out[i].Scene.ID < out[j].Scene.ID
 	})
 	if len(out) > maxCandidatesReturned {
 		out = out[:maxCandidatesReturned]
