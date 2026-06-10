@@ -174,6 +174,28 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Drop per-grab throttle state for grabs that left Active() (confirmed,
+	// failed, deleted): lastScan and packScan otherwise grow for the
+	// daemon's lifetime. forgetPackScan covers the pack-confirm path, but
+	// not failures and deletes.
+	activeIDs := make(map[int64]bool, len(active))
+	for i := range active {
+		activeIDs[active[i].ID] = true
+	}
+	p.scanMu.Lock()
+	for id := range p.lastScan {
+		if !activeIDs[id] {
+			delete(p.lastScan, id)
+		}
+	}
+	p.scanMu.Unlock()
+	p.packMu.Lock()
+	for id := range p.packScan {
+		if !activeIDs[id] {
+			delete(p.packScan, id)
+		}
+	}
+	p.packMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -404,6 +426,19 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 	// StashDB cross-id; orphaned can recover if the user (or a
 	// scheduled task) later scans the file in.
 	confirmable := g.Status == "placed" || g.Status == "scanned" || g.Status == "orphaned" || (g.Status == "completed" && !pl.Configured())
+	// Orphaned is a non-terminal parking state (it recovers if the file is
+	// later scanned in), but it accumulates: without a throttle every
+	// orphan costs a Stash query EVERY tick, forever. Re-check on a long
+	// interval instead; recovery then lands within orphanRecheckInterval
+	// of the user's scan rather than within one tick. Stamped before the
+	// query so an error doesn't bypass the throttle.
+	if confirmable && g.Status == "orphaned" {
+		if !p.orphanRecheckElapsed(g.ID) {
+			confirmable = false
+		} else {
+			p.markScanAttempt(g.ID)
+		}
+	}
 	stashC := p.pool.Stash()
 	if g.Kind == "pack" {
 		// Pack grabs have their own confirm path — enumerate every placed
@@ -1359,6 +1394,22 @@ func (p *Poller) scanThrottleElapsed(grabID int64) bool {
 	defer p.scanMu.Unlock()
 	last, ok := p.lastScan[grabID]
 	return !ok || time.Since(last) >= scanRetryInterval
+}
+
+// orphanRecheckInterval spaces the Stash re-checks of an orphaned grab.
+// Long on purpose: the grab already failed to surface across the whole
+// orphan window of 90s-throttled checks, so the recheck only exists to
+// catch a manual rescue (the user scanning the file in later).
+const orphanRecheckInterval = 15 * time.Minute
+
+// orphanRecheckElapsed reports whether an orphaned grab is due another
+// Stash lookup. Shares the lastScan record with the scan throttle; the
+// caller stamps it via markScanAttempt when it proceeds.
+func (p *Poller) orphanRecheckElapsed(grabID int64) bool {
+	p.scanMu.Lock()
+	defer p.scanMu.Unlock()
+	last, ok := p.lastScan[grabID]
+	return !ok || time.Since(last) >= orphanRecheckInterval
 }
 
 // triggerIdentify fires Stash's Identify task on the given Stash
