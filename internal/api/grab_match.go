@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -96,6 +97,17 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	}
 	if local == nil {
 		writeErr(w, http.StatusUnprocessableEntity, "file not found in Stash yet — wait for it to scan, then retry")
+		return
+	}
+	if !sameParentDir(local.FilePath, grab.PlacedPath) {
+		// The lookup is keyed on basename, and even segment-anchored a
+		// generic name ("video.mp4") can resolve to a same-named file under
+		// ANOTHER performer's folder. Applying metadata there would
+		// overwrite an unrelated scene and confirm the grab against it —
+		// same hazard the purge path guards with this check.
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"the placed file's name matched scene %s in a different directory (%s) — refusing to overwrite it; wait for the placed file to scan, then retry",
+			local.ID, local.FilePath))
 		return
 	}
 
