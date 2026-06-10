@@ -66,13 +66,19 @@ export default function DiscoverList({
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let inFlight = false;
 
     async function tick() {
-      if (cancelled) return;
+      // inFlight: while a fetch is awaited, `timer` holds an already-fired
+      // timeout id, so the visibilitychange handler's clearTimeout is a
+      // no-op and its tick() would fork a second self-rescheduling loop,
+      // permanently doubling the poll rate (same guard as GrabsList).
+      if (cancelled || inFlight) return;
       if (document.hidden) {
         timer = window.setTimeout(tick, SLOW_POLL_MS * 2);
         return;
       }
+      inFlight = true;
       try {
         const r = await fetchDiscover({
           days,
@@ -87,6 +93,7 @@ export default function DiscoverList({
         if (cancelled) return;
         setError((e as Error).message);
       } finally {
+        inFlight = false;
         if (!cancelled) setLoading(false);
       }
       if (cancelled) return;

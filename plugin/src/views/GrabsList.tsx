@@ -225,31 +225,38 @@ export default function GrabsList({
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
+    let inFlight = false;
 
     async function tick() {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
       if (document.hidden) {
         // Don't waste cycles when the tab isn't visible. Reschedule
         // and try again later — visibilitychange handler also kicks.
         timer = window.setTimeout(tick, SLOW_POLL_MS);
         return;
       }
+      // The cadence decision reads the response we JUST fetched. This
+      // effect mounts once with an empty dep list, so the `data` state
+      // variable in this closure is the mount render's value (null,
+      // forever) — deciding off it meant the fast cadence never engaged
+      // and active downloads only refreshed every SLOW_POLL_MS.
+      let hasActive = false;
+      inFlight = true;
       try {
         const r = await fetchGrabs({ limit: 200 });
         if (cancelled) return;
         setData(r);
         setError(null);
         lastFetch.current = Date.now();
+        hasActive = r.grabs.some((g) => isActiveStatus(g.status));
       } catch (e) {
         if (cancelled) return;
         setError((e as Error).message);
       } finally {
+        inFlight = false;
         if (!cancelled) setLoading(false);
       }
       if (cancelled) return;
-      const hasActive = (data?.grabs || []).some((g) =>
-        isActiveStatus(g.status),
-      );
       timer = window.setTimeout(tick, hasActive ? FAST_POLL_MS : SLOW_POLL_MS);
     }
 
@@ -257,6 +264,11 @@ export default function GrabsList({
     const onVis = () => {
       if (!document.hidden && Date.now() - lastFetch.current > FAST_POLL_MS) {
         // Tab refocused after a hidden period — refetch immediately.
+        // The inFlight guard keeps this from FORKING the loop: while a
+        // tick's fetch is awaited, `timer` still holds an already-fired
+        // timeout id, so clearTimeout alone is a no-op and a second
+        // tick() here would start a parallel self-rescheduling chain,
+        // permanently doubling the poll rate.
         if (timer) clearTimeout(timer);
         tick();
       }
@@ -268,8 +280,9 @@ export default function GrabsList({
       document.removeEventListener("visibilitychange", onVis);
     };
     // Dependency list intentionally empty: we don't want the effect
-    // to re-run on every render. Latest data flows in via the closure
-    // capture above (the active-poll decision reads `data` at call time).
+    // to re-run on every render. The cadence decision uses the freshly
+    // fetched response, never component state, so nothing here goes
+    // stale.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
