@@ -582,7 +582,11 @@ button {
   gap: 16px;
   padding: 12px 16px;
   border-radius: var(--radius);
-  background: var(--glass-bg);
+  /* Near-opaque on purpose: this bar floats OVER the scene grid, and
+     the standard 6% glass tint let card imagery bleed straight through
+     it — the count and actions were barely legible. The blur stays for
+     the soft edge, but the surface itself must read as a surface. */
+  background: rgba(13, 13, 13, 0.95);
   border: 1px solid var(--glass-border-bright);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -590,7 +594,7 @@ button {
 }
 .ms-select-count {
   font-weight: 600;
-  color: var(--text-muted);
+  color: var(--text);
 }
 .ms-select-grab {
   padding: 10px 18px;
