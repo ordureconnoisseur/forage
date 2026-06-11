@@ -5842,3 +5842,132 @@ code.grab-fact-v,
   opacity: 0.6;
   cursor: default;
 }
+
+/* ── Mobile (phones + small tablets) ─────────────────────────────
+   One consolidated responsive layer. The desktop layout is the source
+   of truth; these overrides only re-flow what genuinely cannot fit.
+   Breakpoints: 720px (small tablet / large phone), 520px (phone). */
+@media (max-width: 720px) {
+  .app-main {
+    padding: 16px 12px 88px 12px;
+  }
+  .app-header {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+  /* The nav already collapses to icons at this width; let it scroll
+     sideways instead of squeezing if badges push it past the edge. */
+  .top-nav {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .top-nav::-webkit-scrollbar {
+    display: none;
+  }
+  .page-header h2 {
+    font-size: 20px;
+  }
+
+  /* Release rows: the 4-column grid (match | body | score | grab) can't
+     fit. Two columns; the score stat and grab button auto-flow onto a
+     second row, button pushed to the right edge. */
+  .release {
+    grid-template-columns: auto 1fr;
+    row-gap: 10px;
+    padding: 12px 14px;
+  }
+  .release .grab-btn,
+  .release .release-grabbed {
+    justify-self: end;
+  }
+
+  /* Watch cards: actions drop below the text instead of crushing it. */
+  .watch-card {
+    flex-wrap: wrap;
+  }
+  .watch-thumb {
+    width: 104px;
+  }
+  .watch-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+  .watch-title {
+    white-space: normal;
+  }
+
+  /* Collection rows: smaller thumb, titles may wrap to two lines. */
+  .coll-thumb {
+    width: 72px;
+  }
+  .coll-row-title {
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .coll-row-head {
+    gap: 10px;
+    padding: 10px;
+  }
+
+  /* Grabs list: tighter head grid, keep the status stripe visible. */
+  .grab-row-head {
+    grid-template-columns: minmax(72px, auto) 1fr 14px;
+    gap: 10px;
+    padding: 10px 12px 10px 16px;
+  }
+
+  /* The sticky selection bar wraps rather than overflowing, and clears
+     the iPhone home indicator. */
+  .ms-select-bar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 12px;
+    padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+  }
+  .ms-watch-picker {
+    margin-left: 0;
+    flex-wrap: wrap;
+  }
+
+  /* Settings modal: use the full viewport sensibly. */
+  .settings-modal {
+    padding: 10px;
+  }
+  .settings-panel {
+    padding: 18px;
+    max-height: 92dvh;
+    overflow-y: auto;
+  }
+
+  .carousel-chev {
+    flex: none;
+  }
+}
+
+@media (max-width: 520px) {
+  /* Scene cards two-up instead of one giant column. */
+  .scene-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .performer-grid {
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 10px;
+  }
+  /* Filter inputs take the row; the rest of the controls wrap under. */
+  .controls input[type="text"] {
+    min-width: 0;
+    flex-basis: 100%;
+    max-width: none;
+  }
+  .coll-header {
+    align-items: stretch;
+  }
+  .coll-head-actions {
+    flex-wrap: wrap;
+  }
+}

@@ -411,12 +411,30 @@ export default function DiscoverList({
   );
 }
 
-// TrendingCarousel renders the trending list in fixed pages of 5 cards
-// with chevron pagination on either side. No transform/translate math —
+// TrendingCarousel renders the trending list in pages of cards with
+// chevron pagination on either side. No transform/translate math —
 // each page just slices the scenes array. Cards inside a page share
-// the row evenly so 5 always fill the strip; the final (partial) page
-// is centred when it has fewer than 5.
-const TRENDING_PAGE_SIZE = 5;
+// the row evenly; the final (partial) page is centred. The page size
+// is responsive: five 16:9 cards across a phone are unusable slivers.
+function useTrendingPageSize(): number {
+  const calc = () =>
+    window.matchMedia("(max-width: 600px)").matches
+      ? 2
+      : window.matchMedia("(max-width: 960px)").matches
+        ? 3
+        : 5;
+  const [size, setSize] = useState(calc);
+  useEffect(() => {
+    const mqs = [
+      window.matchMedia("(max-width: 600px)"),
+      window.matchMedia("(max-width: 960px)"),
+    ];
+    const update = () => setSize(calc());
+    mqs.forEach((m) => m.addEventListener("change", update));
+    return () => mqs.forEach((m) => m.removeEventListener("change", update));
+  }, []);
+  return size;
+}
 
 function TrendingCarousel({
   scenes,
@@ -428,13 +446,14 @@ function TrendingCarousel({
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [page, setPage] = useState(0);
-  const pageCount = Math.max(1, Math.ceil(scenes.length / TRENDING_PAGE_SIZE));
-  // Clamp if the slider just reduced trendingLimit and the current
-  // page is past the new last page.
+  const pageSize = useTrendingPageSize();
+  const pageCount = Math.max(1, Math.ceil(scenes.length / pageSize));
+  // Clamp if the slider just reduced trendingLimit (or a rotation just
+  // changed the page size) and the current page is past the new last.
   const safePage = Math.min(page, pageCount - 1);
   const pageScenes = scenes.slice(
-    safePage * TRENDING_PAGE_SIZE,
-    (safePage + 1) * TRENDING_PAGE_SIZE,
+    safePage * pageSize,
+    (safePage + 1) * pageSize,
   );
   const canLeft = safePage > 0;
   const canRight = safePage < pageCount - 1;
