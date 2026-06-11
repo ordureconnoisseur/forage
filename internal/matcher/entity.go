@@ -54,8 +54,10 @@ type Entity struct {
 
 // tokenSplit is the punctuation/whitespace class that primarily
 // separates tokens in release names and filenames. Empirically chosen
-// via the collision bench.
-var tokenSplit = regexp.MustCompile(`[._\-\s\[\]()!,@'"&+]+`)
+// via the collision bench. U+2044 (fraction slash) is included because
+// NFKD decomposes vulgar fractions to digit⁄digit — without the split
+// the fraction's numerator fused with a preceding digit ("9½" → "91").
+var tokenSplit = regexp.MustCompile("[._\\-\\s\\[\\]()!,@'\"&+⁄]+")
 
 // caseAndDigitSplit further splits each piece into runs:
 //  1. lowercase runs (most common)
@@ -237,25 +239,12 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 		opts.MinSingleTokenLen = 1
 	}
 
-	// names returns the entity's indexable name strings: canonical +
-	// aliases, plus (when ConcatNames) the concatenated form of each
-	// multi-token name. The concat variants flow through the owners
-	// table and the safety rules below exactly like real names.
-	names := func(e Entity) []string {
-		ns := allNames(e)
-		if !opts.ConcatNames {
-			return ns
-		}
-		for _, n := range ns {
-			if toks := Tokenize(n); len(toks) > 1 {
-				ns = append(ns, strings.Join(toks, ""))
-			}
-		}
-		return ns
-	}
-
-	// Build the safe-singleton table. The exact disqualifier depends
-	// on opts.SingleTokenRule.
+	// Build the safe-singleton table FROM REAL NAMES ONLY. The exact
+	// disqualifier depends on opts.SingleTokenRule. Concat variants
+	// consult this table below but never contribute to it: a synthetic
+	// "teamskeet" claiming ownership would collide with (and disable)
+	// another entity's real pre-existing "TEAMSKEET" alias, silently
+	// breaking inputs that matched before.
 	owners := map[string]map[string]bool{}
 	switch opts.SingleTokenRule {
 	case CanonicalUnique:
@@ -263,7 +252,7 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 		// "Vixen" → entity Vixen owns "vixen". "Vixen X" doesn't
 		// contribute "vixen" because its full name isn't single-token.
 		for _, e := range corpus {
-			for _, n := range names(e) {
+			for _, n := range allNames(e) {
 				toks := Tokenize(n)
 				if len(toks) != 1 {
 					continue
@@ -278,7 +267,7 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 	default:
 		// AnyTokenUnique: every token in every name contributes.
 		for _, e := range corpus {
-			for _, n := range names(e) {
+			for _, n := range allNames(e) {
 				for _, t := range Tokenize(n) {
 					if owners[t] == nil {
 						owners[t] = map[string]bool{}
@@ -294,11 +283,54 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 			safeSingleton[t] = true
 		}
 	}
+	// concatOwners: which entities GENERATE each concat form. Two
+	// entities whose multi-word names concatenate identically ("Team
+	// Skeet" vs "TeamSkeet") are mutually ambiguous and neither may
+	// index the form.
+	concatOwners := map[string]map[string]bool{}
+	if opts.ConcatNames {
+		for _, e := range corpus {
+			for _, n := range allNames(e) {
+				toks := Tokenize(n)
+				if len(toks) < 2 {
+					continue
+				}
+				if ctoks := Tokenize(strings.Join(toks, "")); len(ctoks) == 1 {
+					t := ctoks[0]
+					if concatOwners[t] == nil {
+						concatOwners[t] = map[string]bool{}
+					}
+					concatOwners[t][e.ID] = true
+				}
+			}
+		}
+	}
+	// concatSafe: a concat form is indexable when it's long enough, no
+	// OTHER entity's real name owns the token, and no other entity
+	// generates the same concat. Unlike safeSingleton it tolerates the
+	// token being absent from owners entirely — that's the normal case
+	// ("momdrips" exists as nobody's real name).
+	concatSafe := func(t, selfID string) bool {
+		if len(t) < opts.MinSingleTokenLen {
+			return false
+		}
+		for owner := range owners[t] {
+			if owner != selfID {
+				return false
+			}
+		}
+		for owner := range concatOwners[t] {
+			if owner != selfID {
+				return false
+			}
+		}
+		return true
+	}
 
 	out := make([]scanCandidate, 0, len(corpus))
 	for _, e := range corpus {
 		var tt [][]string
-		for _, n := range names(e) {
+		for _, n := range allNames(e) {
 			toks := Tokenize(n)
 			if len(toks) == 0 {
 				continue
@@ -307,6 +339,17 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 				continue
 			}
 			tt = append(tt, toks)
+			if opts.ConcatNames && len(toks) > 1 {
+				// Index the concatenated form too — but only when its
+				// re-tokenisation stays a single token (digits split back
+				// out: "Studio 18" → "studio18" → [studio 18], which is
+				// just the original) and no other entity claims it.
+				concat := strings.Join(toks, "")
+				ctoks := Tokenize(concat)
+				if len(ctoks) == 1 && concatSafe(ctoks[0], e.ID) {
+					tt = append(tt, ctoks)
+				}
+			}
 		}
 		if len(tt) == 0 {
 			continue

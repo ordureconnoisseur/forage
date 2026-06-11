@@ -151,6 +151,18 @@ func TestScannerConcatNames(t *testing.T) {
 		t.Errorf("ambiguous concat must not match multiple entities: %v", hits)
 	}
 
+	// A concat form must CONSULT ownership without CLAIMING it: when
+	// another entity already has the fused string as a real single-token
+	// alias, that alias keeps matching (the concat is dropped, not the
+	// pre-existing alias).
+	sc2 := NewScanner([]Entity{
+		{ID: "words", Name: "Net Girl"},
+		{ID: "fused", Name: "Other Studio", Aliases: []string{"NETGIRL"}},
+	}, StudioScannerOptions())
+	if hits := sc2.Match("netgirl.26.04.01.monica"); len(hits) != 1 || hits[0] != "fused" {
+		t.Errorf("pre-existing real alias must survive a colliding concat, got %v", hits)
+	}
+
 	// Without ConcatNames (performer scanner default) behaviour is unchanged.
 	plain := NewScanner([]Entity{{ID: "md", Name: "Mom Drips"}}, DefaultScannerOptions())
 	if hits := plain.Match("momdrips_bunny_madison2_full_1080"); len(hits) != 0 {
