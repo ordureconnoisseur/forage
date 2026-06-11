@@ -328,74 +328,6 @@ func (c *Client) FindLabeledScenes(ctx context.Context, limit int) ([]LabeledSce
 	return out, nil
 }
 
-// OwnedScene is what /missing-scenes needs to know about a scene
-// already in the user's library: its local ID + StashDB cross-id (so
-// we can dedupe against the StashDB scene list for the same
-// performer). Used by FindScenesByPerformer.
-type OwnedScene struct {
-	ID        string
-	StashDBID string
-}
-
-const findScenesByPerformerQuery = `
-query ForagerScenesByPerformer($performerID: ID!, $page: Int!, $perPage: Int!) {
-  findScenes(
-    scene_filter: { performers: { value: [$performerID], modifier: INCLUDES } }
-    filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }
-  ) {
-    count
-    scenes {
-      id
-      stash_ids { endpoint stash_id }
-    }
-  }
-}`
-
-// FindScenesByPerformer pages through every scene in local Stash that
-// features the given LOCAL performer ID and returns each scene's StashDB
-// cross-id when present. Used by /missing-scenes to compute the gap
-// between "what StashDB has for this performer" and "what's in the
-// user's library."
-func (c *Client) FindScenesByPerformer(ctx context.Context, localPerformerID string) ([]OwnedScene, error) {
-	if localPerformerID == "" {
-		return nil, nil
-	}
-	const perPage = 1000
-	var out []OwnedScene
-	for page := 1; ; page++ {
-		var resp struct {
-			FindScenes struct {
-				Count  int `json:"count"`
-				Scenes []struct {
-					ID       string    `json:"id"`
-					StashIDs []StashID `json:"stash_ids"`
-				} `json:"scenes"`
-			} `json:"findScenes"`
-		}
-		vars := map[string]any{
-			"performerID": localPerformerID,
-			"page":        page,
-			"perPage":     perPage,
-		}
-		if err := c.do(ctx, findScenesByPerformerQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("findScenes by performer (page %d): %w", page, err)
-		}
-		if len(resp.FindScenes.Scenes) == 0 {
-			break
-		}
-		for _, s := range resp.FindScenes.Scenes {
-			out = append(out, OwnedScene{
-				ID:        s.ID,
-				StashDBID: PickStashDBID(s.StashIDs),
-			})
-		}
-		if len(resp.FindScenes.Scenes) < perPage {
-			break
-		}
-	}
-	return out, nil
-}
-
 const findAllOwnedScenesQuery = `
 query ForagerAllOwnedScenes($page: Int!, $perPage: Int!) {
   findScenes(filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }) {
@@ -411,8 +343,7 @@ query ForagerAllOwnedScenes($page: Int!, $perPage: Int!) {
 // library and returns the set of StashDB cross-ids present. Used by
 // cache.RefreshSceneCache to mark which recent StashDB scenes the
 // user already owns. One sweep replaces what would otherwise be
-// ~900 per-performer queries (each performer would otherwise need
-// their own FindScenesByPerformer round-trip).
+// ~900 per-performer queries.
 //
 // Scenes without a StashDB cross-id are skipped silently.
 func (c *Client) FindAllOwnedStashDBSceneIDs(ctx context.Context) ([]string, error) {
