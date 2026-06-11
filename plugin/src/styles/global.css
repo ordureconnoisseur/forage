@@ -573,12 +573,15 @@ button {
   border-color: var(--glass-border-bright);
 }
 .watch-available-head {
-  /* Inline with the section header, not flung to the page's far edge —
-     space-between across a wide viewport stranded the button on its own. */
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: space-between;
   gap: 16px;
+  /* The row owns the section-header's vertical rhythm (28px above,
+     12px below) because the h3 inside is flattened to margin: 0 for
+     flex alignment — without this the first card jammed against the
+     header/button line. */
+  margin: 28px 0 12px 0;
 }
 .watch-available-head .section-header {
   margin: 0;
