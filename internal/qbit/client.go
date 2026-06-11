@@ -324,6 +324,20 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		// (the grab links to the existing download), not a failure.
 		if hash != "" {
 			if t, terr := c.TorrentInfo(ctx, hash); terr == nil && t != nil {
+				// A missingFiles husk — the data was deleted out from under
+				// the old entry (a manual download later removed from the
+				// library, say) — can never download again, and its mere
+				// presence blocks every future add of this hash. Whatever
+				// category it nominally belongs to, it's dead for everyone:
+				// drop the entry (its files are already gone) and add fresh.
+				if t.State == "missingFiles" {
+					if derr := c.DeleteTorrent(ctx, hash, false); derr == nil {
+						if rerr := c.postAdd(ctx, &buf, mw.FormDataContentType()); rerr == nil {
+							return hash, nil
+						}
+					}
+					return hash, fmt.Errorf("a stale qbit entry for this torrent had lost its files; clearing it didn't unblock the add — remove the torrent in qBit and retry")
+				}
 				// The grab now rides a torrent added outside forage. If it's
 				// uncategorised (a manual add), adopt it properly: set the
 				// forage category and start it, so a paused 0% torrent
