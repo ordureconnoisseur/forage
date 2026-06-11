@@ -290,29 +290,35 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 	for _, c := range candidates {
 		out = append(out, *c)
 	}
-	// Deterministic ranking. Exact confidence ties are real and common —
-	// sibling scenes sharing performer/studio/date whose titles both floor
-	// at the minimum title score — and `out` is built from a map, so with
-	// confidence as the only key the top slot (which Verify's isTop and
-	// release verification's bestOther hang off) flipped run to run.
-	// Quantising by tiebreakerEpsilon keeps the comparator a strict weak
-	// ordering (a raw |a-b|<eps comparison isn't transitive); TitleOverlap
-	// breaks ties toward the title the release actually names, and the
-	// scene id pins whatever remains.
-	rank := func(v float64) int64 { return int64(math.Round(v / tiebreakerEpsilon)) }
-	sort.SliceStable(out, func(i, j int) bool {
-		if ci, cj := rank(out[i].Confidence), rank(out[j].Confidence); ci != cj {
-			return ci > cj
-		}
-		if ti, tj := rank(out[i].TitleOverlap), rank(out[j].TitleOverlap); ti != tj {
-			return ti > tj
-		}
-		return out[i].Scene.ID < out[j].Scene.ID
-	})
+	rankCandidates(out)
 	if len(out) > maxCandidatesReturned {
 		out = out[:maxCandidatesReturned]
 	}
 	return out, nil
+}
+
+// rankCandidates orders candidates best-first, deterministically:
+// Confidence (descending), then TitleOverlap (descending), then Scene.ID
+// (ascending). Exact confidence ties are real and common — sibling scenes
+// sharing performer/studio/date whose titles both floor at the minimum
+// title score — and candidates are collected from a map, so with
+// confidence as the only key the top slot (which Verify's isTop and
+// release verification's bestOther hang off) flipped run to run.
+// Quantising by tiebreakerEpsilon keeps the comparator a strict weak
+// ordering (a raw |a-b|<eps comparison isn't transitive); TitleOverlap
+// breaks ties toward the title the release actually names, and the scene
+// id pins whatever remains.
+func rankCandidates(cands []Candidate) {
+	rank := func(v float64) int64 { return int64(math.Round(v / tiebreakerEpsilon)) }
+	sort.SliceStable(cands, func(i, j int) bool {
+		if ci, cj := rank(cands[i].Confidence), rank(cands[j].Confidence); ci != cj {
+			return ci > cj
+		}
+		if ti, tj := rank(cands[i].TitleOverlap), rank(cands[j].TitleOverlap); ti != tj {
+			return ti > tj
+		}
+		return cands[i].Scene.ID < cands[j].Scene.ID
+	})
 }
 
 // ── session cache ────────────────────────────────────────────────────
