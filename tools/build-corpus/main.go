@@ -41,6 +41,9 @@ import (
 // Categories worth considering. qBit grabs from the *arr stack often
 // use category names like "sonarr"/"radarr" — those aren't porn
 // scenes. Empty category passes (SAB sometimes returns no category).
+// The CONFIGURED qBit/SAB categories are added at runtime in main —
+// the hardcoded "forager" here predated the rename to "forage" and
+// silently filtered every candidate to zero.
 var relevantCats = map[string]bool{
 	"manual":  true,
 	"porn":    true,
@@ -104,6 +107,12 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		die("config: %v", err)
+	}
+	if c := strings.ToLower(strings.TrimSpace(cfg.QbitCategory)); c != "" {
+		relevantCats[c] = true
+	}
+	if c := strings.ToLower(strings.TrimSpace(cfg.SabCategory)); c != "" {
+		relevantCats[c] = true
 	}
 
 	stashC := stash.New(cfg.StashURL, cfg.StashAPIKey)
