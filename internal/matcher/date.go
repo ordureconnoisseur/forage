@@ -67,7 +67,27 @@ var datePatterns = []datePattern{
 	// Performer Title …"). calendar validation (month 1-12, day 1-31)
 	// keeps stray number triples from matching.
 	{regexp.MustCompile(`(?:^|[^0-9])(\d{2}) (\d{2}) (\d{2})(?:[^0-9]|$)`), "yy mm dd", true, false},
-	// Intentionally no "yymmdd" pattern: 6 bare digits is too ambiguous.
+	// Intentionally no free-standing "yymmdd" pattern: 6 bare digits is
+	// too ambiguous. The GUARDED fused forms below are separate.
+}
+
+// fusedDatePatterns match the member-rip convention of gluing a 6-digit
+// date to the site name ("AnalMom260418Aderes.Quin") or bounding it with
+// underscores ("Sinatra_Monroe_032326_1080"). Group 1 is exactly six
+// digits; both YYMMDD and MMDDYY readings are emitted when they
+// calendar-validate, like the separated 2-digit-year family. The
+// boundary requirements keep this away from free-standing numbers, and
+// calendar validation rejects the internal-id shapes that share the
+// boundary (BLACKED_106449_ → month 64 / day 64, invalid both ways).
+// bestDateProximity only rewards a reading a candidate's own scene date
+// confirms, so a spurious parse costs nothing unless it coincides
+// exactly — the same accepted trade as the multi-reading 8c7de51 design.
+var fusedDatePatterns = []struct {
+	rx    *regexp.Regexp
+	label string // suffix appended to the reading labels
+}{
+	{regexp.MustCompile(`\p{L}(\d{6})(?:[^0-9]|$)`), "fused"},
+	{regexp.MustCompile(`_(\d{6})(?:[^0-9]|$)`), "fused_"},
 }
 
 // ExtractDates returns every date-shaped substring found in s,
@@ -180,6 +200,34 @@ func ExtractDates(s string) []ExtractedDate {
 					Pos:      pos,
 					Format:   "mm" + sep + "dd" + sep + "yy",
 					InParens: inParens,
+				})
+			}
+		}
+	}
+
+	// Fused 6-digit forms: both YYMMDD and MMDDYY readings, calendar-
+	// validated. Labels start "yy"/"mm" so TopDate's tie logic treats
+	// them like their separated counterparts.
+	for _, fp := range fusedDatePatterns {
+		for _, m := range fp.rx.FindAllStringSubmatchIndex(s, -1) {
+			d := s[m[2]:m[3]]
+			a, _ := strconv.Atoi(d[0:2])
+			b, _ := strconv.Atoi(d[2:4])
+			c, _ := strconv.Atoi(d[4:6])
+			if y := disambiguateYY(a); validYMD(y, b, c) {
+				emit(ExtractedDate{
+					Date:   fmt.Sprintf("%04d-%02d-%02d", y, b, c),
+					Match:  d,
+					Pos:    m[2],
+					Format: "yymmdd-" + fp.label,
+				})
+			}
+			if y := disambiguateYY(c); validYMD(y, a, b) {
+				emit(ExtractedDate{
+					Date:   fmt.Sprintf("%04d-%02d-%02d", y, a, b),
+					Match:  d,
+					Pos:    m[2],
+					Format: "mmddyy-" + fp.label,
 				})
 			}
 		}

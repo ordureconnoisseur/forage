@@ -80,6 +80,33 @@ func TestAllDatesAmbiguousFourDigitYear(t *testing.T) {
 	}
 }
 
+// TestAllDatesFusedSixDigit: member rips glue a 6-digit date to the site
+// name or bound it with underscores; both readings must emit when they
+// calendar-validate, and internal-id shapes that share the boundary must
+// not parse as dates.
+func TestAllDatesFusedSixDigit(t *testing.T) {
+	if got := AllDates("AnalMom260418Aderes.Quin.2160.mp4"); !dateContains(got, "2026-04-18") {
+		t.Errorf("letter-glued YYMMDD missing: %v", got)
+	}
+	if got := AllDates("Sinatra_Monroe_032326_1080.mp4"); !dateContains(got, "2026-03-23") {
+		t.Errorf("underscore-bounded MMDDYY missing: %v", got)
+	}
+	// Internal ids share the boundaries but fail calendar validation.
+	for _, in := range []string{
+		"BLACKED_106449_1080P.mp4",
+		"DEEPER_106484_1080P.mp4",
+		"BadBella_423461_1080p.mp4", // 6-digit member id
+	} {
+		if got := AllDates(in); len(got) != 0 {
+			t.Errorf("AllDates(%q) = %v, want none (id, not a date)", in, got)
+		}
+	}
+	// Free-standing 6-digit numbers stay unparsed (no boundary).
+	if got := AllDates("Top 260418 Compilation"); len(got) != 0 {
+		t.Errorf("free-standing 6 digits must not parse: %v", got)
+	}
+}
+
 // TestBestDateProximityPicksMatchingReading: the candidate scene's own date
 // selects the correct interpretation of an ambiguous release date.
 func TestBestDateProximityPicksMatchingReading(t *testing.T) {
