@@ -98,6 +98,9 @@ export default function GrabsList({
   const [addErr, setAddErr] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const lastFetch = useRef(0);
+  // Whether the LAST SUCCESSFUL poll saw active grabs — drives the
+  // fast/slow cadence and survives a transient fetch failure.
+  const lastActive = useRef(false);
 
   // Immediate refetch, used after a delete so the row disappears
   // without waiting for the next poll tick.
@@ -239,8 +242,10 @@ export default function GrabsList({
       // effect mounts once with an empty dep list, so the `data` state
       // variable in this closure is the mount render's value (null,
       // forever) — deciding off it meant the fast cadence never engaged
-      // and active downloads only refreshed every SLOW_POLL_MS.
-      let hasActive = false;
+      // and active downloads only refreshed every SLOW_POLL_MS. On a
+      // FAILED fetch, reuse the last successful answer: one transient
+      // blip mid-download shouldn't drop an active grab to the slow
+      // cadence.
       inFlight = true;
       try {
         const r = await fetchGrabs({ limit: 200 });
@@ -248,7 +253,7 @@ export default function GrabsList({
         setData(r);
         setError(null);
         lastFetch.current = Date.now();
-        hasActive = r.grabs.some((g) => isActiveStatus(g.status));
+        lastActive.current = r.grabs.some((g) => isActiveStatus(g.status));
       } catch (e) {
         if (cancelled) return;
         setError((e as Error).message);
@@ -257,7 +262,7 @@ export default function GrabsList({
         if (!cancelled) setLoading(false);
       }
       if (cancelled) return;
-      timer = window.setTimeout(tick, hasActive ? FAST_POLL_MS : SLOW_POLL_MS);
+      timer = window.setTimeout(tick, lastActive.current ? FAST_POLL_MS : SLOW_POLL_MS);
     }
 
     tick();

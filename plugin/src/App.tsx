@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import PerformersList from "./views/PerformersList";
 import MissingScenes from "./views/MissingScenes";
 import CollectionMode from "./views/CollectionMode";
@@ -180,10 +180,21 @@ export default function App() {
   // browser mid-session, rotating the session key). Re-probe health on
   // 401 so the gate can actually engage; without it every view just
   // showed errors until a full page reload.
+  const lastAuthProbe = useRef(0);
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setAuthOk(false);
-      setHealthNonce((n) => n + 1);
+      // Debounced: bumping the nonce re-runs the health probe AND the
+      // effects that depend on it (the notifications poll refetches
+      // immediately), so an environment where API calls 401 while
+      // /healthz still says open would otherwise loop probe → fetch →
+      // 401 → probe at network speed. One re-probe per 10s is plenty to
+      // route a genuine mid-session lockout to the Login gate.
+      const now = Date.now();
+      if (now - lastAuthProbe.current > 10_000) {
+        lastAuthProbe.current = now;
+        setHealthNonce((n) => n + 1);
+      }
     });
     return () => setUnauthorizedHandler(null);
   }, []);

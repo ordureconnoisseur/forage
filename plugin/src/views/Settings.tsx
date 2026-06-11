@@ -337,8 +337,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           }
         }
         // Server reloaded; clear the patch and refetch (now authenticated
-        // with the new key/cookie, if one was set).
+        // with the new key/cookie, if one was set). The raw categories
+        // text resets with it, so the field shows what the server now
+        // stores rather than stale keystrokes (e.g. a dropped "abc").
         setPatch({});
+        setCatsRaw(null);
         setPwConfirm("");
         const note = pwChange
           ? "saved — password updated"
