@@ -105,6 +105,56 @@ func TestVerifyStrongMatchNotBlockedByCastNamedRival(t *testing.T) {
 	}
 }
 
+// TestVerifyDateAnchored covers the date-anchored path for title-less
+// releases (site.26.03.11.performer.mp4): below the 0.70 strong-match
+// bar such releases were structurally unverifiable (no title → overlap
+// and containment can never fire). A unique exact date stated by the
+// release discriminates like a title; a same-day sibling removes the
+// discrimination and must refuse.
+func TestVerifyDateAnchored(t *testing.T) {
+	mk := func(id, title, date string, conf, ov float64) Candidate {
+		return Candidate{Scene: stashdb.Scene{ID: id, Title: title, Date: date,
+			Performers: []stashdb.ScenePerformer{{Name: "Haley Spades"}}},
+			Confidence: conf, TitleOverlap: ov}
+	}
+	release := "freeusefantasy.26.03.11.haley.spades.mp4"
+
+	// Unique exact date at performer+date confidence → verifies.
+	cands := []Candidate{
+		mk("right", "Using My Stepsis All Day", "2026-03-11", 0.66, 0.05),
+		mk("other", "Some Earlier Scene", "2026-02-01", 0.46, 0.05),
+	}
+	if !Verify(cands, "right", "Using My Stepsis All Day", release).Verified {
+		t.Errorf("unique exact-date #1 at 0.66 must verify via the date anchor")
+	}
+
+	// A same-day sibling kills the anchor — date can't discriminate.
+	cands = []Candidate{
+		mk("right", "Using My Stepsis All Day", "2026-03-11", 0.66, 0.05),
+		mk("sibling", "BTS Of The Same Day", "2026-03-11", 0.61, 0.05),
+	}
+	if Verify(cands, "right", "Using My Stepsis All Day", release).Verified {
+		t.Errorf("same-day sibling must block the date anchor")
+	}
+
+	// Date-disagreeing scene (the ~0.51 performer-only band) stays out:
+	// the release's date isn't the scene's date.
+	cands = []Candidate{
+		mk("drifted", "Late Repost", "2026-03-19", 0.51, 0.05),
+	}
+	if Verify(cands, "drifted", "Late Repost", release).Verified {
+		t.Errorf("a scene whose date the release does not state must not verify")
+	}
+
+	// No date in the release at all → anchor can't fire.
+	cands = []Candidate{
+		mk("right", "Using My Stepsis All Day", "2026-03-11", 0.66, 0.05),
+	}
+	if Verify(cands, "right", "Using My Stepsis All Day", "CarliSmall").Verified {
+		t.Errorf("date anchor must require the release to state the date")
+	}
+}
+
 // TestVerifyStrongMatchOnlyForTop confirms the strong-match path only
 // applies to the #1 candidate — a high-conf scene ranked below the top
 // pick shouldn't verify off conf alone.

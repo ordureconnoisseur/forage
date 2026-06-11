@@ -60,12 +60,58 @@ const (
 	// release's tag-soup, NO rival has meaningfully higher overlap, so the
 	// guard doesn't trip and the real match still verifies.
 	verifyStrongMatchRivalTitleMargin = 0.15
+	// verifyDateAnchorMinConf gates the date-anchored path below. The
+	// dominant scene-release form carries NO title at all
+	// (site.26.03.20.performer.mp4), so below verifyStrongMatchConf such
+	// a release was structurally unverifiable: the overlap and
+	// containment paths can never fire on a title that isn't there.
+	// performer (0.40) + exact date (0.20) + both-tracks (0.05) lands at
+	// ~0.66 even with no studio in the corpus and no cast bonus, so 0.65
+	// effectively requires "performer AND exact date agreed" — while the
+	// performer-matched-but-date-DISagreeing population sits at ~0.51 and
+	// stays correctly out of reach.
+	verifyDateAnchorMinConf = 0.65
 )
 
 // VerifyResult is the outcome of checking a release against a scene.
 type VerifyResult struct {
 	Verified   bool
 	Confidence float64
+}
+
+// dateAnchored reports whether the viewed scene's exact release date is
+// (a) present among the release name's date readings and (b) unique to
+// the viewed scene within the candidate set. Both halves matter: (a)
+// makes the date an explicit claim by the release rather than a
+// coincidence, (b) refuses the case where the date can't discriminate
+// (same-performer scenes posted the same day).
+func dateAnchored(cands []Candidate, sceneID, releaseName string) bool {
+	var sceneDate string
+	for i := range cands {
+		if cands[i].Scene.ID == sceneID {
+			sceneDate = cands[i].Scene.Date
+			break
+		}
+	}
+	if sceneDate == "" {
+		return false
+	}
+	stated := false
+	for _, d := range AllDates(releaseName) {
+		if d == sceneDate {
+			stated = true
+			break
+		}
+	}
+	if !stated {
+		return false
+	}
+	for i := range cands {
+		if cands[i].Scene.ID != sceneID && cands[i].Scene.Date == sceneDate {
+			return false
+		}
+	}
+	return true
 }
 
 // rivalTitleOverlap measures how well a RIVAL candidate's title matches
@@ -180,6 +226,18 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			// unless a sibling candidate matches the title clearly better,
 			// which means the title is discriminating between same-cast
 			// scenes and must not be overridden.
+			return VerifyResult{Verified: true, Confidence: conf}
+		case conf >= verifyDateAnchorMinConf &&
+			dateAnchored(cands, sceneID, releaseName) &&
+			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
+			// Date-anchored: the release literally states this scene's
+			// exact date and NO other candidate shares that date, so the
+			// date is doing the discriminating a title would normally do —
+			// for releases that carry no title at all. The uniqueness
+			// requirement is what keeps same-day multi-site postings (and
+			// same-day PMV/compilation siblings) honest: when several
+			// candidates share the date it can't separate them, and this
+			// path refuses rather than guessing.
 			return VerifyResult{Verified: true, Confidence: conf}
 		}
 	}
