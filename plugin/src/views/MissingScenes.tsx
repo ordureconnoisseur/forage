@@ -61,8 +61,10 @@ export default function MissingScenes({
   // Launches the collection flow scoped to a hand-picked scene subset.
   onGrabSelected: (performerId: string, sceneIds: string[]) => void;
   // Starts an upgrade crawl over owned scenes (sceneIds = the selection, or
-  // omitted = every owned scene) and jumps to its review.
-  onUpgrade: (performerId: string, sceneIds?: string[]) => void;
+  // omitted = every owned scene) and jumps to its review. Async so the
+  // buttons can show progress and refuse double-clicks while the job
+  // setup round-trips.
+  onUpgrade: (performerId: string, sceneIds?: string[]) => Promise<void> | void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -75,6 +77,17 @@ export default function MissingScenes({
   const [watchPicking, setWatchPicking] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
+  // An upgrade job is being started on the server (seconds of setup);
+  // disables the upgrade buttons so a second click can't double-submit.
+  const [upgradeBusy, setUpgradeBusy] = useState(false);
+  const startUpgrade = async (sceneIds?: string[]) => {
+    setUpgradeBusy(true);
+    try {
+      await onUpgrade(performerId, sceneIds);
+    } finally {
+      setUpgradeBusy(false); // re-arms only when starting failed
+    }
+  };
   // Owned · Both · Missing filter. Persisted so the choice sticks across
   // performers and sessions; defaults to Missing (the original behaviour).
   const [view, setView] = useState<SceneView>(() => {
@@ -255,10 +268,11 @@ export default function MissingScenes({
               {view === "owned" ? (
                 <button
                   className="collection-cta"
-                  onClick={() => onUpgrade(performerId)}
+                  disabled={upgradeBusy}
+                  onClick={() => startUpgrade()}
                   title="Search every owned scene for a higher-quality release"
                 >
-                  Upgrade collection →
+                  {upgradeBusy ? "Starting…" : "Upgrade collection →"}
                 </button>
               ) : (
                 <button
@@ -359,11 +373,11 @@ export default function MissingScenes({
           <span className="ms-select-count">{selected.size} selected</span>
           <button
             className="ms-select-grab"
-            disabled={selected.size === 0}
-            onClick={() => onUpgrade(performerId, Array.from(selected))}
+            disabled={selected.size === 0 || upgradeBusy}
+            onClick={() => startUpgrade(Array.from(selected))}
             title="Search the selected scenes for a higher-quality release"
           >
-            Upgrade {selected.size} selected →
+            {upgradeBusy ? "Starting…" : `Upgrade ${selected.size} selected →`}
           </button>
         </div>
       )}

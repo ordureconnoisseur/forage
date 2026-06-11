@@ -132,8 +132,9 @@ export default function CollectionMode({
   performerId: string;
   onBack: (performerId: string) => void;
   // Hand the crawl to the daemon (survives leaving the page) and jump to
-  // the Jobs tab. Passed the optional scene subset.
-  onRunOnServer: (performerId: string, sceneIds?: string[]) => void;
+  // the Jobs tab. Passed the optional scene subset. Async so the button
+  // can show progress and stay disabled until the job is accepted.
+  onRunOnServer: (performerId: string, sceneIds?: string[]) => Promise<void> | void;
   // When set, scope the collection to only these StashDB scene ids (the
   // user's multi-select from MissingScenes) instead of every missing
   // scene. undefined = full collection.
@@ -150,6 +151,11 @@ export default function CollectionMode({
   const [rows, setRows] = useState<Record<string, RowState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [grabbing, setGrabbing] = useState(false);
+  // "Search on server" is in flight: the job-setup round-trip takes
+  // seconds, and without a disabled+busy state a second click minted a
+  // duplicate job (the server now also dedupes, but the button should
+  // say what's happening).
+  const [serverBusy, setServerBusy] = useState(false);
   // Count of missing scenes hidden because they're already being grabbed.
   const [inflightHidden, setInflightHidden] = useState(0);
 
@@ -556,10 +562,20 @@ export default function CollectionMode({
         <div className="coll-head-actions">
           <button
             className="coll-run-server"
-            onClick={() => onRunOnServer(performerId, sceneIds)}
+            disabled={serverBusy}
+            onClick={async () => {
+              setServerBusy(true);
+              try {
+                await onRunOnServer(performerId, sceneIds);
+              } finally {
+                // Normally we navigate away on success and unmount; this
+                // re-arms the button when starting FAILED.
+                setServerBusy(false);
+              }
+            }}
             title="Search every missing scene on the server in the background (keeps going if you close this page). Nothing is grabbed — you Review and pick from the Jobs tab."
           >
-            Search on server →
+            {serverBusy ? "Starting on server…" : "Search on server →"}
           </button>
           <button
             className="coll-grab"
