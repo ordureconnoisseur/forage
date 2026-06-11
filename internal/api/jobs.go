@@ -401,12 +401,15 @@ func (s *Server) startCollectionJob(ctx context.Context, performerID string, sce
 func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, performerName string) {
 	// Backstop for panics outside the per-scene recovery (channel plumbing,
 	// matcher construction): log and close the job out rather than crashing
-	// the daemon or leaving the job "running" forever.
+	// the daemon or leaving the job "running" forever. Retention cleanup is
+	// scheduled here too, so a panicked job can't pin its store entry past
+	// jobRetention.
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Error("panic in collection job", "job", job.ID,
 				"panic", r, "stack", string(debug.Stack()))
 			s.finishJob(job, "done")
+			go s.cleanupJobLater(ctx, job.ID)
 		}
 	}()
 	m, err := s.Matcher(ctx)
@@ -447,22 +450,28 @@ func (s *Server) runCollectionJob(ctx context.Context, job *collectionJob, perfo
 		wg.Add(1)
 		go worker()
 	}
-	for i := range job.Scenes {
-		s.jobs.mu.Lock()
-		skip := job.Scenes[i].Status == jobSceneSkipped
-		if skip {
-			job.Done++
+	// The feed runs inside a func so close(queue) is deferred: a panic
+	// mid-feed must still close the channel, or every worker would block
+	// on `range queue` forever (the outer recover keeps the daemon alive,
+	// which is exactly what would have left them stranded).
+	func() {
+		defer close(queue)
+		for i := range job.Scenes {
+			s.jobs.mu.Lock()
+			skip := job.Scenes[i].Status == jobSceneSkipped
+			if skip {
+				job.Done++
+			}
+			s.jobs.mu.Unlock()
+			if skip {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			queue <- i
 		}
-		s.jobs.mu.Unlock()
-		if skip {
-			continue
-		}
-		if ctx.Err() != nil {
-			break
-		}
-		queue <- i
-	}
-	close(queue)
+	}()
 	wg.Wait()
 
 	state := "done"
