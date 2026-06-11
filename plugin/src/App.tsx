@@ -283,6 +283,30 @@ export default function App() {
     }
     goJobs();
   };
+  // Grab a Discover selection. The collection flow is per-performer, so
+  // a single-performer selection opens the same interactive collection
+  // view the missing page uses; a multi-performer selection fans out one
+  // server job per performer and lands on the Jobs tab for review.
+  const grabDiscoverSelection = async (
+    groups: Array<{ performerId: string; sceneIds: string[] }>,
+  ) => {
+    if (groups.length === 0) return;
+    if (groups.length === 1) {
+      goCollectionSelected(groups[0].performerId, groups[0].sceneIds);
+      return;
+    }
+    const results = await Promise.allSettled(
+      groups.map((g) => startCollectionJob(g.performerId, g.sceneIds)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      alert(
+        `Started ${groups.length - failed} of ${groups.length} server jobs — ` +
+          `${failed} failed. The Jobs tab shows what's running.`,
+      );
+    }
+    goJobs();
+  };
   // Start an UPGRADE crawl over owned scenes (sceneIds = the selection, or
   // omitted = every owned scene) and jump straight to its review — the job
   // only suggests releases that beat each scene's current resolution.
@@ -439,7 +463,11 @@ export default function App() {
           />
         )}
         {ready && route.kind === "discover" && (
-          <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
+          <DiscoverList
+            onPickPerformer={goPerformer}
+            onPickScene={goScene}
+            onGrabSelected={grabDiscoverSelection}
+          />
         )}
         {ready && route.kind === "watching" && (
           <WatchingList onPickScene={goScene} />

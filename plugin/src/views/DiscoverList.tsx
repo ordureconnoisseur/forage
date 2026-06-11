@@ -32,12 +32,20 @@ const TRENDING_LIMIT = 50;
 export default function DiscoverList({
   onPickPerformer,
   onPickScene,
+  onGrabSelected,
 }: {
   onPickPerformer: (localID: string) => void;
   // Navigate straight to a scene's release-search page. Carries the
   // optional performer name so the placer can drop the file under
   // <library>/<performer>/ when the user grabs from this jump-point.
   onPickScene: (stashDBID: string, performerName?: string) => void;
+  // Grab the selection, grouped per performer (the collection flow is
+  // per-performer): one group opens the interactive collection view,
+  // several start one server job each. Async so the button can show
+  // progress while jobs start.
+  onGrabSelected: (
+    groups: Array<{ performerId: string; sceneIds: string[] }>,
+  ) => Promise<void> | void;
 }) {
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -64,6 +72,9 @@ export default function DiscoverList({
   const [watchPicking, setWatchPicking] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
+  // Grab-selected is starting server jobs (multi-performer selections);
+  // disable + show progress so it can't double-submit.
+  const [grabBusy, setGrabBusy] = useState(false);
   // Bumped after a bulk watch so the refetch picks up the new
   // watch_status badges without waiting for the next poll.
   const [reloadKey, setReloadKey] = useState(0);
@@ -204,6 +215,29 @@ export default function DiscoverList({
     setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
     window.setTimeout(() => setWatchedMsg(null), 3500);
     setReloadKey((k) => k + 1);
+  };
+
+  // Grab the selection: group scenes by their primary library performer
+  // (the unit the collection flow works in) and hand the groups up.
+  const grabSelected = async () => {
+    const byPerformer = new Map<string, string[]>();
+    for (const s of data.scenes) {
+      if (!selected.has(s.stashdb_id)) continue;
+      const pid = s.performers[0]?.stash_id;
+      if (!pid) continue; // not in the library — nothing to file under
+      byPerformer.set(pid, [...(byPerformer.get(pid) || []), s.stashdb_id]);
+    }
+    const groups = Array.from(byPerformer, ([performerId, sceneIds]) => ({
+      performerId,
+      sceneIds,
+    }));
+    if (groups.length === 0) return;
+    setGrabBusy(true);
+    try {
+      await onGrabSelected(groups);
+    } finally {
+      setGrabBusy(false); // re-arms only when starting failed / no navigation
+    }
   };
 
   return (
@@ -362,6 +396,14 @@ export default function DiscoverList({
               {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
             </button>
           )}
+          <button
+            className="ms-select-grab"
+            disabled={selected.size === 0 || grabBusy}
+            onClick={grabSelected}
+            title="Search the selected scenes for releases — one performer opens the collection view; several start a server job each (review from the Jobs tab)"
+          >
+            {grabBusy ? "Starting…" : `Grab ${selected.size} selected →`}
+          </button>
         </div>
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
