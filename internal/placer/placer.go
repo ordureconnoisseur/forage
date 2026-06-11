@@ -387,6 +387,13 @@ var errDirConflict = errors.New("dir holds foreign content")
 // collision). An empty directory mirrors trivially (an interrupted run
 // that only got as far as MkdirAll). Stranded ".forage-copy-*.partial"
 // temps are ours (a crashed copy fallback), not foreign content.
+//
+// Known limitation, accepted deliberately: a SUPERSET release (same
+// folder name, containing all of dest's files plus new ones — a v2
+// re-rip) is content-indistinguishable from our own interrupted mirror,
+// so it reuses the dir and the two grabs share a placement. Refusing
+// that shape would also refuse every genuine resume, which matters far
+// more often.
 func dirMirrors(dest, src string) (bool, error) {
 	err := filepath.WalkDir(dest, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {

@@ -97,6 +97,11 @@ type VerifyResult struct {
 // never retrieved. So the anchor is the dateBetter-preferred reading
 // only, and never a fused one (six glued digits are member ids more
 // often than dates).
+//
+// Caveat: the sibling-uniqueness check sees only the candidates Match
+// returned (top maxCandidatesReturned); a same-date sibling ranked
+// below the cut is invisible. Accepted — dense same-day batches mostly
+// fail other requirements too, and the ranking cap keeps Match bounded.
 func dateAnchored(cands []Candidate, sceneID, releaseName string) bool {
 	var sceneDate string
 	for i := range cands {
