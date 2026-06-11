@@ -324,15 +324,21 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		// (the grab links to the existing download), not a failure.
 		if hash != "" {
 			if t, terr := c.TorrentInfo(ctx, hash); terr == nil && t != nil {
-				// The grab now rides a torrent added outside forage, which
-				// may be categorised elsewhere or sitting paused at 0% —
-				// linked as-is it would never complete, with no hint why.
-				// Adopt it properly: move it into the forage category and
-				// start it. Best-effort — the link is the success either way.
-				if category != "" && t.Category != category {
-					_ = c.SetCategory(ctx, hash, category)
+				// The grab now rides a torrent added outside forage. If it's
+				// uncategorised (a manual add), adopt it properly: set the
+				// forage category and start it, so a paused 0% torrent
+				// doesn't wedge the grab with no hint why. But a torrent
+				// that BELONGS to another category (a cross-seed under the
+				// *arr stack, say) is another app's: re-categorising it can
+				// physically relocate the payload under Auto Torrent
+				// Management and break that app's import/seeding, so leave
+				// it entirely alone — the hash link alone is the success.
+				if t.Category == "" || t.Category == category {
+					if category != "" && t.Category != category {
+						_ = c.SetCategory(ctx, hash, category)
+					}
+					_ = c.Resume(ctx, hash)
 				}
-				_ = c.Resume(ctx, hash)
 				return hash, nil
 			}
 		}
