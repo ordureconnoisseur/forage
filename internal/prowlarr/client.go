@@ -40,11 +40,15 @@ type Release struct {
 	Indexer     string
 	IndexerID   int
 	Protocol    string // "torrent" | "usenet"
-	Size        int64
-	Seeders     int // torrent only; 0 for usenet
-	Grabs       int // present for both; the dominant signal for usenet
-	Popularity  int
-	PublishDate string // RFC3339
+	Size    int64
+	Seeders int // torrent only; 0 for usenet
+	// SeedersKnown distinguishes a real zero from an indexer that simply
+	// omits the seeders field (cookie/HTML-scraped trackers do): a
+	// seeder floor must not erase such an indexer's whole catalog.
+	SeedersKnown bool
+	Grabs        int // present for both; the dominant signal for usenet
+	Popularity   int
+	PublishDate  string // RFC3339
 	InfoURL     string
 	DownloadURL string
 	// Magnet is a magnet: URI when the indexer is magnet-only (e.g. The
@@ -103,6 +107,7 @@ func (r rawRelease) toRelease() Release {
 	}
 	if r.Seeders != nil {
 		out.Seeders = *r.Seeders
+		out.SeedersKnown = true
 	}
 	if r.Files != nil {
 		out.Files = *r.Files

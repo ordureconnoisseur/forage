@@ -309,10 +309,12 @@ func filterReleases(releases []prowlarr.Release, minSeeders, limit int) []prowla
 // The floor means "can this actually download right now": for torrents
 // that's the live seeder count. Popularity is max(seeders, grabs) — a
 // ranking signal — so filtering on it waved through dead torrents whose
-// historical grabs cleared the floor. Usenet has no swarm; the floor
-// doesn't apply there.
+// historical grabs cleared the floor. Usenet has no swarm, and an
+// indexer that doesn't REPORT seeders (SeedersKnown false) gives the
+// floor nothing to judge — dropping its whole catalog would just look
+// like an empty indexer.
 func seedersBelow(rel prowlarr.Release, minSeeders int) bool {
-	return minSeeders > 0 && rel.Protocol != "usenet" && rel.Seeders < minSeeders
+	return minSeeders > 0 && rel.Protocol != "usenet" && rel.SeedersKnown && rel.Seeders < minSeeders
 }
 
 // isRefinableTitle filters out titles too generic to make useful
