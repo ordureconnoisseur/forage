@@ -1,76 +1,24 @@
 package stash
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"regexp"
 	"strings"
-	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/gqlclient"
 )
 
 type Client struct {
-	baseURL string
-	apiKey  string
-	http    *http.Client
+	gql *gqlclient.Client
 }
 
 func New(baseURL, apiKey string) *Client {
-	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
-		http:    &http.Client{Timeout: 60 * time.Second},
-	}
-}
-
-type gqlError struct {
-	Message string `json:"message"`
+	return &Client{gql: gqlclient.New(baseURL, apiKey, "stash")}
 }
 
 func (c *Client) do(ctx context.Context, query string, vars map[string]any, out any) error {
-	body, err := json.Marshal(map[string]any{"query": query, "variables": vars})
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/graphql", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		req.Header.Set("ApiKey", c.apiKey)
-	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	raw, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("stash graphql %d: %s", resp.StatusCode, raw)
-	}
-	var wrap struct {
-		Data   json.RawMessage `json:"data"`
-		Errors []gqlError      `json:"errors,omitempty"`
-	}
-	if err := json.Unmarshal(raw, &wrap); err != nil {
-		return fmt.Errorf("decode: %w (body=%s)", err, raw)
-	}
-	if len(wrap.Errors) > 0 {
-		return fmt.Errorf("stash graphql errors: %+v", wrap.Errors)
-	}
-	if out != nil {
-		if err := json.Unmarshal(wrap.Data, out); err != nil {
-			return fmt.Errorf("decode data: %w", err)
-		}
-	}
-	return nil
+	return c.gql.Do(ctx, query, vars, out)
 }
 
 // StashID is Stash's cross-reference to an external metadata source
