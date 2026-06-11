@@ -113,53 +113,65 @@ query ForagerAllStudios($page: Int!, $perPage: Int!) {
   }
 }`
 
-// FindPerformers pages through every performer in the user's Stash
-// library. Pagination terminates when an empty page is returned, which
-// is safer than relying on count for libraries that grow mid-fetch.
-func (c *Client) FindPerformers(ctx context.Context) ([]Performer, error) {
-	const perPage = 1000
-	var all []Performer
+// pagedQuery drives the offset-pagination skeleton every library sweep
+// shares: fetch page 1, 2, ... until a page comes back empty or short.
+// Terminating on page shape (not the reported count) is deliberate —
+// counts drift on libraries that grow mid-fetch, and every query pins
+// an explicit sort so the offset cursor stays stable against inserts.
+//
+// query must accept $page and $perPage; vars carries the query's other
+// variables (nil is fine). onPage processes one decoded response and
+// returns how many rows it held, plus stop=true to end early (caller
+// limits). label names the query in error wrapping.
+func pagedQuery[T any](ctx context.Context, c *Client, label, query string, vars map[string]any, perPage int, onPage func(T) (rows int, stop bool)) error {
+	if vars == nil {
+		vars = map[string]any{}
+	}
 	for page := 1; ; page++ {
-		var resp struct {
-			FindPerformers struct {
-				Count      int         `json:"count"`
-				Performers []Performer `json:"performers"`
-			} `json:"findPerformers"`
+		vars["page"], vars["perPage"] = page, perPage
+		var resp T
+		if err := c.do(ctx, query, vars, &resp); err != nil {
+			return fmt.Errorf("%s (page %d): %w", label, page, err)
 		}
-		if err := c.do(ctx, performersQuery, map[string]any{"page": page, "perPage": perPage}, &resp); err != nil {
-			return nil, fmt.Errorf("findPerformers page %d: %w", page, err)
+		rows, stop := onPage(resp)
+		if stop || rows == 0 || rows < perPage {
+			return nil
 		}
-		if len(resp.FindPerformers.Performers) == 0 {
-			break
-		}
-		all = append(all, resp.FindPerformers.Performers...)
-		if len(resp.FindPerformers.Performers) < perPage {
-			break
-		}
+	}
+}
+
+// FindPerformers pages through every performer in the user's Stash
+// library.
+func (c *Client) FindPerformers(ctx context.Context) ([]Performer, error) {
+	type resp struct {
+		FindPerformers struct {
+			Performers []Performer `json:"performers"`
+		} `json:"findPerformers"`
+	}
+	var all []Performer
+	err := pagedQuery(ctx, c, "findPerformers", performersQuery, nil, 1000, func(r resp) (int, bool) {
+		all = append(all, r.FindPerformers.Performers...)
+		return len(r.FindPerformers.Performers), false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return all, nil
 }
 
 func (c *Client) FindStudios(ctx context.Context) ([]Studio, error) {
-	const perPage = 1000
+	type resp struct {
+		FindStudios struct {
+			Studios []Studio `json:"studios"`
+		} `json:"findStudios"`
+	}
 	var all []Studio
-	for page := 1; ; page++ {
-		var resp struct {
-			FindStudios struct {
-				Count   int      `json:"count"`
-				Studios []Studio `json:"studios"`
-			} `json:"findStudios"`
-		}
-		if err := c.do(ctx, studiosQuery, map[string]any{"page": page, "perPage": perPage}, &resp); err != nil {
-			return nil, fmt.Errorf("findStudios page %d: %w", page, err)
-		}
-		if len(resp.FindStudios.Studios) == 0 {
-			break
-		}
-		all = append(all, resp.FindStudios.Studios...)
-		if len(resp.FindStudios.Studios) < perPage {
-			break
-		}
+	err := pagedQuery(ctx, c, "findStudios", studiosQuery, nil, 1000, func(r resp) (int, bool) {
+		all = append(all, r.FindStudios.Studios...)
+		return len(r.FindStudios.Studios), false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return all, nil
 }
@@ -278,52 +290,46 @@ func (c *Client) FindLabeledScenes(ctx context.Context, limit int) ([]LabeledSce
 			ID string `json:"id"`
 		} `json:"performers"`
 	}
-	for page := 1; ; page++ {
-		var resp struct {
-			FindScenes struct {
-				Count  int        `json:"count"`
-				Scenes []sceneRow `json:"scenes"`
-			} `json:"findScenes"`
-		}
-		vars := map[string]any{"page": page, "perPage": perPage, "endpoint": endpoint}
-		if err := c.do(ctx, labeledScenesQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("findLabeledScenes page %d: %w", page, err)
-		}
-		if len(resp.FindScenes.Scenes) == 0 {
-			break
-		}
-		for _, s := range resp.FindScenes.Scenes {
-			if len(s.Files) == 0 {
-				continue
+	type resp struct {
+		FindScenes struct {
+			Scenes []sceneRow `json:"scenes"`
+		} `json:"findScenes"`
+	}
+	err := pagedQuery(ctx, c, "findLabeledScenes", labeledScenesQuery,
+		map[string]any{"endpoint": endpoint}, perPage, func(r resp) (int, bool) {
+			for _, s := range r.FindScenes.Scenes {
+				if len(s.Files) == 0 {
+					continue
+				}
+				folders, base := splitPathParts(s.Files[0].Path, 2)
+				if base == "" {
+					continue
+				}
+				ids := make([]string, 0, len(s.Performers))
+				for _, p := range s.Performers {
+					ids = append(ids, p.ID)
+				}
+				studioStashDBID := ""
+				if s.Studio != nil {
+					studioStashDBID = PickStashDBID(s.Studio.StashIDs)
+				}
+				out = append(out, LabeledScene{
+					ID:              s.ID,
+					Basename:        base,
+					Folders:         folders,
+					Date:            s.Date,
+					StashDBID:       PickStashDBID(s.StashIDs),
+					StudioStashDBID: studioStashDBID,
+					PerformerIDs:    ids,
+				})
+				if limit > 0 && len(out) >= limit {
+					return len(r.FindScenes.Scenes), true
+				}
 			}
-			folders, base := splitPathParts(s.Files[0].Path, 2)
-			if base == "" {
-				continue
-			}
-			ids := make([]string, 0, len(s.Performers))
-			for _, p := range s.Performers {
-				ids = append(ids, p.ID)
-			}
-			studioStashDBID := ""
-			if s.Studio != nil {
-				studioStashDBID = PickStashDBID(s.Studio.StashIDs)
-			}
-			out = append(out, LabeledScene{
-				ID:              s.ID,
-				Basename:        base,
-				Folders:         folders,
-				Date:            s.Date,
-				StashDBID:       PickStashDBID(s.StashIDs),
-				StudioStashDBID: studioStashDBID,
-				PerformerIDs:    ids,
-			})
-			if limit > 0 && len(out) >= limit {
-				return out, nil
-			}
-		}
-		if len(resp.FindScenes.Scenes) < perPage {
-			break
-		}
+			return len(r.FindScenes.Scenes), false
+		})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -347,33 +353,24 @@ query ForagerAllOwnedScenes($page: Int!, $perPage: Int!) {
 //
 // Scenes without a StashDB cross-id are skipped silently.
 func (c *Client) FindAllOwnedStashDBSceneIDs(ctx context.Context) ([]string, error) {
-	const perPage = 1000
+	type resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				StashIDs []StashID `json:"stash_ids"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
 	var out []string
-	for page := 1; ; page++ {
-		var resp struct {
-			FindScenes struct {
-				Count  int `json:"count"`
-				Scenes []struct {
-					ID       string    `json:"id"`
-					StashIDs []StashID `json:"stash_ids"`
-				} `json:"scenes"`
-			} `json:"findScenes"`
-		}
-		vars := map[string]any{"page": page, "perPage": perPage}
-		if err := c.do(ctx, findAllOwnedScenesQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("findScenes all (page %d): %w", page, err)
-		}
-		if len(resp.FindScenes.Scenes) == 0 {
-			break
-		}
-		for _, s := range resp.FindScenes.Scenes {
+	err := pagedQuery(ctx, c, "findScenes all", findAllOwnedScenesQuery, nil, 1000, func(r resp) (int, bool) {
+		for _, s := range r.FindScenes.Scenes {
 			if id := PickStashDBID(s.StashIDs); id != "" {
 				out = append(out, id)
 			}
 		}
-		if len(resp.FindScenes.Scenes) < perPage {
-			break
-		}
+		return len(r.FindScenes.Scenes), false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -410,32 +407,24 @@ type SceneRef struct {
 // rather than a per-scene query. Scenes without a StashDB cross-id are
 // skipped.
 func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]SceneRef, error) {
-	const perPage = 1000
+	type resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				ID       string    `json:"id"`
+				Title    string    `json:"title"`
+				StashIDs []StashID `json:"stash_ids"`
+				Files    []struct {
+					Path   string `json:"path"`
+					Size   int64  `json:"size"`
+					Width  int    `json:"width"`
+					Height int    `json:"height"`
+				} `json:"files"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
 	out := map[string][]SceneRef{}
-	for page := 1; ; page++ {
-		var resp struct {
-			FindScenes struct {
-				Scenes []struct {
-					ID       string    `json:"id"`
-					Title    string    `json:"title"`
-					StashIDs []StashID `json:"stash_ids"`
-					Files    []struct {
-						Path   string `json:"path"`
-						Size   int64  `json:"size"`
-						Width  int    `json:"width"`
-						Height int    `json:"height"`
-					} `json:"files"`
-				} `json:"scenes"`
-			} `json:"findScenes"`
-		}
-		vars := map[string]any{"page": page, "perPage": perPage}
-		if err := c.do(ctx, findAllScenesWithPathsQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("findScenes paths (page %d): %w", page, err)
-		}
-		if len(resp.FindScenes.Scenes) == 0 {
-			break
-		}
-		for _, s := range resp.FindScenes.Scenes {
+	err := pagedQuery(ctx, c, "findScenes paths", findAllScenesWithPathsQuery, nil, 1000, func(r resp) (int, bool) {
+		for _, s := range r.FindScenes.Scenes {
 			id := PickStashDBID(s.StashIDs)
 			if id == "" {
 				continue
@@ -444,9 +433,10 @@ func (c *Client) FindAllSceneStashDBIDs(ctx context.Context) (map[string][]Scene
 				out[id] = append(out[id], SceneRef{SceneID: s.ID, Title: s.Title, Path: f.Path, Size: f.Size, Width: f.Width, Height: f.Height})
 			}
 		}
-		if len(resp.FindScenes.Scenes) < perPage {
-			break
-		}
+		return len(r.FindScenes.Scenes), false
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -642,39 +632,33 @@ func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]Scen
 	// scenes into the pack's identify/dedup set. (Trailing separators on the
 	// needle are trimmed so the anchor doesn't require two.)
 	pattern := regexp.QuoteMeta(strings.TrimRight(needle, `/\`)) + `[\\/]`
-	const perPage = 1000
+	type resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				ID       string    `json:"id"`
+				Title    string    `json:"title"`
+				Date     string    `json:"date"`
+				StashIDs []StashID `json:"stash_ids"`
+				Files    []struct {
+					Path string `json:"path"`
+				} `json:"files"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
 	var out []SceneMatch
-	for page := 1; ; page++ {
-		var resp struct {
-			FindScenes struct {
-				Scenes []struct {
-					ID       string    `json:"id"`
-					Title    string    `json:"title"`
-					Date     string    `json:"date"`
-					StashIDs []StashID `json:"stash_ids"`
-					Files    []struct {
-						Path string `json:"path"`
-					} `json:"files"`
-				} `json:"scenes"`
-			} `json:"findScenes"`
-		}
-		vars := map[string]any{"value": pattern, "page": page, "perPage": perPage}
-		if err := c.do(ctx, findScenesUnderPathQuery, vars, &resp); err != nil {
-			return nil, fmt.Errorf("findScenes under path (page %d): %w", page, err)
-		}
-		if len(resp.FindScenes.Scenes) == 0 {
-			break
-		}
-		for _, s := range resp.FindScenes.Scenes {
-			m := SceneMatch{ID: s.ID, Title: s.Title, Date: s.Date, StashDBID: PickStashDBID(s.StashIDs)}
-			if len(s.Files) > 0 {
-				m.FilePath = s.Files[0].Path
+	err := pagedQuery(ctx, c, "findScenes under path", findScenesUnderPathQuery,
+		map[string]any{"value": pattern}, 1000, func(r resp) (int, bool) {
+			for _, s := range r.FindScenes.Scenes {
+				m := SceneMatch{ID: s.ID, Title: s.Title, Date: s.Date, StashDBID: PickStashDBID(s.StashIDs)}
+				if len(s.Files) > 0 {
+					m.FilePath = s.Files[0].Path
+				}
+				out = append(out, m)
 			}
-			out = append(out, m)
-		}
-		if len(resp.FindScenes.Scenes) < perPage {
-			break
-		}
+			return len(r.FindScenes.Scenes), false
+		})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
