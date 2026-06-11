@@ -155,6 +155,61 @@ func TestVerifyDateAnchored(t *testing.T) {
 	}
 }
 
+// TestVerifyRivalContainmentVeto: when the release spells out ANOTHER
+// candidate's distinctive title, the confidence-driven paths must refuse
+// the viewed scene — the release is stating which scene it is. This is
+// the holdout case "OnlyFans - Elly Clutch, Van Wylde - Afternoon
+// Hookup": the true scene's title contains its own cast names, so
+// cast-stripping halved its rival OVERLAP below the margin and a wrong
+// high-conf rank-1 strong-match-verified past it; its containment claim
+// is untouched by stripping and now vetoes.
+func TestVerifyRivalContainmentVeto(t *testing.T) {
+	wrong := Candidate{
+		Scene: stashdb.Scene{ID: "wrong", Title: "Hot Red Head Super Model Dicked Down - Elly Clutch", Date: "2025-05-29",
+			Performers: []stashdb.ScenePerformer{{Name: "Elly Clutch"}, {Name: "Van Wylde"}}},
+		Confidence: 0.77, TitleOverlap: 0.11,
+	}
+	right := Candidate{
+		Scene: stashdb.Scene{ID: "right", Title: "Afternoon Hookup With Van Wylde", Date: "2026-02-26",
+			Performers: []stashdb.ScenePerformer{{Name: "Elly Clutch"}, {Name: "Van Wylde"}}},
+		Confidence: 0.62, TitleOverlap: 0.33,
+	}
+	cands := []Candidate{wrong, right}
+	release := "OnlyFans - Elly Clutch, Van Wylde  - Afternoon Hookup 1080p rq.mp4"
+
+	if Verify(cands, "wrong", wrong.Scene.Title, release).Verified {
+		t.Errorf("strong-match must refuse when a rival's title is contained by the release")
+	}
+	if !Verify(cands, "right", right.Scene.Title, release).Verified {
+		t.Errorf("the scene whose title the release states must still verify")
+	}
+}
+
+// TestVerifyCastListRivalDoesNotVeto: the veto judges a rival's claim on
+// its CAST-STRIPPED title. A rival whose title IS its cast list is fully
+// "contained" by any release naming the shared cast — a six-performer
+// gangbang release names everyone — and that must not veto the correct
+// strong match (dev corpus case: AccidentalGangbang "Too Many Tops").
+func TestVerifyCastListRivalDoesNotVeto(t *testing.T) {
+	cast := []stashdb.ScenePerformer{
+		{Name: "Khloe Kay"}, {Name: "Jade Venus"}, {Name: "Ariel Demure"},
+		{Name: "Kasey Kei"}, {Name: "Lola Morena"}, {Name: "Avery Lust"},
+	}
+	right := Candidate{
+		Scene:      stashdb.Scene{ID: "right", Title: "Too Many Tops!", Date: "2025-05-03", Performers: cast},
+		Confidence: 0.78, TitleOverlap: 0.12,
+	}
+	castTitled := Candidate{
+		Scene:      stashdb.Scene{ID: "cast-titled", Title: "Khloe Kay, Jade Venus, Ariel Demure, Kasey Kei & Avery Lust", Performers: cast},
+		Confidence: 0.45, TitleOverlap: 0.30,
+	}
+	cands := []Candidate{right, castTitled}
+	release := "AccidentalGangbang.24.05.03.Khloe.Kay.Jade.Venus.Ariel.Demure.Kasey.Kei.Lola.Morena.and.Avery.Lust.Too.Many.Tops.XXX.2160p.MP4-Narcos"
+	if !Verify(cands, "right", right.Scene.Title, release).Verified {
+		t.Errorf("a cast-list-titled rival must not veto the correct strong match")
+	}
+}
+
 // TestVerifyStrongMatchOnlyForTop confirms the strong-match path only
 // applies to the #1 candidate — a high-conf scene ranked below the top
 // pick shouldn't verify off conf alone.

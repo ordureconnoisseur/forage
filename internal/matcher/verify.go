@@ -127,25 +127,12 @@ func dateAnchored(cands []Candidate, sceneID, releaseName string) bool {
 // Same Jaccard shape as titleOverlap, minus the floor (a rival with no
 // non-cast signal contributes 0, not minTitleScore).
 func rivalTitleOverlap(c Candidate, releaseTokens map[string]bool) float64 {
-	if c.Scene.Title == "" || len(releaseTokens) == 0 {
+	if len(releaseTokens) == 0 {
 		return 0
 	}
-	cast := map[string]bool{}
-	for _, p := range c.Scene.Performers {
-		for _, t := range Tokenize(p.Name) {
-			cast[t] = true
-		}
-		if p.As != "" {
-			for _, t := range Tokenize(p.As) {
-				cast[t] = true
-			}
-		}
-	}
 	sceneTokens := map[string]bool{}
-	for _, t := range filterTitleStopwords(Tokenize(c.Scene.Title)) {
-		if !cast[t] {
-			sceneTokens[t] = true
-		}
+	for _, t := range castStrippedTitleTokens(c) {
+		sceneTokens[t] = true
 	}
 	if len(sceneTokens) == 0 {
 		return 0
@@ -161,6 +148,34 @@ func rivalTitleOverlap(c Candidate, releaseTokens map[string]bool) float64 {
 		return 0
 	}
 	return float64(inter) / float64(union)
+}
+
+// castStrippedTitleTokens returns a candidate's significant title tokens
+// with its OWN cast-name tokens removed — the candidate's title signal
+// net of cast coincidence. Shared by the rival overlap and the rival
+// containment claim above.
+func castStrippedTitleTokens(c Candidate) []string {
+	if c.Scene.Title == "" {
+		return nil
+	}
+	cast := map[string]bool{}
+	for _, p := range c.Scene.Performers {
+		for _, t := range Tokenize(p.Name) {
+			cast[t] = true
+		}
+		if p.As != "" {
+			for _, t := range Tokenize(p.As) {
+				cast[t] = true
+			}
+		}
+	}
+	var out []string
+	for _, t := range filterTitleStopwords(Tokenize(c.Scene.Title)) {
+		if !cast[t] {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // Verify decides whether the release (whose matcher candidates are
@@ -198,6 +213,43 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	frac, nTok := TitleContainment(sceneTitle, releaseName)
 	isTop := found && len(cands) > 0 && cands[0].Scene.ID == sceneID
 
+	// rivalOwnsTitle: some OTHER candidate's distinctive title is spelled
+	// out by the release — the release is telling us outright which scene
+	// it is, and it isn't the viewed one — so the confidence-driven paths
+	// below (strong-match, date-anchored) must refuse. This closes the gap
+	// cast-stripping opened: when the true scene's title contains its own
+	// cast names ("Afternoon Hookup With Van Wylde"), stripping halves its
+	// rival OVERLAP below the margin guard, but its title CLAIM is real.
+	//
+	// The claim uses the containment path's own conditions on the FULL
+	// title, plus one extra requirement: at least two of the rival's
+	// NON-cast title tokens must appear in the release. Without that, a
+	// rival whose title IS its cast list ("Khloe Kay, Jade Venus & Avery
+	// Lust") counts as fully "contained" by any release that names the
+	// shared cast — which a six-performer gangbang release does — and
+	// that is cast coincidence, not a title claim.
+	rivalOwnsTitle := false
+	relTokSet := tokenSet(filterTitleStopwords(Tokenize(releaseName)))
+	for i := range cands {
+		if cands[i].Scene.ID == sceneID || cands[i].Confidence < verifyTitleMinConf {
+			continue
+		}
+		rf, rn := TitleContainment(cands[i].Scene.Title, releaseName)
+		if rn < verifyTitleMinTokens || rf < verifyTitleMinContainment {
+			continue
+		}
+		nonCastHits := 0
+		for _, t := range castStrippedTitleTokens(cands[i]) {
+			if relTokSet[t] {
+				nonCastHits++
+			}
+		}
+		if nonCastHits >= 2 {
+			rivalOwnsTitle = true
+			break
+		}
+	}
+
 	// Ranking path: the viewed scene is the single best pick. Normally we
 	// require a real title overlap (so it's #1 for the title, not merely a
 	// shared performer), backed by either a real overall match (conf floor)
@@ -218,7 +270,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			return VerifyResult{Verified: true, Confidence: conf}
 		case shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
 			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= verifyStrongMatchConf &&
+		case conf >= verifyStrongMatchConf && !rivalOwnsTitle &&
 			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
 			// Title overlap is negligible (tag-soup release name, or an
 			// episode tag the release omits) but performer+date+studio/cast
@@ -227,7 +279,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			// which means the title is discriminating between same-cast
 			// scenes and must not be overridden.
 			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= verifyDateAnchorMinConf &&
+		case conf >= verifyDateAnchorMinConf && !rivalOwnsTitle &&
 			dateAnchored(cands, sceneID, releaseName) &&
 			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
 			// Date-anchored: the release literally states this scene's
