@@ -447,6 +447,27 @@ function TrendingCarousel({
 }) {
   const [page, setPage] = useState(0);
   const pageSize = useTrendingPageSize();
+
+  // Phones get a native swipe row instead of paged chevrons: two paged
+  // cards left a column of dead chevron space and slivers of card. The
+  // peeking partial card is the scroll affordance.
+  if (pageSize === 2) {
+    return (
+      <div className="trending-carousel scroll">
+        <div className="carousel-row">
+          {scenes.map((s) => (
+            <TrendingCard
+              key={s.stashdb_id}
+              s={s}
+              onPickPerformer={onPickPerformer}
+              onPickScene={onPickScene}
+            />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   const pageCount = Math.max(1, Math.ceil(scenes.length / pageSize));
   // Clamp if the slider just reduced trendingLimit (or a rotation just
   // changed the page size) and the current page is past the new last.

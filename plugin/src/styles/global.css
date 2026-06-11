@@ -2112,12 +2112,30 @@ button {
   grid-template-columns: 370px 1fr;
 }
 @media (max-width: 680px) {
-  .grab-dossier {
+  /* The :has(.is-scene) variant widens the poster column to 370px and
+     OUTSPECIFIES a bare .grab-dossier override — on a phone the grid
+     stayed 370px+1fr and the whole info column rendered off-screen.
+     Both variants must collapse to one column here, and items stretch
+     (centering made the text block content-width and clipped it). */
+  .grab-dossier,
+  .grab-dossier:has(.grab-poster.is-scene) {
     grid-template-columns: 1fr;
-    justify-items: center;
+    justify-items: stretch;
   }
   .grab-poster {
     width: min(208px, 60%);
+    justify-self: center;
+  }
+  .grab-poster.is-scene {
+    width: 100%;
+    max-width: 370px;
+  }
+  .grab-dossier-main {
+    max-width: 100%;
+  }
+  .grab-ident-sub,
+  .grab-perf-chips {
+    flex-wrap: wrap;
   }
 }
 
@@ -5970,4 +5988,27 @@ code.grab-fact-v,
   .coll-head-actions {
     flex-wrap: wrap;
   }
+}
+
+/* Trending as a native swipe row on phones: every card in one
+   horizontally scrollable, snap-aligned strip; the partially visible
+   next card is the affordance. Chevrons don't render in this mode. */
+.trending-carousel.scroll {
+  display: block;
+}
+.trending-carousel.scroll .carousel-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 6px;
+}
+.trending-carousel.scroll .carousel-row::-webkit-scrollbar {
+  display: none;
+}
+.trending-carousel.scroll .trending-card {
+  flex: 0 0 44%;
+  scroll-snap-align: start;
 }
