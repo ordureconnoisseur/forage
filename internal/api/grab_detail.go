@@ -318,14 +318,31 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// sameParentDir reports whether the Stash-side file and the forage-side
-// placed path sit in the same directory, compared by last directory
-// segment only (the performer folder), since the two sides see the same
-// file through different mounts/roots. Used to verify a basename-keyed
-// scene lookup before the irreversible SceneDestroy(delete_file). False
-// when either parent segment is missing — an unverifiable match is not
-// safe to destroy.
+// sameParentDir reports whether the Stash-side file belongs to the
+// forage-side placement, compared by last directory segment only (the
+// two sides see the same file through different mounts/roots). Used to
+// verify a basename-keyed scene lookup before destructive or
+// metadata-overwriting actions.
+//
+// Two placement shapes:
+//   - file placement: the scene file sits NEXT TO the placed path, so
+//     their parent segments match (the performer folder).
+//   - directory placement (a torrent with a root folder, or any SAB
+//     job): the scene file sits INSIDE the placed path, so the file's
+//     parent segment equals the placed path's own basename. Comparing
+//     parents only — performer vs release dir — rejected every such
+//     placement, 409ing all manual matches for folder-shaped grabs.
+//
+// False when segments are missing — an unverifiable match is not safe
+// to act on. (A scene parent equal to a placed FILE's basename is not
+// realistic, so accepting Base(placedPath) costs nothing for files.)
 func sameParentDir(stashPath, placedPath string) bool {
-	sp, pp := pathmap.Parent(stashPath), pathmap.Parent(placedPath)
-	return sp != "" && pp != "" && sp == pp
+	sp := pathmap.Parent(stashPath)
+	if sp == "" {
+		return false
+	}
+	if pp := pathmap.Parent(placedPath); pp != "" && sp == pp {
+		return true
+	}
+	return sp == pathmap.Base(placedPath)
 }
