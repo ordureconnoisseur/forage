@@ -434,13 +434,23 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	// orphaning the new attempt (or prematurely confirming a pack) when the
 	// retry happens later than the orphan window after the original
 	// completion.
+	//
+	// EXCEPT when the previous attempt already placed a file: the poller's
+	// premature-placement heal treats "placed_path set + download progress
+	// < 1 + completed_at unset" as a partial file to RemoveAll, so zeroing
+	// completed_at while keeping placed_path would re-arm that heal against
+	// a legitimate library copy the moment the retried download starts. A
+	// placed grab keeps its lifecycle stamps; its file confirms on the
+	// placed path regardless of the new attempt's clock.
 	now := time.Now().Unix()
 	g.GrabbedAt = now
 	g.Progress = 0
 	g.ProgressAt = now
-	g.CompletedAt = 0
-	g.PlacedAt = 0
-	g.ConfirmedAt = 0
+	if g.PlacedPath == "" {
+		g.CompletedAt = 0
+		g.PlacedAt = 0
+		g.ConfirmedAt = 0
+	}
 
 	switch g.Client {
 	case "qbit":

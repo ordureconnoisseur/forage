@@ -1102,10 +1102,12 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	//     dip — a tick landing mid-recheck would otherwise RemoveAll a
 	//     fully-placed file or pack directory.
 	//   - a placement stamped at/after a recorded completion was made from
-	//     a finished download and is never premature; completed_at is
-	//     COALESCE-persisted so a later recheck regressing progress can't
-	//     re-arm the heal against it. Premature placements have
-	//     CompletedAt == 0 (the download was never seen complete).
+	//     a finished download and is never premature; nothing clears
+	//     completed_at while a placement exists (retryGrab deliberately
+	//     keeps the lifecycle stamps on placed grabs for exactly this
+	//     reason), so a later recheck regressing progress can't re-arm the
+	//     heal against it. Premature placements have CompletedAt == 0 (the
+	//     download was never seen complete).
 	if g.PlacedPath != "" && t.Progress < 1 &&
 		!qbitProgressUnreliable(t.State) &&
 		(g.CompletedAt == 0 || (g.PlacedAt > 0 && g.PlacedAt < g.CompletedAt)) {
