@@ -100,14 +100,14 @@ export default function WatchingList({
           <div className="watch-available-head">
             <h3 className="section-header">Available ({available.length})</h3>
             <button
-              className="watch-grab"
+              className="collection-cta"
               disabled={grabAllBusy}
               onClick={grabAll}
               title="Queue every found release for download"
             >
               {grabAllBusy
                 ? "Grabbing…"
-                : `Grab all ${available.length} ↓`}
+                : `Grab all ${available.length} →`}
             </button>
           </div>
           <ul className="watch-list">

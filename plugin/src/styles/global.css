@@ -586,10 +586,6 @@ button {
 .watch-available-head .section-header {
   margin: 0;
 }
-.watch-available-head .watch-grab {
-  padding: 5px 14px;
-  font-size: 13px;
-}
 .ms-select-bar {
   position: sticky;
   bottom: 0;
