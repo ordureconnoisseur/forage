@@ -70,6 +70,10 @@ type Settings struct {
 	// PackDedupKeep: "existing" | "pack" | "review" | "both" — which copy survives
 	// when a pack scene duplicates one already in the library.
 	PackDedupKeep string
+	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
+	// lives in the snapshot because the CORS middleware reads it on EVERY
+	// request — composing the full config per request was the alternative.
+	AllowedOrigin string
 	// ExcludedSceneTags: StashDB tag names whose scenes are dropped from
 	// the missing-scenes gap analysis (case-insensitive).
 	ExcludedSceneTags []string
@@ -132,6 +136,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		StashPathMapping:    cfg.StashPathMapping,
 		SabDeleteAfterPlace: cfg.SabDeleteAfterPlace,
 		PackDedupKeep:       cfg.PackDedupKeep,
+		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 	})
 }

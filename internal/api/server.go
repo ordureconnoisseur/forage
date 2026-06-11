@@ -466,10 +466,12 @@ func errNotConfigured(section string) error {
 
 // corsMiddleware reads the allowed-origin from the Pool's snapshot on
 // every request so changes from the /config endpoint propagate without
-// a restart.
+// a restart. The snapshot read is an atomic pointer load — this used to
+// run a full config.Compose (every field resolved, fresh maps, duration
+// parses) per request, on a path the UI polls every five seconds.
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		allowed := s.composedConfig().AllowedOrigin
+		allowed := s.pool.Settings().AllowedOrigin
 		origin := r.Header.Get("Origin")
 		switch {
 		case allowed == "*":
