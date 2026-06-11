@@ -397,6 +397,10 @@ type ListOpts struct {
 	Sort     string // e.g. "added_on"
 	Reverse  bool
 	Limit    int
+	// Hashes restricts the response to these info-hashes ("|"-separated
+	// on the wire; supported since qBit API v2.0.1). Single-torrent
+	// lookups pass one hash instead of downloading the whole list.
+	Hashes []string
 }
 
 // ListTorrents returns qBit's torrent list filtered + sorted per opts.
@@ -419,6 +423,9 @@ func (c *Client) ListTorrents(ctx context.Context, opts ListOpts) ([]Torrent, er
 	}
 	if opts.Limit > 0 {
 		q.Set("limit", fmt.Sprintf("%d", opts.Limit))
+	}
+	if len(opts.Hashes) > 0 {
+		q.Set("hashes", strings.Join(opts.Hashes, "|"))
 	}
 	u := c.baseURL + "/api/v2/torrents/info"
 	if enc := q.Encode(); enc != "" {
@@ -472,14 +479,16 @@ func (c *Client) Categories(ctx context.Context) (map[string]Category, error) {
 }
 
 // TorrentInfo returns a single torrent by hash, or nil if qBit doesn't
-// know about it (deleted, never added, race). Wraps ListTorrents with
-// a single-result filter rather than hitting /torrents/properties,
-// which returns a different (more verbose) shape.
+// know about it (deleted, never added, race). Uses the hashes= filter so
+// qBit returns just that torrent — this used to download and decode the
+// entire torrent list (hundreds of entries on a long-seeding box) to
+// find one row. The EqualFold scan stays as cheap insurance against
+// hash-casing mismatches (qBit reports lowercase hashes).
 func (c *Client) TorrentInfo(ctx context.Context, hash string) (*Torrent, error) {
 	if hash == "" {
 		return nil, nil
 	}
-	ts, err := c.ListTorrents(ctx, ListOpts{Filter: "all"})
+	ts, err := c.ListTorrents(ctx, ListOpts{Filter: "all", Hashes: []string{strings.ToLower(hash)}})
 	if err != nil {
 		return nil, err
 	}
