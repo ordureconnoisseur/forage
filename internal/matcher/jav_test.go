@@ -18,6 +18,10 @@ func TestExtractJAVCodes(t *testing.T) {
 		{"FC2-PPV-1234567", []string{"ppv-1234567"}},
 		// Resolution-sized digits alone must NOT disqualify a real label.
 		{"ABP-1080", []string{"abp-1080"}},
+		// A glued part-suffix starts with 'p' but the digits aren't a
+		// resolution — the code must keep extracting.
+		{"IPX-602part2.mkv", []string{"ipx-602"}},
+		{"SNOS-233Part1", []string{"snos-233"}},
 
 		// Quality/codec markers must not mint pseudo-codes: a shared code is
 		// scene IDENTITY downstream (javCodeFloor + release verification), so

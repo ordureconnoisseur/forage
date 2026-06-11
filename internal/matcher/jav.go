@@ -40,6 +40,14 @@ var javCodeRegex = regexp.MustCompile(`\b(\d{2,4})?([A-Z]{2,6})[-._]?(\d{3,7})(\
 // these pseudo-codes let two unrelated releases "verify" each other
 // whenever both carry the same marker. None of these collide with real
 // JAV label prefixes.
+// resolutionDigits are the pixel heights/widths release names attach a
+// trailing p/i to. A real JAV serial followed by a glued word that
+// happens to start with p ("...602part2") must not be mistaken for one.
+var resolutionDigits = map[string]bool{
+	"360": true, "480": true, "540": true, "576": true, "720": true,
+	"1080": true, "1440": true, "2160": true, "4320": true,
+}
+
 var javMarkerWords = map[string]bool{
 	"xxx": true, "web": true, "dl": true, "webdl": true, "rip": true,
 	"fhd": true, "uhd": true, "qhd": true, "fullhd": true, "hd": true, "sd": true, "hq": true,
@@ -79,13 +87,18 @@ func ExtractJAVCodes(s string) []string {
 		//        the run is too long to be a JAV id, and emitting a
 		//        truncated code would collide distinct scenes)
 		// m[5] = a p/i straight after the digits — "1080p"/"1080i": a
-		//        resolution token, not a JAV id (chapter markers like
-		//        "302ch" use other letters and stay matchable)
-		if m[4] != "" || m[5] != "" {
+		//        resolution token, not a JAV id. Only disqualifying when
+		//        the digits ARE a resolution: "IPX-602part2" glues "part"
+		//        after a real code and must keep extracting, while chapter
+		//        markers ("302ch") use other letters and never hit this.
+		if m[4] != "" {
 			continue
 		}
 		letters := lowercaseASCII(m[2])
 		digits := m[3]
+		if m[5] != "" && resolutionDigits[digits] {
+			continue
+		}
 		if letters == "" || digits == "" || javMarkerWords[letters] {
 			continue
 		}
