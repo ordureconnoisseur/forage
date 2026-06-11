@@ -305,6 +305,22 @@ func (s *Server) postCollectionJobGrab(w http.ResponseWriter, r *http.Request) {
 // handler goroutine forever with no way for a client disconnect to cancel
 // it. Only the crawl itself runs on the job's own context.
 func (s *Server) startCollectionJob(ctx context.Context, performerID string, sceneIDs []string, upgrade bool) (*collectionJob, error) {
+	// Idempotency: the setup below takes seconds (full filmography
+	// pagination + a library sweep), and a second "Search on server"
+	// click in that window used to mint a duplicate job crawling the
+	// same scenes. While a job of the same kind for this performer is
+	// RUNNING, return it instead of starting another — the client lands
+	// on the same job either way.
+	s.jobs.mu.Lock()
+	for _, j := range s.jobs.jobs {
+		if j.PerformerID == performerID && j.Upgrade == upgrade && j.State == "running" {
+			s.jobs.mu.Unlock()
+			s.log.Info("collection job already running; returning it", "id", j.ID, "performer", performerID)
+			return j, nil
+		}
+	}
+	s.jobs.mu.Unlock()
+
 	stashDBC := s.pool.StashDB()
 	if stashDBC == nil || s.pool.Prowlarr() == nil {
 		return nil, grabError{http.StatusServiceUnavailable, "prowlarr and stashdb must be configured"}
