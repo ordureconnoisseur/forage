@@ -572,6 +572,15 @@ button {
 .ms-select-cancel:hover {
   border-color: var(--glass-border-bright);
 }
+.watch-available-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.watch-available-head .section-header {
+  margin: 0;
+}
 .ms-select-bar {
   position: sticky;
   bottom: 0;

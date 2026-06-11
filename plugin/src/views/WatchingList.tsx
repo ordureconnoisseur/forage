@@ -21,6 +21,10 @@ export default function WatchingList({
   const [watches, setWatches] = useState<Watch[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  // Grab-all over the Available section: one click queues every found
+  // release instead of a Grab per card.
+  const [grabAllBusy, setGrabAllBusy] = useState(false);
+  const [grabAllMsg, setGrabAllMsg] = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -61,6 +65,23 @@ export default function WatchingList({
   const available = watches.filter((w) => w.status === "available");
   const watching = watches.filter((w) => w.status !== "available");
 
+  const grabAll = async () => {
+    setGrabAllBusy(true);
+    const targets = available.map((w) => w.stashdb_id);
+    const results = await Promise.allSettled(
+      targets.map((id) => grabWatch(id)),
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    setGrabAllBusy(false);
+    setGrabAllMsg(
+      failed === 0
+        ? `Queued ${targets.length} grab${targets.length === 1 ? "" : "s"} ✓`
+        : `Queued ${targets.length - failed}, ${failed} failed — they stay listed for a retry`,
+    );
+    window.setTimeout(() => setGrabAllMsg(null), 4500);
+    await load();
+  };
+
   return (
     <div>
       <div className="page-header">
@@ -76,7 +97,19 @@ export default function WatchingList({
 
       {available.length > 0 && (
         <section>
-          <h3 className="section-header">Available ({available.length})</h3>
+          <div className="watch-available-head">
+            <h3 className="section-header">Available ({available.length})</h3>
+            <button
+              className="watch-grab"
+              disabled={grabAllBusy}
+              onClick={grabAll}
+              title="Queue every found release for download"
+            >
+              {grabAllBusy
+                ? "Grabbing…"
+                : `Grab all ${available.length} ↓`}
+            </button>
+          </div>
           <ul className="watch-list">
             {available.map((w) => (
               <WatchCard
@@ -89,6 +122,8 @@ export default function WatchingList({
           </ul>
         </section>
       )}
+
+      {grabAllMsg && <div className="ms-toast">{grabAllMsg}</div>}
 
       {watching.length > 0 && (
         <section>
