@@ -121,20 +121,6 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "stash: "+ferr.Error())
 			return
 		}
-		if len(refs) == 0 {
-			// The dedup that recorded this row may have matched copies via the
-			// endpoint-agnostic whole-library sweep (poller dedup does exactly
-			// that when no stash-box is configured), so an endpoint-filtered
-			// miss isn't proof the copies are gone. Re-check the same way
-			// before concluding anything was deleted.
-			sweep, serr := sc.FindAllSceneStashDBIDs(r.Context())
-			if serr != nil {
-				s.log.Warn("duplicate resolve revalidate sweep", "dup", id, "err", serr)
-				writeErr(w, http.StatusBadGateway, "stash: "+serr.Error())
-				return
-			}
-			refs = sweep[dup.StashDBID]
-		}
 		alive := map[string]bool{}
 		for _, ref := range refs {
 			alive[ref.SceneID] = true
@@ -156,6 +142,33 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			kept = append(kept, dup.Pack.SceneID)
+		}
+
+		// The endpoint-filtered lookup can be PARTIAL, not just empty:
+		// copies cross-tagged under a legacy/other endpoint string don't
+		// come back, and treating an absent target as "already deleted"
+		// would mark the review resolved while the duplicate file quietly
+		// survives. Whenever any id from the snapshot is missing, re-check
+		// via the endpoint-agnostic whole-library sweep (the same source
+		// poller dedup uses when no stash-box is configured) before
+		// concluding anything is gone.
+		missing := false
+		for _, sid := range append(append([]string{}, targets...), kept...) {
+			if sid != "" && !alive[sid] {
+				missing = true
+				break
+			}
+		}
+		if missing {
+			sweep, serr := sc.FindAllSceneStashDBIDs(r.Context())
+			if serr != nil {
+				s.log.Warn("duplicate resolve revalidate sweep", "dup", id, "err", serr)
+				writeErr(w, http.StatusBadGateway, "stash: "+serr.Error())
+				return
+			}
+			for _, ref := range sweep[dup.StashDBID] {
+				alive[ref.SceneID] = true
+			}
 		}
 		keptAlive := false
 		for _, sid := range kept {
