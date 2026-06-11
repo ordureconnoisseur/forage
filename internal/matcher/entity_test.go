@@ -117,6 +117,47 @@ func TestTokenizeFullwidthFolds(t *testing.T) {
 	}
 }
 
+// TestScannerConcatNames: member-rip releases fuse the site name in
+// lowercase (momdrips_, nfbusty_), one token that can never match the
+// multi-token corpus name [mom drips]. With ConcatNames the scanner also
+// indexes the concatenated form, under the same singleton safety rules:
+// an ambiguous concatenation (collides with another entity's name) is
+// dropped.
+func TestScannerConcatNames(t *testing.T) {
+	corpus := []Entity{
+		{ID: "momdrips", Name: "Mom Drips"},
+		{ID: "nfbusty", Name: "NF Busty"},
+		// Collision pair: "Team Skeet"'s concat equals an existing
+		// single-token canonical of another entity → unsafe, not indexed.
+		{ID: "teamskeet", Name: "Team Skeet"},
+		{ID: "imposter", Name: "TeamSkeet"}, // tokenizes [team skeet] too; its CONCAT also collides
+	}
+	sc := NewScanner(corpus, StudioScannerOptions())
+
+	if hits := sc.Match("momdrips_bunny_madison2_full_1080"); len(hits) != 1 || hits[0] != "momdrips" {
+		t.Errorf("fused lowercase site name should match via concat alias, got %v", hits)
+	}
+	if hits := sc.Match("nfbusty_maid_for_me_1920"); len(hits) != 1 || hits[0] != "nfbusty" {
+		t.Errorf("nfbusty should match, got %v", hits)
+	}
+	// The separated form still matches as before.
+	if hits := sc.Match("Mom.Drips.26.01.01.Performer"); len(hits) != 1 || hits[0] != "momdrips" {
+		t.Errorf("separated form regressed: %v", hits)
+	}
+	// Ambiguous concat: "teamskeet" is claimable by two entities → no
+	// single winner may match the fused form.
+	hits := sc.Match("teamskeet_full_1080")
+	if len(hits) > 1 {
+		t.Errorf("ambiguous concat must not match multiple entities: %v", hits)
+	}
+
+	// Without ConcatNames (performer scanner default) behaviour is unchanged.
+	plain := NewScanner([]Entity{{ID: "md", Name: "Mom Drips"}}, DefaultScannerOptions())
+	if hits := plain.Match("momdrips_bunny_madison2_full_1080"); len(hits) != 0 {
+		t.Errorf("ConcatNames off must not index concat forms, got %v", hits)
+	}
+}
+
 // TestExtractJAVCodesFullwidth: code identity must survive fullwidth
 // titles too — the regex is ASCII, so extraction folds first.
 func TestExtractJAVCodesFullwidth(t *testing.T) {

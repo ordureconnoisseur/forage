@@ -168,9 +168,20 @@ func containsSubsequence(haystack, needle []string) bool {
 //
 // SingleTokenRule controls what counts as "safe" for a single-token
 // name. See the SingleTokenRule constants for the two behaviours.
+//
+// ConcatNames additionally indexes every multi-token name/alias as its
+// CONCATENATED single token ("Mom Drips" → "momdrips"). Member-rip
+// release names routinely fuse the site name in lowercase (momdrips_,
+// nfbusty_, sisswap.26.05.03), which tokenizes as one token and can
+// never subsequence-match the multi-token corpus name — camel-case
+// fusions split fine, lowercase ones don't. Concat forms go through
+// exactly the same single-token safety rules as real names, so an
+// ambiguous concatenation (one that collides with another entity) is
+// dropped like any unsafe singleton.
 type ScannerOptions struct {
 	MinSingleTokenLen int
 	SingleTokenRule   SingleTokenRule
+	ConcatNames       bool
 }
 
 // SingleTokenRule picks the disqualifier for a single-token name.
@@ -200,8 +211,11 @@ func DefaultScannerOptions() ScannerOptions {
 }
 
 // StudioScannerOptions returns the looser rule set used for studios.
+// ConcatNames is on: fused lowercase site names are a studio-side
+// release convention (performer names in those same releases arrive
+// underscore- or camel-separated and need no concat form).
 func StudioScannerOptions() ScannerOptions {
-	return ScannerOptions{MinSingleTokenLen: 3, SingleTokenRule: CanonicalUnique}
+	return ScannerOptions{MinSingleTokenLen: 3, SingleTokenRule: CanonicalUnique, ConcatNames: true}
 }
 
 // Scanner is a pre-compiled entity scanner. Construct once per corpus
@@ -223,6 +237,23 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 		opts.MinSingleTokenLen = 1
 	}
 
+	// names returns the entity's indexable name strings: canonical +
+	// aliases, plus (when ConcatNames) the concatenated form of each
+	// multi-token name. The concat variants flow through the owners
+	// table and the safety rules below exactly like real names.
+	names := func(e Entity) []string {
+		ns := allNames(e)
+		if !opts.ConcatNames {
+			return ns
+		}
+		for _, n := range ns {
+			if toks := Tokenize(n); len(toks) > 1 {
+				ns = append(ns, strings.Join(toks, ""))
+			}
+		}
+		return ns
+	}
+
 	// Build the safe-singleton table. The exact disqualifier depends
 	// on opts.SingleTokenRule.
 	owners := map[string]map[string]bool{}
@@ -232,7 +263,7 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 		// "Vixen" → entity Vixen owns "vixen". "Vixen X" doesn't
 		// contribute "vixen" because its full name isn't single-token.
 		for _, e := range corpus {
-			for _, n := range allNames(e) {
+			for _, n := range names(e) {
 				toks := Tokenize(n)
 				if len(toks) != 1 {
 					continue
@@ -247,7 +278,7 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 	default:
 		// AnyTokenUnique: every token in every name contributes.
 		for _, e := range corpus {
-			for _, n := range allNames(e) {
+			for _, n := range names(e) {
 				for _, t := range Tokenize(n) {
 					if owners[t] == nil {
 						owners[t] = map[string]bool{}
@@ -267,7 +298,7 @@ func NewScanner(corpus []Entity, opts ScannerOptions) *Scanner {
 	out := make([]scanCandidate, 0, len(corpus))
 	for _, e := range corpus {
 		var tt [][]string
-		for _, n := range allNames(e) {
+		for _, n := range names(e) {
 			toks := Tokenize(n)
 			if len(toks) == 0 {
 				continue
