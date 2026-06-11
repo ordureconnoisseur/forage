@@ -31,9 +31,10 @@ const AUTO_PICK_FLOOR = 0.5;
 // magnet-only indexers (TPB) can share an empty download_url, which
 // rendered every such row selected at once, gave them duplicate React
 // keys, and made a pick of one silently resolve to (or be skipped as)
-// another at grab time.
+// another at grab time. The title fallback carries the indexer so two
+// URL-less releases sharing a title don't collide either.
 function releaseKey(r: SceneRelease): string {
-  return r.download_url || r.info_url || r.title;
+  return r.download_url || r.info_url || r.indexer + "|" + r.title;
 }
 
 // pickBest chooses the auto-pick release for a scene the same way the
@@ -50,6 +51,10 @@ function pickBest(releases: SceneRelease[]): string | null {
     (r) =>
       r.verified &&
       !r.rejected &&
+      // download_url is already GrabURL (magnet fallback applied
+      // server-side); empty means the indexer gave NOTHING to grab, so
+      // auto-picking it would only manufacture a guaranteed grab failure.
+      r.download_url !== "" &&
       r.confidence >= AUTO_PICK_FLOOR &&
       (r.protocol === "usenet" || r.seeders > 0),
   );
@@ -220,14 +225,18 @@ export default function CollectionMode({
             // The server stores the pick as a download_url; translate to
             // our releaseKey identity (falls back to the raw value when
             // the release isn't in the stored candidates).
+            // A picked_url that matches no stored candidate would be a
+            // PHANTOM selection: the checkbox renders checked, it counts
+            // toward "Grab N selected", and bulkGrab silently drops it.
+            // No match → no pick.
             const pickedRel = sc.picked_url
               ? releases.find((r) => r.download_url === sc.picked_url)
               : undefined;
             hydrated[sc.stashdb_id] = {
               status: releases.length > 0 ? "done" : sceneStatusFromJob(sc.status),
               releases,
-              pickedURL: pickedRel ? releaseKey(pickedRel) : sc.picked_url || null,
-              autoPicked: !!sc.picked_url,
+              pickedURL: pickedRel ? releaseKey(pickedRel) : null,
+              autoPicked: !!pickedRel,
               grab: sc.status === "grabbed" ? "queued" : "idle",
             };
           }
@@ -423,7 +432,9 @@ export default function CollectionMode({
         )
           return null;
         const rel = row.releases.find((r) => releaseKey(r) === row.pickedURL);
-        return rel ? { scene: s, rel } : null;
+        // No grab URL = nothing the server could download; the pick UI
+        // disables these, but guard the POST anyway.
+        return rel && rel.download_url !== "" ? { scene: s, rel } : null;
       })
       .filter((t): t is { scene: MissingScene; rel: SceneRelease } => !!t);
     if (targets.length === 0) return;
@@ -471,7 +482,8 @@ export default function CollectionMode({
     setRows((r) => {
       const row = r[s.stashdb_id] || blankRow();
       if (row.status === "inflight") return r; // already grabbing — not selectable
-      const first = row.releases.find((x) => x.verified) ?? row.releases[0];
+      const grabbable = row.releases.filter((x) => x.download_url !== "");
+      const first = grabbable.find((x) => x.verified) ?? grabbable[0];
       const next = row.pickedURL != null ? null : first ? releaseKey(first) : null;
       return { ...r, [s.stashdb_id]: { ...row, pickedURL: next } };
     });
@@ -506,7 +518,7 @@ export default function CollectionMode({
     });
   const selectAllVerified = () =>
     bulkSet((row) => {
-      const v = row.releases.find((x) => x.verified);
+      const v = row.releases.find((x) => x.verified && x.download_url !== "");
       return v ? releaseKey(v) : null;
     });
   const clearAll = () => bulkSet(() => null);
@@ -916,6 +928,8 @@ function CollectionRow({
                 type="radio"
                 name={"pick-" + scene.stashdb_id}
                 checked={releaseKey(rel) === row.pickedURL}
+                disabled={rel.download_url === ""}
+                title={rel.download_url === "" ? "indexer provided no download link" : undefined}
                 onChange={() => onPick(releaseKey(rel))}
               />
               <span
