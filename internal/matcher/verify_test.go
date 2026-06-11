@@ -153,6 +153,24 @@ func TestVerifyDateAnchored(t *testing.T) {
 	if Verify(cands, "right", "Using My Stepsis All Day", "CarliSmall").Verified {
 		t.Errorf("date anchor must require the release to state the date")
 	}
+
+	// Speculative readings must not anchor. The conventional (TopDate)
+	// reading of "05.06.2024" is the EU 2024-06-05; the US alternate
+	// 2024-05-06 exists in AllDates for RANKING, but a scene matching
+	// only the alternate must not be decisively verified by it.
+	cands = []Candidate{
+		mk("alt", "Some Scene", "2024-05-06", 0.66, 0.05),
+	}
+	if Verify(cands, "alt", "Some Scene", "Studio.05.06.2024.Haley.Spades.mp4").Verified {
+		t.Errorf("a non-conventional date reading must not anchor")
+	}
+	// Fused readings never anchor (member ids masquerade as dates).
+	cands = []Candidate{
+		mk("fused", "Some Scene", "2026-04-18", 0.66, 0.05),
+	}
+	if Verify(cands, "fused", "Some Scene", "AnalMom260418Haley.Spades.mp4").Verified {
+		t.Errorf("a fused date reading must not anchor")
+	}
 }
 
 // TestVerifyRivalContainmentVeto: when the release spells out ANOTHER

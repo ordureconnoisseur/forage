@@ -1,5 +1,7 @@
 package matcher
 
+import "strings"
+
 // Verification — deciding whether a specific release IS a specific
 // scene — is distinct from ranking (which scene best matches a release).
 // The release page and the bench share this one implementation so the
@@ -80,11 +82,21 @@ type VerifyResult struct {
 }
 
 // dateAnchored reports whether the viewed scene's exact release date is
-// (a) present among the release name's date readings and (b) unique to
+// (a) the release name's CONVENTIONAL date reading and (b) unique to
 // the viewed scene within the candidate set. Both halves matter: (a)
 // makes the date an explicit claim by the release rather than a
 // coincidence, (b) refuses the case where the date can't discriminate
 // (same-performer scenes posted the same day).
+//
+// "Conventional reading" is deliberate: AllDates emits every plausible
+// reading (EU/US swaps, fused member-rip digits) because RANKING treats
+// date as a soft, candidate-confirmed signal — but this path makes the
+// date decisive, and a speculative reading both inflates confidence
+// (bestDateProximity scores that same reading "exact") and satisfies
+// the anchor, while the sibling guard can't see a true scene that was
+// never retrieved. So the anchor is the dateBetter-preferred reading
+// only, and never a fused one (six glued digits are member ids more
+// often than dates).
 func dateAnchored(cands []Candidate, sceneID, releaseName string) bool {
 	var sceneDate string
 	for i := range cands {
@@ -96,14 +108,17 @@ func dateAnchored(cands []Candidate, sceneID, releaseName string) bool {
 	if sceneDate == "" {
 		return false
 	}
-	stated := false
-	for _, d := range AllDates(releaseName) {
-		if d == sceneDate {
-			stated = true
-			break
+	hits := ExtractDates(releaseName)
+	if len(hits) == 0 {
+		return false
+	}
+	best := hits[0]
+	for _, h := range hits[1:] {
+		if dateBetter(h, best) {
+			best = h
 		}
 	}
-	if !stated {
+	if strings.Contains(best.Format, "fused") || best.Date != sceneDate {
 		return false
 	}
 	for i := range cands {
@@ -238,13 +253,16 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		if rn < verifyTitleMinTokens || rf < verifyTitleMinContainment {
 			continue
 		}
-		nonCastHits := 0
+		// Count DISTINCT non-cast tokens: castStrippedTitleTokens keeps
+		// duplicates, and a single shared word repeated in a rival's title
+		// must not satisfy a two-token distinctiveness requirement.
+		nonCastHits := map[string]bool{}
 		for _, t := range castStrippedTitleTokens(cands[i]) {
 			if relTokSet[t] {
-				nonCastHits++
+				nonCastHits[t] = true
 			}
 		}
-		if nonCastHits >= 2 {
+		if len(nonCastHits) >= 2 {
 			rivalOwnsTitle = true
 			break
 		}
