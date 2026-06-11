@@ -573,13 +573,19 @@ button {
   border-color: var(--glass-border-bright);
 }
 .watch-available-head {
+  /* Inline with the section header, not flung to the page's far edge —
+     space-between across a wide viewport stranded the button on its own. */
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  justify-content: flex-start;
+  gap: 16px;
 }
 .watch-available-head .section-header {
   margin: 0;
+}
+.watch-available-head .watch-grab {
+  padding: 5px 14px;
+  font-size: 13px;
 }
 .ms-select-bar {
   position: sticky;
