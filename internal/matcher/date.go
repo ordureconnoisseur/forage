@@ -82,11 +82,16 @@ var datePatterns = []datePattern{
 // bestDateProximity only rewards a reading a candidate's own scene date
 // confirms, so a spurious parse costs nothing unless it coincides
 // exactly — the same accepted trade as the multi-reading 8c7de51 design.
+// The glued boundary is Latin-only: \p{L} also matched CJK, and JAV
+// titles routinely glue six-digit production/member numbers to CJK text
+// — minting two spurious readings per id (plus an extra date-narrowed
+// StashDB query each) whenever the digits calendar-validate. The actual
+// convention this parses (AnalMom260418, member-site rips) is ASCII.
 var fusedDatePatterns = []struct {
 	rx    *regexp.Regexp
 	label string // suffix appended to the reading labels
 }{
-	{regexp.MustCompile(`\p{L}(\d{6})(?:[^0-9]|$)`), "fused"},
+	{regexp.MustCompile(`[A-Za-z](\d{6})(?:[^0-9]|$)`), "fused"},
 	{regexp.MustCompile(`_(\d{6})(?:[^0-9]|$)`), "fused_"},
 }
 

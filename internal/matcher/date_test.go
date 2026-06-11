@@ -105,6 +105,11 @@ func TestAllDatesFusedSixDigit(t *testing.T) {
 	if got := AllDates("Top 260418 Compilation"); len(got) != 0 {
 		t.Errorf("free-standing 6 digits must not parse: %v", got)
 	}
+	// The glued boundary is Latin-only: JAV titles glue production ids to
+	// CJK text, which must not mint dates.
+	if got := AllDates("巨乳女子120115タイトル"); len(got) != 0 {
+		t.Errorf("CJK-glued 6 digits must not parse: %v", got)
+	}
 }
 
 // TestBestDateProximityPicksMatchingReading: the candidate scene's own date
