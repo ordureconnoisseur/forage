@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  addWatch,
   DiscoverPerformer,
   DiscoverResponse,
   DiscoverScene,
   fetchDiscover,
   performerImageURL,
+  type WatchTarget,
 } from "../api";
 import WatchControl from "../WatchControl";
 
@@ -51,6 +53,20 @@ export default function DiscoverList({
   );
   const [q, setQ] = useState("");
   const lastFetch = useRef(0);
+  // Multi-select over the "From your performers" grid, same interaction
+  // as MissingScenes: Select flips cards into toggle mode, the bottom
+  // bar bulk-watches the chosen scenes. Watch is the one action that
+  // makes sense across a multi-performer set (grab/collection flows are
+  // per-performer by design). Trending stays out of selection — its
+  // compact carousel cards are navigation-first.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [watchPicking, setWatchPicking] = useState(false);
+  const [watchBusy, setWatchBusy] = useState(false);
+  const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
+  // Bumped after a bulk watch so the refetch picks up the new
+  // watch_status badges without waiting for the next poll.
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Persist filter prefs across reloads.
   useEffect(() => {
@@ -113,6 +129,14 @@ export default function DiscoverList({
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
     };
+  }, [days, favoriteOnly, reloadKey]);
+
+  // Changing the day window / favourites filter swaps the scene set out
+  // from under a selection — drop it rather than keep invisible picks.
+  useEffect(() => {
+    setSelecting(false);
+    setSelected(new Set());
+    setWatchPicking(false);
   }, [days, favoriteOnly]);
 
   const filtered = useMemo(() => {
@@ -131,6 +155,56 @@ export default function DiscoverList({
   if (error)
     return <div className="empty error">Failed to load: {error}</div>;
   if (!data) return null;
+
+  const toggleSelected = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  const exitSelect = () => {
+    setSelecting(false);
+    setSelected(new Set());
+    setWatchPicking(false);
+  };
+
+  // Select-all works on the FILTERED grid (what the user can see); the
+  // bulk action resolves ids against the full scene list, so picks made
+  // before a narrowing filter still apply.
+  const visibleIds = filtered.map((s) => s.stashdb_id);
+  const allSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+
+  // Watch every selected scene at one quality target, in parallel. Each
+  // scene carries its OWN primary library performer (unlike the
+  // per-performer pages) so the watch lands in the right folder later.
+  const watchSelected = async (target: WatchTarget) => {
+    setWatchPicking(false);
+    setWatchBusy(true);
+    const chosen = data.scenes.filter((s) => selected.has(s.stashdb_id));
+    await Promise.all(
+      chosen.map((s) =>
+        addWatch({
+          stashdb_id: s.stashdb_id,
+          title: s.title || "",
+          date: s.release_date,
+          studio: s.studio_name,
+          image_url: s.image_url,
+          performer_name: s.performers[0]?.name,
+          performer_id: s.performers[0]?.stash_id,
+          target,
+        }).catch(() => {}),
+      ),
+    );
+    setWatchBusy(false);
+    const n = chosen.length;
+    exitSelect();
+    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
+    window.setTimeout(() => setWatchedMsg(null), 3500);
+    setReloadKey((k) => k + 1);
+  };
 
   return (
     <div>
@@ -200,6 +274,36 @@ export default function DiscoverList({
         <span className="count">
           {filtered.length} / {data.scenes.length}
         </span>
+        {filtered.length > 0 &&
+          (selecting ? (
+            <div className="ms-select-actions">
+              <button
+                className="ms-select-toggle"
+                onClick={() =>
+                  setSelected((prev) => {
+                    const next = new Set(prev);
+                    if (allSelected) visibleIds.forEach((id) => next.delete(id));
+                    else visibleIds.forEach((id) => next.add(id));
+                    return next;
+                  })
+                }
+              >
+                {allSelected ? "Clear all" : "Select all"}
+              </button>
+              <button className="ms-select-cancel" onClick={exitSelect}>
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <div className="ms-select-actions">
+              <button
+                className="ms-select-toggle"
+                onClick={() => setSelecting(true)}
+              >
+                Select
+              </button>
+            </div>
+          ))}
       </div>
 
       {filtered.length === 0 ? (
@@ -214,12 +318,53 @@ export default function DiscoverList({
             <DiscoverCard
               key={s.stashdb_id}
               s={s}
+              selecting={selecting}
+              selected={selected.has(s.stashdb_id)}
+              onToggle={() => toggleSelected(s.stashdb_id)}
               onPickPerformer={onPickPerformer}
               onPickScene={onPickScene}
             />
           ))}
         </div>
       )}
+      {selecting && (
+        <div className="ms-select-bar">
+          <span className="ms-select-count">{selected.size} selected</span>
+          {watchPicking ? (
+            <div className="ms-watch-picker" role="menu">
+              <span className="ms-watch-picker-label">Watch at:</span>
+              {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
+                (t) => (
+                  <button
+                    key={t}
+                    disabled={watchBusy}
+                    onClick={() => watchSelected(t)}
+                  >
+                    {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
+                  </button>
+                ),
+              )}
+              <button
+                className="ms-watch-cancel"
+                onClick={() => setWatchPicking(false)}
+                aria-label="Cancel"
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <button
+              className="ms-select-watch"
+              disabled={selected.size === 0 || watchBusy}
+              onClick={() => setWatchPicking(true)}
+              title="Watch all selected scenes for releases"
+            >
+              {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
+            </button>
+          )}
+        </div>
+      )}
+      {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
     </div>
   );
 }
@@ -372,10 +517,16 @@ function TrendingCard({
 
 function DiscoverCard({
   s,
+  selecting,
+  selected,
+  onToggle,
   onPickPerformer,
   onPickScene,
 }: {
   s: DiscoverScene;
+  selecting: boolean;
+  selected: boolean;
+  onToggle: () => void;
   onPickPerformer: (localID: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
@@ -387,7 +538,33 @@ function DiscoverCard({
   // Stash regardless of folder choice).
   const primaryLibraryPerformer = s.performers[0];
   return (
-    <div className="scene-card discover-card">
+    <div
+      className={
+        "scene-card discover-card" +
+        (selecting ? " selectable" : "") +
+        (selected ? " selected" : "")
+      }
+      // In select mode the WHOLE card toggles, captured before the inner
+      // interactive elements (thumb navigation, StashDB link, performer
+      // chips, the watch overlay) can fire — same one-gesture toggle the
+      // missing-scenes grid has.
+      onClickCapture={
+        selecting
+          ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              onToggle();
+            }
+          : undefined
+      }
+      role={selecting ? "button" : undefined}
+      aria-pressed={selecting ? selected : undefined}
+    >
+      {selecting && (
+        <span className="scene-check" aria-hidden="true">
+          {selected ? "✓" : ""}
+        </span>
+      )}
       <div className="scene-thumb-wrap">
         <button
           type="button"
