@@ -181,9 +181,43 @@ type rig struct {
 	poller  *Poller
 	repo    *grabs.Repo
 	qbit    *fakeQbit
+	sab     *fakeSab
 	stash   *fakeStash
 	libRoot string // <tmp>/library
 	stage   string // <tmp>/staging (the download client's "complete" dir)
+}
+
+// fakeSab serves the two SAB endpoints the poller touches: mode=queue
+// (always empty) and mode=history (configurable slots). Slots are raw
+// maps so tests control exactly which JSON fields exist.
+type fakeSab struct {
+	mu    sync.Mutex
+	slots []map[string]any
+}
+
+func (f *fakeSab) set(slots []map[string]any) {
+	f.mu.Lock()
+	f.slots = slots
+	f.mu.Unlock()
+}
+
+func (f *fakeSab) handler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("mode") {
+		case "queue":
+			writeRaw(w, `{"queue":{"kbpersec":"0","slots":[]}}`)
+		case "history":
+			f.mu.Lock()
+			slots := f.slots
+			f.mu.Unlock()
+			if slots == nil {
+				slots = []map[string]any{}
+			}
+			writeJSON(w, map[string]any{"history": map[string]any{"slots": slots}})
+		default:
+			writeRaw(w, `{}`)
+		}
+	})
 }
 
 // newRig stands up the full real pipeline against fake qBit/Stash HTTP
@@ -200,10 +234,13 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 	repo := grabs.NewRepo(dbh)
 
 	fq := &fakeQbit{files: map[string][]qbit.TorrentFile{}}
+	fsab := &fakeSab{}
 	fs := &fakeStash{}
 	qSrv := httptest.NewServer(fq.handler())
+	sabSrv := httptest.NewServer(fsab.handler())
 	sSrv := httptest.NewServer(fs.handler())
 	t.Cleanup(qSrv.Close)
+	t.Cleanup(sabSrv.Close)
 	t.Cleanup(sSrv.Close)
 
 	base := t.TempDir()
@@ -222,13 +259,16 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 		StashAPIKey:  "test-key",
 		QbitURL:      qSrv.URL,
 		QbitCategory: qbitCategory, // empty disables adoptOrphans
+		SabURL:       sabSrv.URL,
+		SabAPIKey:    "test-key",
+		SabCategory:  qbitCategory, // mirrors qBit: empty disables SAB adoption
 		LibraryRoot:  libRoot,
 	})
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour)
 
-	return &rig{poller: p, repo: repo, qbit: fq, stash: fs, libRoot: libRoot, stage: stage}
+	return &rig{poller: p, repo: repo, qbit: fq, sab: fsab, stash: fs, libRoot: libRoot, stage: stage}
 }
 
 // stageFile writes a real file into the staging dir and returns its path,
@@ -486,6 +526,72 @@ func TestLifecycleAdoptionDeferredWithoutFileList(t *testing.T) {
 	}
 	if adopted.Kind != "pack" || adopted.PackFiles != 5 {
 		t.Fatalf("adopted kind=%q packFiles=%d, want pack/5", adopted.Kind, adopted.PackFiles)
+	}
+}
+
+// TestLifecycleSabAdoption: untracked COMPLETED forage-category SAB
+// history jobs become grab rows keyed on the nzo_id, classified from
+// their on-disk storage (a directory of 3+ videos = pack). Jobs outside
+// the sabAdoptWindow and non-Completed jobs are left alone.
+func TestLifecycleSabAdoption(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	single := r.stageFile(t, "Manually Added Nzb.mkv")
+	packDir := filepath.Join(r.stage, "Some Performer Pack")
+	if err := os.MkdirAll(packDir, 0o755); err != nil {
+		t.Fatalf("mkdir pack: %v", err)
+	}
+	for _, n := range []string{"a.mkv", "b.mkv", "c.mkv"} {
+		if err := os.WriteFile(filepath.Join(packDir, n), []byte("x"), 0o644); err != nil {
+			t.Fatalf("write pack file: %v", err)
+		}
+	}
+	ancient := r.stageFile(t, "Ancient.mkv")
+
+	now := time.Now().Unix()
+	r.sab.set([]map[string]any{
+		{"nzo_id": "SABnzbd_nzo_new1", "name": "Manually Added Nzb", "category": "forager",
+			"status": "Completed", "storage": single, "completed": now - 60},
+		{"nzo_id": "SABnzbd_nzo_pack", "name": "Some Performer Pack", "category": "forager",
+			"status": "Completed", "storage": packDir, "completed": now - 60},
+		// Outside the adoption window — must not be re-imported.
+		{"nzo_id": "SABnzbd_nzo_old", "name": "Ancient", "category": "forager",
+			"status": "Completed", "storage": ancient, "completed": now - 3*24*3600},
+		// Failed jobs are never adopted.
+		{"nzo_id": "SABnzbd_nzo_fail", "name": "Broken Job", "category": "forager",
+			"status": "Failed", "storage": "", "completed": now - 60},
+	})
+
+	r.tick(t)
+
+	known, err := r.repo.KnownClientIDs(ctx)
+	if err != nil {
+		t.Fatalf("known: %v", err)
+	}
+	if !known["SABnzbd_nzo_new1"] || !known["SABnzbd_nzo_pack"] {
+		t.Fatalf("completed jobs not adopted: known=%v", known)
+	}
+	if known["SABnzbd_nzo_old"] || known["SABnzbd_nzo_fail"] {
+		t.Fatalf("old/failed jobs wrongly adopted: known=%v", known)
+	}
+
+	active, err := r.repo.Active(ctx)
+	if err != nil {
+		t.Fatalf("active: %v", err)
+	}
+	var pack *grabs.Grab
+	for i := range active {
+		if active[i].ClientID == "SABnzbd_nzo_pack" {
+			pack = &active[i]
+		}
+	}
+	if pack == nil {
+		t.Fatalf("pack grab not active (active=%d)", len(active))
+	}
+	if pack.Client != "sabnzbd" || pack.Kind != "pack" || pack.PackFiles != 3 {
+		t.Fatalf("pack grab client=%q kind=%q packFiles=%d, want sabnzbd/pack/3",
+			pack.Client, pack.Kind, pack.PackFiles)
 	}
 }
 

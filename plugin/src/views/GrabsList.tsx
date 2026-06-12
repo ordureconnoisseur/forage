@@ -123,8 +123,8 @@ export default function GrabsList({
       const res = await adoptDownloads();
       setNotice(
         res.adopted > 0
-          ? `Imported ${res.adopted} torrent${res.adopted === 1 ? "" : "s"} from qBit`
-          : "Nothing new in qBit to import",
+          ? `Imported ${res.adopted} download${res.adopted === 1 ? "" : "s"}`
+          : "Nothing new to import",
       );
       await refresh();
     } catch (e) {
@@ -523,9 +523,9 @@ export default function GrabsList({
             className="grab-adopt-btn"
             onClick={scanForDownloads}
             disabled={adopting}
-            title="Pick up torrents you added to qBittorrent yourself (forage category) — skips the 5-minute wait"
+            title="Pick up downloads you added to qBittorrent or SABnzbd yourself (forage category). qBit torrents import right away; SAB jobs once they finish downloading."
           >
-            {adopting ? "Importing…" : "↻ Import from qBit"}
+            {adopting ? "Importing…" : "↻ Import downloads"}
           </button>
         </span>
       </div>

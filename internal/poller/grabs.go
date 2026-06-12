@@ -11,6 +11,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -1196,17 +1197,32 @@ func (p *Poller) AdoptNow(ctx context.Context) int {
 	return p.adoptOrphans(ctx, manualAdoptGrace)
 }
 
-// adoptOrphans creates grab rows for torrents the user added directly to
-// qBit under the configured forage category that forage isn't tracking
-// yet, so they flow through the normal place → scan → identify → dedup
-// pipeline exactly like a UI add. Scoped strictly to that category;
-// other categories (the *arr stack, ad-hoc qBit use) are never touched.
-// qBit *tags* are ignored — only the category matches. minAge skips
-// torrents added more recently than it (the periodic tick passes
-// adoptionGrace; a manual force-adopt passes 0). Returns the count adopted.
+// adoptOrphans creates grab rows for downloads the user fed to a client
+// directly under the configured forage category — torrents added straight
+// to qBit, NZBs uploaded straight to SAB — so they flow through the
+// normal place → scan → identify → dedup pipeline exactly like a UI add.
+// Scoped strictly to the forage category in each client; other categories
+// (the *arr stack, ad-hoc client use) are never touched. minAge applies
+// to the qBit pass only (see adoptQbitOrphans); SAB adoption is gated on
+// job completion instead. Returns the count adopted across both clients.
 func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 	p.adoptMu.Lock()
 	defer p.adoptMu.Unlock()
+	known, err := p.repo.KnownClientIDs(ctx)
+	if err != nil {
+		p.log.Warn("adopt: known client ids", "err", err)
+		return 0
+	}
+	return p.adoptQbitOrphans(ctx, known, minAge) + p.adoptSabOrphans(ctx, known)
+}
+
+// adoptQbitOrphans is the qBit half of adoptOrphans: untracked torrents
+// under the forage category become grab rows. qBit *tags* are ignored —
+// only the category matches. minAge skips torrents added more recently
+// than it (the periodic tick passes adoptionGrace; the manual button
+// passes manualAdoptGrace) so a torrent forage itself just added gets
+// linked to its existing grab first.
+func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, minAge time.Duration) int {
 	qb := p.pool.Qbit()
 	if qb == nil {
 		return 0
@@ -1221,11 +1237,6 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 		return 0
 	}
 	if len(ts) == 0 {
-		return 0
-	}
-	known, err := p.repo.KnownClientIDs(ctx)
-	if err != nil {
-		p.log.Warn("adopt: known client ids", "err", err)
 		return 0
 	}
 	adopted := 0
@@ -1284,6 +1295,115 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder)
 	}
 	return adopted
+}
+
+// sabAdoptWindow bounds SAB history adoption to recent completions. SAB's
+// history is long-lived: without a window, a fresh forage database pointed
+// at an existing SAB instance would mass-import every old forage-category
+// job on the first sweep.
+const sabAdoptWindow = 48 * time.Hour
+
+// adoptSabOrphans is the SAB half of adoptOrphans: untracked COMPLETED
+// forage-category history jobs become grab rows. Queue items are left
+// alone — SAB exposes no file inventory before completion, so pack vs
+// single can't be classified (kind is decided exactly once, at adoption),
+// and usenet queues drain in minutes; the periodic sweep adopts the job
+// right after it lands in history. No minAge: SAB's addurl returns the
+// nzo_id synchronously, so forage's own grabs are known the moment they
+// exist and can't be re-adopted.
+func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int {
+	sb := p.pool.Sab()
+	if sb == nil {
+		return 0
+	}
+	cat := p.pool.Settings().SabCategory
+	if cat == "" {
+		return 0 // never adopt uncategorised jobs
+	}
+	hist, err := sb.History(ctx, 200, cat)
+	if err != nil {
+		p.log.Warn("adopt: sab history", "err", err)
+		return 0
+	}
+	adopted := 0
+	now := time.Now().Unix()
+	for _, it := range hist {
+		if it.NzoID == "" || known[it.NzoID] {
+			continue
+		}
+		if !strings.EqualFold(it.Status, "Completed") || it.Path == "" {
+			continue
+		}
+		if it.Completed > 0 && now-it.Completed > int64(sabAdoptWindow/time.Second) {
+			continue
+		}
+		kind, videos, ok := classifyDownloadPath(it.Path)
+		if !ok {
+			// Storage path not visible from this container (mount gap or
+			// the files were already cleaned up). Don't guess — kind is
+			// classified once and a wrong "single" permanently routes a
+			// pack down the wrong confirm path.
+			p.log.Info("adopt: deferred, sab storage not visible", "nzo_id", it.NzoID, "name", it.Name, "path", it.Path)
+			continue
+		}
+		packFiles := 0
+		if kind == "pack" {
+			packFiles = videos
+		}
+		grabbedAt := it.Completed
+		if grabbedAt == 0 {
+			grabbedAt = now
+		}
+		folder := suggest.ConfidentTopFolder(ctx, p.db, it.Name)
+		id, err := p.repo.Insert(ctx, grabs.Grab{
+			ReleaseTitle:  it.Name,
+			Client:        "sabnzbd",
+			ClientID:      it.NzoID,
+			ClientName:    it.Name,
+			Category:      cat,
+			Status:        "queued",
+			PerformerName: folder,
+			Kind:          kind,
+			PackFiles:     packFiles,
+			GrabbedAt:     grabbedAt,
+			Reason:        "adopted from sab",
+		})
+		if err != nil {
+			p.log.Warn("adopt: insert", "nzo_id", it.NzoID, "name", it.Name, "err", err)
+			continue
+		}
+		adopted++
+		p.log.Info("adopted sab job", "id", id, "name", it.Name,
+			"nzo_id", it.NzoID, "kind", kind, "videos", videos, "folder", folder)
+	}
+	return adopted
+}
+
+// classifyDownloadPath decides pack vs single for an on-disk completed
+// download (SAB's history storage path): a lone file is a single; a
+// directory is classified by its video count, mirroring classifyTorrent.
+// ok is false when the path can't be inspected from this container.
+func classifyDownloadPath(path string) (kind string, videos int, ok bool) {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return "", 0, false
+	}
+	if !fi.IsDir() {
+		if torrentmeta.IsVideo(fi.Name()) {
+			videos = 1
+		}
+		return "single", videos, true
+	}
+	_ = filepath.WalkDir(path, func(_ string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && torrentmeta.IsVideo(d.Name()) {
+			videos++
+		}
+		return nil
+	})
+	if videos >= adoptMinVideos {
+		return "pack", videos, true
+	}
+	return "single", videos, true
 }
 
 // classifyTorrent counts a torrent's video files via qBit's metainfo file
