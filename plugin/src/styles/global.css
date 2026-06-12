@@ -5929,6 +5929,36 @@ code.grab-fact-v,
   .coll-row-head {
     gap: 10px;
     padding: 10px;
+    flex-wrap: wrap;
+  }
+  /* The status/result block can't share the head row on a phone — it
+     crushes the title to a few characters and clips its own buttons
+     off the right edge. Drop it to a full-width line of its own under
+     the thumb + title; the expand chevron stays top-right. */
+  .coll-row-result {
+    order: 10;
+    flex: 1 1 100%;
+    max-width: none;
+    text-align: left;
+  }
+  .coll-state,
+  .coll-pick {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+  /* Candidate rows: the fixed-width tag + badge left column leaves a
+     sliver for the title, which then breaks mid-word. Badges on line
+     one, title + meta full-width underneath. */
+  .coll-cands {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .coll-cand {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .coll-cand-body {
+    flex: 1 1 100%;
   }
 
   /* Grabs list: tighter head grid, keep the status stripe visible. */
