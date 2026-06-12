@@ -356,9 +356,13 @@ export default function GrabsList({
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          <span className="grab-toolbar-count">
-            {filtered.length}/{data.grabs.length}
-          </span>
+          {/* Only meaningful when the text filter is narrowing the
+              list — "200/200" is noise. */}
+          {filtered.length !== data.grabs.length && (
+            <span className="grab-toolbar-count">
+              {filtered.length}/{data.grabs.length}
+            </span>
+          )}
         </div>
       </div>
 
@@ -452,47 +456,54 @@ export default function GrabsList({
           outcome states (status dots). Inline micro-labels, no
           stacked headers, everything centre-aligned. */}
       <div className="grab-filter">
-        <button
-          className={"grab-chip chip-any" + (filter === "any" ? " active" : "")}
-          onClick={() => setFilter("any")}
-        >
-          <span className="chip-label">all</span>
-          <span className="chip-count">{anyTotal}</span>
-        </button>
+        {/* On desktop this wrapper is display:contents (invisible to
+            layout); on phones it becomes a horizontally swipeable strip
+            so the chips never stack into a wall. */}
+        <div className="grab-filter-chips">
+          <button
+            className={
+              "grab-chip chip-any" + (filter === "any" ? " active" : "")
+            }
+            onClick={() => setFilter("any")}
+          >
+            <span className="chip-label">all</span>
+            <span className="chip-count">{anyTotal}</span>
+          </button>
 
-        <span className="grab-filter-sep" />
-        <span className="grab-filter-label">flight</span>
-        <div className="grab-flow-pills">
-          {IN_FLIGHT.map((s, i) => (
-            <Fragment key={s}>
-              {i > 0 && (
-                <span className="grab-flow-arrow" aria-hidden="true">
-                  ›
-                </span>
-              )}
+          <span className="grab-filter-sep" />
+          <span className="grab-filter-label">flight</span>
+          <div className="grab-flow-pills">
+            {IN_FLIGHT.map((s, i) => (
+              <Fragment key={s}>
+                {i > 0 && (
+                  <span className="grab-flow-arrow" aria-hidden="true">
+                    ›
+                  </span>
+                )}
+                <FilterChip
+                  status={s}
+                  count={totals[s] || 0}
+                  active={filter === s}
+                  onClick={() => setFilter(s)}
+                />
+              </Fragment>
+            ))}
+          </div>
+
+          <span className="grab-filter-sep" />
+          <span className="grab-filter-label">outcome</span>
+          <div className="grab-flow-pills">
+            {OUTCOME.map((s) => (
               <FilterChip
+                key={s}
                 status={s}
                 count={totals[s] || 0}
                 active={filter === s}
                 onClick={() => setFilter(s)}
+                dot
               />
-            </Fragment>
-          ))}
-        </div>
-
-        <span className="grab-filter-sep" />
-        <span className="grab-filter-label">outcome</span>
-        <div className="grab-flow-pills">
-          {OUTCOME.map((s) => (
-            <FilterChip
-              key={s}
-              status={s}
-              count={totals[s] || 0}
-              active={filter === s}
-              onClick={() => setFilter(s)}
-              dot
-            />
-          ))}
+            ))}
+          </div>
         </div>
 
         {/* List-level actions, right-aligned. */}
@@ -592,7 +603,15 @@ function FilterChip({
 }) {
   return (
     <button
-      className={"grab-chip chip-" + status + (active ? " active" : "")}
+      className={
+        "grab-chip chip-" +
+        status +
+        (active ? " active" : "") +
+        // Phones hide empty chips to cut clutter; desktop keeps them so
+        // the pipeline reads as a flow. An active chip stays visible
+        // even at zero so the filter can be escaped.
+        (count === 0 && !active ? " zero" : "")
+      }
       onClick={onClick}
     >
       {dot && <span className="chip-dot" aria-hidden="true" />}

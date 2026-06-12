@@ -1850,6 +1850,11 @@ button {
   gap: 8px 10px;
   margin: 0 0 22px 0;
 }
+/* Invisible to desktop layout — its children participate directly in
+   .grab-filter's flex. The mobile layer turns it into a swipe strip. */
+.grab-filter-chips {
+  display: contents;
+}
 .grab-filter-label {
   font-size: 9px;
   font-weight: 700;
@@ -5966,6 +5971,41 @@ code.grab-fact-v,
     grid-template-columns: minmax(72px, auto) 1fr 14px;
     gap: 10px;
     padding: 10px 12px 10px 16px;
+  }
+
+  /* Grabs filter header: five stacked rows of pills and labels is a
+     wall on a phone. Collapse to one horizontally swipeable chip strip
+     (zero-count chips hidden, flow arrows and section labels dropped —
+     the chip colors carry the flight/outcome distinction) with the
+     list actions on their own line below. */
+  .grab-filter-chips {
+    display: flex;
+    flex: 1 1 100%;
+    align-items: center;
+    gap: 6px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .grab-filter-chips::-webkit-scrollbar {
+    display: none;
+  }
+  .grab-filter-chips .grab-chip {
+    flex: none;
+  }
+  .grab-flow-pills {
+    flex: none;
+    flex-wrap: nowrap;
+  }
+  .grab-chip.zero,
+  .grab-flow-arrow,
+  .grab-filter-label,
+  .grab-filter-sep {
+    display: none;
+  }
+  .grab-filter-actions {
+    margin-left: 0;
+    flex-wrap: wrap;
   }
 
   /* The sticky selection bar wraps rather than overflowing, and clears
