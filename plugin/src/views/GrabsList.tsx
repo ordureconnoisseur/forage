@@ -123,12 +123,12 @@ export default function GrabsList({
       const res = await adoptDownloads();
       setNotice(
         res.adopted > 0
-          ? `Adopted ${res.adopted} new download${res.adopted === 1 ? "" : "s"}`
-          : "No new downloads to adopt",
+          ? `Imported ${res.adopted} torrent${res.adopted === 1 ? "" : "s"} from qBit`
+          : "Nothing new in qBit to import",
       );
       await refresh();
     } catch (e) {
-      setNotice("Scan failed: " + (e as Error).message);
+      setNotice("Import failed: " + (e as Error).message);
     } finally {
       setAdopting(false);
     }
@@ -523,9 +523,9 @@ export default function GrabsList({
             className="grab-adopt-btn"
             onClick={scanForDownloads}
             disabled={adopting}
-            title="Adopt torrents you added to the download client manually — skips the 5-minute wait"
+            title="Pick up torrents you added to qBittorrent yourself (forage category) — skips the 5-minute wait"
           >
-            {adopting ? "Scanning…" : "↻ Scan for downloads"}
+            {adopting ? "Importing…" : "↻ Import from qBit"}
           </button>
         </span>
       </div>
