@@ -123,12 +123,12 @@ export default function GrabsList({
       const res = await adoptDownloads();
       setNotice(
         res.adopted > 0
-          ? `Imported ${res.adopted} download${res.adopted === 1 ? "" : "s"}`
-          : "Nothing new to import",
+          ? `Adopted ${res.adopted} download${res.adopted === 1 ? "" : "s"}`
+          : "Nothing new to adopt",
       );
       await refresh();
     } catch (e) {
-      setNotice("Import failed: " + (e as Error).message);
+      setNotice("Adopt failed: " + (e as Error).message);
     } finally {
       setAdopting(false);
     }
@@ -523,9 +523,9 @@ export default function GrabsList({
             className="grab-adopt-btn"
             onClick={scanForDownloads}
             disabled={adopting}
-            title="Pick up downloads you added to qBittorrent or SABnzbd yourself (forage category). qBit torrents import right away; SAB jobs once they finish downloading."
+            title="Pick up downloads you added to qBittorrent or SABnzbd yourself (forage category). qBit torrents adopt right away; SAB jobs once they finish downloading."
           >
-            {adopting ? "Importing…" : "↻ Import downloads"}
+            {adopting ? "Adopting…" : "↻ Adopt downloads"}
           </button>
         </span>
       </div>
