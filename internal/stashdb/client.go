@@ -2,6 +2,8 @@ package stashdb
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/ordureconnoisseur/forager/internal/gqlclient"
 )
@@ -415,6 +417,58 @@ func (c *Client) QueryAllStudios(ctx context.Context) ([]Studio, error) {
 			break
 		}
 		page++
+	}
+	return out, nil
+}
+
+// ── findPerformer (batched) ──────────────────────────────────────────
+
+// Performer is the slim projection used to enrich performer_cache with
+// StashDB-side names: the canonical name (which the local Stash record
+// may spell differently — "Summer Cline" locally vs "Summer Kline" on
+// StashDB) plus StashDB's alias list.
+type Performer struct {
+	ID      string
+	Name    string
+	Aliases []string
+}
+
+// findPerformerChunk is how many findPerformer lookups we pack into one
+// GraphQL request via field aliases. StashDB's queryPerformers has no
+// ids filter, so alias-batching single lookups is the only way to bulk
+// fetch by id without one round-trip per performer.
+const findPerformerChunk = 40
+
+// FindPerformersByID fetches StashDB performers for the given ids,
+// keyed by id. Unknown ids are simply absent from the result (StashDB
+// returns null for them), not an error.
+func (c *Client) FindPerformersByID(ctx context.Context, ids []string) (map[string]Performer, error) {
+	out := make(map[string]Performer, len(ids))
+	for start := 0; start < len(ids); start += findPerformerChunk {
+		end := start + findPerformerChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var b strings.Builder
+		b.WriteString("query ForagerFindPerformers {\n")
+		for i, id := range ids[start:end] {
+			fmt.Fprintf(&b, "  p%d: findPerformer(id: %q) { id name aliases }\n", i, id)
+		}
+		b.WriteString("}")
+		var resp map[string]*struct {
+			ID      string   `json:"id"`
+			Name    string   `json:"name"`
+			Aliases []string `json:"aliases"`
+		}
+		if err := c.do(ctx, b.String(), nil, &resp); err != nil {
+			return nil, err
+		}
+		for _, p := range resp {
+			if p == nil || p.ID == "" {
+				continue
+			}
+			out[p.ID] = Performer{ID: p.ID, Name: p.Name, Aliases: p.Aliases}
+		}
 	}
 	return out, nil
 }

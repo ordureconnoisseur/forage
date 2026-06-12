@@ -213,7 +213,7 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 			ctx, cancel := context.WithTimeout(context.Background(), 5*60*1e9)
 			defer cancel()
 			if sc := s.pool.Stash(); sc != nil {
-				_ = cache.RefreshPerformers(ctx, sc, s.db, s.log.With("op", "performers", "trigger", "config-save"))
+				_ = cache.RefreshPerformers(ctx, sc, s.pool.StashDB(), s.db, s.log.With("op", "performers", "trigger", "config-save"))
 				_ = cache.RefreshStudios(ctx, sc, s.pool.StashDB(), s.db, s.log.With("op", "studios", "trigger", "config-save"))
 			}
 		}()

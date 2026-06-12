@@ -30,7 +30,7 @@ func (s *Server) postRefresh(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if err := cache.RefreshPerformers(ctx, stashC, s.db, s.log.With("op", "performers")); err != nil {
+	if err := cache.RefreshPerformers(ctx, stashC, s.pool.StashDB(), s.db, s.log.With("op", "performers")); err != nil {
 		s.log.Error("performer refresh failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "performer refresh: "+err.Error())
 		return
@@ -69,7 +69,7 @@ func (s *Server) postRefreshPerformers(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := cache.RefreshPerformers(ctx, stashC, s.db, s.log.With("op", "performers")); err != nil {
+	if err := cache.RefreshPerformers(ctx, stashC, s.pool.StashDB(), s.db, s.log.With("op", "performers")); err != nil {
 		s.log.Error("performer refresh failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "performer refresh: "+err.Error())
 		return

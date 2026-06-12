@@ -207,7 +207,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 	scenesAt, _ := cache.ScenesRefreshedAt(ctx, database)
 	cutoff := time.Now().Add(-interval).Unix()
 	if perfAt < cutoff {
-		if err := cache.RefreshPerformers(ctx, sc, database, log.With("op", "performers")); err != nil {
+		if err := cache.RefreshPerformers(ctx, sc, pool.StashDB(), database, log.With("op", "performers")); err != nil {
 			log.Error("boot performer refresh failed", "err", err)
 		}
 	}
@@ -273,7 +273,7 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 				if sc == nil {
 					return
 				}
-				if err := cache.RefreshPerformers(ctx, sc, database, log.With("op", "performers")); err != nil {
+				if err := cache.RefreshPerformers(ctx, sc, pool.StashDB(), database, log.With("op", "performers")); err != nil {
 					log.Error("ticker performer refresh failed", "err", err)
 				}
 				if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
