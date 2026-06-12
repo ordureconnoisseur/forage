@@ -5986,12 +5986,23 @@ code.grab-fact-v,
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    /* Full-bleed: run edge-to-edge of the screen (cancel the app-main
+       side padding) so a pill half-visible at the edge reads as "keep
+       swiping", not as clipped. Padding restores the alignment of the
+       first chip with the rest of the page. */
+    margin-left: -12px;
+    margin-right: -12px;
+    padding-left: 12px;
+    padding-right: 12px;
+    scroll-padding-left: 12px;
+    scroll-snap-type: x proximity;
   }
   .grab-filter-chips::-webkit-scrollbar {
     display: none;
   }
   .grab-filter-chips .grab-chip {
     flex: none;
+    scroll-snap-align: start;
   }
   .grab-flow-pills {
     flex: none;
@@ -6003,9 +6014,21 @@ code.grab-fact-v,
   .grab-filter-sep {
     display: none;
   }
+  /* The list actions were pill-styled like the chips above them — two
+     stacked rows of identical pills with different semantics read as
+     one confusing wall. On phones the actions become light text
+     buttons, right-aligned, clearly not filters. */
   .grab-filter-actions {
-    margin-left: 0;
+    margin-left: auto;
     flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .grab-filter-actions .grab-adopt-btn {
+    border: none;
+    background: transparent;
+    color: var(--accent-bright);
+    font-size: 12px;
+    padding: 2px 4px;
   }
 
   /* The sticky selection bar wraps rather than overflowing, and clears
