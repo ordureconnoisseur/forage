@@ -64,6 +64,57 @@ func TestAdminAuthMiddleware(t *testing.T) {
 	}
 }
 
+// TestAdminAuthStashKey verifies the same-Stash-trust path: with the gate
+// active (a password is set), a Bearer that matches the configured Stash
+// API key is accepted even when it isn't the admin token — so a Stash
+// plugin can authenticate with the key it reads live from Stash. The admin
+// token still works, a non-matching key is rejected, and an empty
+// configured key never matches an empty Bearer.
+func TestAdminAuthStashKey(t *testing.T) {
+	sentinel := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name       string
+		token      string // admin token
+		stashKey   string // configured Stash API key
+		authHeader string
+		want       int
+	}{
+		{"stash key accepted as bearer", "", "stash-key", "Bearer stash-key", http.StatusOK},
+		{"stash key works alongside an admin token", "admin-tok", "stash-key", "Bearer stash-key", http.StatusOK},
+		{"admin token still works", "admin-tok", "stash-key", "Bearer admin-tok", http.StatusOK},
+		{"wrong key → 401", "", "stash-key", "Bearer nope", http.StatusUnauthorized},
+		{"empty configured key never matches", "admin-tok", "", "Bearer ", http.StatusUnauthorized},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s := &Server{
+				bootstrap: config.BootstrapConfig{Config: config.Config{
+					AdminToken:   c.token,
+					StashAPIKey:  c.stashKey,
+					PasswordHash: "h", // keep the gate active for every case
+				}},
+				store: store,
+			}
+			h := s.adminAuthMiddleware(sentinel)
+			req := httptest.NewRequest(http.MethodGet, "/performers", nil)
+			if c.authHeader != "" {
+				req.Header.Set("Authorization", c.authHeader)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != c.want {
+				t.Errorf("status = %d, want %d (body=%q)", rec.Code, c.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestAdminAuthCookie verifies the <img>-auth path: the gate accepts a
 // forage_token cookie that carries a VALID server-side session id (the new
 // model — the cookie no longer carries the raw token). A made-up cookie

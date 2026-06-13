@@ -56,6 +56,20 @@ func (s *Server) effectiveAdminToken() string {
 	return s.bootstrap.AdminToken
 }
 
+// effectiveStashAPIKey resolves the configured Stash API key (the key the
+// daemon already holds to act on Stash's behalf), JSON-over-env. It's
+// accepted as a Bearer credential so a same-origin Stash plugin (e.g.
+// binge), which can read this key live via Stash's GraphQL under the
+// user's session, can drive forage without a separate token to paste or
+// store. "Can talk to Stash" == "can talk to forage"; rotating the Stash
+// key rotates this access too.
+func (s *Server) effectiveStashAPIKey() string {
+	if k := s.store.Get().StashAPIKey; k != nil && *k != "" {
+		return *k
+	}
+	return s.bootstrap.StashAPIKey
+}
+
 // effectiveUsername / effectivePasswordHash resolve the web-login
 // credentials with the same JSON-over-env precedence as the API key.
 func (s *Server) effectiveUsername() string {
@@ -93,17 +107,24 @@ func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// requestAuthorized accepts a request via the two credential paths, in
+// requestAuthorized accepts a request via these credential paths, in
 // order:
 //  1. Authorization: Bearer <adminToken> — the API-key path (clients),
 //     when an admin token is configured. Constant-time compared.
-//  2. forage_token cookie that is a valid (unexpired) session id — the web
+//  2. Authorization: Bearer <stashApiKey> — the same-Stash-trust path: a
+//     plugin that can read Stash's own API key (authorized by the user's
+//     Stash session) drives forage with it, no separate token needed.
+//  3. forage_token cookie that is a valid (unexpired) session id — the web
 //     path, incl. <img> loads and navigation.
 func (s *Server) requestAuthorized(r *http.Request) bool {
-	if token := s.effectiveAdminToken(); token != "" {
-		auth := r.Header.Get("Authorization")
-		if provided := strings.TrimPrefix(auth, "Bearer "); provided != auth &&
+	auth := r.Header.Get("Authorization")
+	if provided := strings.TrimPrefix(auth, "Bearer "); provided != auth {
+		if token := s.effectiveAdminToken(); token != "" &&
 			subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1 {
+			return true
+		}
+		if key := s.effectiveStashAPIKey(); key != "" &&
+			subtle.ConstantTimeCompare([]byte(provided), []byte(key)) == 1 {
 			return true
 		}
 	}
