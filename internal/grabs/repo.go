@@ -334,6 +334,30 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
+// RecoverableSab returns SAB grabs marked failed but not yet placed,
+// keyed by nzo_id (client_id). The adoption sweep cross-references this
+// against SAB's history: when a failed grab's nzo turns up Completed, the
+// failure was spurious (a slow URL fetch / queue-visibility flap tripped the
+// not-found timeout) and the finished download would otherwise be stranded —
+// adoption skips known nzos, so it can't be re-picked-up as a fresh grab.
+// Scoped to unplaced failures: a grab with a placed_path already reached the
+// library, so there's nothing to recover.
+func (r *Repo) RecoverableSab(ctx context.Context) (map[string]Grab, error) {
+	rows, err := r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE client = 'sabnzbd' AND status = 'failed'
+		  AND (placed_path IS NULL OR placed_path = '')
+		  AND client_id IS NOT NULL AND client_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Grab, len(rows))
+	for _, g := range rows {
+		out[g.ClientID] = g
+	}
+	return out, nil
+}
+
 // KnownClientIDs returns the set of download-client ids (qBit info_hashes
 // / SAB nzo_ids) that already back a grab. The poller's adoption path
 // uses it to skip torrents forage is already tracking.

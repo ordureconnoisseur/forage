@@ -997,3 +997,93 @@ func TestSabFetchErrorFreezesGrabs(t *testing.T) {
 		t.Fatalf("status = %q, want downloading (frozen on fetch error)", got.Status)
 	}
 }
+
+// TestSabInflightSurvivesQueueGap pins the prevention half of the false-fail
+// fix: a SAB grab temporarily absent from BOTH queue and history (SAB fetching
+// the NZB from the indexer, or the job waiting in a backed-up queue) must NOT
+// be failed on the first miss — even long past the old 5-minute grab-time
+// grace — only after sabInflightTimeout of CONTINUOUS no-contact.
+func TestSabInflightSurvivesQueueGap(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Scene",
+		Client:       "sabnzbd",
+		ClientID:     "SABnzbd_nzo_gap",
+		Status:       "downloading",
+		GrabbedAt:    time.Now().Add(-time.Hour).Unix(), // long past sabRegisterGrace
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// First miss: lists fetched fine (sabListsOK=true), nzo just isn't in
+	// either yet. Must seed the absence clock and leave the grab alone.
+	g := r.get(t, id)
+	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, true); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := r.get(t, id); got.Status != "downloading" {
+		t.Fatalf("status = %q, want downloading (first miss must not fail)", got.Status)
+	}
+
+	// Once contact has been lost for the full inflight timeout, it does fail
+	// (a genuinely removed job). Backdate the recorded contact to simulate it.
+	r.poller.sabMu.Lock()
+	r.poller.sabSeen[id] = time.Now().Add(-sabInflightTimeout - time.Minute)
+	r.poller.sabMu.Unlock()
+	g = r.get(t, id)
+	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, true); err != nil {
+		t.Fatalf("advance: %v", err)
+	}
+	if got := r.get(t, id); got.Status != "failed" {
+		t.Fatalf("status = %q, want failed (past inflight timeout)", got.Status)
+	}
+}
+
+// TestSabReviveFalseFailed pins the recovery half: a SAB grab wrongly marked
+// failed (download still unplaced) is flipped back to "completed" when the
+// adopt sweep sees its nzo Completed in SAB history, so the place pipeline can
+// finish what the spurious failure interrupted. Without this, adoption skips
+// the nzo as already-known and the finished download is stranded forever.
+func TestSabReviveFalseFailed(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	file := r.stageFile(t, "Recovered Scene.mkv")
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Recovered Scene",
+		Client:       "sabnzbd",
+		ClientID:     "SABnzbd_nzo_recover",
+		Category:     "forager",
+		Status:       "failed",
+		Reason:       "sab no longer tracks this nzo_id",
+		GrabbedAt:    time.Now().Add(-time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	now := time.Now().Unix()
+	r.sab.set([]map[string]any{
+		{"nzo_id": "SABnzbd_nzo_recover", "name": "Recovered Scene", "category": "forager",
+			"status": "Completed", "storage": file, "completed": now - 60},
+	})
+
+	// Revival is NOT an adoption — the nzo is already known, so nothing new is
+	// inserted; AdoptNow's count must stay 0.
+	if n := r.poller.AdoptNow(ctx); n != 0 {
+		t.Fatalf("AdoptNow adopted=%d, want 0 (revive is not adoption)", n)
+	}
+
+	got := r.get(t, id)
+	if got.Status != "completed" {
+		t.Fatalf("status = %q (reason %q), want completed (revived)", got.Status, got.Reason)
+	}
+	if got.CompletedAt == 0 {
+		t.Fatalf("completed_at not stamped on revive")
+	}
+	if !strings.Contains(got.Reason, "recovered") {
+		t.Fatalf("reason = %q, want it to mention recovery", got.Reason)
+	}
+}

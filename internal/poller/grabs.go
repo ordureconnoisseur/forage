@@ -70,6 +70,19 @@ type Poller struct {
 	// In-memory: lost on restart, which merely re-arms the settle window.
 	packMu   sync.Mutex
 	packScan map[int64]packScanState
+
+	// sabSeen records, per active SAB grab, the last time we had positive
+	// contact with its nzo in SAB (queue or history) — or, for a grab in
+	// neither, when we first noticed it missing. advanceSab fails a SAB grab
+	// only once contact has been lost for sabInflightTimeout, measured from
+	// this (NOT from grab time): usenet jobs sit invisibly in fetch/queue
+	// states far longer than the old 5-minute grab-time grace, which
+	// false-failed slow-but-fine downloads that SAB later completed.
+	// In-memory: lost on restart, which merely restarts the absence clock
+	// (the adopt sweep's revive path is the correctness backstop). Pruned
+	// with the others.
+	sabMu   sync.Mutex
+	sabSeen map[int64]time.Time
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -125,6 +138,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		orphan:   orphanAfter,
 		lastScan: map[int64]time.Time{},
 		packScan: map[int64]packScanState{},
+		sabSeen:  map[int64]time.Time{},
 	}
 }
 
@@ -209,6 +223,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.packMu.Unlock()
+	p.sabMu.Lock()
+	for id := range p.sabSeen {
+		if !activeIDs[id] {
+			delete(p.sabSeen, id)
+		}
+	}
+	p.sabMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -985,6 +1006,33 @@ func (p *Poller) markScanAttempt(grabID int64) {
 	p.scanMu.Unlock()
 }
 
+// markSabContact stamps now as the last time we saw this grab's nzo in SAB
+// (queue or history). Resets the missing-absence clock sabMissingElapsed
+// reads, so a job that re-surfaces after a fetch/queue gap isn't failed.
+func (p *Poller) markSabContact(grabID int64) {
+	p.sabMu.Lock()
+	p.sabSeen[grabID] = time.Now()
+	p.sabMu.Unlock()
+}
+
+// sabMissingElapsed reports whether this grab's nzo has been absent from SAB
+// for at least d. The first time it's called for a grab with no recorded
+// contact (a fresh add not yet surfaced, or a download in flight across a
+// daemon restart) it seeds the timestamp to now and returns false — so the
+// very first miss starts the clock rather than failing immediately. Every
+// positive sighting (markSabContact) overwrites the timestamp to now, so d
+// only elapses after d of continuous no-contact.
+func (p *Poller) sabMissingElapsed(grabID int64, d time.Duration) bool {
+	p.sabMu.Lock()
+	defer p.sabMu.Unlock()
+	last, ok := p.sabSeen[grabID]
+	if !ok {
+		p.sabSeen[grabID] = time.Now()
+		return false
+	}
+	return time.Since(last) >= d
+}
+
 // advanceQbit handles the qBit-specific enrichment + state-refresh
 // steps, working entirely off the tick's shared torrent list (ts, plus
 // its byHash index) — no network calls of its own. Returns (dirty,
@@ -1164,6 +1212,16 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 // download that's actually in flight.
 const sabRegisterGrace = 5 * time.Minute
 
+// sabInflightTimeout is how long a SAB grab's nzo may be absent from BOTH
+// SAB's queue and history — measured from the last positive contact (see
+// sabSeen) — before advanceSab declares it gone. Far longer than
+// sabRegisterGrace because SAB legitimately holds a job out of view while it
+// fetches the NZB from the indexer and while it waits in a backed-up queue;
+// those gaps can run tens of minutes on a slow server. A real removal stays
+// absent and still fails after this; a slow-but-live download re-surfaces and
+// resets the clock long before it elapses.
+const sabInflightTimeout = 45 * time.Minute
+
 // qbitLinkTimeout is how long a qBit grab may sit "queued" without ever
 // linking to a torrent before it's declared failed. Well beyond the 2-min
 // async-add budget, so a slow add still resolves first; a grab still
@@ -1325,10 +1383,31 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 		p.log.Warn("adopt: sab history", "err", err)
 		return 0
 	}
+	// Failed-but-unplaced SAB grabs whose download SAB may have completed
+	// after the not-found timeout wrongly failed them. Looked up once and
+	// revived in the loop below — keyed by nzo, the same id SAB history
+	// carries. Best-effort: a query error just skips recovery this pass.
+	recoverable, rerr := p.repo.RecoverableSab(ctx)
+	if rerr != nil {
+		p.log.Warn("adopt: recoverable sab", "err", rerr)
+		recoverable = nil
+	}
 	adopted := 0
 	now := time.Now().Unix()
 	for _, it := range hist {
-		if it.NzoID == "" || known[it.NzoID] {
+		if it.NzoID == "" {
+			continue
+		}
+		// Revive a false-failed grab before the known-nzo skip below: a
+		// recoverable grab's nzo IS known (it has a client_id), so the skip
+		// would otherwise strand its completed download forever.
+		if g, ok := recoverable[it.NzoID]; ok {
+			if strings.EqualFold(it.Status, "Completed") {
+				p.reviveSabGrab(ctx, g, it)
+			}
+			continue // known nzo — never adopt a second copy of it
+		}
+		if known[it.NzoID] {
 			continue
 		}
 		if !strings.EqualFold(it.Status, "Completed") || it.Path == "" {
@@ -1377,6 +1456,38 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 			"nzo_id", it.NzoID, "kind", kind, "videos", videos, "folder", folder)
 	}
 	return adopted
+}
+
+// reviveSabGrab flips a false-failed SAB grab back to "completed" once SAB's
+// history shows its nzo Completed, so the normal place → scan → confirm
+// pipeline (re-)runs on the file SAB already downloaded. Clears the failure
+// state and restamps completion from SAB's timestamp; refreshes ClientName
+// from the final on-disk path, since the failed grab may still carry SAB's
+// "Trying to fetch NZB from…" placeholder name. Best-effort: a stale write or
+// DB error just leaves the grab failed for a later pass to retry.
+func (p *Poller) reviveSabGrab(ctx context.Context, g grabs.Grab, it sabnzbd.Item) {
+	g.Status = "completed"
+	g.PlaceError = ""
+	g.Reason = "recovered: sab completed this nzo after a spurious not-found failure"
+	if it.Completed > 0 {
+		g.CompletedAt = it.Completed
+	} else if g.CompletedAt == 0 {
+		g.CompletedAt = time.Now().Unix()
+	}
+	if it.Path != "" {
+		if base := pathmap.Base(it.Path); base != "" {
+			g.ClientName = base
+		}
+	}
+	if err := p.repo.Update(ctx, g); err != nil {
+		if errors.Is(err, grabs.ErrStaleUpdate) {
+			p.log.Info("revive sab grab: changed under sweep, skipping", "id", g.ID)
+			return
+		}
+		p.log.Warn("revive sab grab", "id", g.ID, "nzo_id", it.NzoID, "err", err)
+		return
+	}
+	p.log.Info("revived false-failed sab grab", "id", g.ID, "nzo_id", it.NzoID, "name", g.ClientName)
 }
 
 // classifyDownloadPath decides pack vs single for an on-disk completed
@@ -1442,6 +1553,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		return false, "", nil
 	}
 	if item := findByNzo(queue, g.ClientID); item != nil {
+		p.markSabContact(g.ID)
 		if item.Name != "" && item.Name != g.ClientName {
 			g.ClientName = item.Name
 			dirty = true
@@ -1454,6 +1566,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		return dirty, "", nil
 	}
 	if item := findByNzo(history, g.ClientID); item != nil {
+		p.markSabContact(g.ID)
 		// Prefer the final on-disk path's basename when available —
 		// that's what Stash will see during a scan.
 		name := item.Name
@@ -1532,7 +1645,17 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		return dirty, "", nil
 	}
 	if g.Status != "completed" && g.Status != "placed" && g.Status != "scanned" && g.Status != "confirmed" && g.Status != "mismatched" && g.Status != "orphaned" && g.Status != "failed" {
-		if g.GrabbedAt > 0 && time.Since(time.Unix(g.GrabbedAt, 0)) < sabRegisterGrace {
+		// Fail only after contact has been LOST for sabInflightTimeout,
+		// measured from the last time we saw the nzo in SAB (or first noticed
+		// it missing) — not from grab time. SAB holds a job invisibly while it
+		// fetches the NZB from the indexer and while it sits queued behind
+		// others; those waits routinely exceed the old 5-minute grab-time
+		// grace, so that grace false-failed slow-but-fine downloads that SAB
+		// went on to complete 30+ minutes later. A genuinely removed job stays
+		// absent and still fails here; a slow one re-appears (queue or, on
+		// completion, history) and markSabContact resets the clock. The adopt
+		// sweep's revive path recovers anything this still gets wrong.
+		if !p.sabMissingElapsed(g.ID, sabInflightTimeout) {
 			return dirty, "", nil
 		}
 		g.Status = "failed"
