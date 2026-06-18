@@ -625,8 +625,9 @@ func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]Scen
 // strings to match what Stash sees on its filesystem — which they
 // usually DON'T when forager runs in Docker on Linux and Stash runs
 // on Windows/macOS over a NAS mount. The poller handles this via
-// FORAGER_STASH_PATH_MAPPING (see config); if no mapping is
-// configured we fall back to a full-library scan.
+// FORAGER_STASH_PATH_MAPPING (see config); if a placed path can't be
+// mapped the poller skips the scan rather than scanning the whole
+// library (see triggerPlacementScan).
 //
 // Returns the queued job ID. Non-fatal — if it fails, the poller's
 // passive confirmation path still works on Stash's next scheduled

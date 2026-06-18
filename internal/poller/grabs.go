@@ -1696,23 +1696,29 @@ func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {
 // rather than waiting on Stash's scheduled scan. Records the attempt
 // time so the confirmation step can throttle retries. Best-effort.
 //
-// The scan is scoped to the placed file's parent via
-// FORAGER_STASH_PATH_MAPPING when set; otherwise paths is empty and
-// Stash does a full-library scan (slow but always correct since it
-// skips unchanged files).
+// The scan is ALWAYS scoped to the placed file's parent folder via
+// FORAGER_STASH_PATH_MAPPING. If the placed path can't be mapped to a
+// Stash-side path (no mapping configured, or a stale path prefix left by
+// a mount rename), we deliberately skip the scan instead of falling back
+// to a full-library scan — re-scanning the whole library per grab is far
+// too expensive, and the grab still confirms via basename lookup once
+// Stash's next scheduled scan indexes the file.
 func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, grabID int64, placedPath string) {
 	stashSidePath := pathmap.Translate(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
-	var scanPaths []string
-	if stashSidePath != "" {
-		scanPaths = []string{stashSidePath}
-	}
+	// Stamp the throttle even when we skip, so an unmappable grab doesn't
+	// re-enter this path on every tick.
 	p.scanMu.Lock()
 	p.lastScan[grabID] = time.Now()
 	p.scanMu.Unlock()
-	if jobID, err := sc.MetadataScan(ctx, scanPaths); err != nil {
-		p.log.Warn("metadataScan trigger failed", "id", grabID, "paths", scanPaths, "err", err)
+	if stashSidePath == "" {
+		p.log.Info("metadataScan skipped: placed path not mappable to a Stash path; awaiting scheduled scan",
+			"id", grabID, "placed", placedPath)
+		return
+	}
+	if jobID, err := sc.MetadataScan(ctx, []string{stashSidePath}); err != nil {
+		p.log.Warn("metadataScan trigger failed", "id", grabID, "path", stashSidePath, "err", err)
 	} else {
-		p.log.Info("metadataScan triggered", "id", grabID, "paths", scanPaths, "job_id", jobID)
+		p.log.Info("metadataScan triggered", "id", grabID, "path", stashSidePath, "job_id", jobID)
 	}
 }
 
