@@ -680,7 +680,13 @@ export interface GrabsResponse {
 // client manually — qBit torrents immediately (bypassing the 5-min adoption
 // grace), completed SAB jobs from history. Returns how many grabs were
 // created.
-export function adoptDownloads(): Promise<{ ok: boolean; adopted: number }> {
+export function adoptDownloads(): Promise<{
+  ok: boolean;
+  adopted: number;
+  // Torrents skipped only for being added in the last 90s — the periodic
+  // poller picks them up automatically within ~5 min.
+  skippedRecent: number;
+}> {
   return postJSON("/grabs/adopt", {});
 }
 

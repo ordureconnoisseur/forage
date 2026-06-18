@@ -1248,10 +1248,12 @@ const manualAdoptGrace = 90 * time.Second
 // AdoptNow force-adopts untracked forage-category torrents for the Grabs
 // "scan for new downloads" button — much sooner than the 5-minute periodic
 // grace, but still skipping torrents added in the last 90s so it can't race
-// forage's own in-flight adds. Returns how many were adopted. Safe alongside
-// the periodic tick: adoptOrphans serialises on adoptMu and the known-id
-// check prevents double-adoption.
-func (p *Poller) AdoptNow(ctx context.Context) int {
+// forage's own in-flight adds. Returns how many were adopted and how many
+// were skipped only for being too fresh (the button reports the latter so a
+// bulk add the user just made reads as "auto-adopting soon", not "nothing
+// new"). Safe alongside the periodic tick: adoptOrphans serialises on adoptMu
+// and the known-id check prevents double-adoption.
+func (p *Poller) AdoptNow(ctx context.Context) (adopted, skippedRecent int) {
 	return p.adoptOrphans(ctx, manualAdoptGrace)
 }
 
@@ -1262,16 +1264,18 @@ func (p *Poller) AdoptNow(ctx context.Context) int {
 // Scoped strictly to the forage category in each client; other categories
 // (the *arr stack, ad-hoc client use) are never touched. minAge applies
 // to the qBit pass only (see adoptQbitOrphans); SAB adoption is gated on
-// job completion instead. Returns the count adopted across both clients.
-func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
+// job completion instead. Returns the count adopted across both clients and
+// the count skipped only for being too fresh (qBit pass only).
+func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) (adopted, skippedRecent int) {
 	p.adoptMu.Lock()
 	defer p.adoptMu.Unlock()
 	known, err := p.repo.KnownClientIDs(ctx)
 	if err != nil {
 		p.log.Warn("adopt: known client ids", "err", err)
-		return 0
+		return 0, 0
 	}
-	return p.adoptQbitOrphans(ctx, known, minAge) + p.adoptSabOrphans(ctx, known)
+	qAdopted, skippedRecent := p.adoptQbitOrphans(ctx, known, minAge)
+	return qAdopted + p.adoptSabOrphans(ctx, known), skippedRecent
 }
 
 // adoptQbitOrphans is the qBit half of adoptOrphans: untracked torrents
@@ -1280,24 +1284,23 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) int {
 // than it (the periodic tick passes adoptionGrace; the manual button
 // passes manualAdoptGrace) so a torrent forage itself just added gets
 // linked to its existing grab first.
-func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, minAge time.Duration) int {
+func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, minAge time.Duration) (adopted, skippedRecent int) {
 	qb := p.pool.Qbit()
 	if qb == nil {
-		return 0
+		return
 	}
 	cat := p.pool.Settings().QbitCategory
 	if cat == "" {
-		return 0 // never adopt uncategorised torrents
+		return // never adopt uncategorised torrents
 	}
 	ts, err := qb.ListTorrents(ctx, qbit.ListOpts{Category: cat, Filter: "all"})
 	if err != nil {
 		p.log.Warn("adopt: list torrents", "err", err)
-		return 0
+		return
 	}
 	if len(ts) == 0 {
-		return 0
+		return
 	}
-	adopted := 0
 	now := time.Now().Unix()
 	graceSecs := int64(minAge / time.Second)
 	for i := range ts {
@@ -1305,8 +1308,10 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 		if t.Hash == "" || known[t.Hash] {
 			continue
 		}
-		// Give a UI-added torrent time to claim its own grab first.
+		// Give a UI-added torrent time to claim its own grab first. Counted
+		// so the manual button can say "N too new" rather than "nothing new".
 		if now-t.AddedOn < graceSecs {
+			skippedRecent++
 			continue
 		}
 		kind, videos, ok := p.classifyTorrent(ctx, qb, t.Hash)
@@ -1352,7 +1357,7 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 		p.log.Info("adopted qbit torrent", "id", id, "name", t.Name,
 			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder)
 	}
-	return adopted
+	return
 }
 
 // sabAdoptWindow bounds SAB history adoption to recent completions. SAB's

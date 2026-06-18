@@ -124,7 +124,9 @@ export default function GrabsList({
       setNotice(
         res.adopted > 0
           ? `Adopted ${res.adopted} download${res.adopted === 1 ? "" : "s"}`
-          : "Nothing new to adopt",
+          : res.skippedRecent > 0
+            ? `${res.skippedRecent} too new, auto-adopting soon`
+            : "Nothing new to adopt",
       );
       await refresh();
     } catch (e) {

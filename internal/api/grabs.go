@@ -134,9 +134,9 @@ func (s *Server) postAdopt(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "adoption unavailable (no poller)")
 		return
 	}
-	n := s.adoptNow(r.Context())
-	s.log.Info("manual adopt", "adopted", n)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "adopted": n})
+	n, skippedRecent := s.adoptNow(r.Context())
+	s.log.Info("manual adopt", "adopted", n, "skipped_recent", skippedRecent)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "adopted": n, "skippedRecent": skippedRecent})
 }
 
 // getGrabs returns the most-recent grabs with status totals for the

@@ -1072,7 +1072,7 @@ func TestSabReviveFalseFailed(t *testing.T) {
 
 	// Revival is NOT an adoption — the nzo is already known, so nothing new is
 	// inserted; AdoptNow's count must stay 0.
-	if n := r.poller.AdoptNow(ctx); n != 0 {
+	if n, _ := r.poller.AdoptNow(ctx); n != 0 {
 		t.Fatalf("AdoptNow adopted=%d, want 0 (revive is not adoption)", n)
 	}
 

@@ -41,7 +41,7 @@ type Server struct {
 	watches   *watches.Repo // never nil
 	log       *slog.Logger
 	version   string
-	adoptNow  func(context.Context) int // force-adopt callback (poller.AdoptNow); may be nil
+	adoptNow  func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
 
 	// torrentGate spaces out .torrent fetches (addTorrentAsync) so a bulk
 	// grab or bulk-retry doesn't burst the indexer into HTTP 429s. Zero value
@@ -139,8 +139,9 @@ type Options struct {
 	Version   string
 	// AdoptNow force-adopts untracked forage-category download-client
 	// torrents immediately (poller.AdoptNow), bypassing the adoption grace.
-	// Backs the Grabs "scan for new downloads" button. Returns the count.
-	AdoptNow func(context.Context) int
+	// Backs the Grabs "scan for new downloads" button. Returns the count
+	// adopted and the count skipped only for being too fresh.
+	AdoptNow func(context.Context) (int, int)
 }
 
 func New(opts Options) *Server {
