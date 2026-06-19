@@ -101,6 +101,47 @@ func TestPlaceDirFresh(t *testing.T) {
 	}
 }
 
+// TestPlaceDirPrematureEmptySourceErrors covers the placement race that
+// stranded a pack for ~20h: the download client reported the release
+// complete before it finished moving files into the complete dir, so Place
+// mirrored an empty source — zero files into an empty destination. That
+// must be an error (so the poller keeps the grab "completed" and retries),
+// NOT a silent success that marks the grab placed against an empty folder
+// forever. Once the source finishes moving in, the retry must place it.
+func TestPlaceDirPrematureEmptySourceErrors(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "NotReadyPack")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+
+	// Source dir exists but files haven't moved in yet: must error.
+	if _, err := p.Place(src, "Performer"); err == nil {
+		t.Fatal("Place on an empty source dir returned nil; want a retry error")
+	}
+
+	// The download finishes moving in; the retry must now place the files.
+	for _, n := range []string{"a.mkv", "b.mkv"} {
+		if err := os.WriteFile(filepath.Join(src, n), []byte(n), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	res, err := p.Place(src, "Performer")
+	if err != nil {
+		t.Fatalf("Place after source populated: %v", err)
+	}
+	if res.Mode == "" {
+		t.Errorf("expected files placed, got idempotent")
+	}
+	for _, n := range []string{"a.mkv", "b.mkv"} {
+		if _, err := os.Stat(filepath.Join(res.Path, n)); err != nil {
+			t.Errorf("missing %s after retry: %v", n, err)
+		}
+	}
+}
+
 // TestPlaceDirCollisionSuffixes is the directory analogue of the
 // single-file collision guarantee: a DIFFERENT release whose folder has
 // the same name (pack folders are routinely just the performer's name)

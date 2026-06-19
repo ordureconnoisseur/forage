@@ -172,6 +172,19 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 			return Result{}, err
 		}
 		if placed == 0 {
+			// placed==0 is a legitimate no-op ONLY when the destination
+			// already holds the tree (a re-run of a finished placement). If
+			// the destination is still empty, the source had nothing to
+			// mirror — the download client reported the release complete
+			// before it finished moving files into place (moving a large
+			// pack across a CIFS mount isn't instant). Recording success
+			// would strand the grab: marked "placed" against an empty
+			// folder, it never re-places and Stash never sees the files.
+			// Return an error so the poller keeps the grab in "completed"
+			// and retries once the source is populated.
+			if dirHasNoFiles(destPath) {
+				return Result{}, fmt.Errorf("nothing placed and destination is empty (source %q not finished moving in)", srcPath)
+			}
 			return Result{Path: destPath}, nil
 		}
 		return Result{Path: destPath, Mode: mode}, nil
@@ -344,6 +357,25 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 		return "", 0, fmt.Errorf("mirror tree: %w", err)
 	}
 	return mode, placed, nil
+}
+
+// dirHasNoFiles reports whether dir contains no regular files — it's empty
+// or holds only (empty) subdirectories. Used to tell a premature tree
+// placement (download client reported complete before moving files in)
+// from a genuine idempotent re-run, which leaves the whole tree present.
+func dirHasNoFiles(dir string) bool {
+	hasFile := false
+	_ = filepath.WalkDir(dir, func(_ string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable entry: keep looking rather than crash
+		}
+		if !d.IsDir() {
+			hasFile = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return !hasFile
 }
 
 // dirTarget picks the destination directory for a tree placement by
