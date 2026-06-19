@@ -5972,6 +5972,20 @@ code.grab-fact-v,
     gap: 10px;
     padding: 10px 12px 10px 16px;
   }
+  /* Stack the status/PACK/ADOPTED badges vertically on phones. In a row
+     three of them widen the badge column enough to crush the title into
+     an ellipsis ("Angie Fait…"); stacked, the column stays one badge
+     wide and the title gets the room back. The children's own
+     align-self:center (PACK/ADOPTED) would otherwise float them off the
+     left edge, so pin every badge to the start for a clean column. */
+  .grab-row-badges {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .grab-row-badges > * {
+    align-self: flex-start;
+  }
 
   /* Grabs filter header: five stacked rows of pills and labels is a
      wall on a phone. Collapse to one horizontally swipeable chip strip
