@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
@@ -512,7 +513,11 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		}
 		if needle != "" {
 			scene, err := stashC.FindSceneByPathContains(ctx, needle)
-			if err != nil {
+			if err != nil && !errors.Is(err, clienterr.ErrNotFound) {
+				// A real lookup failure (transient Stash error). ErrNotFound is
+				// NOT one: it's the expected "scene not indexed yet" state, which
+				// must fall through to the not-found handling below (re-scan /
+				// orphan), exactly as the old (nil, nil) did.
 				confirmErr = err
 				scene = nil
 			}

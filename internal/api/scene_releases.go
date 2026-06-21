@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
@@ -102,7 +104,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	lean := r.URL.Query().Get("lean") == "1"
 
 	scene, err := stashDBC.FindScene(r.Context(), id)
-	if err != nil {
+	if err != nil && !errors.Is(err, clienterr.ErrNotFound) {
 		s.log.Error("findScene", "err", err)
 		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
 		return

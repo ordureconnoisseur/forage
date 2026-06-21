@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/gqlclient"
 )
 
@@ -228,7 +229,7 @@ query ForagerQueryScenes($input: SceneQueryInput!) {
 // target scene's title + studio + date before searching Prowlarr.
 func (c *Client) FindScene(ctx context.Context, id string) (*Scene, error) {
 	if id == "" {
-		return nil, nil
+		return nil, clienterr.ErrNotFound
 	}
 	q := `
 query ForagerFindScene($id: ID!) {
@@ -243,7 +244,7 @@ query ForagerFindScene($id: ID!) {
 		return nil, err
 	}
 	if resp.FindScene == nil {
-		return nil, nil
+		return nil, clienterr.ErrNotFound
 	}
 	s := resp.FindScene.toScene()
 	return &s, nil

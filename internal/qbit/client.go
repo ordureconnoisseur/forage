@@ -502,15 +502,16 @@ func (c *Client) Categories(ctx context.Context) (map[string]Category, error) {
 	return out, nil
 }
 
-// TorrentInfo returns a single torrent by hash, or nil if qBit doesn't
-// know about it (deleted, never added, race). Uses the hashes= filter so
-// qBit returns just that torrent — this used to download and decode the
-// entire torrent list (hundreds of entries on a long-seeding box) to
-// find one row. The EqualFold scan stays as cheap insurance against
+// TorrentInfo returns a single torrent by hash, or clienterr.ErrNotFound if
+// qBit doesn't know about it (deleted, never added, race) so callers can tell
+// "definitely gone" from a transient list-fetch failure with errors.Is. Uses
+// the hashes= filter so qBit returns just that torrent — this used to download
+// and decode the entire torrent list (hundreds of entries on a long-seeding
+// box) to find one row. The EqualFold scan stays as cheap insurance against
 // hash-casing mismatches (qBit reports lowercase hashes).
 func (c *Client) TorrentInfo(ctx context.Context, hash string) (*Torrent, error) {
 	if hash == "" {
-		return nil, nil
+		return nil, clienterr.ErrNotFound
 	}
 	ts, err := c.ListTorrents(ctx, ListOpts{Filter: "all", Hashes: []string{strings.ToLower(hash)}})
 	if err != nil {
@@ -521,7 +522,7 @@ func (c *Client) TorrentInfo(ctx context.Context, hash string) (*Torrent, error)
 			return &ts[i], nil
 		}
 	}
-	return nil, nil
+	return nil, clienterr.ErrNotFound
 }
 
 // TorrentFile is one entry from /api/v2/torrents/files.

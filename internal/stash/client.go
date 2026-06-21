@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/gqlclient"
 )
 
@@ -497,7 +498,7 @@ query ForagerFindSceneByPath($value: String!) {
 // Returns nil scene + nil err when no match (poller retries next tick).
 func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*SceneMatch, error) {
 	if needle == "" {
-		return nil, nil
+		return nil, clienterr.ErrNotFound
 	}
 	// Anchor the needle as a complete path segment: directly after a
 	// separator, running to a separator or end-of-path. An unanchored
@@ -527,7 +528,7 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 		return nil, fmt.Errorf("findScenes by path: %w", err)
 	}
 	if len(resp.FindScenes.Scenes) == 0 {
-		return nil, nil
+		return nil, clienterr.ErrNotFound
 	}
 	s := resp.FindScenes.Scenes[0]
 	out := &SceneMatch{

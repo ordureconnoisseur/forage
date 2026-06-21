@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
@@ -81,7 +82,7 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	scene, err := sdb.FindScene(r.Context(), target)
-	if err != nil {
+	if err != nil && !errors.Is(err, clienterr.ErrNotFound) {
 		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
 		return
 	}
@@ -91,7 +92,7 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	local, err := sc.FindSceneByPathContains(r.Context(), lastPathSegment(grab.PlacedPath))
-	if err != nil {
+	if err != nil && !errors.Is(err, clienterr.ErrNotFound) {
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
 		return
 	}

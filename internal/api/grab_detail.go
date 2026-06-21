@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 )
@@ -238,7 +240,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 			}
 		case sc != nil:
 			scene, ferr := sc.FindSceneByPathContains(r.Context(), filepath.Base(g.PlacedPath))
-			if ferr != nil {
+			if ferr != nil && !errors.Is(ferr, clienterr.ErrNotFound) {
 				addErr("find stash scene", ferr)
 			} else if scene != nil && !sameParentDir(scene.FilePath, g.PlacedPath) {
 				// The lookup is keyed on basename, and even segment-anchored
