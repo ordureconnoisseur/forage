@@ -2505,6 +2505,27 @@ button {
   --tone: var(--amber);
   --tone-rgb: 212, 161, 74;
 }
+/* Transient state while we ask Stash whether the placed scene is linked —
+   neutral grey, ring slowly spinning, so we never flash "not identified"
+   at a scene that turns out to be identified. */
+.grab-match-hero.checking {
+  --tone: rgba(255, 255, 255, 0.6);
+  --tone-rgb: 255, 255, 255;
+}
+.grab-match-hero.checking .ring {
+  opacity: 0.55;
+  stroke-dasharray: 70 40;
+  transform-origin: center;
+  animation: matchSpin 0.9s linear infinite;
+}
+@keyframes matchSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
 /* One-time light sweep across the card on reveal. */
 .grab-match-hero::after {
   content: "";

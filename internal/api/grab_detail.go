@@ -26,6 +26,13 @@ type grabDetailResponse struct {
 	Performers    []missingPerformer `json:"performers"`
 	LocalSceneID  string             `json:"local_scene_id,omitempty"`
 	StashSceneURL string             `json:"stash_scene_url,omitempty"`
+	// LocalStashDBID is the StashDB cross-id actually on the placed scene in
+	// the user's Stash, the source of truth for "is this identified?". It can
+	// differ from the grab's own actual_stashdb_id: an adopted single often
+	// settles "in library (scanned)" before Stash's identify lands (or the
+	// user identifies it by hand later), so the grab record stays blank while
+	// Stash holds the real link. The card trusts this over the grab field.
+	LocalStashDBID string `json:"local_stashdb_id,omitempty"`
 	// PerformerImageURL is the grab performer's portrait, served by the
 	// user's own Stash (/performer/{id}/image). Forage is performer-driven
 	// and a pack has no single scene, so the expanded card leads with the
@@ -99,6 +106,10 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 		if sc := s.pool.Stash(); sc != nil {
 			if scene, err := sc.FindSceneByPathContains(r.Context(), filepath.Base(g.PlacedPath)); err == nil && scene != nil {
 				resp.LocalSceneID = scene.ID
+				// The cross-id Stash actually holds on this file — the truth
+				// for the card's identified/not-identified hero, regardless of
+				// what the grab record captured.
+				resp.LocalStashDBID = scene.StashDBID
 				cfg, _ := config.Compose(s.bootstrap, s.store.Get())
 				if cfg.StashURL != "" {
 					// "View in Stash" opens the user's Stash UI directly, so

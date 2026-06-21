@@ -727,6 +727,11 @@ export interface GrabDetail {
   performers: { name: string; as?: string }[];
   local_scene_id?: string;
   stash_scene_url?: string;
+  // The StashDB cross-id actually on the placed scene in Stash — the truth
+  // for "is this identified?", which can outrun the grab's actual_stashdb_id
+  // (an adopted single settles before identify lands, or you match it by
+  // hand later). The identify hero trusts this over the grab field.
+  local_stashdb_id?: string;
   // Ranked local-performer guesses from the release title — the one-click
   // options for reassigning a mis-filed / Unsorted grab. Absent for packs.
   performer_suggestions?: {

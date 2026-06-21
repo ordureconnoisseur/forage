@@ -1006,12 +1006,29 @@ function MatchBlock({ g }: { g: Grab }) {
 // IdentifyBlock is the adopted-scene analogue of MatchBlock's hero.
 // Adopted grabs carry no prediction (you added the torrent to qBit
 // yourself), so there's nothing to "match" against — only whether Stash
-// linked the file to a StashDB scene. Green confirmed hero with the same
-// check glyph when it did; an understated amber hero when it hasn't, where
-// the Find-matches tool below is the fix.
-function IdentifyBlock({ g }: { g: Grab }) {
-  const actual = g.actual_stashdb_id;
-  if (actual) {
+// linked the file to a StashDB scene.
+//
+// The truth is the cross-id on the placed scene in Stash (detail's
+// local_stashdb_id), NOT the grab's own actual_stashdb_id: an adopted
+// single often settles "in library (scanned)" before Stash's identify
+// lands, or you identify it by hand later, so the grab field stays blank
+// while Stash already holds the link. We trust detail and only fall back
+// to the grab field (which gives an instant green for forage-identified
+// adoptions, no wait for detail). While detail is still loading and the
+// grab field is blank we show a neutral "checking" state rather than
+// flashing "not identified" at a scene that turns out to be linked.
+function IdentifyBlock({
+  g,
+  detail,
+  detailLoading,
+}: {
+  g: Grab;
+  detail: GrabDetail | null;
+  detailLoading: boolean;
+}) {
+  const linked = g.actual_stashdb_id || detail?.local_stashdb_id || "";
+
+  if (linked) {
     return (
       <div className="grab-match-hero confirmed">
         <svg
@@ -1027,17 +1044,38 @@ function IdentifyBlock({ g }: { g: Grab }) {
           <div className="grab-match-hero-sub">
             Linked to a StashDB scene ·{" "}
             <a
-              href={stashdbScene(actual)}
+              href={stashdbScene(linked)}
               target="_blank"
               rel="noopener noreferrer"
             >
-              {actual}
+              {linked}
             </a>
           </div>
         </div>
       </div>
     );
   }
+
+  if (detailLoading && !detail) {
+    return (
+      <div className="grab-match-hero checking">
+        <svg
+          className="grab-match-glyph"
+          viewBox="0 0 40 40"
+          aria-hidden="true"
+        >
+          <circle className="ring" cx="20" cy="20" r="17" />
+        </svg>
+        <div className="grab-match-hero-body">
+          <div className="grab-match-hero-title">Checking Stash…</div>
+          <div className="grab-match-hero-sub">
+            Looking up whether this scene is linked to StashDB.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grab-match-hero unidentified">
       <svg
@@ -1974,7 +2012,11 @@ function GrabRow({
           <div className="grab-facts">
             {g.predicted_stashdb_id && <MatchBlock g={g} />}
             {!g.predicted_stashdb_id && g.placed_path && (
-              <IdentifyBlock g={g} />
+              <IdentifyBlock
+                g={g}
+                detail={detail}
+                detailLoading={detailLoading}
+              />
             )}
             {g.placed_path && (
               <div className="grab-fact">
