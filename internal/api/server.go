@@ -207,6 +207,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/adopt", s.postAdopt)
 		r.Post("/grabs/retry-failed", s.postRetryAllFailed)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
+		r.Get("/grabs/{id}/match-candidates", s.getGrabMatchCandidates)
 		r.Post("/grabs/{id}/match", s.postGrabMatch)
 		r.Post("/grabs/{id}/performer", s.postGrabPerformer)
 		r.Post("/grabs/{id}/retry", s.postGrabRetry)
