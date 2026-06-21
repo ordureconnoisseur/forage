@@ -270,8 +270,23 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 
 	wg.Wait()
 
-	if len(errs) > 0 {
-		return nil, errors.Join(errs...)
+	// Degrade gracefully on a PARTIAL source failure. Track A fans out several
+	// StashDB queries and Track B a full-text search; a transient failure in
+	// one (a 502, a rate-limit on the broad fallback, a timeout) must not
+	// discard the candidates the others already produced. Every caller treats a
+	// non-nil error as "throw the candidates away" (match.go 500s, the stream
+	// callers skip the release), so returning the join here silently tanks
+	// recall on a blip. Only surface an error when we have NOTHING usable:
+	// zero candidates AND at least one failure. With candidates in hand we
+	// score and return them (a partial match beats none); zero candidates with
+	// no errors is a legitimate "no match" and returns empty, nil.
+	//
+	// Note: a partial failure is not logged here (the matcher has no logger and
+	// runs per-release in hot batches). The dropped queries are transient
+	// client errors; classifying and retrying them at the client boundary is
+	// the durable fix (see docs/error-handling.md, phases 1 and 3).
+	if err := matchOutcomeErr(len(candidates), errs); err != nil {
+		return nil, err
 	}
 
 	// Score candidates.
@@ -295,6 +310,20 @@ func (m *Matcher) matchWithCache(ctx context.Context, releaseName string, cache 
 		out = out[:maxCandidatesReturned]
 	}
 	return out, nil
+}
+
+// matchOutcomeErr decides whether per-source failures should fail the whole
+// match. The match fans out across several StashDB queries and a full-text
+// search; one failing must not discard the candidates the others produced
+// (every caller throws candidates away on a non-nil error). So a failure is
+// fatal ONLY when nothing usable survived: zero candidates AND at least one
+// error. Candidates in hand → degrade to success (nil). Zero candidates with
+// no errors is a legitimate empty match, also nil.
+func matchOutcomeErr(candidateCount int, errs []error) error {
+	if candidateCount == 0 && len(errs) > 0 {
+		return errors.Join(errs...)
+	}
+	return nil
 }
 
 // rankCandidates orders candidates best-first, deterministically:

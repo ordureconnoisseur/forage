@@ -416,14 +416,20 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	}
 	settings := s.pool.Settings()
 	// Reset the failure, but KEEP the client link: a torrent's info-hash
-	// doesn't change on retry, and clearing g.ClientID would drop the
-	// torrent out of KnownClientIDs — so a still-present qBit torrent (with
-	// its original, often past-grace AddedOn) gets adopted as a DUPLICATE
-	// grab. addTorrentAsync re-adds idempotently and links the hash only if
-	// we don't already have one.
-	g.Status = "queued"
-	g.Reason = "retry requested"
-	g.PlaceError = ""
+	// doesn't change on retry, and clearing ClientID would drop the torrent
+	// out of KnownClientIDs — so a still-present qBit torrent (with its
+	// original, often past-grace AddedOn) gets adopted as a DUPLICATE grab.
+	// addTorrentAsync re-adds idempotently and links the hash only if we don't
+	// already have one.
+	//
+	// The write goes through applyGrabUpdate (Get → apply → CAS-Update, retried
+	// on a stale rev) rather than from this handler's snapshot: a poller tick
+	// that advances the row between the handler's Get and our write would make a
+	// bare Update lose the optimistic lock — surfacing as a spurious 500 (single
+	// retry) or a silently-skipped grab (bulk retry-all). applyReset is
+	// deterministic, so re-running it on a freshly-loaded row is idempotent,
+	// which applyGrabUpdate requires.
+	//
 	// A retry is a fresh add to the client, so re-arm every clock keyed on
 	// GrabbedAt — the SAB register grace (else the first tick can't find the
 	// new nzo and re-fails it), the qBit link timeout, and pickRecent's
@@ -432,8 +438,7 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	// timestamps reset too: a stale completed_at from the previous attempt
 	// would otherwise feed the orphan/identify-grace clocks, instantly
 	// orphaning the new attempt (or prematurely confirming a pack) when the
-	// retry happens later than the orphan window after the original
-	// completion.
+	// retry happens later than the orphan window after the original completion.
 	//
 	// EXCEPT when the previous attempt already placed a file: the poller's
 	// premature-placement heal treats "placed_path set + download progress
@@ -442,14 +447,19 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	// a legitimate library copy the moment the retried download starts. A
 	// placed grab keeps its lifecycle stamps; its file confirms on the
 	// placed path regardless of the new attempt's clock.
-	now := time.Now().Unix()
-	g.GrabbedAt = now
-	g.Progress = 0
-	g.ProgressAt = now
-	if g.PlacedPath == "" {
-		g.CompletedAt = 0
-		g.PlacedAt = 0
-		g.ConfirmedAt = 0
+	applyReset := func(fresh *grabs.Grab) {
+		fresh.Status = "queued"
+		fresh.Reason = "retry requested"
+		fresh.PlaceError = ""
+		now := time.Now().Unix()
+		fresh.GrabbedAt = now
+		fresh.Progress = 0
+		fresh.ProgressAt = now
+		if fresh.PlacedPath == "" {
+			fresh.CompletedAt = 0
+			fresh.PlacedAt = 0
+			fresh.ConfirmedAt = 0
+		}
 	}
 
 	switch g.Client {
@@ -461,11 +471,13 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 		if cat == "" {
 			cat = settings.QbitCategory
 		}
-		g.Category = cat
-		if g.ClientID == "" {
-			g.ClientID = magnetInfoHash(g.DownloadURL) // pin magnet hash when we have none
-		}
-		if err := s.grabs.Update(ctx, *g); err != nil {
+		if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
+			applyReset(fresh)
+			fresh.Category = cat
+			if fresh.ClientID == "" {
+				fresh.ClientID = magnetInfoHash(fresh.DownloadURL) // pin magnet hash when we have none
+			}
+		}); err != nil {
 			return err
 		}
 		go s.addTorrentAsync(g.DownloadURL, cat, g.ReleaseTitle, g.ID)
@@ -478,14 +490,20 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 		if cat == "" {
 			cat = settings.SabCategory
 		}
+		// AddURL is a real side effect (it enqueues the NZB) and returns the
+		// nzo_id we must persist, so it runs ONCE here, before the CAS write —
+		// not inside the applyGrabUpdate closure, which can re-run on a stale
+		// row and would enqueue the download twice.
 		clientID, aerr := sb.AddURL(ctx, g.DownloadURL, cat)
 		if aerr != nil {
 			s.failGrab(ctx, g.ID, "retry add: "+aerr.Error())
 			return grabError{http.StatusBadGateway, "sabnzbd: " + aerr.Error()}
 		}
-		g.Category = cat
-		g.ClientID = clientID
-		if err := s.grabs.Update(ctx, *g); err != nil {
+		if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
+			applyReset(fresh)
+			fresh.Category = cat
+			fresh.ClientID = clientID
+		}); err != nil {
 			return err
 		}
 	default:
