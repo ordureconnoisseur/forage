@@ -1727,6 +1727,35 @@ function GrabRow({
               ADOPTED
             </span>
           )}
+          {/* Adopted scenes carry no prediction, so the green "confirmed"
+              chip alone can't tell a StashDB-linked scene from one that's
+              merely in the library unidentified. Surface that distinction:
+              green check borrowed from the match hero when linked, amber
+              when still unmatched. */}
+          {g.adopted &&
+            g.placed_path &&
+            (g.actual_stashdb_id ? (
+              <span
+                className="grab-ident-badge is-identified"
+                title="Identified in Stash — linked to a StashDB scene, metadata applied"
+              >
+                <svg
+                  className="grab-ident-glyph"
+                  viewBox="0 0 16 16"
+                  aria-hidden="true"
+                >
+                  <path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />
+                </svg>
+                IDENTIFIED
+              </span>
+            ) : (
+              <span
+                className="grab-ident-badge is-unidentified"
+                title="In your library but not identified — no StashDB match yet. Open the card and use Find matches to link it."
+              >
+                UNIDENTIFIED
+              </span>
+            ))}
         </div>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>

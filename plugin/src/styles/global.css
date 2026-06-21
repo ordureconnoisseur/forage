@@ -5541,6 +5541,42 @@ code.grab-fact-v,
   color: #aebfd4;
 }
 
+/* Adopted-scene identify state — at a glance, did Stash link this to a
+   StashDB scene? Positive case borrows the confirmed green + the check
+   glyph from the match hero (without the word "matched"); the still-
+   unmatched case is amber. Same pill family as ADOPTED. */
+.grab-ident-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+}
+.grab-ident-badge.is-identified {
+  background: var(--status-confirmed-bg);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  color: var(--accent-bright);
+}
+.grab-ident-badge.is-unidentified {
+  background: rgba(212, 161, 74, 0.13);
+  border: 1px solid rgba(212, 161, 74, 0.4);
+  color: var(--amber);
+}
+.grab-ident-glyph {
+  width: 11px;
+  height: 11px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
 /* Place-failing badge — downloaded but can't get into the library.
    Same pill family as ADOPTED/STALLED, danger-toned (the file's stuck). */
 .grab-placefail-badge {
