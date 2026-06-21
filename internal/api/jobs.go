@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"runtime/debug"
 	"sort"
@@ -142,13 +141,7 @@ func (s *Server) postCollectionJob(w http.ResponseWriter, r *http.Request) {
 	}
 	job, err := s.startCollectionJob(r.Context(), req.PerformerID, req.SceneIDs, req.Upgrade)
 	if err != nil {
-		var ge grabError
-		status := http.StatusBadGateway
-		msg := err.Error()
-		if errors.As(err, &ge) {
-			status, msg = ge.status, ge.msg
-		}
-		writeErr(w, status, msg)
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, http.StatusOK, job.snapshot(true))
@@ -269,12 +262,7 @@ func (s *Server) postCollectionJobGrab(w http.ResponseWriter, r *http.Request) {
 		PerformerName:  perfName,
 	})
 	if err != nil {
-		var ge grabError
-		if errors.As(err, &ge) {
-			writeErr(w, ge.status, ge.msg)
-			return
-		}
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
 	}
 

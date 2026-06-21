@@ -5,8 +5,10 @@ import (
 	"database/sql"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -454,6 +456,57 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// pathInt64 reads a chi URL path param as an int64, writing a 400 and
+// returning ok=false when it's missing or non-numeric. Centralizes the parse
+// every resource handler repeats.
+func pathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	v, err := strconv.ParseInt(chi.URLParam(r, name), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad "+name)
+		return 0, false
+	}
+	return v, true
+}
+
+// grabByID resolves the {id} path param to a grab, writing the right error
+// (400 bad id / 500 db / 404 not found) and returning ok=false on any miss, so
+// handlers collapse the parse + fetch + 404 boilerplate to a single call.
+func (s *Server) grabByID(w http.ResponseWriter, r *http.Request) (*grabs.Grab, bool) {
+	id, ok := pathInt64(w, r, "id")
+	if !ok {
+		return nil, false
+	}
+	g, err := s.grabs.Get(r.Context(), id)
+	if err != nil {
+		s.log.Error("grab get", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return nil, false
+	}
+	if g == nil {
+		writeErr(w, http.StatusNotFound, "grab not found")
+		return nil, false
+	}
+	return g, true
+}
+
+// writeMappedErr renders err with the right HTTP status: a grabError carries
+// its own; a notConfiguredErr is 503; anything else uses defaultStatus. Folds
+// the errors.As ladders that were copy-pasted across the grab/job/watch
+// handlers into one place.
+func writeMappedErr(w http.ResponseWriter, err error, defaultStatus int) {
+	var ge grabError
+	if errors.As(err, &ge) {
+		writeErr(w, ge.status, ge.msg)
+		return
+	}
+	var nc notConfiguredErr
+	if errors.As(err, &nc) {
+		writeErr(w, http.StatusServiceUnavailable, nc.Error())
+		return
+	}
+	writeErr(w, defaultStatus, err.Error())
 }
 
 // errNotConfigured is returned by handlers that need a client the

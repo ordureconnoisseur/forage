@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
@@ -37,20 +35,11 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "stash and stashdb must be configured")
 		return
 	}
-	gid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad grab id")
+	grab, ok := s.grabByID(w, r)
+	if !ok {
 		return
 	}
-	grab, err := s.grabs.Get(r.Context(), gid)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	if grab == nil {
-		writeErr(w, http.StatusNotFound, "grab not found")
-		return
-	}
+	gid := grab.ID
 	if grab.Kind == "pack" {
 		// A pack is many scenes; applying one StashDB scene's metadata to
 		// it would resolve a single arbitrary member and overwrite it.

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
@@ -66,9 +65,8 @@ type resolveDuplicateResponse struct {
 // is only marked resolved when every intended destroy succeeded, so a
 // transient Stash failure leaves it pending for a retry.
 func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad duplicate id")
+	id, ok := pathInt64(w, r, "id")
+	if !ok {
 		return
 	}
 

@@ -9,12 +9,10 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
@@ -67,12 +65,7 @@ func (s *Server) postGrab(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.doGrab(r.Context(), req)
 	if err != nil {
-		var ge grabError
-		if errors.As(err, &ge) {
-			writeErr(w, ge.status, ge.msg)
-			return
-		}
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -381,23 +374,12 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "grabs unavailable")
 		return
 	}
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad id")
-		return
-	}
-	g, err := s.grabs.Get(r.Context(), id)
-	if err != nil || g == nil {
-		writeErr(w, http.StatusNotFound, "grab not found")
+	g, ok := s.grabByID(w, r)
+	if !ok {
 		return
 	}
 	if err := s.retryGrab(r.Context(), g); err != nil {
-		var ge grabError
-		if errors.As(err, &ge) {
-			writeErr(w, ge.status, ge.msg)
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		writeMappedErr(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

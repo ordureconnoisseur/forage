@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -168,12 +167,7 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 		SceneID:        wt.StashDBID,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {
-		var ge grabError
-		if errors.As(err, &ge) {
-			writeErr(w, ge.status, ge.msg)
-			return
-		}
-		writeErr(w, http.StatusBadGateway, err.Error())
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
 	}
 	// Grabbed → the watch is done; remove it.

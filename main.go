@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -69,20 +70,33 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Every background goroutine joins this group so shutdown can wait for
+	// them to unwind before the deferred database.Close() runs — otherwise a
+	// tick mid-write hits a closed DB on the way out. They all already exit on
+	// ctx.Done(); bg just lets main observe that they have.
+	var bg sync.WaitGroup
+	launch := func(fn func()) {
+		bg.Add(1)
+		go func() {
+			defer bg.Done()
+			fn()
+		}()
+	}
+
 	// Cache refresh goroutines hold the *Pool, not individual clients,
 	// so hot-swapped Stash credentials reach the next tick automatically.
-	go maybeRefreshOnBoot(ctx, pool, database, log.With("component", "cache"), cfg.CacheRefresh)
-	go runRefreshTicker(ctx, pool, database, log.With("component", "cache"), cfg.CacheRefresh)
+	launch(func() { maybeRefreshOnBoot(ctx, pool, database, log.With("component", "cache"), cfg.CacheRefresh) })
+	launch(func() { runRefreshTicker(ctx, pool, database, log.With("component", "cache"), cfg.CacheRefresh) })
 	// Trending refreshes on its own 1h cadence — StashDB's trending
 	// list changes faster than the 12h performer-filtered cache.
-	go runTrendingTicker(ctx, pool, database, log.With("component", "trending"))
+	launch(func() { runTrendingTicker(ctx, pool, database, log.With("component", "trending")) })
 
 	grabsRepo := grabs.NewRepo(database)
 	// Phase B grabs poller — always start; the poller itself short-circuits
 	// when no download clients are configured (pool.Qbit() / Sab() = nil).
 	p := poller.New(grabsRepo, database, pool, log.With("component", "poller"),
 		cfg.PollInterval, cfg.OrphanAfter)
-	go p.Run(ctx)
+	launch(func() { p.Run(ctx) })
 
 	watchesRepo := watches.NewRepo(database)
 
@@ -100,7 +114,7 @@ func main() {
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-
 	// over-24h cadence and flips them to "available" (never grabs).
-	go server.RunWatchLoop(ctx)
+	launch(func() { server.RunWatchLoop(ctx) })
 
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,
@@ -120,6 +134,24 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = httpServer.Shutdown(shutdownCtx)
+
+	// Wait for the background goroutines to finish unwinding (they're already
+	// cancelled via ctx) before the deferred database.Close() runs, so a tick
+	// mid-write doesn't race a closed DB. Bounded so a wedged goroutine can't
+	// hang shutdown past docker's stop grace; the WAL is durable either way.
+	waitForBackground(&bg, 3*time.Second, log)
+}
+
+// waitForBackground blocks until every tracked background goroutine has
+// returned, or d elapses (logging a warning), whichever comes first.
+func waitForBackground(wg *sync.WaitGroup, d time.Duration, log *slog.Logger) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+		log.Warn("shutdown: background goroutines did not stop in time; closing anyway")
+	}
 }
 
 // logBootProbes hits each configured client at startup so the logs

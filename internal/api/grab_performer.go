@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
@@ -25,9 +23,8 @@ type setPerformerRequest struct {
 //
 //	POST /grabs/{id}/performer   body: { "performer_name": "Brie Belle" }
 func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
-	gid, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad grab id")
+	gid, ok := pathInt64(w, r, "id")
+	if !ok {
 		return
 	}
 	var req setPerformerRequest

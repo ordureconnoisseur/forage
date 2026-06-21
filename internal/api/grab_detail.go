@@ -6,10 +6,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
@@ -62,21 +60,11 @@ type grabDetailResponse struct {
 // Stash. Both lookups are best-effort: a grab that hasn't landed yet
 // just renders with whatever's available.
 func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad grab id")
+	g, ok := s.grabByID(w, r)
+	if !ok {
 		return
 	}
-	g, err := s.grabs.Get(r.Context(), id)
-	if err != nil {
-		s.log.Error("grab get", "err", err)
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	if g == nil {
-		writeErr(w, http.StatusNotFound, "grab not found")
-		return
-	}
+	id := g.ID
 
 	resp := grabDetailResponse{Performers: []missingPerformer{}}
 
@@ -183,21 +171,11 @@ type deleteGrabResponse struct {
 //  3. Download-client copy: qBit torrent+files / SAB history+files.
 //  4. The grab row itself.
 func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
-	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad grab id")
+	g, ok := s.grabByID(w, r)
+	if !ok {
 		return
 	}
-	g, err := s.grabs.Get(r.Context(), id)
-	if err != nil {
-		s.log.Error("grab get", "err", err)
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	if g == nil {
-		writeErr(w, http.StatusNotFound, "grab not found")
-		return
-	}
+	id := g.ID
 
 	out := deleteGrabResponse{}
 	addErr := func(label string, err error) {

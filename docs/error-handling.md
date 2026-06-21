@@ -144,23 +144,31 @@ Two items originally bundled here were dropped after closer reading:
   value (current handling is correct) and high risk (rewires live confirm
   branching), so it belongs with a careful, separately-tested pass.
 
-### Phase 3 - actively consume the classification + consistency cleanups
+### Phase 3 - actively consume the classification + consistency cleanups (DONE)
 
-- Add bounded retry + backoff to the Prowlarr search (the one client that
-  observably times out and currently has zero retry), gated on
-  `errors.Is(err, clienterr.ErrTransient)` — the first real consumer of the
-  Phase 1 classification.
-- Flip the `(nil, nil)` "not found" lookups (`qbit.TorrentInfo`,
-  `stash.FindSceneByPathContains`, `stashdb.FindScene`) to `ErrNotFound`, and
-  update every consumer to branch on `errors.Is(err, ErrNotFound)` — most
-  importantly the poller confirm path, which must keep treating "scene not in
-  Stash yet" as a wait, not a hard error.
-- A single error-to-HTTP mapping helper (also finishes wiring the dead
-  `notConfiguredErr` type to a 503).
-- A `grabByID` helper to erase the ~15 copy-pasted parse-id / get / 404 blocks.
-- Await the background goroutines (poller, watch loop, cache tickers) on
-  shutdown before `database.Close()`, so the exit path stops racing the DB.
-- Uniform `%w` error wrapping so `errors.Is` works end to end.
+- **Prowlarr search retry** (the first real consumer of the classification):
+  `SearchScoped` retries up to 3x with backoff + jitter, gated on
+  `errors.Is(err, clienterr.ErrTransient)` and only for FAST failures (a slow
+  one is a slow indexer, not a blip). The one client that observably times out
+  now rides a blip out instead of dropping the query.
+- **`(nil, nil)` -> `ErrNotFound`** on `qbit.TorrentInfo`,
+  `stash.FindSceneByPathContains`, `stashdb.FindScene`, with every consumer
+  updated. The skip/collapse consumers were already correct; the 502/422/404
+  handlers now guard with `!errors.Is(err, ErrNotFound)`; the poller confirm
+  path treats `ErrNotFound` as "not indexed yet, keep waiting" exactly as the
+  old `(nil, nil)` did. Behavior-preserving, proved by the lifecycle tests.
+- **`writeMappedErr` helper** folds the four copy-pasted `errors.As(&grabError)`
+  ladders into one and maps `notConfiguredErr` -> 503 (the `Matcher()` callers
+  already 503'd it directly, so this just centralizes + future-proofs).
+- **`pathInt64` + `grabByID` helpers** collapse the repeated parse-id / get /
+  404 boilerplate across the grab handlers.
+- **Shutdown waits for background goroutines** (`waitForBackground`, bounded
+  3s) before the deferred `database.Close()`, so a tick mid-write no longer
+  races a closed DB on exit.
+
+Not done: an exhaustive `%w` sweep. Phase 1 already wrapped the client layer
+(where `errors.Is` matters); the remaining bare `fmt.Errorf` strings are in
+leaf spots that nothing matches on, so a blanket sweep is churn without payoff.
 
 ## Known residual risks (tracked, not yet fixed)
 
