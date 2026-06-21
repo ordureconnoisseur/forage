@@ -2955,6 +2955,304 @@ code.grab-fact-v,
   border-color: var(--accent);
 }
 
+/* The primary "Find matches" action reads as the lead choice in the row:
+   a filled-tint pill that lifts to solid accent on hover, distinct from
+   the outline-only "Use predicted" / "Apply" siblings beside it. */
+.grab-action.match.find {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.grab-action.match.find:hover:not(:disabled) {
+  background: var(--accent);
+  color: #0a0a0a;
+}
+.grab-match-find-glyph {
+  width: 15px;
+  height: 15px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+}
+
+/* ── Match-candidates picker modal ────────────────────────────── */
+
+.match-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: match-modal-in 0.16s ease;
+}
+@keyframes match-modal-in {
+  from {
+    opacity: 0;
+  }
+}
+.match-panel {
+  width: 100%;
+  max-width: 720px;
+  max-height: 86vh;
+  display: flex;
+  flex-direction: column;
+  background:
+    radial-gradient(
+      120% 90% at 12% -10%,
+      rgba(var(--accent-rgb), 0.1) 0%,
+      transparent 55%
+    ),
+    rgba(18, 19, 22, 0.98);
+  border: 1px solid var(--glass-border-bright);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: match-panel-in 0.22s cubic-bezier(0.18, 0.9, 0.28, 1);
+}
+@keyframes match-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.985);
+  }
+}
+.match-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 22px 16px;
+  border-bottom: 1px solid var(--glass-border);
+}
+.match-head-text {
+  min-width: 0;
+}
+.match-head h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.match-sub {
+  margin: 4px 0 0 0;
+  font-size: 13px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-body {
+  padding: 16px 22px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.match-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 4px;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.55;
+}
+.match-state.err {
+  color: #fca5a5;
+}
+.match-spinner {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border: 2px solid var(--glass-border-bright);
+  border-top-color: var(--accent-bright);
+  border-radius: 50%;
+  animation: match-spin 0.7s linear infinite;
+}
+@keyframes match-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.match-foot-err {
+  padding: 12px 22px;
+  border-top: 1px solid rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.1);
+  color: #fca5a5;
+  font-size: 13px;
+}
+
+/* One candidate row: poster · details · confidence + action. */
+.match-cand {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  transition: border-color 0.14s ease, background 0.14s ease;
+  animation: match-cand-in 0.28s ease both;
+}
+@keyframes match-cand-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.match-cand:hover {
+  border-color: var(--glass-border-bright);
+  background: var(--glass-bg-strong);
+}
+.match-cand-poster {
+  flex: none;
+  width: 132px;
+  aspect-ratio: 16 / 9;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--bg-0);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.match-cand-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.match-cand-noposter {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.match-cand-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.match-cand-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  text-decoration: none;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.match-cand-title:hover {
+  color: var(--accent-bright);
+  text-decoration: none;
+}
+.match-cand-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.match-cand-studio {
+  font-weight: 600;
+  color: var(--text);
+}
+.match-cand-date::before {
+  content: "·";
+  margin-right: 8px;
+  color: var(--text-dim);
+}
+.match-cand-perfs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.match-cand-perf {
+  font-size: 11.5px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+.match-cand-tokens {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 1px;
+}
+.match-cand-token {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-tint);
+  border: 1px solid rgba(var(--accent-rgb), 0.32);
+  color: var(--accent-bright);
+  font-variant-numeric: tabular-nums;
+}
+.match-cand-side {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding-left: 4px;
+}
+.match-cand-conf {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.match-cand-conf-num {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+.match-cand-conf-pct {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.match-cand-conf[data-strength="high"] .match-cand-conf-num {
+  color: var(--accent-bright);
+}
+.match-cand-conf[data-strength="mid"] .match-cand-conf-num {
+  color: var(--amber);
+}
+.match-cand-conf[data-strength="low"] .match-cand-conf-num {
+  color: var(--text-muted);
+}
+.match-cand-side .grab-action.match {
+  padding: 7px 16px;
+  font-size: 12.5px;
+}
+
+@media (max-width: 560px) {
+  .match-cand {
+    flex-wrap: wrap;
+  }
+  .match-cand-poster {
+    width: 100%;
+  }
+  .match-cand-side {
+    flex-direction: row;
+    width: 100%;
+    justify-content: space-between;
+    padding-left: 0;
+  }
+}
+
 /* Transient banner after a delete. */
 .grab-notice {
   display: flex;

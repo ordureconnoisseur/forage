@@ -22,6 +22,8 @@ import {
   inspectTorrentFile,
   type TorrentInspect,
   matchGrab,
+  type MatchCandidate,
+  fetchGrabMatchCandidates,
   retryGrab,
   setGrabPerformer,
   fetchPerformers,
@@ -696,6 +698,215 @@ function Pipeline({ g }: { g: Grab }) {
 
 const stashdbScene = (id: string) => `https://stashdb.org/scenes/${id}`;
 
+// grabMatchName mirrors the daemon's grabMatchName: the name the matcher
+// works from — curated release title, else the placed file's basename,
+// else the download client's name. Shown as the modal subtitle so it's
+// clear what the candidates were ranked against.
+function grabMatchName(g: Grab): string {
+  if (g.release_title) return g.release_title;
+  if (g.placed_path) {
+    const parts = g.placed_path.split(/[/\\]/);
+    return parts[parts.length - 1] || g.placed_path;
+  }
+  return g.client_name || "";
+}
+
+// confStrength buckets a 0..1 match confidence for color coding. The
+// matcher's scores run low and flat for bare studio-code filenames (only
+// the studio token matches), so these thresholds stay deliberately gentle
+// — "mid" is still worth a look, the badge just signals relative footing.
+function confStrength(c: number): "high" | "mid" | "low" {
+  if (c >= 0.6) return "high";
+  if (c >= 0.3) return "mid";
+  return "low";
+}
+
+// MatchCandidateCard renders one ranked StashDB scene: cover, title,
+// studio/date, performers, and the matching tokens that earned its score.
+// Built to be scanned by eye — for cryptic filenames the right scene is
+// in the list but not always #1, so title + performers + cover carry the
+// decision, not the confidence number alone.
+function MatchCandidateCard({
+  c,
+  rank,
+  busy,
+  onApply,
+}: {
+  c: MatchCandidate;
+  rank: number;
+  busy: boolean;
+  onApply: () => void;
+}) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const pct = Math.round((c.confidence || 0) * 100);
+  return (
+    <div
+      className="match-cand"
+      style={{ animationDelay: `${Math.min(rank, 8) * 45}ms` }}
+    >
+      <div className="match-cand-poster">
+        {c.image && !imgFailed ? (
+          <img
+            src={c.image}
+            alt=""
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <span className="match-cand-noposter">no cover</span>
+        )}
+      </div>
+
+      <div className="match-cand-body">
+        <a
+          className="match-cand-title"
+          href={stashdbScene(c.scene_id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Open on StashDB"
+        >
+          {c.title || c.scene_id}
+        </a>
+        <div className="match-cand-meta">
+          {c.studio && <span className="match-cand-studio">{c.studio}</span>}
+          {c.date && <span className="match-cand-date">{c.date}</span>}
+        </div>
+        {c.performers && c.performers.length > 0 && (
+          <div className="match-cand-perfs">
+            {c.performers.map((p) => (
+              <span className="match-cand-perf" key={p}>
+                {p}
+              </span>
+            ))}
+          </div>
+        )}
+        {c.reasons && c.reasons.length > 0 && (
+          <div className="match-cand-tokens">
+            {c.reasons.map((r, i) => (
+              <span className="match-cand-token" key={i}>
+                {r}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="match-cand-side">
+        <div
+          className="match-cand-conf"
+          data-strength={confStrength(c.confidence || 0)}
+          title="Match confidence"
+        >
+          <span className="match-cand-conf-num">{pct}</span>
+          <span className="match-cand-conf-pct">%</span>
+        </div>
+        <button
+          className="grab-action match"
+          disabled={busy}
+          onClick={onApply}
+        >
+          {busy ? "Applying…" : "Use this"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// MatchCandidatesModal is the picker overlay: a ranked list of StashDB
+// scenes for a grab phash couldn't link. Read-only suggestions — picking
+// one calls the existing match endpoint via onApply. Portal + backdrop +
+// Escape, matching the Settings modal's interaction model.
+function MatchCandidatesModal({
+  grabName,
+  candidates,
+  loading,
+  error,
+  applyBusy,
+  applyErr,
+  onApply,
+  onClose,
+}: {
+  grabName: string;
+  candidates: MatchCandidate[] | null;
+  loading: boolean;
+  error: string | null;
+  applyBusy: boolean;
+  applyErr: string | null;
+  onApply: (sceneId: string) => void;
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const empty =
+    !loading && !error && candidates !== null && candidates.length === 0;
+
+  return createPortal(
+    <div className="match-modal" onClick={onClose}>
+      <div
+        className="match-panel"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="StashDB match candidates"
+      >
+        <div className="match-head">
+          <div className="match-head-text">
+            <h2>Match to StashDB</h2>
+            <p className="match-sub" title={grabName}>
+              {grabName || "this grab"}
+            </p>
+          </div>
+          <button
+            className="settings-close"
+            onClick={onClose}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="match-body">
+          {loading && (
+            <div className="match-state">
+              <span className="match-spinner" aria-hidden="true" />
+              Searching StashDB…
+            </div>
+          )}
+          {error && <div className="match-state err">{error}</div>}
+          {empty && (
+            <div className="match-state">
+              No candidates from this name. The filename has nothing the
+              matcher can lock onto — close this and paste a StashDB scene
+              URL instead.
+            </div>
+          )}
+          {!loading &&
+            !error &&
+            candidates &&
+            candidates.map((c, i) => (
+              <MatchCandidateCard
+                key={c.scene_id}
+                c={c}
+                rank={i}
+                busy={applyBusy}
+                onApply={() => onApply(c.scene_id)}
+              />
+            ))}
+        </div>
+
+        {applyErr && <div className="match-foot-err">{applyErr}</div>}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // MatchBlock unifies predicted-vs-actual by outcome:
 //   • match    → ONE green "match confirmed" hero (the prediction and
 //                Stash's identification are the same scene, so there's
@@ -1268,6 +1479,13 @@ function GrabRow({
   const [matchVal, setMatchVal] = useState("");
   const [matchBusy, setMatchBusy] = useState(false);
   const [matchErr, setMatchErr] = useState<string | null>(null);
+  // Candidate-picker modal: a ranked list of StashDB scenes the matcher
+  // found from the grab's own name, for files phash couldn't link. Lazy —
+  // fetched the first time the user opens it, then cached on the row.
+  const [candOpen, setCandOpen] = useState(false);
+  const [candidates, setCandidates] = useState<MatchCandidate[] | null>(null);
+  const [candLoading, setCandLoading] = useState(false);
+  const [candErr, setCandErr] = useState<string | null>(null);
   const [posterFailed, setPosterFailed] = useState(false);
 
   // Performer reassignment — re-files an Unsorted / mis-identified grab.
@@ -1386,10 +1604,29 @@ function GrabRow({
     setMatchErr(null);
     try {
       await matchGrab(g.id, useId);
+      setCandOpen(false); // close the picker if the pick came from there
       onMatched(); // parent refreshes; row re-renders as confirmed
     } catch (e) {
       setMatchErr((e as Error).message);
       setMatchBusy(false);
+    }
+  }
+
+  // openCandidates lazily loads the matcher's ranked guesses the first
+  // time, then just reopens the cached list. Errors surface inside the
+  // modal so the picker still opens (with a retry message) on failure.
+  async function openCandidates() {
+    setCandOpen(true);
+    if (candidates || candLoading) return;
+    setCandLoading(true);
+    setCandErr(null);
+    try {
+      const r = await fetchGrabMatchCandidates(g.id);
+      setCandidates(r.candidates);
+    } catch (e) {
+      setCandErr((e as Error).message);
+    } finally {
+      setCandLoading(false);
     }
   }
 
@@ -1704,9 +1941,24 @@ function GrabRow({
               <span className="grab-match-tool-label">
                 {g.status === "mismatched"
                   ? "Wrong scene? Force the right StashDB match:"
-                  : "Not on StashDB by fingerprint — match it manually:"}
+                  : "Not on StashDB by fingerprint. Find it by name, or paste a link:"}
               </span>
               <div className="grab-match-tool-row">
+                <button
+                  className="grab-action match find"
+                  onClick={openCandidates}
+                  disabled={matchBusy}
+                >
+                  <svg
+                    className="grab-match-find-glyph"
+                    viewBox="0 0 24 24"
+                    aria-hidden="true"
+                  >
+                    <circle cx="10.5" cy="10.5" r="6.5" />
+                    <line x1="15.5" y1="15.5" x2="21" y2="21" />
+                  </svg>
+                  Find matches
+                </button>
                 {g.predicted_stashdb_id && (
                   <button
                     className="grab-action match"
@@ -1735,6 +1987,19 @@ function GrabRow({
                 )}
               </div>
             </div>
+          )}
+
+          {candOpen && (
+            <MatchCandidatesModal
+              grabName={grabMatchName(g)}
+              candidates={candidates}
+              loading={candLoading}
+              error={candErr}
+              applyBusy={matchBusy}
+              applyErr={matchErr}
+              onApply={(sceneId) => handleMatch(sceneId)}
+              onClose={() => setCandOpen(false)}
+            />
           )}
 
           {/* Action bar */}

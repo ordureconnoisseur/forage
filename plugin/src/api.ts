@@ -793,6 +793,32 @@ export function matchGrab(id: number, stashdbId?: string): Promise<MatchResult> 
   );
 }
 
+// A ranked StashDB scene candidate for a grab phash couldn't link. The
+// matcher's best guesses against the grab's own name, each scored with the
+// tokens that matched (reasons) so the file can be picked by eye when the
+// confidence number alone is inconclusive. See GET /grabs/{id}/match-candidates.
+export interface MatchCandidate {
+  scene_id: string;
+  title: string;
+  studio?: string;
+  date?: string;
+  performers?: string[];
+  confidence: number;
+  tracks: string[];
+  reasons: string[];
+  url?: string;
+  image?: string; // StashDB cover for the pick-list thumbnail
+}
+
+// fetchGrabMatchCandidates runs the matcher against a grab's own name
+// (release title -> placed basename -> client name) and returns ranked
+// StashDB scenes to choose from. Read-only: it suggests, matchGrab applies.
+export function fetchGrabMatchCandidates(
+  id: number,
+): Promise<{ candidates: MatchCandidate[] }> {
+  return get<{ candidates: MatchCandidate[] }>(`/grabs/${id}/match-candidates`);
+}
+
 // retryGrab re-attempts a failed grab from its stored download URL.
 export function retryGrab(id: number): Promise<{ ok: boolean }> {
   return postJSON<{ ok: boolean }>(`/grabs/${id}/retry`, {});
