@@ -110,26 +110,56 @@ NOT in this phase: several callers (the poller's confirm path especially) treat
 `(nil, nil)` as a normal "not indexed yet, keep waiting" state, so flipping it to
 `ErrNotFound` must happen with its consumers, in Phase 2.
 
-### Phase 2 - consume the classification + collapse the poller compensation
+### Phase 2 - collapse the poller compensation (DONE)
 
-On top of Phase 1: `xListOK` booleans become
-`errors.Is(err, clienterr.ErrTransient)`; the lookups switch `(nil, nil)` ->
-`ErrNotFound` with every consumer updated to handle absence explicitly; one
-generic grace clock replaces the parallel `sabSeen`/`qbitErr` maps and their twin
-helpers; one `classifyClientState` verdict and one `reviveGrab` replace the
-duplicated SAB/qBit machinery; one `Recoverable(client)` query replaces the two
-copies. Deletes ~200 lines of duplication. This is where the bandaid feel
-actually disappears.
+The duplicated SAB/qBit grace+revive machinery is now one path:
 
-### Phase 3 - consistency cleanups
+- One grace clock (`p.grace` + `graceElapsed`/`graceClear`) replaces the
+  parallel `sabSeen`/`qbitErr` maps and their four twin helpers. Both clients
+  ask the same question ("how long has this bad condition held?") and a grab
+  belongs to exactly one client, so a single map keyed by grab id is safe. The
+  distinct durations (`sabInflightTimeout`, `qbitErrorGrace`) stay as the
+  per-condition arguments; only the mechanism unified (principle 4).
+- One `repo.Recoverable(client)` replaces the byte-identical `RecoverableSab` /
+  `RecoverableQbit`.
+- One `applyRevive` core (clear grace + PlaceError, CAS-write, log) backs the
+  two thin client wrappers `reviveSabGrab` / `reviveQbitGrab`, which now only
+  compute their client-specific status/completion/name.
 
+This is a behavior-preserving refactor: the SAB clock now measures from
+first-absence rather than last-contact, a sub-one-tick difference on a 45-minute
+timeout, otherwise identical. The full existing test suite (the SAB + qBit
+grace/revive tests) passes unchanged, which is the regression proof.
+
+Two items originally bundled here were dropped after closer reading:
+
+- **`xListOK` was left as-is.** It already skips the per-tick client refresh on
+  ANY list-fetch error, which is the correct safe behavior — a non-transient
+  error still means "no valid list this tick, don't misread every grab as gone."
+  Narrowing it to only-transient would be wrong, not better.
+- **The `(nil, nil)` -> `ErrNotFound` flip moved to Phase 3.** The poller's
+  confirm path deliberately treats `(nil, nil)` from `FindSceneByPathContains`
+  as "not indexed yet, keep waiting" (it drives the placed -> scanned -> orphaned
+  timing); the lookups aren't in the poller's hot path at all. The change is low
+  value (current handling is correct) and high risk (rewires live confirm
+  branching), so it belongs with a careful, separately-tested pass.
+
+### Phase 3 - actively consume the classification + consistency cleanups
+
+- Add bounded retry + backoff to the Prowlarr search (the one client that
+  observably times out and currently has zero retry), gated on
+  `errors.Is(err, clienterr.ErrTransient)` — the first real consumer of the
+  Phase 1 classification.
+- Flip the `(nil, nil)` "not found" lookups (`qbit.TorrentInfo`,
+  `stash.FindSceneByPathContains`, `stashdb.FindScene`) to `ErrNotFound`, and
+  update every consumer to branch on `errors.Is(err, ErrNotFound)` — most
+  importantly the poller confirm path, which must keep treating "scene not in
+  Stash yet" as a wait, not a hard error.
 - A single error-to-HTTP mapping helper (also finishes wiring the dead
   `notConfiguredErr` type to a 503).
 - A `grabByID` helper to erase the ~15 copy-pasted parse-id / get / 404 blocks.
 - Await the background goroutines (poller, watch loop, cache tickers) on
   shutdown before `database.Close()`, so the exit path stops racing the DB.
-- Add bounded retry + backoff to the Prowlarr search (the one client that
-  observably times out and currently has zero retry), gated on `ErrTransient`.
 - Uniform `%w` error wrapping so `errors.Is` works end to end.
 
 ## Known residual risks (tracked, not yet fixed)

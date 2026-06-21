@@ -71,32 +71,29 @@ type Poller struct {
 	packMu   sync.Mutex
 	packScan map[int64]packScanState
 
-	// sabSeen records, per active SAB grab, the last time we had positive
-	// contact with its nzo in SAB (queue or history) — or, for a grab in
-	// neither, when we first noticed it missing. advanceSab fails a SAB grab
-	// only once contact has been lost for sabInflightTimeout, measured from
-	// this (NOT from grab time): usenet jobs sit invisibly in fetch/queue
-	// states far longer than the old 5-minute grab-time grace, which
-	// false-failed slow-but-fine downloads that SAB later completed.
-	// In-memory: lost on restart, which merely restarts the absence clock
-	// (the adopt sweep's revive path is the correctness backstop). Pruned
-	// with the others.
-	sabMu   sync.Mutex
-	sabSeen map[int64]time.Time
-
-	// qbitErr records, per qBit grab, when we first saw its torrent in a
-	// failure state (qBit "error"/"missingFiles"). Those states are often
-	// transient — a tracker hiccup, a brief disk/IO error, a recheck or a
-	// not-yet-mounted volume right after an unclean qBit restart — and
-	// failing on the first sighting strands the download: Active() excludes
-	// failed grabs, so a torrent that recovers is never re-checked. We hold
-	// off failing until the bad state persists past qbitErrorGrace; a healthy
-	// reading clears the entry (markQbitHealthy) so a later error starts the
-	// clock fresh. In-memory: lost on restart, which merely restarts the
-	// grace clock (the adopt sweep's revive path is the correctness backstop).
-	// Pruned with the others.
-	qbitMu  sync.Mutex
-	qbitErr map[int64]time.Time
+	// grace is the one per-grab "how long has this bad condition held?" clock,
+	// shared by both clients (a grab belongs to exactly one, so a single map
+	// keyed by grab id never collides). It answers two structurally identical
+	// questions:
+	//
+	//   - SAB: how long has the nzo been absent from SAB's queue+history?
+	//     advanceSab fails only once absence exceeds sabInflightTimeout,
+	//     measured from the last positive contact (graceClear on a sighting),
+	//     NOT from grab time — usenet jobs sit invisibly in fetch/queue states
+	//     far longer than the old grab-time grace, which false-failed
+	//     slow-but-fine downloads SAB later completed.
+	//   - qBit: how long has the torrent been in a failure state
+	//     (error/missingFiles)? advanceQbit fails only once it exceeds
+	//     qbitErrorGrace, measured from the first error sighting; a healthy
+	//     reading (graceClear) resets it. Those states are usually transient (a
+	//     tracker hiccup, a recheck, a volume not yet mounted after a restart),
+	//     and failing on the first sighting strands the download: Active()
+	//     excludes failed grabs, so a torrent that recovers is never re-checked.
+	//
+	// In-memory: lost on restart, which merely restarts the clock (the adopt
+	// sweep's revive path is the correctness backstop). Pruned in tickOnce.
+	graceMu sync.Mutex
+	grace   map[int64]time.Time
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -152,8 +149,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		orphan:   orphanAfter,
 		lastScan: map[int64]time.Time{},
 		packScan: map[int64]packScanState{},
-		sabSeen:  map[int64]time.Time{},
-		qbitErr:  map[int64]time.Time{},
+		grace:    map[int64]time.Time{},
 	}
 }
 
@@ -238,20 +234,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.packMu.Unlock()
-	p.sabMu.Lock()
-	for id := range p.sabSeen {
+	p.graceMu.Lock()
+	for id := range p.grace {
 		if !activeIDs[id] {
-			delete(p.sabSeen, id)
+			delete(p.grace, id)
 		}
 	}
-	p.sabMu.Unlock()
-	p.qbitMu.Lock()
-	for id := range p.qbitErr {
-		if !activeIDs[id] {
-			delete(p.qbitErr, id)
-		}
-	}
-	p.qbitMu.Unlock()
+	p.graceMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -1028,57 +1017,32 @@ func (p *Poller) markScanAttempt(grabID int64) {
 	p.scanMu.Unlock()
 }
 
-// markSabContact stamps now as the last time we saw this grab's nzo in SAB
-// (queue or history). Resets the missing-absence clock sabMissingElapsed
-// reads, so a job that re-surfaces after a fetch/queue gap isn't failed.
-func (p *Poller) markSabContact(grabID int64) {
-	p.sabMu.Lock()
-	p.sabSeen[grabID] = time.Now()
-	p.sabMu.Unlock()
-}
-
-// sabMissingElapsed reports whether this grab's nzo has been absent from SAB
-// for at least d. The first time it's called for a grab with no recorded
-// contact (a fresh add not yet surfaced, or a download in flight across a
-// daemon restart) it seeds the timestamp to now and returns false — so the
-// very first miss starts the clock rather than failing immediately. Every
-// positive sighting (markSabContact) overwrites the timestamp to now, so d
-// only elapses after d of continuous no-contact.
-func (p *Poller) sabMissingElapsed(grabID int64, d time.Duration) bool {
-	p.sabMu.Lock()
-	defer p.sabMu.Unlock()
-	last, ok := p.sabSeen[grabID]
+// graceElapsed reports whether a per-grab bad condition (a SAB nzo absent from
+// SAB, a qBit torrent in an error state) has held continuously for at least d.
+// The first call for a grab seeds the clock to now and returns false, so the
+// first sighting of the bad condition starts the timer rather than tripping it
+// immediately; graceClear deletes the entry when the condition lifts, so a
+// later recurrence starts a fresh window. One clock serves both clients — a
+// grab belongs to exactly one, so the grab id never collides.
+func (p *Poller) graceElapsed(grabID int64, d time.Duration) bool {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	since, ok := p.grace[grabID]
 	if !ok {
-		p.sabSeen[grabID] = time.Now()
+		p.grace[grabID] = time.Now()
 		return false
 	}
-	return time.Since(last) >= d
+	return time.Since(since) >= d
 }
 
-// qbitErrorElapsed reports whether this grab's qBit torrent has been in a
-// failure state (error/missingFiles) continuously for at least d. The first
-// call for a grab with no recorded error seeds the timestamp to now and
-// returns false — so the first error sighting starts the grace clock rather
-// than failing the grab immediately. markQbitHealthy clears the entry on any
-// healthy reading, so d only elapses after d of continuous failure.
-func (p *Poller) qbitErrorElapsed(grabID int64, d time.Duration) bool {
-	p.qbitMu.Lock()
-	defer p.qbitMu.Unlock()
-	first, ok := p.qbitErr[grabID]
-	if !ok {
-		p.qbitErr[grabID] = time.Now()
-		return false
-	}
-	return time.Since(first) >= d
-}
-
-// markQbitHealthy clears a grab's error-grace clock after a healthy qBit
-// reading, so a torrent that recovers and later errors again gets a fresh
-// grace window rather than failing instantly off the stale first-error time.
-func (p *Poller) markQbitHealthy(grabID int64) {
-	p.qbitMu.Lock()
-	delete(p.qbitErr, grabID)
-	p.qbitMu.Unlock()
+// graceClear resets a grab's grace clock after the bad condition lifts (a SAB
+// nzo seen again in queue/history, a qBit torrent healthy again), so the next
+// recurrence is measured fresh instead of tripping off the stale first-seen
+// time. Calling it when no clock is set is a harmless no-op.
+func (p *Poller) graceClear(grabID int64) {
+	p.graceMu.Lock()
+	delete(p.grace, grabID)
+	p.graceMu.Unlock()
 }
 
 // advanceQbit handles the qBit-specific enrichment + state-refresh
@@ -1244,11 +1208,11 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	// clock. (adoptQbitOrphans' revive path is the backstop that recovers a
 	// grab we DO end up failing, should it recover after the grace.)
 	if newStatus == "failed" {
-		if !p.qbitErrorElapsed(g.ID, qbitErrorGrace) {
+		if !p.graceElapsed(g.ID, qbitErrorGrace) {
 			return dirty, t.ContentPath
 		}
 	} else if newStatus != "" {
-		p.markQbitHealthy(g.ID)
+		p.graceClear(g.ID)
 	}
 	// Don't downgrade post-completed states (placed/scanned/etc.)
 	// back to "completed" just because qBit still reports the torrent
@@ -1276,8 +1240,8 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 const sabRegisterGrace = 5 * time.Minute
 
 // sabInflightTimeout is how long a SAB grab's nzo may be absent from BOTH
-// SAB's queue and history — measured from the last positive contact (see
-// sabSeen) — before advanceSab declares it gone. Far longer than
+// SAB's queue and history — measured from the last positive contact (the
+// shared grace clock) — before advanceSab declares it gone. Far longer than
 // sabRegisterGrace because SAB legitimately holds a job out of view while it
 // fetches the NZB from the indexer and while it waits in a backed-up queue;
 // those gaps can run tens of minutes on a slow server. A real removal stays
@@ -1380,7 +1344,7 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 	// downloading/seeding strands. Looked up once and revived in the loop below
 	// — keyed by info-hash, the same id qBit's list carries. Best-effort: a
 	// query error just skips recovery this pass.
-	recoverable, rerr := p.repo.RecoverableQbit(ctx)
+	recoverable, rerr := p.repo.Recoverable(ctx, "qbit")
 	if rerr != nil {
 		p.log.Warn("adopt: recoverable qbit", "err", rerr)
 		recoverable = nil
@@ -1491,7 +1455,7 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 	// after the not-found timeout wrongly failed them. Looked up once and
 	// revived in the loop below — keyed by nzo, the same id SAB history
 	// carries. Best-effort: a query error just skips recovery this pass.
-	recoverable, rerr := p.repo.RecoverableSab(ctx)
+	recoverable, rerr := p.repo.Recoverable(ctx, "sabnzbd")
 	if rerr != nil {
 		p.log.Warn("adopt: recoverable sab", "err", rerr)
 		recoverable = nil
@@ -1562,16 +1526,34 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 	return adopted
 }
 
+// applyRevive persists a recovered grab: it clears the grace clock and the
+// prior PlaceError, writes the row through the optimistic-lock CAS (a
+// concurrent sweep/tick write is benign — skip it), and logs the outcome. The
+// caller sets the client-specific fields (status, completion, name, reason) on
+// g first; logKV carries client-specific log context. Best-effort: a stale or
+// failed write just leaves the grab failed for a later pass to retry.
+func (p *Poller) applyRevive(ctx context.Context, g grabs.Grab, logKV ...any) {
+	g.PlaceError = ""
+	p.graceClear(g.ID)
+	err := p.repo.Update(ctx, g)
+	switch {
+	case errors.Is(err, grabs.ErrStaleUpdate):
+		p.log.Info("revive grab: changed under sweep, skipping", "id", g.ID)
+	case err != nil:
+		p.log.Warn("revive grab", append([]any{"id", g.ID, "err", err}, logKV...)...)
+	default:
+		p.log.Info("revived false-failed grab", append([]any{"id", g.ID}, logKV...)...)
+	}
+}
+
 // reviveSabGrab flips a false-failed SAB grab back to "completed" once SAB's
 // history shows its nzo Completed, so the normal place → scan → confirm
-// pipeline (re-)runs on the file SAB already downloaded. Clears the failure
-// state and restamps completion from SAB's timestamp; refreshes ClientName
-// from the final on-disk path, since the failed grab may still carry SAB's
-// "Trying to fetch NZB from…" placeholder name. Best-effort: a stale write or
-// DB error just leaves the grab failed for a later pass to retry.
+// pipeline (re-)runs on the file SAB already downloaded. Restamps completion
+// from SAB's timestamp and refreshes ClientName from the final on-disk path,
+// since the failed grab may still carry SAB's "Trying to fetch NZB from…"
+// placeholder name.
 func (p *Poller) reviveSabGrab(ctx context.Context, g grabs.Grab, it sabnzbd.Item) {
 	g.Status = "completed"
-	g.PlaceError = ""
 	g.Reason = "recovered: sab completed this nzo after a spurious not-found failure"
 	if it.Completed > 0 {
 		g.CompletedAt = it.Completed
@@ -1583,32 +1565,22 @@ func (p *Poller) reviveSabGrab(ctx context.Context, g grabs.Grab, it sabnzbd.Ite
 			g.ClientName = base
 		}
 	}
-	if err := p.repo.Update(ctx, g); err != nil {
-		if errors.Is(err, grabs.ErrStaleUpdate) {
-			p.log.Info("revive sab grab: changed under sweep, skipping", "id", g.ID)
-			return
-		}
-		p.log.Warn("revive sab grab", "id", g.ID, "nzo_id", it.NzoID, "err", err)
-		return
-	}
-	p.log.Info("revived false-failed sab grab", "id", g.ID, "nzo_id", it.NzoID, "name", g.ClientName)
+	p.applyRevive(ctx, g, "client", "sabnzbd", "nzo_id", it.NzoID, "name", g.ClientName)
 }
 
 // reviveQbitGrab flips a false-failed qBit grab back into the live pipeline
 // once its torrent is healthy again, so the normal place → scan → confirm
 // steps (re-)run on what qBit downloaded. Maps the current qBit state to
 // downloading or completed (progress is the authority for completion, exactly
-// as advanceQbit gates it), clears the failure, and refreshes ClientName from
-// qBit's current torrent name. The caller only invokes this for a torrent
-// already classified healthy. Best-effort: a stale write or DB error just
-// leaves the grab failed for a later pass to retry.
+// as advanceQbit gates it) and refreshes ClientName from qBit's current
+// torrent name. The caller only invokes this for a torrent already classified
+// healthy.
 func (p *Poller) reviveQbitGrab(ctx context.Context, g grabs.Grab, t *qbit.Torrent) {
 	ns := classifyQbitState(t.State)
 	if ns == "completed" && t.Progress < 1 {
 		ns = "downloading"
 	}
 	g.Status = ns
-	g.PlaceError = ""
 	g.Reason = "recovered: qBit torrent healthy again after a transient error"
 	if ns == "completed" && g.CompletedAt == 0 {
 		g.CompletedAt = time.Now().Unix()
@@ -1616,16 +1588,7 @@ func (p *Poller) reviveQbitGrab(ctx context.Context, g grabs.Grab, t *qbit.Torre
 	if t.Name != "" {
 		g.ClientName = t.Name
 	}
-	p.markQbitHealthy(g.ID) // clear any stale error-grace clock
-	if err := p.repo.Update(ctx, g); err != nil {
-		if errors.Is(err, grabs.ErrStaleUpdate) {
-			p.log.Info("revive qbit grab: changed under sweep, skipping", "id", g.ID)
-			return
-		}
-		p.log.Warn("revive qbit grab", "id", g.ID, "hash", g.ClientID, "err", err)
-		return
-	}
-	p.log.Info("revived false-failed qbit grab", "id", g.ID, "hash", g.ClientID, "state", t.State, "status", ns)
+	p.applyRevive(ctx, g, "client", "qbit", "hash", g.ClientID, "state", t.State, "status", ns)
 }
 
 // classifyDownloadPath decides pack vs single for an on-disk completed
@@ -1691,7 +1654,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		return false, "", nil
 	}
 	if item := findByNzo(queue, g.ClientID); item != nil {
-		p.markSabContact(g.ID)
+		p.graceClear(g.ID) // positive contact: nzo seen, reset the absence clock
 		if item.Name != "" && item.Name != g.ClientName {
 			g.ClientName = item.Name
 			dirty = true
@@ -1704,7 +1667,7 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		return dirty, "", nil
 	}
 	if item := findByNzo(history, g.ClientID); item != nil {
-		p.markSabContact(g.ID)
+		p.graceClear(g.ID) // positive contact: nzo seen, reset the absence clock
 		// Prefer the final on-disk path's basename when available —
 		// that's what Stash will see during a scan.
 		name := item.Name
@@ -1791,9 +1754,9 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		// grace, so that grace false-failed slow-but-fine downloads that SAB
 		// went on to complete 30+ minutes later. A genuinely removed job stays
 		// absent and still fails here; a slow one re-appears (queue or, on
-		// completion, history) and markSabContact resets the clock. The adopt
+		// completion, history) and graceClear resets the clock. The adopt
 		// sweep's revive path recovers anything this still gets wrong.
-		if !p.sabMissingElapsed(g.ID, sabInflightTimeout) {
+		if !p.graceElapsed(g.ID, sabInflightTimeout) {
 			return dirty, "", nil
 		}
 		g.Status = "failed"

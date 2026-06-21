@@ -1029,9 +1029,9 @@ func TestSabInflightSurvivesQueueGap(t *testing.T) {
 
 	// Once contact has been lost for the full inflight timeout, it does fail
 	// (a genuinely removed job). Backdate the recorded contact to simulate it.
-	r.poller.sabMu.Lock()
-	r.poller.sabSeen[id] = time.Now().Add(-sabInflightTimeout - time.Minute)
-	r.poller.sabMu.Unlock()
+	r.poller.graceMu.Lock()
+	r.poller.grace[id] = time.Now().Add(-sabInflightTimeout - time.Minute)
+	r.poller.graceMu.Unlock()
 	g = r.get(t, id)
 	if err := r.poller.advance(ctx, g, nil, nil, false, nil, nil, nil, true); err != nil {
 		t.Fatalf("advance: %v", err)
@@ -1126,9 +1126,9 @@ func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
 
 	// Backdate the grace clock past qbitErrorGrace; the persisting error is now
 	// terminal.
-	r.poller.qbitMu.Lock()
-	r.poller.qbitErr[id] = time.Now().Add(-qbitErrorGrace - time.Minute)
-	r.poller.qbitMu.Unlock()
+	r.poller.graceMu.Lock()
+	r.poller.grace[id] = time.Now().Add(-qbitErrorGrace - time.Minute)
+	r.poller.graceMu.Unlock()
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "failed" {
 		t.Fatalf("error persisted past grace: status=%q, want failed", g.Status)

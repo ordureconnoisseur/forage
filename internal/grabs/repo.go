@@ -334,45 +334,22 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 	return err
 }
 
-// RecoverableSab returns SAB grabs marked failed but not yet placed,
-// keyed by nzo_id (client_id). The adoption sweep cross-references this
-// against SAB's history: when a failed grab's nzo turns up Completed, the
-// failure was spurious (a slow URL fetch / queue-visibility flap tripped the
-// not-found timeout) and the finished download would otherwise be stranded —
-// adoption skips known nzos, so it can't be re-picked-up as a fresh grab.
-// Scoped to unplaced failures: a grab with a placed_path already reached the
-// library, so there's nothing to recover.
-func (r *Repo) RecoverableSab(ctx context.Context) (map[string]Grab, error) {
+// Recoverable returns grabs for the given client (e.g. "sabnzbd", "qbit")
+// marked failed but not yet placed, keyed by client_id (SAB nzo_id / qBit
+// info-hash). The adoption sweep cross-references these against the client's
+// live state: when a failed grab's download is in fact still present and
+// healthy/completed, the failure was spurious (a transient client error past
+// the grace window, or a queue-visibility flap) and the download would
+// otherwise be stranded — Active() excludes failed grabs and adoption skips
+// known ids, so it can't be re-picked-up as a fresh grab. Scoped to unplaced
+// failures: a grab with a placed_path already reached the library and is healed
+// on its placed path, not re-downloaded.
+func (r *Repo) Recoverable(ctx context.Context, client string) (map[string]Grab, error) {
 	rows, err := r.query(ctx, `
 		SELECT * FROM grabs
-		WHERE client = 'sabnzbd' AND status = 'failed'
+		WHERE client = ? AND status = 'failed'
 		  AND (placed_path IS NULL OR placed_path = '')
-		  AND client_id IS NOT NULL AND client_id != ''`)
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]Grab, len(rows))
-	for _, g := range rows {
-		out[g.ClientID] = g
-	}
-	return out, nil
-}
-
-// RecoverableQbit returns qBit grabs marked failed but not yet placed, keyed
-// by info-hash (client_id). The adoption sweep cross-references this against
-// qBit's live torrent list: when a failed grab's torrent is in fact still
-// present and back to a healthy state, the failure was spurious (a transient
-// qBit error past the grace window) and the download would otherwise be
-// stranded — Active() excludes failed grabs and adoption skips known hashes,
-// so it can't be re-picked-up as a fresh grab. Scoped to unplaced failures,
-// mirroring RecoverableSab: a grab with a placed_path already reached the
-// library and is healed on its placed path, not re-downloaded.
-func (r *Repo) RecoverableQbit(ctx context.Context) (map[string]Grab, error) {
-	rows, err := r.query(ctx, `
-		SELECT * FROM grabs
-		WHERE client = 'qbit' AND status = 'failed'
-		  AND (placed_path IS NULL OR placed_path = '')
-		  AND client_id IS NOT NULL AND client_id != ''`)
+		  AND client_id IS NOT NULL AND client_id != ''`, client)
 	if err != nil {
 		return nil, err
 	}
