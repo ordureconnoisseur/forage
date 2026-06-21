@@ -638,15 +638,17 @@ func (c *Client) MetadataScan(ctx context.Context, paths []string) (string, erro
   metadataScan(input: $input)
 }`
 	input := map[string]any{
-		// Ask Stash to fully process new files: cover thumbnail,
-		// perceptual hash, seekbar sprite sheet, hover preview. These
-		// are all things the user expects to see on the scene card
-		// without manually running Generate afterwards. Stash skips
-		// any artifact that already exists, so re-scanning is cheap.
-		"scanGenerateCovers":   true,
-		"scanGeneratePhashes":  true,
-		"scanGeneratePreviews": true,
-		"scanGenerateSprites":  true,
+		// Generate only the cheap, identify-critical artifacts inline: the
+		// cover thumbnail (the scene card) and the perceptual hash (what
+		// StashDB identify matches on). Deliberately NOT previews or sprites:
+		// those are slow (preview clips transcode, sprite sheets render), and
+		// Stash runs ONE serial job queue — a slow scan blocks the identify
+		// job queued behind it, so forage used to confirm a grab before its
+		// identify ever ran, leaving studio scenes unmatched. Keeping the scan
+		// fast lets identify land promptly. Previews/sprites come from Stash's
+		// scheduled Generate task (or a manual Generate) instead.
+		"scanGenerateCovers":  true,
+		"scanGeneratePhashes": true,
 	}
 	if len(paths) > 0 {
 		input["paths"] = paths

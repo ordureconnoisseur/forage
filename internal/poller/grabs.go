@@ -134,6 +134,15 @@ const packIndexedFloorPct = 80
 // the full (hours-long) orphan window.
 const packIdentifyGrace = 20 * time.Minute
 
+// singleIdentifyGrace bounds how long an adopted single with no prediction
+// keeps retrying Identify before settling as "in library (scanned)". Generous
+// enough to cover Stash's serial job queue draining a batch import (so a studio
+// scene's identify lands even when it's queued behind many scans) and to
+// survive a Stash restart that drops a queued identify (the retry re-fires it),
+// but far shorter than the orphan window so genuinely-amateur content
+// StashDB doesn't have settles in minutes, not hours.
+const singleIdentifyGrace = 30 * time.Minute
+
 func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
 	if interval <= 0 {
 		interval = 60 * time.Second
@@ -558,15 +567,31 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 					}
 					p.markScanAttempt(g.ID)
 				} else if g.PredictedStashDBID == "" {
-					// No prediction to verify against — for a manual/pack/
-					// adopted grab, being scanned into the library IS the
-					// goal. Don't strand it waiting on a StashDB match that
-					// may never exist (amateur content often isn't on
-					// StashDB, or is identified via another scraper).
-					g.Status = "confirmed"
-					g.Reason = "in library (scanned)"
-					g.ConfirmedAt = time.Now().Unix()
-					dirty = true
+					// No prediction (an adopted/manual grab). Being scanned in
+					// is the floor, BUT a manual add of studio content IS on
+					// StashDB and should still be identified — and we can't tell
+					// amateur from studio until identify actually runs. Stash's
+					// identify is a queued, serial job that can land well after
+					// the first attempt (behind other scans/generates), and a
+					// queued one is lost on a Stash restart. So keep retrying
+					// identify on the throttle until the cross-id lands, and
+					// only settle as "in library (scanned)" once a bounded grace
+					// has passed — that's the window for genuinely-amateur
+					// content StashDB doesn't have. (Mirrors the predicted path
+					// below, just with a shorter grace than the orphan window.)
+					if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > singleIdentifyGrace {
+						g.Status = "confirmed"
+						g.Reason = "in library (scanned)"
+						g.ConfirmedAt = time.Now().Unix()
+						dirty = true
+					} else if p.scanThrottleElapsed(g.ID) {
+						if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
+							p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
+						} else if jobID != "" {
+							p.log.Info("metadataIdentify retried", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+						}
+						p.markScanAttempt(g.ID)
+					}
 				} else if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan {
 					// Predicted grab: gave up on the StashDB match.
 					g.Status = "confirmed"

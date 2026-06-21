@@ -424,6 +424,106 @@ func TestLifecycleMismatch(t *testing.T) {
 	}
 }
 
+// TestAdoptedSingleRetriesIdentifyThenConfirms covers the fix for manual
+// (no-prediction) singles: an adopted scene that's in Stash but not yet
+// cross-id'd must NOT give up after a single identify attempt (the bug that
+// left studio scenes like BLACKED unidentified when their queued identify ran
+// late or was lost). It stays "scanned", retrying identify, and confirms as
+// identified once the cross-id lands.
+func TestAdoptedSingleRetriesIdentifyThenConfirms(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const performer = "Studio Performer"
+	fileName := "BLACKED_TEST_1080P.mp4"
+	placed := filepath.Join(r.libRoot, performer, fileName)
+	if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "BLACKED test", Client: "qbit", ClientID: "blktesthash",
+		Category: "forager", Status: "placed", PlacedPath: placed,
+		PerformerName: performer, Kind: "single", Reason: "adopted from qbit",
+		// no PredictedStashDBID — this is the manual/adopted path
+		CompletedAt: time.Now().Unix(),
+		GrabbedAt:   time.Now().Add(-time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Scene is indexed in Stash but has no StashDB cross-id yet (identify
+	// hasn't landed — e.g. queued behind a batch).
+	r.stash.set([]fakeScene{{id: "100", title: "", path: placed, stashDBID: ""}})
+
+	// Tick 1: placed -> scanned, fires identify. Must NOT confirm.
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "scanned" {
+		t.Fatalf("tick 1: status=%q, want scanned (reason=%q)", g.Status, g.Reason)
+	}
+	// Tick 2: still within grace, identify hasn't landed -> must STILL be
+	// scanned, not prematurely confirmed "in library (scanned)" (the old bug).
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "scanned" {
+		t.Fatalf("tick 2: status=%q, want still scanned (one-shot give-up regression)", g.Status)
+	}
+
+	// Identify lands: the scene now carries a StashDB cross-id -> confirmed.
+	r.stash.set([]fakeScene{{id: "100", title: "Tiny Fresh Face", path: placed, stashDBID: "sdb-blacked-1"}})
+	r.tick(t)
+	g := r.get(t, id)
+	if g.Status != "confirmed" {
+		t.Fatalf("after identify landed: status=%q, want confirmed (reason=%q)", g.Status, g.Reason)
+	}
+	if g.ActualStashDBID != "sdb-blacked-1" {
+		t.Fatalf("actual_stashdb_id=%q, want the landed cross-id", g.ActualStashDBID)
+	}
+}
+
+// TestAdoptedSingleSettlesAfterGrace covers the other half: a no-prediction
+// single whose scene genuinely isn't on StashDB (amateur content) must not
+// retry forever — once singleIdentifyGrace passes it settles to confirmed
+// "in library (scanned)".
+func TestAdoptedSingleSettlesAfterGrace(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const performer = "Amateur Creator"
+	fileName := "onlyfans_clip.mp4"
+	placed := filepath.Join(r.libRoot, performer, fileName)
+	if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "onlyfans clip", Client: "qbit", ClientID: "amateurhash",
+		Category: "forager", Status: "scanned", PlacedPath: placed,
+		PerformerName: performer, Kind: "single", Reason: "in Stash, awaiting identify",
+		// grace measured from completion: set it past singleIdentifyGrace
+		CompletedAt: time.Now().Add(-singleIdentifyGrace - time.Minute).Unix(),
+		GrabbedAt:   time.Now().Add(-2 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// In Stash, never cross-id'd (StashDB doesn't have this amateur scene).
+	r.stash.set([]fakeScene{{id: "200", title: "", path: placed, stashDBID: ""}})
+
+	r.tick(t)
+	g := r.get(t, id)
+	if g.Status != "confirmed" {
+		t.Fatalf("past grace: status=%q, want confirmed (reason=%q)", g.Status, g.Reason)
+	}
+	if g.Reason != "in library (scanned)" {
+		t.Fatalf("reason=%q, want \"in library (scanned)\"", g.Reason)
+	}
+}
+
 // TestLifecycleOrphanAdoption verifies a qBit torrent under the forager
 // category that forage isn't tracking gets a grab row created by
 // adoptOrphans, keyed on the torrent hash. This is the path the user adds
