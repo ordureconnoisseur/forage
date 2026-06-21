@@ -6,8 +6,10 @@ package prowlarr
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -160,6 +162,22 @@ func (c *Client) SearchScoped(ctx context.Context, term string, categories, inde
 	}
 	u := c.baseURL + "/api/v1/search?" + q.Encode()
 
+	var out []Release
+	err := transientRetry(ctx, func() error {
+		rels, aerr := c.searchOnce(ctx, u)
+		if aerr != nil {
+			return aerr
+		}
+		out = rels
+		return nil
+	})
+	return out, err
+}
+
+// searchOnce performs one /api/v1/search request and decodes it. Errors are
+// classified (clienterr) so transientRetry can tell a retryable blip from a
+// definitive failure.
+func (c *Client) searchOnce(ctx context.Context, u string) ([]Release, error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, err
@@ -190,6 +208,65 @@ func (c *Client) SearchScoped(ctx context.Context, term string, categories, inde
 	}
 	sortByPopularity(out)
 	return out, nil
+}
+
+// Retry tuning (vars, not consts, so tests can shrink them). Prowlarr's
+// /search intermittently fails transiently under load — a 5xx, or a refused
+// connection while it restarts — and a couple of retries turn that into a short
+// delay instead of a hard failure that drops the whole query.
+var (
+	prowlarrSearchAttempts = 3 // initial + 2 retries
+	// prowlarrRetryFastFail bounds WHICH transients we retry: only ones that
+	// failed quickly. A transient that took most of the request timeout is a
+	// persistently slow indexer — retrying it just doubles the caller's wait
+	// without helping (and would penalize interactive search), so we surface it
+	// as-is. A refused connection / fast 5xx fails in well under this.
+	prowlarrRetryFastFail  = 8 * time.Second
+	prowlarrRetryBaseDelay = 300 * time.Millisecond
+	prowlarrRetryMaxDelay  = 5 * time.Second
+)
+
+// shouldRetry decides whether a failed attempt is worth another try: it must be
+// a transient error (clienterr.ErrTransient) AND have failed fast (a slow
+// failure is a slow indexer, not a blip). Pure + deterministic so it can be
+// unit-tested without timing.
+func shouldRetry(err error, elapsed time.Duration) bool {
+	return errors.Is(err, clienterr.ErrTransient) && elapsed < prowlarrRetryFastFail
+}
+
+// transientRetry runs fn up to prowlarrSearchAttempts times, retrying only when
+// shouldRetry approves, with exponential backoff + jitter, bounded by ctx. A
+// success, a non-transient error (4xx/auth/decode), or a slow transient returns
+// immediately.
+func transientRetry(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < prowlarrSearchAttempts; attempt++ {
+		start := time.Now()
+		err = fn()
+		if !shouldRetry(err, time.Since(start)) {
+			return err
+		}
+		if attempt == prowlarrSearchAttempts-1 {
+			break
+		}
+		select {
+		case <-time.After(retryBackoff(attempt)):
+		case <-ctx.Done():
+			return err
+		}
+	}
+	return err
+}
+
+// retryBackoff is prowlarrRetryBaseDelay * 2^attempt, capped at
+// prowlarrRetryMaxDelay, with up to ~20% jitter so concurrent per-indexer
+// retries don't resynchronize into a thundering herd.
+func retryBackoff(attempt int) time.Duration {
+	d := prowlarrRetryBaseDelay << attempt
+	if d > prowlarrRetryMaxDelay {
+		d = prowlarrRetryMaxDelay
+	}
+	return d - d/10 + time.Duration(rand.Int63n(int64(d)/5+1))
 }
 
 // Indexer is the slim shape of a configured Prowlarr indexer.
