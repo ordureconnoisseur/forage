@@ -763,6 +763,34 @@ func (c *Client) MetadataIdentify(ctx context.Context, sceneIDs []string, stashB
 	return resp.MetadataIdentify, nil
 }
 
+// MetadataGenerate generates the cosmetic artifacts the fast placement scan
+// deliberately skips — the hover-preview clips and the seekbar sprite sheet —
+// for the given scenes (covers + phashes are already produced by the scan).
+// forage fires this AFTER identify has settled a grab, so the slow generation
+// never blocks the identify queued behind it in Stash's single serial job
+// queue. Stash skips any artifact that already exists, so it's safe to re-run.
+// Best-effort; returns the job id.
+func (c *Client) MetadataGenerate(ctx context.Context, sceneIDs []string) (string, error) {
+	if len(sceneIDs) == 0 {
+		return "", nil
+	}
+	q := `mutation ForagerMetadataGenerate($input: GenerateMetadataInput!) {
+  metadataGenerate(input: $input)
+}`
+	input := map[string]any{
+		"sceneIDs": sceneIDs,
+		"previews": true,
+		"sprites":  true,
+	}
+	var resp struct {
+		MetadataGenerate string `json:"metadataGenerate"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return "", fmt.Errorf("metadataGenerate: %w", err)
+	}
+	return resp.MetadataGenerate, nil
+}
+
 // SceneDestroy removes a scene from Stash. deleteFile also unlinks the
 // underlying media file from disk; deleteGenerated also removes the
 // scene's covers/sprites/previews. Used by the grab purge to leave no

@@ -96,9 +96,10 @@ type fakeScene struct {
 // `scenes` between ticks to control what FindSceneByPathContains returns,
 // stepping a grab from placed → (re-scan) → confirmed/scanned.
 type fakeStash struct {
-	mu     sync.Mutex
-	scenes []fakeScene
-	reqs   int // total GraphQL requests served (lets a test prove a code path made no calls)
+	mu        sync.Mutex
+	scenes    []fakeScene
+	reqs      int // total GraphQL requests served (lets a test prove a code path made no calls)
+	generated int // metadataGenerate calls served (proves deferred preview/sprite generation fired)
 }
 
 func (f *fakeStash) set(scenes []fakeScene) {
@@ -113,6 +114,12 @@ func (f *fakeStash) reqCount() int {
 	return f.reqs
 }
 
+func (f *fakeStash) generateCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.generated
+}
+
 func (f *fakeStash) handler() http.Handler {
 	const stashDBEndpoint = "https://stashdb.org/graphql"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,6 +129,11 @@ func (f *fakeStash) handler() http.Handler {
 		body, _ := io.ReadAll(r.Body)
 		q := string(body)
 		switch {
+		case strings.Contains(q, "metadataGenerate"):
+			f.mu.Lock()
+			f.generated++
+			f.mu.Unlock()
+			writeRaw(w, `{"data":{"metadataGenerate":"generate-job-1"}}`)
 		case strings.Contains(q, "metadataIdentify"):
 			writeRaw(w, `{"data":{"metadataIdentify":"identify-job-1"}}`)
 		case strings.Contains(q, "metadataScan"):
@@ -481,6 +493,11 @@ func TestAdoptedSingleRetriesIdentifyThenConfirms(t *testing.T) {
 	if g.ActualStashDBID != "sdb-blacked-1" {
 		t.Fatalf("actual_stashdb_id=%q, want the landed cross-id", g.ActualStashDBID)
 	}
+	// The fast placement scan skips previews/sprites; forage must generate them
+	// once identify settles, so the scene gets the artifacts the scan deferred.
+	if r.stash.generateCount() == 0 {
+		t.Errorf("expected deferred preview/sprite generation to fire on confirm")
+	}
 }
 
 // TestAdoptedSingleSettlesAfterGrace covers the other half: a no-prediction
@@ -521,6 +538,11 @@ func TestAdoptedSingleSettlesAfterGrace(t *testing.T) {
 	}
 	if g.Reason != "in library (scanned)" {
 		t.Fatalf("reason=%q, want \"in library (scanned)\"", g.Reason)
+	}
+	// Even unidentified (amateur) scenes get the deferred previews/sprites —
+	// the user wants generation on everything forage adds.
+	if r.stash.generateCount() == 0 {
+		t.Errorf("expected generation to fire even when settling unidentified")
 	}
 }
 

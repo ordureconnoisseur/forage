@@ -530,6 +530,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 				confirmErr = err
 				scene = nil
 			}
+			prevStatus := g.Status
 			switch {
 			case confirmErr != nil:
 				// Lookup failed — change nothing; retry next tick.
@@ -624,6 +625,13 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) {
 					p.triggerPlacementScan(ctx, stashC, g.ID, g.PlacedPath)
 				}
+			}
+			if scene != nil && g.Status != prevStatus &&
+				(g.Status == "confirmed" || g.Status == "mismatched") {
+				// Identify settled this single (the scene is in Stash). Now
+				// generate the previews/sprites the fast placement scan skipped
+				// — after identify, so it can't block it in the serial queue.
+				p.triggerGenerate(ctx, stashC, g.ID, []string{scene.ID})
 			}
 		}
 	}
@@ -811,6 +819,14 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		dirty = true
 		p.forgetPackScan(g.ID)
 		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "deduped", g.PackDeduped, "pendingReview", pendingReview)
+		// Generate the previews/sprites the fast scan skipped for every scene
+		// the pack landed, now that it's settled (after identify, so it can't
+		// block it in the serial queue).
+		packIDs := make([]string, 0, len(scenes))
+		for _, s := range scenes {
+			packIDs = append(packIDs, s.ID)
+		}
+		p.triggerGenerate(ctx, sc, g.ID, packIDs)
 	}
 	return dirty, nil
 }
@@ -1891,6 +1907,23 @@ func (p *Poller) triggerIdentify(ctx context.Context, sc *stash.Client, sceneID 
 		return "", nil
 	}
 	return sc.MetadataIdentify(ctx, []string{sceneID}, endpoint)
+}
+
+// triggerGenerate fires the deferred preview/sprite generation for a grab's
+// scene(s) once it has settled. The placement scan only makes cover + phash
+// (kept fast so identify isn't starved behind it); this produces the slow
+// artifacts the user expects on the card afterwards, AFTER identify so it never
+// re-blocks the queue. Best-effort: a failure just leaves the artifacts for
+// Stash's scheduled Generate.
+func (p *Poller) triggerGenerate(ctx context.Context, sc *stash.Client, grabID int64, sceneIDs []string) {
+	if sc == nil || len(sceneIDs) == 0 {
+		return
+	}
+	if jobID, err := sc.MetadataGenerate(ctx, sceneIDs); err != nil {
+		p.log.Warn("metadataGenerate trigger failed", "id", grabID, "scenes", len(sceneIDs), "err", err)
+	} else if jobID != "" {
+		p.log.Info("metadataGenerate triggered", "id", grabID, "scenes", len(sceneIDs), "job_id", jobID)
+	}
 }
 
 // identifyEndpoint returns the user's StashDB stash-box endpoint,
