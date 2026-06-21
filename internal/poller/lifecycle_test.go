@@ -1087,3 +1087,96 @@ func TestSabReviveFalseFailed(t *testing.T) {
 		t.Fatalf("reason = %q, want it to mention recovery", got.Reason)
 	}
 }
+
+// TestQbitTransientErrorDoesNotFailImmediately covers the grace window that
+// stops a momentary qBit "error" from stranding a download. qBit raises error
+// transiently (tracker hiccup, brief disk/IO error, a recheck); failing on the
+// first sighting drops the grab out of Active() so a torrent that recovers is
+// never re-checked. The grab must stay downloading on the first error tick and
+// only fail once the error has persisted past qbitErrorGrace.
+func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
+	r := newRig(t, "") // adoption off — exercise advanceQbit in isolation
+	ctx := context.Background()
+
+	const hash = "qbiterrorgracehash"
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Flapping Torrent",
+		Client:       "qbit",
+		ClientID:     hash,
+		Category:     "forager",
+		Status:       "downloading",
+		Progress:     0.5,
+		GrabbedAt:    time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// qBit reports a transient error on an otherwise mid-flight download.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: "Flapping Torrent", Category: "forager",
+		State: "error", Progress: 0.5,
+	}})
+
+	// First sighting only starts the grace clock — the grab must NOT fail.
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "downloading" {
+		t.Fatalf("transient error within grace: status=%q (reason %q), want downloading", g.Status, g.Reason)
+	}
+
+	// Backdate the grace clock past qbitErrorGrace; the persisting error is now
+	// terminal.
+	r.poller.qbitMu.Lock()
+	r.poller.qbitErr[id] = time.Now().Add(-qbitErrorGrace - time.Minute)
+	r.poller.qbitMu.Unlock()
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "failed" {
+		t.Fatalf("error persisted past grace: status=%q, want failed", g.Status)
+	}
+}
+
+// TestQbitReviveFalseFailed covers the recovery path for a grab we DID fail
+// (e.g. before this fix shipped, or an error that outlasted the grace) whose
+// qBit torrent is in fact still present and healthy again. The adopt sweep
+// must flip it back into the pipeline rather than leave it stranded — Active()
+// excludes failed grabs and adoption skips known hashes, so without this the
+// completed download is never placed. This is the qBit twin of
+// TestSabReviveFalseFailed.
+func TestQbitReviveFalseFailed(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const hash = "qbitrevivehash"
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Recovered Torrent",
+		Client:       "qbit",
+		ClientID:     hash,
+		Category:     "forager",
+		Status:       "failed",
+		Reason:       "qbit state=error",
+		GrabbedAt:    time.Now().Add(-time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// qBit still has the torrent and it's downloading again.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: "Recovered Torrent", Category: "forager",
+		State: "downloading", Progress: 0.4,
+	}})
+
+	// Revival is NOT an adoption — the hash is already known, so nothing new is
+	// inserted; AdoptNow's count must stay 0.
+	if n, _ := r.poller.AdoptNow(ctx); n != 0 {
+		t.Fatalf("AdoptNow adopted=%d, want 0 (revive is not adoption)", n)
+	}
+
+	got := r.get(t, id)
+	if got.Status != "downloading" {
+		t.Fatalf("status = %q (reason %q), want downloading (revived)", got.Status, got.Reason)
+	}
+	if !strings.Contains(got.Reason, "recovered") {
+		t.Fatalf("reason = %q, want it to mention recovery", got.Reason)
+	}
+}

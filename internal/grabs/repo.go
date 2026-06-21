@@ -358,6 +358,31 @@ func (r *Repo) RecoverableSab(ctx context.Context) (map[string]Grab, error) {
 	return out, nil
 }
 
+// RecoverableQbit returns qBit grabs marked failed but not yet placed, keyed
+// by info-hash (client_id). The adoption sweep cross-references this against
+// qBit's live torrent list: when a failed grab's torrent is in fact still
+// present and back to a healthy state, the failure was spurious (a transient
+// qBit error past the grace window) and the download would otherwise be
+// stranded — Active() excludes failed grabs and adoption skips known hashes,
+// so it can't be re-picked-up as a fresh grab. Scoped to unplaced failures,
+// mirroring RecoverableSab: a grab with a placed_path already reached the
+// library and is healed on its placed path, not re-downloaded.
+func (r *Repo) RecoverableQbit(ctx context.Context) (map[string]Grab, error) {
+	rows, err := r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE client = 'qbit' AND status = 'failed'
+		  AND (placed_path IS NULL OR placed_path = '')
+		  AND client_id IS NOT NULL AND client_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Grab, len(rows))
+	for _, g := range rows {
+		out[g.ClientID] = g
+	}
+	return out, nil
+}
+
 // KnownClientIDs returns the set of download-client ids (qBit info_hashes
 // / SAB nzo_ids) that already back a grab. The poller's adoption path
 // uses it to skip torrents forage is already tracking.

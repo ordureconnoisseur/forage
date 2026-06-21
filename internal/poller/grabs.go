@@ -83,6 +83,20 @@ type Poller struct {
 	// with the others.
 	sabMu   sync.Mutex
 	sabSeen map[int64]time.Time
+
+	// qbitErr records, per qBit grab, when we first saw its torrent in a
+	// failure state (qBit "error"/"missingFiles"). Those states are often
+	// transient — a tracker hiccup, a brief disk/IO error, a recheck or a
+	// not-yet-mounted volume right after an unclean qBit restart — and
+	// failing on the first sighting strands the download: Active() excludes
+	// failed grabs, so a torrent that recovers is never re-checked. We hold
+	// off failing until the bad state persists past qbitErrorGrace; a healthy
+	// reading clears the entry (markQbitHealthy) so a later error starts the
+	// clock fresh. In-memory: lost on restart, which merely restarts the
+	// grace clock (the adopt sweep's revive path is the correctness backstop).
+	// Pruned with the others.
+	qbitMu  sync.Mutex
+	qbitErr map[int64]time.Time
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -139,6 +153,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		lastScan: map[int64]time.Time{},
 		packScan: map[int64]packScanState{},
 		sabSeen:  map[int64]time.Time{},
+		qbitErr:  map[int64]time.Time{},
 	}
 }
 
@@ -230,6 +245,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.sabMu.Unlock()
+	p.qbitMu.Lock()
+	for id := range p.qbitErr {
+		if !activeIDs[id] {
+			delete(p.qbitErr, id)
+		}
+	}
+	p.qbitMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -1033,6 +1055,32 @@ func (p *Poller) sabMissingElapsed(grabID int64, d time.Duration) bool {
 	return time.Since(last) >= d
 }
 
+// qbitErrorElapsed reports whether this grab's qBit torrent has been in a
+// failure state (error/missingFiles) continuously for at least d. The first
+// call for a grab with no recorded error seeds the timestamp to now and
+// returns false — so the first error sighting starts the grace clock rather
+// than failing the grab immediately. markQbitHealthy clears the entry on any
+// healthy reading, so d only elapses after d of continuous failure.
+func (p *Poller) qbitErrorElapsed(grabID int64, d time.Duration) bool {
+	p.qbitMu.Lock()
+	defer p.qbitMu.Unlock()
+	first, ok := p.qbitErr[grabID]
+	if !ok {
+		p.qbitErr[grabID] = time.Now()
+		return false
+	}
+	return time.Since(first) >= d
+}
+
+// markQbitHealthy clears a grab's error-grace clock after a healthy qBit
+// reading, so a torrent that recovers and later errors again gets a fresh
+// grace window rather than failing instantly off the stale first-error time.
+func (p *Poller) markQbitHealthy(grabID int64) {
+	p.qbitMu.Lock()
+	delete(p.qbitErr, grabID)
+	p.qbitMu.Unlock()
+}
+
 // advanceQbit handles the qBit-specific enrichment + state-refresh
 // steps, working entirely off the tick's shared torrent list (ts, plus
 // its byHash index) — no network calls of its own. Returns (dirty,
@@ -1187,6 +1235,21 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	if newStatus == "completed" && t.Progress < 1 {
 		newStatus = "downloading"
 	}
+	// qBit reports "error"/"missingFiles" transiently (tracker hiccup, brief
+	// disk/IO error, a recheck, a not-yet-mounted volume after an unclean
+	// restart). Failing on the first sighting strands the download: Active()
+	// excludes failed grabs, so a torrent qBit later recovers to
+	// downloading/seeding is never re-checked and never placed. Hold off until
+	// the bad state persists past qbitErrorGrace; a healthy reading clears the
+	// clock. (adoptQbitOrphans' revive path is the backstop that recovers a
+	// grab we DO end up failing, should it recover after the grace.)
+	if newStatus == "failed" {
+		if !p.qbitErrorElapsed(g.ID, qbitErrorGrace) {
+			return dirty, t.ContentPath
+		}
+	} else if newStatus != "" {
+		p.markQbitHealthy(g.ID)
+	}
 	// Don't downgrade post-completed states (placed/scanned/etc.)
 	// back to "completed" just because qBit still reports the torrent
 	// as seeding (the most common case). qBit's view is limited to
@@ -1227,6 +1290,16 @@ const sabInflightTimeout = 45 * time.Minute
 // async-add budget, so a slow add still resolves first; a grab still
 // unlinked past it means the add never landed.
 const qbitLinkTimeout = 10 * time.Minute
+
+// qbitErrorGrace is how long a qBit torrent may report a failure state
+// (error/missingFiles) before the grab is declared failed. qBit raises these
+// transiently — a tracker re-announce after an outage, a brief disk/IO error,
+// a force-recheck, or a volume not yet mounted right after an unclean restart
+// — and usually clears within a re-announce cycle or two. Generous on purpose,
+// matching the SAB philosophy: a download stuck "downloading" a few extra
+// minutes is far cheaper than a false "failed" that strands a torrent qBit
+// then completes (Active() never re-checks a failed grab).
+const qbitErrorGrace = 10 * time.Minute
 
 // adoptionGrace delays adopting a freshly-added qBit torrent, so a
 // torrent added through the forage UI gets linked to its existing grab
@@ -1301,11 +1374,37 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 	if len(ts) == 0 {
 		return
 	}
+	// Failed-but-unplaced qBit grabs whose torrent is in fact still present and
+	// healthy: a transient qBit error past qbitErrorGrace false-failed them,
+	// and Active() then stopped polling them, so a torrent that recovered to
+	// downloading/seeding strands. Looked up once and revived in the loop below
+	// — keyed by info-hash, the same id qBit's list carries. Best-effort: a
+	// query error just skips recovery this pass.
+	recoverable, rerr := p.repo.RecoverableQbit(ctx)
+	if rerr != nil {
+		p.log.Warn("adopt: recoverable qbit", "err", rerr)
+		recoverable = nil
+	}
 	now := time.Now().Unix()
 	graceSecs := int64(minAge / time.Second)
 	for i := range ts {
 		t := &ts[i]
-		if t.Hash == "" || known[t.Hash] {
+		if t.Hash == "" {
+			continue
+		}
+		// Revive a false-failed grab before the known-hash skip below: a
+		// recoverable grab's hash IS known (it has a client_id), so the skip
+		// would otherwise strand its recovered download forever. Only revive
+		// when the torrent is actually healthy again; a still-errored one is
+		// left failed for a later pass.
+		if g, ok := recoverable[t.Hash]; ok {
+			switch classifyQbitState(t.State) {
+			case "downloading", "completed":
+				p.reviveQbitGrab(ctx, g, t)
+			}
+			continue // known hash — never adopt a second copy of it
+		}
+		if known[t.Hash] {
 			continue
 		}
 		// Give a UI-added torrent time to claim its own grab first. Counted
@@ -1493,6 +1592,40 @@ func (p *Poller) reviveSabGrab(ctx context.Context, g grabs.Grab, it sabnzbd.Ite
 		return
 	}
 	p.log.Info("revived false-failed sab grab", "id", g.ID, "nzo_id", it.NzoID, "name", g.ClientName)
+}
+
+// reviveQbitGrab flips a false-failed qBit grab back into the live pipeline
+// once its torrent is healthy again, so the normal place → scan → confirm
+// steps (re-)run on what qBit downloaded. Maps the current qBit state to
+// downloading or completed (progress is the authority for completion, exactly
+// as advanceQbit gates it), clears the failure, and refreshes ClientName from
+// qBit's current torrent name. The caller only invokes this for a torrent
+// already classified healthy. Best-effort: a stale write or DB error just
+// leaves the grab failed for a later pass to retry.
+func (p *Poller) reviveQbitGrab(ctx context.Context, g grabs.Grab, t *qbit.Torrent) {
+	ns := classifyQbitState(t.State)
+	if ns == "completed" && t.Progress < 1 {
+		ns = "downloading"
+	}
+	g.Status = ns
+	g.PlaceError = ""
+	g.Reason = "recovered: qBit torrent healthy again after a transient error"
+	if ns == "completed" && g.CompletedAt == 0 {
+		g.CompletedAt = time.Now().Unix()
+	}
+	if t.Name != "" {
+		g.ClientName = t.Name
+	}
+	p.markQbitHealthy(g.ID) // clear any stale error-grace clock
+	if err := p.repo.Update(ctx, g); err != nil {
+		if errors.Is(err, grabs.ErrStaleUpdate) {
+			p.log.Info("revive qbit grab: changed under sweep, skipping", "id", g.ID)
+			return
+		}
+		p.log.Warn("revive qbit grab", "id", g.ID, "hash", g.ClientID, "err", err)
+		return
+	}
+	p.log.Info("revived false-failed qbit grab", "id", g.ID, "hash", g.ClientID, "state", t.State, "status", ns)
 }
 
 // classifyDownloadPath decides pack vs single for an on-disk completed
