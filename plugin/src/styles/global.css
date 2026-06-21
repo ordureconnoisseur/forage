@@ -2499,6 +2499,12 @@ button {
   --tone: #f8b34d;
   --tone-rgb: 245, 158, 11;
 }
+/* Adopted-but-unlinked: amber, deliberately calmer than the confirmed
+   green — informational, not celebratory. No triumphant tick to draw. */
+.grab-match-hero.unidentified {
+  --tone: var(--amber);
+  --tone-rgb: 212, 161, 74;
+}
 /* One-time light sweep across the card on reveal. */
 .grab-match-hero::after {
   content: "";
@@ -2561,6 +2567,20 @@ button {
 @keyframes matchTick {
   to {
     stroke-dashoffset: 0;
+  }
+}
+/* Question glyph for the unidentified hero — filled, not stroked, so it
+   reads at a glance against the ring. Fades in instead of drawing. */
+.grab-match-glyph .qmark {
+  fill: var(--tone);
+  font-family: var(--font-stack);
+  font-size: 22px;
+  font-weight: 800;
+  animation: matchQ 0.3s 0.18s ease both;
+}
+@keyframes matchQ {
+  from {
+    opacity: 0;
   }
 }
 .grab-match-hero-body {
@@ -5539,42 +5559,6 @@ code.grab-fact-v,
   background: rgba(120, 145, 175, 0.13);
   border: 1px solid rgba(120, 145, 175, 0.4);
   color: #aebfd4;
-}
-
-/* Adopted-scene identify state — at a glance, did Stash link this to a
-   StashDB scene? Positive case borrows the confirmed green + the check
-   glyph from the match hero (without the word "matched"); the still-
-   unmatched case is amber. Same pill family as ADOPTED. */
-.grab-ident-badge {
-  flex: none;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-}
-.grab-ident-badge.is-identified {
-  background: var(--status-confirmed-bg);
-  border: 1px solid rgba(var(--accent-rgb), 0.45);
-  color: var(--accent-bright);
-}
-.grab-ident-badge.is-unidentified {
-  background: rgba(212, 161, 74, 0.13);
-  border: 1px solid rgba(212, 161, 74, 0.4);
-  color: var(--amber);
-}
-.grab-ident-glyph {
-  width: 11px;
-  height: 11px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
 }
 
 /* Place-failing badge — downloaded but can't get into the library.

@@ -1003,6 +1003,64 @@ function MatchBlock({ g }: { g: Grab }) {
   );
 }
 
+// IdentifyBlock is the adopted-scene analogue of MatchBlock's hero.
+// Adopted grabs carry no prediction (you added the torrent to qBit
+// yourself), so there's nothing to "match" against — only whether Stash
+// linked the file to a StashDB scene. Green confirmed hero with the same
+// check glyph when it did; an understated amber hero when it hasn't, where
+// the Find-matches tool below is the fix.
+function IdentifyBlock({ g }: { g: Grab }) {
+  const actual = g.actual_stashdb_id;
+  if (actual) {
+    return (
+      <div className="grab-match-hero confirmed">
+        <svg
+          className="grab-match-glyph"
+          viewBox="0 0 40 40"
+          aria-hidden="true"
+        >
+          <circle className="ring" cx="20" cy="20" r="17" />
+          <path className="tick" d="M12 20.5 L18 26 L28 14" />
+        </svg>
+        <div className="grab-match-hero-body">
+          <div className="grab-match-hero-title">Identified in Stash</div>
+          <div className="grab-match-hero-sub">
+            Linked to a StashDB scene ·{" "}
+            <a
+              href={stashdbScene(actual)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {actual}
+            </a>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div className="grab-match-hero unidentified">
+      <svg
+        className="grab-match-glyph"
+        viewBox="0 0 40 40"
+        aria-hidden="true"
+      >
+        <circle className="ring" cx="20" cy="20" r="17" />
+        <text className="qmark" x="20" y="28" textAnchor="middle">
+          ?
+        </text>
+      </svg>
+      <div className="grab-match-hero-body">
+        <div className="grab-match-hero-title">Not identified</div>
+        <div className="grab-match-hero-sub">
+          In your library, but not linked to a StashDB scene yet. Use Find
+          matches below to link it.
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // initials reduces a performer name to a 1–2 letter monogram for the
 // poster fallback when no portrait is available ("Brie Belle" → "BB").
 function initials(name?: string): string {
@@ -1727,35 +1785,6 @@ function GrabRow({
               ADOPTED
             </span>
           )}
-          {/* Adopted scenes carry no prediction, so the green "confirmed"
-              chip alone can't tell a StashDB-linked scene from one that's
-              merely in the library unidentified. Surface that distinction:
-              green check borrowed from the match hero when linked, amber
-              when still unmatched. */}
-          {g.adopted &&
-            g.placed_path &&
-            (g.actual_stashdb_id ? (
-              <span
-                className="grab-ident-badge is-identified"
-                title="Identified in Stash — linked to a StashDB scene, metadata applied"
-              >
-                <svg
-                  className="grab-ident-glyph"
-                  viewBox="0 0 16 16"
-                  aria-hidden="true"
-                >
-                  <path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" />
-                </svg>
-                IDENTIFIED
-              </span>
-            ) : (
-              <span
-                className="grab-ident-badge is-unidentified"
-                title="In your library but not identified — no StashDB match yet. Open the card and use Find matches to link it."
-              >
-                UNIDENTIFIED
-              </span>
-            ))}
         </div>
         <div className="grab-row-body">
           <div className="grab-title">{g.release_title}</div>
@@ -1944,6 +1973,9 @@ function GrabRow({
           {/* The record — labelled cards, not a flat list. */}
           <div className="grab-facts">
             {g.predicted_stashdb_id && <MatchBlock g={g} />}
+            {!g.predicted_stashdb_id && g.placed_path && (
+              <IdentifyBlock g={g} />
+            )}
             {g.placed_path && (
               <div className="grab-fact">
                 <span className="grab-fact-k">Placed</span>
