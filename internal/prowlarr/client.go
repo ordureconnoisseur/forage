@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 )
 
 type Client struct {
@@ -166,15 +168,15 @@ func (c *Client) SearchScoped(ctx context.Context, term string, categories, inde
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("prowlarr search", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("prowlarr search read", err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("prowlarr search %d: %s", resp.StatusCode, body)
+		return nil, clienterr.Status("prowlarr search", resp.StatusCode, body)
 	}
 
 	var raw []rawRelease
@@ -211,12 +213,12 @@ func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
 	req.Header.Set("X-Api-Key", c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("prowlarr indexer list", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("prowlarr indexer list %d: %s", resp.StatusCode, body)
+		return nil, clienterr.Status("prowlarr indexer list", resp.StatusCode, body)
 	}
 	var out []Indexer
 	if err := json.Unmarshal(body, &out); err != nil {
@@ -238,12 +240,12 @@ func (c *Client) Status(ctx context.Context) (string, error) {
 	req.Header.Set("X-Api-Key", c.apiKey)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return "", err
+		return "", clienterr.Transport("prowlarr status", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("prowlarr status %d: %s", resp.StatusCode, body)
+		return "", clienterr.Status("prowlarr status", resp.StatusCode, body)
 	}
 	var s struct {
 		Version string `json:"version"`

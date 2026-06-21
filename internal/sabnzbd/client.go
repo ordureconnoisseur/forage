@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 )
 
 type Client struct {
@@ -325,15 +327,15 @@ func (c *Client) get(ctx context.Context, q url.Values) ([]byte, error) {
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("sab "+q.Get("mode"), err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("sab "+q.Get("mode")+" read", err)
 	}
 	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("sab %s %d: %s", q.Get("mode"), resp.StatusCode, body)
+		return nil, clienterr.Status("sab "+q.Get("mode"), resp.StatusCode, body)
 	}
 	return body, nil
 }

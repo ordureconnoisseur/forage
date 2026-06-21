@@ -88,26 +88,38 @@ appetite.
   survived (`matchOutcomeErr`). Mirrors the cache layer's existing
   minority-tolerant policy.
 
-### Phase 1 - the keystone: client error classification
+### Phase 1 - the keystone foundation: client error classification (DONE)
 
 A small `clienterr` package: sentinel errors `ErrTransient`, `ErrNotFound`,
-`ErrRejected`, plus a `Classify(resp, err)` helper mapping
-`context.DeadlineExceeded` / `net.Error.Timeout()` / connection-refused / 5xx ->
-`ErrTransient`; 404 (and GraphQL "not found") -> `ErrNotFound`; 4xx/auth ->
-`ErrRejected`. Wrap it into all five clients. Replace the `(nil, nil)`
-"not found" convention on the lookups (`qbit.TorrentInfo`,
-`stash.FindSceneByPathContains`, `stashdb.FindScene`) with `ErrNotFound`. This
-is what makes principles 1 and 2 enforceable.
+`ErrRejected`, plus `Transport(label, err)` (every `http.Client.Do` failure is
+connection-level, so it wraps `ErrTransient` while preserving the original for
+`errors.Is(context.DeadlineExceeded)`) and `Status(label, code, body)` (404 ->
+`ErrNotFound`; 408/429/5xx -> `ErrTransient`; other 4xx -> `ErrRejected`; nil for
+2xx). Wired into the one shared GraphQL transport (`gqlclient.Do`, covering Stash
++ StashDB) and the three REST clients (qbit, sab, prowlarr) at every transport
+and status site.
 
-### Phase 2 - collapse the poller compensation
+This phase is deliberately ADDITIVE: it only wraps the errors clients already
+return, so no caller's behavior changes (nothing does `errors.Is` on a client
+error yet, and string logging still works). It is the foundation that makes
+principles 1 and 2 enforceable in Phase 2.
+
+The `(nil, nil)` "not found" contract change on the lookups
+(`qbit.TorrentInfo`, `stash.FindSceneByPathContains`, `stashdb.FindScene`) is
+NOT in this phase: several callers (the poller's confirm path especially) treat
+`(nil, nil)` as a normal "not indexed yet, keep waiting" state, so flipping it to
+`ErrNotFound` must happen with its consumers, in Phase 2.
+
+### Phase 2 - consume the classification + collapse the poller compensation
 
 On top of Phase 1: `xListOK` booleans become
-`errors.Is(err, clienterr.ErrTransient)`; one generic grace clock replaces the
-parallel `sabSeen`/`qbitErr` maps and their twin helpers; one
-`classifyClientState` verdict and one `reviveGrab` replace the duplicated
-SAB/qBit machinery; one `Recoverable(client)` query replaces the two copies.
-Deletes ~200 lines of duplication. This is where the bandaid feel actually
-disappears.
+`errors.Is(err, clienterr.ErrTransient)`; the lookups switch `(nil, nil)` ->
+`ErrNotFound` with every consumer updated to handle absence explicitly; one
+generic grace clock replaces the parallel `sabSeen`/`qbitErr` maps and their twin
+helpers; one `classifyClientState` verdict and one `reviveGrab` replace the
+duplicated SAB/qBit machinery; one `Recoverable(client)` query replaces the two
+copies. Deletes ~200 lines of duplication. This is where the bandaid feel
+actually disappears.
 
 ### Phase 3 - consistency cleanups
 

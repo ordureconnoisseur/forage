@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
@@ -98,16 +99,16 @@ func (c *Client) Login(ctx context.Context) error {
 	req.Header.Set("Referer", c.baseURL)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return clienterr.Transport("qbit login", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("qbit login %d: %s", resp.StatusCode, body)
+		return clienterr.Status("qbit login", resp.StatusCode, body)
 	}
 	// qBit replies "Ok." on success, "Fails." otherwise — both with HTTP 200.
 	if strings.TrimSpace(string(body)) != "Ok." {
-		return fmt.Errorf("qbit login refused: %s", body)
+		return fmt.Errorf("qbit login refused: %s (%w)", body, clienterr.ErrRejected)
 	}
 	c.authedOnce = true
 	return nil
@@ -140,7 +141,7 @@ func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, erro
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, clienterr.Transport("qbit request", err)
 	}
 	if resp.StatusCode != http.StatusForbidden {
 		return resp, nil
@@ -153,7 +154,8 @@ func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, erro
 	if err != nil {
 		return nil, err
 	}
-	return c.http.Do(req)
+	resp, err = c.http.Do(req)
+	return resp, clienterr.Transport("qbit request", err)
 }
 
 // Version returns qBittorrent's version string ("v5.1.4"). Used as a
@@ -168,7 +170,7 @@ func (c *Client) Version(ctx context.Context) (string, error) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("qbit version %d: %s", resp.StatusCode, body)
+		return "", clienterr.Status("qbit version", resp.StatusCode, body)
 	}
 	return strings.TrimSpace(string(body)), nil
 }
@@ -231,7 +233,7 @@ func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]b
 			if lastErr != nil {
 				return nil, lastErr
 			}
-			return nil, ctx.Err()
+			return nil, clienterr.Transport("fetch torrent", ctx.Err())
 		}
 		req, err := http.NewRequestWithContext(ctx, "GET", downloadURL, nil)
 		if err != nil {
@@ -239,14 +241,16 @@ func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]b
 		}
 		resp, err := c.fetchHTTP.Do(req)
 		if err != nil {
-			lastErr = fmt.Errorf("fetch torrent: %w", err)
+			lastErr = clienterr.Transport("fetch torrent", err)
 			continue // transient (timeout / reset) — retry
 		}
 		if resp.StatusCode >= 400 {
 			b, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()
 			// 5xx is worth a retry (Prowlarr/tracker hiccup); 4xx isn't.
-			lastErr = fmt.Errorf("fetch torrent %d: %s", resp.StatusCode, b)
+			// clienterr.Status classifies the body accordingly (5xx ->
+			// ErrTransient, 4xx -> ErrRejected/ErrNotFound).
+			lastErr = clienterr.Status("fetch torrent", resp.StatusCode, b)
 			if resp.StatusCode < 500 {
 				return nil, lastErr
 			}
@@ -255,7 +259,7 @@ func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]b
 		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		if err != nil {
-			lastErr = fmt.Errorf("read torrent body: %w", err)
+			lastErr = clienterr.Transport("read torrent body", err)
 			continue
 		}
 		return body, nil
@@ -460,7 +464,7 @@ func (c *Client) ListTorrents(ctx context.Context, opts ListOpts) ([]Torrent, er
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("qbit list %d: %s", resp.StatusCode, body)
+		return nil, clienterr.Status("qbit list", resp.StatusCode, body)
 	}
 	var out []Torrent
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -489,7 +493,7 @@ func (c *Client) Categories(ctx context.Context) (map[string]Category, error) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("qbit categories %d: %s", resp.StatusCode, body)
+		return nil, clienterr.Status("qbit categories", resp.StatusCode, body)
 	}
 	var out map[string]Category
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -544,7 +548,7 @@ func (c *Client) TorrentFiles(ctx context.Context, hash string) ([]TorrentFile, 
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("qbit files %d: %s", resp.StatusCode, body)
+		return nil, clienterr.Status("qbit files", resp.StatusCode, body)
 	}
 	var out []TorrentFile
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -585,7 +589,7 @@ func (c *Client) DeleteTorrent(ctx context.Context, hash string, deleteFiles boo
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("qbit delete %d: %s", resp.StatusCode, body)
+		return clienterr.Status("qbit delete", resp.StatusCode, body)
 	}
 	return nil
 }
@@ -609,7 +613,7 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values) err
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("qbit %s %d: %s", path, resp.StatusCode, body)
+		return clienterr.Status("qbit "+path, resp.StatusCode, body)
 	}
 	return nil
 }
@@ -657,10 +661,10 @@ func (c *Client) postAdd(ctx context.Context, body *bytes.Buffer, contentType st
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("qbit add %d: %s", resp.StatusCode, respBody)
+		return clienterr.Status("qbit add", resp.StatusCode, respBody)
 	}
 	if strings.TrimSpace(string(respBody)) == "Fails." {
-		return fmt.Errorf("qbit refused the torrent (could not parse)")
+		return fmt.Errorf("qbit refused the torrent (could not parse) (%w)", clienterr.ErrRejected)
 	}
 	return nil
 }

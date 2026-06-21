@@ -16,6 +16,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 )
 
 type Client struct {
@@ -56,15 +58,17 @@ func (c *Client) Do(ctx context.Context, query string, vars map[string]any, out 
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return err
+		return clienterr.Transport(c.label+" graphql", err)
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		// A body that fails mid-read is a dropped connection, not a semantic
+		// failure — classify it transient so callers retry rather than give up.
+		return clienterr.Transport(c.label+" graphql read", err)
 	}
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("%s graphql %d: %s", c.label, resp.StatusCode, raw)
+		return clienterr.Status(c.label+" graphql", resp.StatusCode, raw)
 	}
 	var wrap struct {
 		Data   json.RawMessage `json:"data"`
@@ -74,7 +78,9 @@ func (c *Client) Do(ctx context.Context, query string, vars map[string]any, out 
 		return fmt.Errorf("decode: %w (body=%s)", err, raw)
 	}
 	if len(wrap.Errors) > 0 {
-		return fmt.Errorf("%s graphql errors: %+v", c.label, wrap.Errors)
+		// GraphQL-level errors are semantic (the request was understood and
+		// refused): a malformed query or a rejected field won't fix on retry.
+		return fmt.Errorf("%s graphql errors: %+v (%w)", c.label, wrap.Errors, clienterr.ErrRejected)
 	}
 	if out != nil {
 		if err := json.Unmarshal(wrap.Data, out); err != nil {
