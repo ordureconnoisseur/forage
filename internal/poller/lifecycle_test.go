@@ -98,14 +98,37 @@ type fakeScene struct {
 type fakeStash struct {
 	mu        sync.Mutex
 	scenes    []fakeScene
-	reqs      int // total GraphQL requests served (lets a test prove a code path made no calls)
-	generated int // metadataGenerate calls served (proves deferred preview/sprite generation fired)
+	reqs      int  // total GraphQL requests served (lets a test prove a code path made no calls)
+	generated int  // metadataGenerate calls served (proves deferred preview/sprite generation fired)
+	scanned   int  // metadataScan calls served (proves a (re-)scan fired)
+	boxErr    bool // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
+	jobErr    bool // when true, findJob queries 500 (simulates a JobStatus query failure)
+	jobStatus string
 }
 
 func (f *fakeStash) set(scenes []fakeScene) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.scenes = scenes
+}
+
+func (f *fakeStash) setBoxErr(v bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.boxErr = v
+}
+
+func (f *fakeStash) setJob(err bool, status string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.jobErr = err
+	f.jobStatus = status
+}
+
+func (f *fakeStash) scanCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.scanned
 }
 
 func (f *fakeStash) reqCount() int {
@@ -137,8 +160,31 @@ func (f *fakeStash) handler() http.Handler {
 		case strings.Contains(q, "metadataIdentify"):
 			writeRaw(w, `{"data":{"metadataIdentify":"identify-job-1"}}`)
 		case strings.Contains(q, "metadataScan"):
+			f.mu.Lock()
+			f.scanned++
+			f.mu.Unlock()
 			writeRaw(w, `{"data":{"metadataScan":"scan-job-1"}}`)
+		case strings.Contains(q, "findJob"):
+			f.mu.Lock()
+			jobErr, status := f.jobErr, f.jobStatus
+			f.mu.Unlock()
+			if jobErr {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
+			if status == "" {
+				writeRaw(w, `{"data":{"findJob":null}}`)
+				return
+			}
+			writeRaw(w, `{"data":{"findJob":{"status":"`+status+`"}}}`)
 		case strings.Contains(q, "stashBoxes"):
+			f.mu.Lock()
+			boxErr := f.boxErr
+			f.mu.Unlock()
+			if boxErr {
+				http.Error(w, "boom", http.StatusInternalServerError)
+				return
+			}
 			writeRaw(w, `{"data":{"configuration":{"general":{"stashBoxes":[{"endpoint":"`+stashDBEndpoint+`"}]}}}}`)
 		case strings.Contains(q, "findScenes"):
 			f.mu.Lock()
@@ -197,6 +243,7 @@ type rig struct {
 	stash   *fakeStash
 	libRoot string // <tmp>/library
 	stage   string // <tmp>/staging (the download client's "complete" dir)
+	cfg     config.Config
 }
 
 // fakeSab serves the two SAB endpoints the poller touches: mode=queue
@@ -265,8 +312,7 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 		t.Fatalf("mkdir stage: %v", err)
 	}
 
-	pool := clientpool.New()
-	pool.Reload(config.Config{
+	cfg := config.Config{
 		StashURL:     sSrv.URL,
 		StashAPIKey:  "test-key",
 		QbitURL:      qSrv.URL,
@@ -275,12 +321,22 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 		SabAPIKey:    "test-key",
 		SabCategory:  qbitCategory, // mirrors qBit: empty disables SAB adoption
 		LibraryRoot:  libRoot,
-	})
+	}
+	pool := clientpool.New()
+	pool.Reload(cfg)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour)
 
-	return &rig{poller: p, repo: repo, qbit: fq, sab: fsab, stash: fs, libRoot: libRoot, stage: stage}
+	return &rig{poller: p, repo: repo, qbit: fq, sab: fsab, stash: fs, libRoot: libRoot, stage: stage, cfg: cfg}
+}
+
+// setConfig mutates the rig's config via fn and reloads the pool. Lets a test
+// turn on a setting (e.g. a path mapping or a pack dedup mode) without
+// re-specifying the httptest server URLs.
+func (r *rig) setConfig(fn func(c *config.Config)) {
+	fn(&r.cfg)
+	r.poller.pool.Reload(r.cfg)
 }
 
 // stageFile writes a real file into the staging dir and returns its path,
@@ -1300,5 +1356,178 @@ func TestQbitReviveFalseFailed(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "recovered") {
 		t.Fatalf("reason = %q, want it to mention recovery", got.Reason)
+	}
+}
+
+// TestPackOrphansWhenStashNeverIndexes pins C1: a pack whose files Stash
+// never indexes under the placed path (found==0, e.g. a stale path mapping)
+// must orphan once the download is older than the orphan window, instead of
+// re-scanning forever. The single-scene path always had this backstop; the
+// pack path returned before reaching it.
+func TestPackOrphansWhenStashNeverIndexes(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	r.stash.set(nil) // nothing indexed under the path
+
+	g := &grabs.Grab{
+		ID:          1,
+		Kind:        "pack",
+		Status:      "scanned",
+		PlacedPath:  "/lib/Performer/SomePack",
+		CompletedAt: time.Now().Add(-7 * time.Hour).Unix(), // older than the 6h orphan window
+		PackFiles:   10,
+	}
+	dirty, err := r.poller.advancePackConfirm(context.Background(), g, sc)
+	if err != nil {
+		t.Fatalf("advancePackConfirm: %v", err)
+	}
+	if !dirty {
+		t.Fatalf("expected a status change (dirty), got false")
+	}
+	if g.Status != "orphaned" {
+		t.Fatalf("status = %q, want orphaned", g.Status)
+	}
+
+	// Before the orphan window elapses it must NOT orphan — it keeps trying.
+	g2 := &grabs.Grab{
+		ID:          2,
+		Kind:        "pack",
+		Status:      "scanned",
+		PlacedPath:  "/lib/Performer/SomePack",
+		CompletedAt: time.Now().Add(-1 * time.Minute).Unix(),
+		PackFiles:   10,
+	}
+	if _, err := r.poller.advancePackConfirm(context.Background(), g2, sc); err != nil {
+		t.Fatalf("advancePackConfirm g2: %v", err)
+	}
+	if g2.Status == "orphaned" {
+		t.Fatalf("a recently-completed pack must not orphan yet, got %q", g2.Status)
+	}
+}
+
+// TestPackRescansWhenSettledBelowCoverage pins C7: when Stash's scan settles
+// below the expected file count (a coalesced/interrupted post-placement
+// scan), the pack must re-fire the directory scan rather than stranding at
+// "scanned" until the 6h backstop confirms against the partial set.
+func TestPackRescansWhenSettledBelowCoverage(t *testing.T) {
+	r := newRig(t, "")
+	// Path mapping so triggerPlacementScan actually issues metadataScan
+	// (it skips, without scanning, when a placed path can't be mapped).
+	r.setConfig(func(c *config.Config) { c.StashPathMapping = "/lib:/lib" })
+	sc := r.poller.pool.Stash()
+
+	// 4 of an expected 10 files indexed (40% < the 80% floor).
+	r.stash.set([]fakeScene{
+		{id: "s1", title: "A", path: "/lib/P/Pack/a.mp4", stashDBID: "x1"},
+		{id: "s2", title: "B", path: "/lib/P/Pack/b.mp4", stashDBID: "x2"},
+		{id: "s3", title: "C", path: "/lib/P/Pack/c.mp4", stashDBID: "x3"},
+		{id: "s4", title: "D", path: "/lib/P/Pack/d.mp4", stashDBID: "x4"},
+	})
+	g := &grabs.Grab{
+		ID: 1, Kind: "pack", Status: "scanned",
+		PlacedPath:  "/lib/P/Pack",
+		CompletedAt: time.Now().Add(-1 * time.Minute).Unix(),
+		PackFiles:   10,
+	}
+	// Force the scan to read as settled at the current count: seed the
+	// high-water in the past so packScanStableWindow has elapsed.
+	r.poller.packMu.Lock()
+	r.poller.packScan[g.ID] = packScanState{count: 4, since: time.Now().Add(-10 * time.Minute)}
+	r.poller.packMu.Unlock()
+
+	before := r.stash.scanCount()
+	if _, err := r.poller.advancePackConfirm(context.Background(), g, sc); err != nil {
+		t.Fatalf("advancePackConfirm: %v", err)
+	}
+	if r.stash.scanCount() == before {
+		t.Fatalf("expected a re-scan for a settled-but-incomplete pack, none fired")
+	}
+	if g.Status == "confirmed" {
+		t.Fatalf("pack must not confirm below the coverage floor, got %q", g.Status)
+	}
+}
+
+// TestPackDefersConfirmWhenEndpointLookupFails pins C10: a pack that is ready
+// to confirm must NOT confirm when the stash-box endpoint lookup fails (Stash
+// briefly unreachable). Confirming would run — or skip — dedup against an
+// unreachable Stash and then leave Active() permanently. It must defer and
+// confirm on a later tick once Stash is reachable again.
+func TestPackDefersConfirmWhenEndpointLookupFails(t *testing.T) {
+	r := newRig(t, "")
+	r.setConfig(func(c *config.Config) { c.StashPathMapping = "/lib:/lib" })
+	sc := r.poller.pool.Stash()
+
+	// A fully-indexed, fully-identified 2-file pack: ready to confirm.
+	r.stash.set([]fakeScene{
+		{id: "s1", title: "A", path: "/lib/P/Pack/a.mp4", stashDBID: "x1"},
+		{id: "s2", title: "B", path: "/lib/P/Pack/b.mp4", stashDBID: "x2"},
+	})
+	newPack := func(id int64) *grabs.Grab {
+		g := &grabs.Grab{
+			ID: id, Kind: "pack", Status: "scanned",
+			PlacedPath:  "/lib/P/Pack",
+			CompletedAt: time.Now().Add(-1 * time.Minute).Unix(),
+			PackFiles:   2,
+		}
+		r.poller.packMu.Lock()
+		r.poller.packScan[id] = packScanState{count: 2, since: time.Now().Add(-10 * time.Minute)}
+		r.poller.packMu.Unlock()
+		return g
+	}
+
+	// Endpoint lookup fails → defer (stay scanned).
+	r.stash.setBoxErr(true)
+	g := newPack(1)
+	if _, err := r.poller.advancePackConfirm(context.Background(), g, sc); err != nil {
+		t.Fatalf("advancePackConfirm (boxErr): %v", err)
+	}
+	if g.Status != "scanned" {
+		t.Fatalf("status = %q, want scanned (deferred) while endpoint lookup fails", g.Status)
+	}
+
+	// Stash recovers → the same conditions now confirm.
+	r.stash.setBoxErr(false)
+	g2 := newPack(2)
+	if _, err := r.poller.advancePackConfirm(context.Background(), g2, sc); err != nil {
+		t.Fatalf("advancePackConfirm (recovered): %v", err)
+	}
+	if g2.Status != "confirmed" {
+		t.Fatalf("status = %q, want confirmed once Stash is reachable", g2.Status)
+	}
+}
+
+// TestIdentifyInFlightAssumesInFlightOnError pins C12: a JobStatus query
+// error must be treated as "still in flight" (return true) so a transient
+// blip can't stack a redundant Identify behind the still-pending one. A
+// clean "job drained from the queue" reply (null) returns false so a genuine
+// next batch can fire.
+func TestIdentifyInFlightAssumesInFlightOnError(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	ctx := context.Background()
+
+	// No remembered job → not in flight.
+	if r.poller.identifyInFlight(ctx, sc, 1) {
+		t.Fatalf("no remembered job should not be in flight")
+	}
+
+	r.poller.rememberIdentifyJob(1, "identify-job-1")
+
+	// JobStatus errors → assume still in flight (don't re-fire).
+	r.stash.setJob(true, "")
+	if !r.poller.identifyInFlight(ctx, sc, 1) {
+		t.Fatalf("a JobStatus error must be treated as in flight")
+	}
+
+	// Job still running → in flight.
+	r.stash.setJob(false, "RUNNING")
+	if !r.poller.identifyInFlight(ctx, sc, 1) {
+		t.Fatalf("a RUNNING job must be in flight")
+	}
+
+	// Job drained from the queue (null) → free to fire again.
+	r.stash.setJob(false, "")
+	if r.poller.identifyInFlight(ctx, sc, 1) {
+		t.Fatalf("a drained/finished job must not be in flight")
 	}
 }

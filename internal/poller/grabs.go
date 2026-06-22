@@ -232,10 +232,12 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// Drop per-grab throttle state for grabs that left Active() (confirmed,
-	// failed, deleted): lastScan and packScan otherwise grow for the
-	// daemon's lifetime. forgetPackScan covers the pack-confirm path, but
-	// not failures and deletes.
+	// Drop per-grab in-memory state for grabs that left Active() (confirmed,
+	// failed, deleted): lastScan, packScan, grace and identifyJob otherwise
+	// grow for the daemon's lifetime. This is the SOLE cleanup path — pack
+	// confirm deliberately does not eagerly clear its settle high-water,
+	// because its confirm write can be dropped by an optimistic-lock miss and
+	// the retained high-water lets the retry re-confirm immediately. [C9]
 	activeIDs := make(map[int64]bool, len(active))
 	for i := range active {
 		activeIDs[active[i].ID] = true
@@ -736,6 +738,24 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// Nothing indexed yet — the post-placement scan can miss a large new
 	// directory. Re-fire it, throttled, until scenes appear.
 	if found == 0 {
+		// Give-up backstop: if the download finished long ago but Stash never
+		// indexed a single scene under the path, orphan the pack instead of
+		// re-scanning forever. The single-scene path orphans this exact
+		// condition (g.CompletedAt>0 && since>p.orphan); packs lacked an
+		// equivalent because this branch returns before the confirm/gaveUp
+		// logic below, so a path-mapping mismatch (stale prefix after a mount
+		// rename, no mapping configured) left the pack polled every tick for
+		// the daemon's lifetime. Orphaned is a recoverable parking state:
+		// if the files are later scanned in, found>0 and the pack resumes.
+		if g.CompletedAt > 0 && time.Since(time.Unix(g.CompletedAt, 0)) > p.orphan {
+			if g.Status != "orphaned" {
+				g.Status = "orphaned"
+				g.Reason = "placed but Stash never indexed any scene under " + needle
+				dirty = true
+				p.log.Info("pack orphaned: no scenes indexed under path", "id", g.ID, "needle", needle, "placed", g.PlacedPath)
+			}
+			return dirty, nil
+		}
 		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) {
 			// Surface a persistent miss: if this keeps logging after the pack
 			// has landed + Stash scanned, `needle` doesn't match how Stash
@@ -755,10 +775,38 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		dirty = true
 	}
 
-	// Drive identify across everything still missing a cross-id. Skip while
-	// our previous batch is still queued/running in Stash's serial queue —
-	// re-firing then would just stack a redundant identical job behind it.
-	if len(toIdentify) > 0 && p.scanThrottleElapsed(g.ID) && !p.identifyInFlight(ctx, sc, g.ID) {
+	// Has Stash's directory scan settled (count stopped climbing) and indexed
+	// enough of the expected file count? Computed before driving identify so a
+	// scan that stalled mid-directory can re-trigger a scan rather than
+	// identifying only the partial set. packScanSettled updates the in-memory
+	// high-water as a side effect, so call it exactly once per tick.
+	settled := p.packScanSettled(g.ID, found)
+	downloadDone := g.CompletedAt > 0
+	var sinceDone time.Duration
+	if downloadDone {
+		sinceDone = time.Since(time.Unix(g.CompletedAt, 0))
+	}
+	coverageOK := packScanCoverageOK(found, g.PackFiles)
+
+	// A scan that SETTLED below the expected file count means the
+	// post-placement scan was coalesced or interrupted and indexed only part
+	// of the directory. Re-fire the directory scan (throttled) so Stash
+	// indexes the rest, instead of stranding the pack at "scanned" until the
+	// 6h backstop confirms + dedups against a partial set. Only fires when
+	// the count has settled (still climbing? just wait) and is known
+	// incomplete (PackFiles>0 and below floor); magnet/manual packs
+	// (PackFiles==0) are coverageOK vacuously, so this never fires for them.
+	// Shares the scan throttle with identify: getting the rest of the files
+	// in takes priority while coverage is incomplete; identify resumes once
+	// the scan grows again (settled flips false) or coverage is reached. [C7]
+	if settled && !coverageOK && downloadDone && sinceDone <= p.orphan && p.scanThrottleElapsed(g.ID) {
+		p.log.Info("pack: scan settled below expected count, re-scanning",
+			"id", g.ID, "found", found, "packFiles", g.PackFiles, "placed", g.PlacedPath)
+		p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
+	} else if len(toIdentify) > 0 && p.scanThrottleElapsed(g.ID) && !p.identifyInFlight(ctx, sc, g.ID) {
+		// Drive identify across everything still missing a cross-id. Skip while
+		// our previous batch is still queued/running in Stash's serial queue —
+		// re-firing then would just stack a redundant identical job behind it.
 		if jobID, err := p.triggerIdentifyBatch(ctx, sc, toIdentify); err != nil {
 			p.log.Warn("pack identify trigger failed", "id", g.ID, "scenes", len(toIdentify), "err", err)
 		} else if jobID != "" {
@@ -777,12 +825,6 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// overstate the real file count — neither should hold the pack at
 	// "scanned" for the full orphan window). A long orphan backstop covers
 	// a missing download timestamp.
-	settled := p.packScanSettled(g.ID, found)
-	downloadDone := g.CompletedAt > 0
-	var sinceDone time.Duration
-	if downloadDone {
-		sinceDone = time.Since(time.Unix(g.CompletedAt, 0))
-	}
 	identifyDone := len(toIdentify) == 0
 	// Floor against confirming a half-scanned pack. The settle window
 	// (packScanSettled) is the primary "scan stopped growing" signal, but
@@ -795,7 +837,7 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// of it to be indexed before a settle can complete. The gaveUp orphan
 	// backstop below still forces eventual confirmation if some files
 	// legitimately never scan, so this can't hang a pack forever.
-	ready := settled && packScanCoverageOK(found, g.PackFiles) && (identifyDone || !downloadDone || sinceDone > packIdentifyGrace)
+	ready := settled && coverageOK && (identifyDone || !downloadDone || sinceDone > packIdentifyGrace)
 	gaveUp := downloadDone && sinceDone > p.orphan
 	if g.Status == "scanned" && (ready || gaveUp) {
 		// Download-then-dedup: reconcile pack scenes whose StashDB id the
@@ -815,16 +857,35 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			// an unknown expected count as UNverified, not as "100% covered".
 			// This is what stops the orphan-backstop / post-restart partial
 			// confirm from destroying originals against an incomplete set.
-			coverageVerified := g.PackFiles > 0 && packScanCoverageOK(found, g.PackFiles)
-			endpoint, _ := p.identifyEndpoint(ctx, sc)
-			if deduped, recorded, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep, coverageVerified); err != nil {
-				p.log.Warn("pack dedup failed", "id", g.ID, "err", err)
-			} else {
-				if deduped > 0 {
-					g.PackDeduped += deduped
-				}
-				pendingReview = recorded
+			coverageVerified := g.PackFiles > 0 && coverageOK
+			// Resolve the stash-box endpoint. A real lookup error means Stash
+			// is unreachable right now — distinct from the genuine "no box
+			// configured" case (err==nil, endpoint==""). Don't confirm against
+			// a dedup we can't run: defer and retry next tick, otherwise a
+			// transient outage at this exact tick would confirm the pack with
+			// duplicates silently left unreconciled, never to be retried (the
+			// grab leaves Active() once confirmed). [C10]
+			endpoint, epErr := p.identifyEndpoint(ctx, sc)
+			if epErr != nil {
+				p.log.Warn("pack confirm deferred: stash-box endpoint lookup failed", "id", g.ID, "err", epErr)
+				return dirty, nil
 			}
+			deduped, recorded, err := p.dedupPack(ctx, sc, g, scenes, endpoint, keep, coverageVerified)
+			if err != nil {
+				// Dedup didn't complete (a transient Stash error, or a failed
+				// review-item write). Stay "scanned" and retry next tick rather
+				// than confirming against an unfinished reconcile — keep="review"
+				// would otherwise lose the pending-review record permanently,
+				// and a destroy mode would leave duplicates unreconciled. The
+				// retry re-runs dedup idempotently (destroyed copies drop from
+				// the re-query; UpsertDuplicate refreshes in place). [C10][C11]
+				p.log.Warn("pack confirm deferred: dedup failed", "id", g.ID, "err", err)
+				return dirty, nil
+			}
+			if deduped > 0 {
+				g.PackDeduped += deduped
+			}
+			pendingReview = recorded
 		}
 		// Record the final scene total for the UI when we never had a real
 		// count (manual/magnet packs). The scan has settled, so this is the
@@ -840,7 +901,13 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			g.Reason += fmt.Sprintf(", %d to review", pendingReview)
 		}
 		dirty = true
-		p.forgetPackScan(g.ID)
+		// NB: do NOT forgetPackScan here. The confirm write happens in the
+		// caller and can be dropped by an optimistic-lock miss (a concurrent
+		// performer reassignment bumps rev). If we cleared the settle
+		// high-water now and the write were dropped, the next tick would
+		// re-seed it and delay re-confirm by a full settle window. Leaving it
+		// lets a dropped-write pack re-confirm immediately; tickOnce's prune
+		// frees the entry one tick after the grab actually leaves Active(). [C9]
 		p.log.Info("pack confirmed", "id", g.ID, "identified", identified, "found", found, "deduped", g.PackDeduped, "pendingReview", pendingReview)
 		// Generate the previews/sprites the fast scan skipped for every scene
 		// the pack landed, now that it's settled (after identify, so it can't
@@ -964,8 +1031,14 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		case "review":
 			// Destroy nothing now — record the collision for the user to
 			// resolve per scene. Idempotent: re-ticks refresh a still-pending
-			// row in place.
-			if p.recordReviewDuplicate(ctx, g, ps, refs, packIDs) {
+			// row in place. A write failure is propagated (not swallowed) so
+			// the caller defers the confirm and retries, rather than confirming
+			// the pack with this duplicate permanently unrecorded. [C11]
+			ok, err := p.recordReviewDuplicate(ctx, g, ps, refs, packIDs)
+			if err != nil {
+				return deduped, recorded, err
+			}
+			if ok {
 				recorded++
 			}
 		case "pack":
@@ -982,10 +1055,12 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 // recordReviewDuplicate writes (or refreshes) a pending review item for one
 // pack scene that collides with copies already in the library. refs is every
 // local copy of the scene's cross-id; packIDs marks which of those belong to
-// this pack. Returns false (and logs) on a write error. Skips writing if the
-// pack copy can't be located among refs AND we have no fallback identity —
-// without a pack-side scene id there's nothing to act on later.
-func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps stash.SceneMatch, refs []stash.SceneRef, packIDs map[string]bool) bool {
+// this pack. Returns (true, nil) when a row was written, (false, err) on a
+// write failure (the caller propagates it so the confirm defers + retries),
+// and (false, nil) when there's nothing actionable to record — the pack copy
+// can't be located among refs AND we have no fallback identity, so there's no
+// pack-side scene id to act on later.
+func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps stash.SceneMatch, refs []stash.SceneRef, packIDs map[string]bool) (bool, error) {
 	var pack grabs.SceneCopy
 	var existing []grabs.SceneCopy
 	for _, ref := range refs {
@@ -1004,7 +1079,7 @@ func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps st
 		pack = grabs.SceneCopy{SceneID: ps.ID, Title: ps.Title, Path: ps.FilePath}
 	}
 	if pack.SceneID == "" {
-		return false
+		return false, nil
 	}
 	title := pack.Title
 	if title == "" {
@@ -1023,9 +1098,9 @@ func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps st
 	}
 	if err := p.repo.UpsertDuplicate(ctx, d); err != nil {
 		p.log.Warn("pack dedup: record review item", "id", g.ID, "scene", ps.StashDBID, "err", err)
-		return false
+		return false, err
 	}
-	return true
+	return true, nil
 }
 
 // packScanSettled reports whether Stash has stopped indexing new scenes
@@ -1056,21 +1131,19 @@ func packScanCoverageOK(found, expected int) bool {
 	return found*100 >= expected*packIndexedFloorPct
 }
 
-// forgetPackScan drops the in-memory scan record once a pack confirms.
-func (p *Poller) forgetPackScan(grabID int64) {
-	p.packMu.Lock()
-	delete(p.packScan, grabID)
-	p.packMu.Unlock()
-	p.identifyJobMu.Lock()
-	delete(p.identifyJob, grabID)
-	p.identifyJobMu.Unlock()
-}
-
 // identifyInFlight reports whether the last Identify job fired for this grab
 // is still pending or running in Stash's queue. A finished, failed,
 // cancelled, or unknown (already drained from the queue) job returns false,
-// so the caller is free to fire a fresh batch. Best-effort: a query error
-// returns false (fire anyway) rather than blocking identify indefinitely.
+// so the caller is free to fire a fresh batch.
+//
+// On a JobStatus query error we report true (treat the prior job as still in
+// flight) rather than false. A query error means Stash is unreachable for
+// this call — and a fired identify would fail against the same unreachable
+// Stash anyway, so firing gains nothing and would just stack a redundant job
+// behind the still-pending one once Stash recovers (the pile-up this guard
+// exists to prevent). This can't block identify indefinitely: a persistent
+// JobStatus failure is a Stash outage, and identify resumes the moment the
+// query succeeds again. [C12]
 func (p *Poller) identifyInFlight(ctx context.Context, sc *stash.Client, grabID int64) bool {
 	p.identifyJobMu.Lock()
 	jobID := p.identifyJob[grabID]
@@ -1080,8 +1153,8 @@ func (p *Poller) identifyInFlight(ctx context.Context, sc *stash.Client, grabID 
 	}
 	status, err := sc.JobStatus(ctx, jobID)
 	if err != nil {
-		p.log.Warn("identify job status check failed", "id", grabID, "job_id", jobID, "err", err)
-		return false
+		p.log.Warn("identify job status check failed; assuming still in flight", "id", grabID, "job_id", jobID, "err", err)
+		return true
 	}
 	switch status {
 	case "READY", "RUNNING", "STOPPING":
