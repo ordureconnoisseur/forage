@@ -95,6 +95,15 @@ type Poller struct {
 	// sweep's revive path is the correctness backstop). Pruned in tickOnce.
 	graceMu sync.Mutex
 	grace   map[int64]time.Time
+
+	// identifyJob records the most recent Stash Identify job id fired per
+	// grab. Before re-firing an Identify (a pack batch or a single scene),
+	// we check whether that job is still queued or running; if so we skip,
+	// so a backed-up Stash serial queue can't accumulate redundant identical
+	// Identify jobs while an earlier one waits its turn. In-memory: lost on
+	// restart, which merely permits one extra re-fire. Pruned in tickOnce.
+	identifyJobMu sync.Mutex
+	identifyJob   map[int64]string
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -151,15 +160,16 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		orphanAfter = 6 * time.Hour
 	}
 	return &Poller{
-		repo:     repo,
-		db:       db,
-		pool:     pool,
-		log:      log,
-		interval: interval,
-		orphan:   orphanAfter,
-		lastScan: map[int64]time.Time{},
-		packScan: map[int64]packScanState{},
-		grace:    map[int64]time.Time{},
+		repo:        repo,
+		db:          db,
+		pool:        pool,
+		log:         log,
+		interval:    interval,
+		orphan:      orphanAfter,
+		lastScan:    map[int64]time.Time{},
+		packScan:    map[int64]packScanState{},
+		grace:       map[int64]time.Time{},
+		identifyJob: map[int64]string{},
 	}
 }
 
@@ -251,6 +261,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.graceMu.Unlock()
+	p.identifyJobMu.Lock()
+	for id := range p.identifyJob {
+		if !activeIDs[id] {
+			delete(p.identifyJob, id)
+		}
+	}
+	p.identifyJobMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -565,6 +582,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
 					} else if jobID != "" {
 						p.log.Info("metadataIdentify triggered", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+						p.rememberIdentifyJob(g.ID, jobID)
 					}
 					p.markScanAttempt(g.ID)
 				} else if g.PredictedStashDBID == "" {
@@ -585,11 +603,12 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 						g.Reason = "in library (scanned)"
 						g.ConfirmedAt = time.Now().Unix()
 						dirty = true
-					} else if p.scanThrottleElapsed(g.ID) {
+					} else if p.scanThrottleElapsed(g.ID) && !p.identifyInFlight(ctx, stashC, g.ID) {
 						if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
 							p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
 						} else if jobID != "" {
 							p.log.Info("metadataIdentify retried", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+							p.rememberIdentifyJob(g.ID, jobID)
 						}
 						p.markScanAttempt(g.ID)
 					}
@@ -599,12 +618,13 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 					g.Reason = "in library; no StashDB match"
 					g.ConfirmedAt = time.Now().Unix()
 					dirty = true
-				} else if p.scanThrottleElapsed(g.ID) {
+				} else if p.scanThrottleElapsed(g.ID) && !p.identifyInFlight(ctx, stashC, g.ID) {
 					// Predicted grab: retry Identify until the cross-id lands.
 					if jobID, err := p.triggerIdentify(ctx, stashC, scene.ID); err != nil {
 						p.log.Warn("metadataIdentify trigger failed", "id", g.ID, "scene_id", scene.ID, "err", err)
 					} else if jobID != "" {
 						p.log.Info("metadataIdentify triggered", "id", g.ID, "scene_id", scene.ID, "job_id", jobID)
+						p.rememberIdentifyJob(g.ID, jobID)
 					}
 					p.markScanAttempt(g.ID)
 				}
@@ -735,12 +755,15 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 		dirty = true
 	}
 
-	// Drive identify across everything still missing a cross-id.
-	if len(toIdentify) > 0 && p.scanThrottleElapsed(g.ID) {
+	// Drive identify across everything still missing a cross-id. Skip while
+	// our previous batch is still queued/running in Stash's serial queue —
+	// re-firing then would just stack a redundant identical job behind it.
+	if len(toIdentify) > 0 && p.scanThrottleElapsed(g.ID) && !p.identifyInFlight(ctx, sc, g.ID) {
 		if jobID, err := p.triggerIdentifyBatch(ctx, sc, toIdentify); err != nil {
 			p.log.Warn("pack identify trigger failed", "id", g.ID, "scenes", len(toIdentify), "err", err)
 		} else if jobID != "" {
 			p.log.Info("pack identify triggered", "id", g.ID, "scenes", len(toIdentify), "job_id", jobID)
+			p.rememberIdentifyJob(g.ID, jobID)
 		}
 		p.markScanAttempt(g.ID)
 	}
@@ -1038,6 +1061,46 @@ func (p *Poller) forgetPackScan(grabID int64) {
 	p.packMu.Lock()
 	delete(p.packScan, grabID)
 	p.packMu.Unlock()
+	p.identifyJobMu.Lock()
+	delete(p.identifyJob, grabID)
+	p.identifyJobMu.Unlock()
+}
+
+// identifyInFlight reports whether the last Identify job fired for this grab
+// is still pending or running in Stash's queue. A finished, failed,
+// cancelled, or unknown (already drained from the queue) job returns false,
+// so the caller is free to fire a fresh batch. Best-effort: a query error
+// returns false (fire anyway) rather than blocking identify indefinitely.
+func (p *Poller) identifyInFlight(ctx context.Context, sc *stash.Client, grabID int64) bool {
+	p.identifyJobMu.Lock()
+	jobID := p.identifyJob[grabID]
+	p.identifyJobMu.Unlock()
+	if jobID == "" {
+		return false
+	}
+	status, err := sc.JobStatus(ctx, jobID)
+	if err != nil {
+		p.log.Warn("identify job status check failed", "id", grabID, "job_id", jobID, "err", err)
+		return false
+	}
+	switch status {
+	case "READY", "RUNNING", "STOPPING":
+		return true
+	default:
+		// FINISHED, CANCELLED, FAILED, or "" (no longer in the queue).
+		return false
+	}
+}
+
+// rememberIdentifyJob records the Identify job id last fired for a grab so a
+// subsequent tick can see it's still in flight (see identifyInFlight).
+func (p *Poller) rememberIdentifyJob(grabID int64, jobID string) {
+	if jobID == "" {
+		return
+	}
+	p.identifyJobMu.Lock()
+	p.identifyJob[grabID] = jobID
+	p.identifyJobMu.Unlock()
 }
 
 // triggerIdentifyBatch fires Stash's Identify task over a set of scene

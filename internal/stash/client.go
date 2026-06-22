@@ -763,6 +763,36 @@ func (c *Client) MetadataIdentify(ctx context.Context, sceneIDs []string, stashB
 	return resp.MetadataIdentify, nil
 }
 
+// JobStatus returns the status of a queued Stash job (e.g. an Identify or
+// Scan task) by its id: one of READY, RUNNING, STOPPING, FINISHED,
+// CANCELLED, FAILED. A job that has already drained out of Stash's queue is
+// no longer findable — findJob returns null and this returns "" with no
+// error. Used to avoid re-queuing an Identify batch while its predecessor is
+// still pending or running, which would otherwise stack redundant identical
+// jobs behind a backed-up serial queue.
+func (c *Client) JobStatus(ctx context.Context, jobID string) (string, error) {
+	if jobID == "" {
+		return "", nil
+	}
+	q := `query ForagerFindJob($input: FindJobInput!) {
+  findJob(input: $input) {
+    status
+  }
+}`
+	var resp struct {
+		FindJob *struct {
+			Status string `json:"status"`
+		} `json:"findJob"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": map[string]any{"id": jobID}}, &resp); err != nil {
+		return "", fmt.Errorf("findJob: %w", err)
+	}
+	if resp.FindJob == nil {
+		return "", nil
+	}
+	return resp.FindJob.Status, nil
+}
+
 // MetadataGenerate generates the cosmetic artifacts the fast placement scan
 // deliberately skips — the hover-preview clips and the seekbar sprite sheet —
 // for the given scenes (covers + phashes are already produced by the scan).
