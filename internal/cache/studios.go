@@ -286,6 +286,13 @@ func RefreshStudioCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clie
 					mu.Unlock()
 					continue
 				}
+				// Populate the persistent scene cache (additive — feeds the
+				// studio page; the scene's studio_id lands on the row). The
+				// studio pass catches scenes featuring no OWNED performer, which
+				// the performer pass never sees. Non-fatal.
+				if err := UpsertSceneBatch(ctx, db, scenes, start); err != nil {
+					log.Warn("studio scene cache upsert failed", "studio", id, "err", err)
+				}
 				agg := aggUpdate{stashdbID: id, totalScenes: len(scenes)}
 				for _, s := range scenes {
 					ts := parseStashDBDate(s.Date)

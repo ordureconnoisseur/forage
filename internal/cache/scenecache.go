@@ -91,6 +91,27 @@ func UpsertScene(ctx context.Context, ex sceneExecer, s stashdb.Scene, now int64
 	return nil
 }
 
+// UpsertSceneBatch writes a fetched batch of StashDB scenes into the persistent
+// cache in one transaction. Safe to call concurrently from the refresh workers —
+// the single DB connection serializes the transactions (fetches stay parallel;
+// only the writes queue).
+func UpsertSceneBatch(ctx context.Context, db *sql.DB, scenes []stashdb.Scene, now int64) error {
+	if len(scenes) == 0 {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for i := range scenes {
+		if err := UpsertScene(ctx, tx, scenes[i], now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 const sceneCols = `s.stashdb_id, COALESCE(s.title,''), COALESCE(s.release_date,''),
 	COALESCE(s.studio_id,''), COALESCE(s.studio_name,''), COALESCE(s.image_url,''),
 	COALESCE(s.performers,'[]'), COALESCE(s.urls,'[]'), COALESCE(s.tags,'[]'), s.updated_unix`

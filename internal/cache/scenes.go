@@ -126,6 +126,14 @@ func RefreshSceneCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 					continue
 				}
 
+				// Populate the persistent scene cache (additive — the
+				// performer/studio pages read their filmographies from it
+				// instead of re-querying StashDB). Non-fatal: a write failure
+				// must not abort the aggregate pass.
+				if err := UpsertSceneBatch(ctx, db, scenes, start); err != nil {
+					log.Warn("scene cache upsert failed", "stashdb_id", p.stashdb, "err", err)
+				}
+
 				agg := aggUpdate{localID: p.local, totalScenes: len(scenes)}
 				for _, s := range scenes {
 					ts := parseStashDBDate(s.Date)
