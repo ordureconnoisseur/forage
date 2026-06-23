@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchStudios,
   refreshStudios,
+  studioImageURL,
   type Studio,
   type StudioSort,
 } from "../api";
@@ -160,6 +161,9 @@ function StudioCard({ s, onPick }: { s: Studio; onPick: () => void }) {
     s.last_release_unix > 0
       ? new Date(s.last_release_unix * 1000).toISOString().slice(0, 10)
       : null;
+  // Studio logo/banner from Stash (proxied). Sits over a letter-tile fallback
+  // that shows through if the studio has no image (onError hides the img).
+  const imgURL = s.stash_id ? studioImageURL(s.stash_id) : null;
   return (
     <button
       className={"performer-card studio-card" + (s.favorite ? " fav" : "")}
@@ -168,6 +172,17 @@ function StudioCard({ s, onPick }: { s: Studio; onPick: () => void }) {
       <div className="perf-img perf-img-empty studio-img">
         {s.name.slice(0, 1)}
       </div>
+      {imgURL && (
+        <img
+          className="perf-img studio-banner"
+          src={imgURL}
+          alt=""
+          loading="lazy"
+          onError={(e) => {
+            (e.currentTarget as HTMLImageElement).style.display = "none";
+          }}
+        />
+      )}
       <div className="perf-scrim">
         <div className="perf-name">{s.name}</div>
         <div className="perf-stats">

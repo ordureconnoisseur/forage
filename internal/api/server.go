@@ -222,6 +222,7 @@ func (s *Server) Router() http.Handler {
 		// never needs Stash creds. Gated like everything else (cookie auth
 		// for <img>).
 		r.Get("/img/performer/{id}", s.getPerformerImage)
+		r.Get("/img/studio/{id}", s.getStudioImage)
 		r.Get("/img/scene/{id}/screenshot", s.getSceneScreenshot)
 		r.Get("/config", s.getConfig)
 		r.Post("/config", s.postConfig)

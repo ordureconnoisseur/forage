@@ -67,6 +67,15 @@ func (s *Server) getPerformerImage(w http.ResponseWriter, r *http.Request) {
 	s.proxyStashImage(w, r, "/performer/"+id+"/image")
 }
 
+func (s *Server) getStudioImage(w http.ResponseWriter, r *http.Request) {
+	id, ok := numericID(chi.URLParam(r, "id"))
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	s.proxyStashImage(w, r, "/studio/"+id+"/image")
+}
+
 func (s *Server) getSceneScreenshot(w http.ResponseWriter, r *http.Request) {
 	id, ok := numericID(chi.URLParam(r, "id"))
 	if !ok {

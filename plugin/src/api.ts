@@ -424,6 +424,14 @@ export function performerImageURL(localStashID: string): string | null {
   return `${base}/img/performer/${encodeURIComponent(localStashID)}`;
 }
 
+// studioImageURL proxies a studio's image (logo/banner) from Stash by its
+// LOCAL Stash studio id. null when images can't be proxied (dev cross-origin).
+export function studioImageURL(localStashID: string): string | null {
+  const base = imageBase();
+  if (base === null) return null;
+  return `${base}/img/studio/${encodeURIComponent(localStashID)}`;
+}
+
 // proxiedImageURL resolves a daemon-relative image path (e.g. a grab
 // detail's `/img/scene/{id}/screenshot`) against the daemon base. Leaves
 // absolute URLs untouched (legacy data / StashDB CDN); returns null when

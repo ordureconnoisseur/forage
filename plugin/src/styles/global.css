@@ -373,8 +373,8 @@ button {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3));
   text-transform: uppercase;
 }
-/* Studios have no portrait — give their letter tile a faint accent wash so a
-   studio card reads as intentional, not a broken performer image. */
+/* Studios fall back to a letter tile with a faint accent wash so a studio
+   card reads as intentional, not a broken performer image. */
 .studio-img {
   color: rgba(var(--accent-rgb, 22, 163, 74), 0.22);
   background: linear-gradient(
@@ -382,6 +382,21 @@ button {
     rgba(var(--accent-rgb, 22, 163, 74), 0.1),
     rgba(0, 0, 0, 0.35)
   );
+}
+/* Studio logo/banner: contain (not cover) so a wide logo shows whole rather
+   than being cropped to the portrait card, on a dark wash that hides the
+   letter tile behind it. No hover zoom — logos look odd scaled. */
+.studio-banner {
+  object-fit: contain;
+  padding: 14px;
+  background: radial-gradient(
+    120% 100% at 50% 35%,
+    rgba(255, 255, 255, 0.06),
+    rgba(0, 0, 0, 0.55)
+  );
+}
+.performer-card:hover .studio-banner {
+  transform: none;
 }
 .perf-scrim {
   position: absolute;
