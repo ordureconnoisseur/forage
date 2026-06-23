@@ -536,12 +536,12 @@ function WatchCard({
                 onClick={() => setExpanded((e) => !e)}
                 title="Show every release this watch found — pick a different one"
               >
-                {expanded
-                  ? "Show fewer"
-                  : `${others} other release${others === 1 ? "" : "s"}`}
                 <span className={"watch-rel-chev" + (expanded ? " open" : "")}>
                   ▾
                 </span>
+                {expanded
+                  ? "Show fewer"
+                  : `${others} other release${others === 1 ? "" : "s"}`}
               </button>
             )}
           </div>

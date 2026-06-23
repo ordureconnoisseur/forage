@@ -5193,28 +5193,35 @@ code.grab-fact-v,
   white-space: nowrap;
   text-align: right;
 }
+/* The "N other releases" toggle is a quiet continuation of the list, not a
+   floating chip — full-width, borderless, indented to align with the radio
+   column, with a leading disclosure chevron. */
 .watch-rel-more {
-  align-self: flex-start;
-  margin: 4px 0 0 4px;
-  display: inline-flex;
+  display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 11px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, background 0.1s ease;
 }
 .watch-rel-more:hover {
-  color: var(--text);
-  border-color: var(--glass-border-bright);
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
 }
 .watch-rel-chev {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
   font-size: 9px;
+  color: var(--text-dim);
   transition: transform 0.15s ease;
 }
 .watch-rel-chev.open {
