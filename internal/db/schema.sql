@@ -23,6 +23,9 @@ CREATE TABLE IF NOT EXISTS performer_cache (
   total_stashdb_scenes  INTEGER NOT NULL DEFAULT 0,
   owned_scenes_count    INTEGER NOT NULL DEFAULT 0,
   last_release_unix     INTEGER NOT NULL DEFAULT 0,
+  -- max StashDB `updated` seen for this performer's scenes; the delta sync
+  -- stops paginating once it reaches scenes older than this (0 = full sync).
+  scenes_synced_at      INTEGER NOT NULL DEFAULT 0,
   refreshed_at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_performer_favorite     ON performer_cache(favorite);
@@ -50,11 +53,47 @@ CREATE TABLE IF NOT EXISTS studio_cache (
   total_stashdb_scenes  INTEGER NOT NULL DEFAULT 0,
   owned_scenes_count    INTEGER NOT NULL DEFAULT 0,
   last_release_unix     INTEGER NOT NULL DEFAULT 0,
+  -- delta-sync watermark (see performer_cache.scenes_synced_at).
+  scenes_synced_at      INTEGER NOT NULL DEFAULT 0,
   refreshed_at          INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_studio_favorite     ON studio_cache(favorite);
 CREATE INDEX IF NOT EXISTS idx_studio_scene_count  ON studio_cache(scene_count);
 CREATE INDEX IF NOT EXISTS idx_studio_last_release ON studio_cache(last_release_unix DESC);
+
+-- stashdb_scene is the PERSISTENT cache of StashDB scene bodies (immutable
+-- after publication), keyed by the StashDB scene id. The performer/studio
+-- pages read their filmographies from here instead of live-querying StashDB,
+-- and the delta sync upserts into it (a scene seen via both a performer and a
+-- studio query is stored once). performers/urls/tags are denormalised JSON for
+-- rendering without a join; scene_performer (below) carries the membership the
+-- performer page filters on. updated_unix is StashDB's `updated` timestamp —
+-- the delta sync's stop signal.
+CREATE TABLE IF NOT EXISTS stashdb_scene (
+  stashdb_id    TEXT PRIMARY KEY,
+  title         TEXT,
+  release_date  TEXT,
+  release_unix  INTEGER NOT NULL DEFAULT 0,
+  studio_id     TEXT,                       -- StashDB studio id (studio-page membership)
+  studio_name   TEXT,
+  image_url     TEXT,
+  performers    TEXT NOT NULL DEFAULT '[]', -- JSON [{id,name,as}]
+  urls          TEXT NOT NULL DEFAULT '[]', -- JSON [{url,type}]
+  tags          TEXT NOT NULL DEFAULT '[]', -- JSON [name,...]
+  updated_unix  INTEGER NOT NULL DEFAULT 0, -- StashDB `updated`
+  cached_at     INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_scene_studio  ON stashdb_scene(studio_id);
+CREATE INDEX IF NOT EXISTS idx_scene_release ON stashdb_scene(release_unix DESC);
+
+-- scene_performer is the many-to-many membership (a scene has several
+-- performers): the performer page filters by performer_stashdb_id.
+CREATE TABLE IF NOT EXISTS scene_performer (
+  scene_id              TEXT NOT NULL,
+  performer_stashdb_id  TEXT NOT NULL,
+  PRIMARY KEY (scene_id, performer_stashdb_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sp_performer ON scene_performer(performer_stashdb_id);
 
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,

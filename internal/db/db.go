@@ -336,5 +336,33 @@ func migrateGrabsColumns(db *sql.DB) error {
 			}
 		}
 	}
+
+	// 2026-06-24 persistent StashDB scene cache: the per-subject delta-sync
+	// watermark. The stashdb_scene / scene_performer tables are created fresh by
+	// schema.sql (CREATE TABLE IF NOT EXISTS); only these columns need an ALTER
+	// on existing performer_cache/studio_cache. Guarded on the table existing.
+	for _, tbl := range []string{"performer_cache", "studio_cache"} {
+		var exists int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&exists); err != nil {
+			return err
+		}
+		if exists == 0 {
+			continue
+		}
+		var has int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(` + quoteIdent(tbl) + `) WHERE name = 'scenes_synced_at'`).Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := db.Exec(`ALTER TABLE ` + tbl + ` ADD COLUMN scenes_synced_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return fmt.Errorf("add %s scenes_synced_at column: %w", tbl, err)
+			}
+		}
+	}
 	return nil
 }
+
+// quoteIdent wraps a trusted (hardcoded) table name in single quotes for use
+// inside pragma_table_info(...). Only ever called with literal table names from
+// this file, never user input.
+func quoteIdent(s string) string { return "'" + s + "'" }

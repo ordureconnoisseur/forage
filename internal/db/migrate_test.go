@@ -156,3 +156,60 @@ func TestStudioCacheMigrationAddsColumns(t *testing.T) {
 		t.Errorf("total_stashdb_scenes default = %d, want 0", total)
 	}
 }
+
+// TestSceneCacheMigration proves the 2026-06-24 persistent-scene-cache
+// migration: an old performer_cache/studio_cache gains scenes_synced_at, and
+// the stashdb_scene / scene_performer tables are created.
+func TestSceneCacheMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forager.db")
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial Open: %v", err)
+	}
+	d1.Close()
+
+	// Strip scenes_synced_at + the new tables to simulate a pre-migration DB.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`ALTER TABLE performer_cache DROP COLUMN scenes_synced_at`,
+		`ALTER TABLE studio_cache DROP COLUMN scenes_synced_at`,
+		`DROP TABLE stashdb_scene`,
+		`DROP TABLE scene_performer`,
+	} {
+		if _, err := raw.Exec(stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	raw.Close()
+
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating Open: %v", err)
+	}
+	defer d2.Close()
+
+	for _, tc := range []struct{ table, col string }{
+		{"performer_cache", "scenes_synced_at"},
+		{"studio_cache", "scenes_synced_at"},
+	} {
+		var n int
+		if err := d2.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('`+tc.table+`') WHERE name = ?`, tc.col).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("%s.%s missing after migration", tc.table, tc.col)
+		}
+	}
+	for _, tbl := range []string{"stashdb_scene", "scene_performer"} {
+		var n int
+		if err := d2.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, tbl).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("table %s not created", tbl)
+		}
+	}
+}

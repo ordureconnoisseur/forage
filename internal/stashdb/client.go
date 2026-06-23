@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/gqlclient"
@@ -55,6 +56,10 @@ type Scene struct {
 	// wire side is not done — callers match case-insensitively). Used to
 	// filter out noise like compilations / PMVs from the gap analysis.
 	Tags []string
+	// Updated is StashDB's `updated` timestamp parsed to unix seconds (0 if
+	// absent/unparseable). The persistent scene cache's delta sync sorts by
+	// UPDATED_AT and stops once it reaches scenes older than its watermark.
+	Updated int64
 }
 
 // SceneImage is a single image associated with a scene. StashDB
@@ -112,6 +117,7 @@ type sceneWire struct {
 	Tags       []struct {
 		Name string `json:"name"`
 	} `json:"tags"`
+	Updated string `json:"updated"`
 }
 
 func (w sceneWire) toScene() Scene {
@@ -137,6 +143,11 @@ func (w sceneWire) toScene() Scene {
 			s.Tags = append(s.Tags, t.Name)
 		}
 	}
+	if w.Updated != "" {
+		if t, err := time.Parse(time.RFC3339, w.Updated); err == nil {
+			s.Updated = t.Unix()
+		}
+	}
 	return s
 }
 
@@ -144,6 +155,7 @@ const sceneFields = `
   id
   title
   date
+  updated
   studio { id name }
   performers { performer { id name } as }
   urls { url site { name } }
