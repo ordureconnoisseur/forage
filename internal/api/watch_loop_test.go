@@ -2,28 +2,33 @@ package api
 
 import (
 	"testing"
-
-	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
-func TestResolutionMatches(t *testing.T) {
-	cases := []struct {
-		target, relRes string
-		want           bool
-	}{
-		{watches.TargetAny, "1080p", true},
-		{watches.TargetAny, "", true}, // any accepts even no-resolution
-		{"1080p", "1080p", true},
-		{"1080p", "4k", false}, // EXACT: 4k does NOT satisfy 1080p
-		{"1080p", "720p", false},
-		{"4k", "4k", true},
-		{"720p", "720p", true},
-		{"1080p", "", false}, // no resolution → doesn't satisfy a specific target
+// TestBestWatchMatch pins the no-target preference ranking: surface the
+// highest-score VERIFIED, non-rejected, non-ignored, GRABBABLE release —
+// regardless of resolution. A dead torrent can't win even with a higher score.
+func TestBestWatchMatch(t *testing.T) {
+	s := &Server{}
+	cands := []sceneRelease{
+		{Title: "A 1080p", DownloadURL: "a", Verified: true, Score: 100, Protocol: "usenet"},
+		{Title: "B 4k", DownloadURL: "b", Verified: true, Score: 150, Protocol: "usenet"}, // top
+		{Title: "C rejected", DownloadURL: "c", Verified: true, Rejected: true, Score: 999},
+		{Title: "D unverified", DownloadURL: "d", Verified: false, Score: 999},
+		// highest raw score but a dead torrent (0 seeders) — must NOT win.
+		{Title: "E 4k dead", DownloadURL: "e", Verified: true, Score: 200, Protocol: "torrent", Seeders: 0},
 	}
-	for _, c := range cases {
-		if got := resolutionMatches(c.target, c.relRes); got != c.want {
-			t.Errorf("resolutionMatches(%q,%q)=%v want %v", c.target, c.relRes, got, c.want)
-		}
+
+	best := s.bestWatchMatch(cands, nil)
+	if best == nil || best.DownloadURL != "b" {
+		t.Fatalf("want B (top grabbable verified by score), got %+v", best)
+	}
+	// Ignoring B falls through to A (next grabbable verified), NOT the dead E.
+	if best := s.bestWatchMatch(cands, []string{"b"}); best == nil || best.DownloadURL != "a" {
+		t.Fatalf("with B ignored want A, got %+v", best)
+	}
+	// Nothing verified → nil (watch stays watching).
+	if s.bestWatchMatch([]sceneRelease{{DownloadURL: "x", Verified: false, Score: 999}}, nil) != nil {
+		t.Error("no verified release should yield nil")
 	}
 }
 

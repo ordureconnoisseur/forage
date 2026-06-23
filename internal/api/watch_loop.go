@@ -6,7 +6,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -147,10 +146,11 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	}
 	cands := s.verifyReleases(ctx, m, w.StashDBID, scene.Title, releases)
 
-	// First verified, non-rejected release whose resolution matches the
-	// target (exact; "any" accepts anything). Best-scoring first so the
-	// recorded release is the nicest qualifying one.
-	best := s.bestWatchMatch(cands, w.Target, w.IgnoredURLs)
+	// The best release to surface — top of the user's preference ranking,
+	// whatever its resolution (no quality target; the stored candidate list
+	// lets the user pick a different one, and quality floors live in the
+	// release reject rules the scorer already applies).
+	best := s.bestWatchMatch(cands, w.IgnoredURLs)
 	if best == nil {
 		return
 	}
@@ -164,7 +164,7 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 		return
 	}
 	s.log.Info("watch available", "scene", w.StashDBID, "title", scene.Title,
-		"target", w.Target, "release", best.Title)
+		"release", best.Title)
 }
 
 // watchCandidateCap bounds how many candidates a watch stores (verified,
@@ -196,34 +196,29 @@ func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-// bestWatchMatch returns the best verified, non-rejected release matching
-// the target resolution, or nil. Candidates are score-ranked first so the
-// chosen release is the highest-scoring qualifier.
-func (s *Server) bestWatchMatch(cands []sceneRelease, target string, ignored []string) *sceneRelease {
+// bestWatchMatch returns the single release to surface for a watch: the best
+// VERIFIED, non-rejected, non-ignored release by the user's preference ranking
+// — the same precedence the release list uses (grabbable first so a dead
+// torrent can't win, then preference score, then seed health, then
+// popularity). No resolution target: a watch surfaces the best available
+// release whatever its quality, and the stored candidate list lets the user
+// pick a different one. Quality FLOORS are release reject rules (Settings),
+// which the scorer already enforces via Rejected.
+func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRelease {
 	ignoredSet := make(map[string]bool, len(ignored))
 	for _, u := range ignored {
 		ignoredSet[u] = true
 	}
-	// Rank like the releases endpoint: score desc (verified/non-rejected
-	// filtered below).
 	bestIdx := -1
-	bestScore := 0
 	for i := range cands {
 		c := &cands[i]
-		if !c.Verified || c.Rejected {
+		// Skip unverified/rejected, and releases the user dismissed for this
+		// watch (a dead/over-compressed find must not re-surface).
+		if !c.Verified || c.Rejected || ignoredSet[c.DownloadURL] {
 			continue
 		}
-		// Skip releases the user dismissed for this watch — a rejected
-		// dead/over-compressed find must not re-surface.
-		if ignoredSet[c.DownloadURL] {
-			continue
-		}
-		if !resolutionMatches(target, scoring.Resolution(c.Title)) {
-			continue
-		}
-		if bestIdx == -1 || c.Score > bestScore {
+		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {
 			bestIdx = i
-			bestScore = c.Score
 		}
 	}
 	if bestIdx == -1 {
@@ -232,12 +227,18 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, target string, ignored []s
 	return &cands[bestIdx]
 }
 
-// resolutionMatches reports whether a release's resolution satisfies the
-// watch target. "any" accepts anything; otherwise it's an EXACT tier
-// match (a 4k release does NOT satisfy a 1080p watch, per the design).
-func resolutionMatches(target, releaseRes string) bool {
-	if target == "" || target == watches.TargetAny {
-		return true
+// betterRelease reports whether a should rank above b for auto-selection:
+// grabbable first, then preference score, then seed health, then popularity —
+// the precedence the release list sorts on.
+func betterRelease(a, b sceneRelease) bool {
+	if ga, gb := grabbable(a), grabbable(b); ga != gb {
+		return ga
 	}
-	return target == releaseRes
+	if a.Score != b.Score {
+		return a.Score > b.Score
+	}
+	if sa, sb := seedTier(a), seedTier(b); sa != sb {
+		return sa > sb
+	}
+	return a.Popularity > b.Popularity
 }
