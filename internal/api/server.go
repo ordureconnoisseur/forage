@@ -313,12 +313,18 @@ func (s *Server) invalidateOwned() {
 // performers, so a short window would re-fetch on every revisit.
 const filmoTTL = 10 * time.Minute
 
-// performerFilmography returns a performer's full StashDB filmography,
-// memoised per performer for filmoTTL. The QueryAllScenes pagination
-// dominates a cold /missing-scenes load; caching it makes revisiting (or
-// re-opening for the scoped multi-select grab) instant. The lock is held
-// across the fetch so concurrent loads of the same performer coalesce.
+// performerFilmography returns a performer's full StashDB filmography. It reads
+// from the PERSISTENT scene cache (no StashDB round-trip) — the cache is filled
+// by the 12h refresh. Only when the cache has nothing for this performer (not
+// yet synced, or the window before the first populate completes) does it fall
+// back to a live StashDB query, memoised per performer for filmoTTL.
 func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, stashDBPerformerID string) ([]stashdb.Scene, error) {
+	if scenes, err := cache.ScenesForPerformer(ctx, s.db, stashDBPerformerID); err != nil {
+		s.log.Warn("scene cache read failed; falling back to live query", "performer", stashDBPerformerID, "err", err)
+	} else if len(scenes) > 0 {
+		return scenes, nil
+	}
+	// Fallback: live query (memoised). Coalesce concurrent loads under the lock.
 	s.filmoMu.Lock()
 	defer s.filmoMu.Unlock()
 	if s.filmoCache == nil {
@@ -338,12 +344,15 @@ func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, 
 	return scenes, nil
 }
 
-// studioFilmography returns a studio's full StashDB catalogue, memoised like
-// performerFilmography. Shares filmoCache under a distinct "studio:" key
-// namespace so a studio id can't collide with a performer id (both are
-// StashDB UUIDs from separate namespaces). A studio's catalogue is far larger
-// than a performer's, so it pages at 100 and shares the 5000 hard cap.
+// studioFilmography returns a studio's full StashDB catalogue. Cache-first like
+// performerFilmography, falling back to a live (memoised) query under the
+// "studio:" key namespace when the cache has nothing for this studio yet.
 func (s *Server) studioFilmography(ctx context.Context, sdb *stashdb.Client, stashDBStudioID string) ([]stashdb.Scene, error) {
+	if scenes, err := cache.ScenesForStudio(ctx, s.db, stashDBStudioID); err != nil {
+		s.log.Warn("studio scene cache read failed; falling back to live query", "studio", stashDBStudioID, "err", err)
+	} else if len(scenes) > 0 {
+		return scenes, nil
+	}
 	s.filmoMu.Lock()
 	defer s.filmoMu.Unlock()
 	if s.filmoCache == nil {
