@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -98,6 +99,15 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 	if ws == nil {
 		ws = []watches.Watch{}
 	}
+	// Overlay the transient "searching now" flag so the UI can spin the cards
+	// a manual search-now is actively re-searching.
+	s.searchingMu.Lock()
+	for i := range ws {
+		if s.searching[ws[i].StashDBID] {
+			ws[i].Searching = true
+		}
+	}
+	s.searchingMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"watches": ws})
 }
 
@@ -356,6 +366,112 @@ func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("watch find dismissed — back to watching", "scene", id, "ignored", wt.FoundURL)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// markSearching adds or removes a set of watch ids from the in-memory
+// "searching now" set (overlaid as the transient Watch.Searching flag).
+func (s *Server) markSearching(ids []string, on bool) {
+	s.searchingMu.Lock()
+	defer s.searchingMu.Unlock()
+	if s.searching == nil {
+		s.searching = map[string]bool{}
+	}
+	for _, id := range ids {
+		if on {
+			s.searching[id] = true
+		} else {
+			delete(s.searching, id)
+		}
+	}
+}
+
+// searchNowConcurrency bounds how many watches a manual "search now" re-checks
+// at once. Deliberately low (the same gentle rate the collection crawl used)
+// so a one-shot burst can't choke Prowlarr/the trackers — the failure mode
+// that motivated removing collection Jobs.
+const searchNowConcurrency = 2
+
+// postWatchSearchNow kicks an immediate, bounded re-search of the still-
+// watching scenes (optionally scoped to one batch via {batch_id}), bypassing
+// the 30-min loop cadence so a freshly-created batch surfaces releases now.
+// Runs in the background at low concurrency, ONE at a time (so clicks can't
+// stack load); the watch list's `searching` flag drives the per-card spinner
+// and results land via the normal list poll.
+func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BatchID string `json:"batch_id"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req) // body optional (no batch = all watching)
+
+	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
+		writeErr(w, http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)")
+		return
+	}
+	// One search-now at a time.
+	if !s.searchNowMu.TryLock() {
+		writeErr(w, http.StatusConflict, "a search is already running")
+		return
+	}
+	list, err := s.watches.List(r.Context())
+	if err != nil {
+		s.searchNowMu.Unlock()
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	var targets []watches.Watch
+	for _, wt := range list {
+		if wt.Status != watches.StatusWatching {
+			continue // already available / grabbed — nothing to search
+		}
+		if req.BatchID != "" && wt.BatchID != req.BatchID {
+			continue
+		}
+		targets = append(targets, wt)
+	}
+	if len(targets) == 0 {
+		s.searchNowMu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": 0})
+		return
+	}
+	ids := make([]string, len(targets))
+	for i, t := range targets {
+		ids[i] = t.StashDBID
+	}
+	s.markSearching(ids, true)
+
+	go func() {
+		defer s.searchNowMu.Unlock()
+		defer s.markSearching(ids, false) // backstop clear on early exit
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		defer cancel()
+		jobs := make(chan watches.Watch)
+		var wg sync.WaitGroup
+		for i := 0; i < searchNowConcurrency; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for wt := range jobs {
+					if ctx.Err() != nil {
+						return
+					}
+					s.checkWatch(ctx, wt)
+					_ = s.watches.MarkChecked(ctx, wt.StashDBID)
+					s.markSearching([]string{wt.StashDBID}, false) // stop this card's spinner
+				}
+			}()
+		}
+		for _, t := range targets {
+			if ctx.Err() != nil {
+				break
+			}
+			jobs <- t
+		}
+		close(jobs)
+		wg.Wait()
+		s.log.Info("watch search-now done", "batch", req.BatchID, "count", len(targets))
+	}()
+
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": len(targets)})
 }
 
 // normalizeTarget validates the quality target, defaulting unknown values

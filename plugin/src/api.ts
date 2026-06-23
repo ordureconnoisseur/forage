@@ -1232,6 +1232,8 @@ export interface Watch {
   candidates?: SceneRelease[];
   // When the watch was grabbed (status="grabbed").
   grabbed_at?: number;
+  // Transient: a manual "search now" is actively re-searching this watch.
+  searching?: boolean;
 }
 
 // AddWatchReq is one scene to watch — shared by the single add and the batch.
@@ -1303,6 +1305,17 @@ export function grabWatchCandidate(
   return postJSON(`/watches/${encodeURIComponent(stashDBID)}/grab-candidate`, {
     download_url: downloadUrl,
   });
+}
+
+// searchWatches kicks an immediate, server-bounded re-search of the still-
+// watching scenes (optionally scoped to one batch), bypassing the 30-min loop
+// so a fresh batch surfaces releases now. Returns how many it's searching; the
+// per-watch `searching` flag + list poll show progress. 409 if one's running.
+export function searchWatches(batchId?: string): Promise<{
+  ok: boolean;
+  searching: number;
+}> {
+  return postJSON("/watches/search-now", batchId ? { batch_id: batchId } : {});
 }
 
 // clearWatchBatch removes every watch in a batch (the per-batch "Clear",

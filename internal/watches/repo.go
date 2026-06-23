@@ -64,6 +64,11 @@ type Watch struct {
 	Candidates json.RawMessage `json:"candidates,omitempty"`
 	// GrabbedAt is when the watch was grabbed (status='grabbed'); 0 otherwise.
 	GrabbedAt int64 `json:"grabbed_at,omitempty"`
+	// Searching is a transient, NON-persisted view flag: true while a manual
+	// "search now" is actively re-searching this watch. Set by the API layer
+	// from an in-memory set (never read from / written to the DB), so the UI
+	// can show a spinner. Always false off the DB.
+	Searching bool `json:"searching,omitempty"`
 	// IgnoredURLs are download URLs the user dismissed for this watch — the
 	// loop skips them so a rejected dead/over-compressed find can't
 	// re-surface. Not exposed in the API (internal to the loop's matching).
@@ -241,6 +246,15 @@ func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer
 		  candidates = ?
 		WHERE stashdb_id = ?`,
 		title, url, indexer, protocol, size, time.Now().Unix(), cands, stashDBID)
+	return err
+}
+
+// MarkChecked stamps a watch's last_checked to now — used after a manual
+// "search now" so the background loop (which claims oldest-checked first)
+// deprioritises rows that were just searched.
+func (r *Repo) MarkChecked(ctx context.Context, stashDBID string) error {
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE watches SET last_checked = ? WHERE stashdb_id = ?`, time.Now().Unix(), stashDBID)
 	return err
 }
 

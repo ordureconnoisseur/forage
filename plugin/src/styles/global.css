@@ -671,6 +671,19 @@ button {
   opacity: 0.5;
   cursor: default;
 }
+/* Search-now reuses the watch-clear pill but tinted accent (it's an action,
+   not a destructive one). */
+.watch-search-now {
+  color: var(--accent-bright, #22c55e);
+  border-color: rgba(var(--accent-rgb, 22, 163, 74), 0.4);
+}
+.watch-search-now:hover:not(:disabled) {
+  color: var(--accent-bright, #22c55e);
+  border-color: rgba(var(--accent-rgb, 22, 163, 74), 0.7);
+}
+.watch-spinner-label.searching {
+  color: var(--accent-bright, #22c55e);
+}
 /* A grabbed watch lingers, greyed, so batch progress reads correctly. */
 .watch-card.is-grabbed {
   opacity: 0.6;

@@ -6,6 +6,7 @@ import {
   fetchWatches,
   grabWatch,
   grabWatchCandidate,
+  searchWatches,
   type SceneRelease,
   type Watch,
 } from "../api";
@@ -14,8 +15,10 @@ import { humanSize } from "../format";
 
 // Poll cadence: the watch loop runs server-side on a 30m cadence, so the
 // list changes slowly — a relaxed poll keeps the "available" badge fresh
-// without hammering.
+// without hammering. While a manual "search now" is running (any card
+// flagged searching), poll fast so progress shows live.
 const POLL_MS = 30000;
+const FAST_POLL_MS = 2500;
 
 // relKey is a stable per-candidate identity for React keys (download_url can
 // be empty for magnet-less indexers).
@@ -73,13 +76,15 @@ export default function WatchingList({
   const [toast, setToast] = useState<string | null>(null);
   const timer = useRef<number | undefined>(undefined);
 
-  const load = async () => {
+  const load = async (): Promise<Watch[] | null> => {
     try {
       const r = await fetchWatches();
       setWatches(r.watches);
       setError(null);
+      return r.watches;
     } catch (e) {
       setError((e as Error).message);
+      return null;
     }
   };
 
@@ -87,8 +92,10 @@ export default function WatchingList({
     let cancelled = false;
     const tick = async () => {
       if (cancelled) return;
-      await load();
-      timer.current = window.setTimeout(tick, POLL_MS);
+      const ws = await load();
+      // Poll fast while a search-now is in flight so cards update live.
+      const fast = !!ws && ws.some((w) => w.searching);
+      timer.current = window.setTimeout(tick, fast ? FAST_POLL_MS : POLL_MS);
     };
     void tick();
     return () => {
@@ -156,12 +163,29 @@ function WatchGroup({
 }) {
   const [grabAllBusy, setGrabAllBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
+  const [searchBusy, setSearchBusy] = useState(false);
 
   const items = group.items;
   const available = items.filter((w) => w.status === "available");
   const watching = items.filter((w) => w.status === "watching");
   const grabbed = items.filter((w) => w.status === "grabbed");
+  const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
+
+  const searchNow = async () => {
+    setSearchBusy(true);
+    try {
+      const r = await searchWatches(group.id);
+      onToast(
+        `Searching ${r.searching} scene${r.searching === 1 ? "" : "s"}…`,
+      );
+      onChanged(); // pick up the searching flags + kick the fast poll
+    } catch (e) {
+      onToast((e as Error).message || "Search failed");
+    } finally {
+      setSearchBusy(false);
+    }
+  };
 
   const grabAll = async () => {
     setGrabAllBusy(true);
@@ -188,17 +212,24 @@ function WatchGroup({
   };
 
   // Progress line for a batch: collapses status counts into "N of M grabbed".
+  const searchingNote = searchingCount > 0 ? `${searchingCount} searching` : "";
   const progress = isBatch
     ? [
         `${grabbed.length} of ${items.length} grabbed`,
         available.length > 0 ? `${available.length} ready` : "",
         watching.length > 0 ? `${watching.length} watching` : "",
+        searchingNote,
       ]
         .filter(Boolean)
         .join(" · ")
-    : `${available.length} ready · ${watching.length} watching${
-        grabbed.length ? ` · ${grabbed.length} grabbed` : ""
-      }`;
+    : [
+        `${available.length} ready`,
+        `${watching.length} watching`,
+        grabbed.length ? `${grabbed.length} grabbed` : "",
+        searchingNote,
+      ]
+        .filter(Boolean)
+        .join(" · ");
 
   return (
     <section className="watch-group">
@@ -208,6 +239,20 @@ function WatchGroup({
           <span className="watch-group-progress">{progress}</span>
         </div>
         <div className="watch-group-actions">
+          {isBatch && watching.length > 0 && (
+            <button
+              className="watch-clear watch-search-now"
+              disabled={searchBusy || searchingCount > 0}
+              onClick={searchNow}
+              title="Search these scenes for releases now, instead of waiting for the background loop"
+            >
+              {searchingCount > 0
+                ? `Searching ${searchingCount}…`
+                : searchBusy
+                  ? "Searching…"
+                  : "Search now ↻"}
+            </button>
+          )}
           {available.length > 0 && (
             <button
               className="collection-cta"
@@ -430,6 +475,10 @@ function WatchCard({
               </button>
             )}
           </>
+        ) : w.searching ? (
+          <span className="watch-spinner-label searching">
+            <span className="coll-spinner" /> searching…
+          </span>
         ) : (
           <span className="watch-spinner-label">
             <span className="coll-spinner" /> watching

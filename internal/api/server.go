@@ -52,6 +52,15 @@ type Server struct {
 
 	refreshMu sync.Mutex
 
+	// searchNow state. searchNowMu (TryLock) enforces ONE manual "search now"
+	// at a time, so repeated clicks can't stack concurrent Prowlarr load (the
+	// flood-protection that matters most here). searching is the set of watch
+	// ids currently being re-searched by that run — overlaid onto the watch
+	// list as a transient `searching` flag so the UI can show a spinner.
+	searchNowMu sync.Mutex
+	searchingMu sync.Mutex
+	searching   map[string]bool
+
 	// Lazy-constructed matcher — needs a populated cache, so we wait
 	// until the first request that uses it. matcherMu serialises
 	// construction attempts; on error we retry next request rather than
@@ -203,6 +212,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
 		r.Post("/watches", s.postWatch)
 		r.Post("/watches/batch", s.postWatchBatch)
+		r.Post("/watches/search-now", s.postWatchSearchNow)
 		r.Get("/watches", s.getWatches)
 		r.Delete("/watches/batch/{batchId}", s.clearBatch)
 		r.Delete("/watches/{id}", s.deleteWatch)
