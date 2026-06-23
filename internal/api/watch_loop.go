@@ -26,6 +26,10 @@ const (
 	// (responsive), and only a large list spreads across ticks (each scene
 	// every ceil(total/8) ticks) to keep Prowlarr load bounded.
 	watchMaxBatch = 8
+	// watchSearchTimeout caps how long one watch's release search may run
+	// before a slow indexer is abandoned and the scene is judged on the fast
+	// indexers' results. Bounds per-scene latency so "search all" stays usable.
+	watchSearchTimeout = 25 * time.Second
 )
 
 // RunWatchLoop drives the watchlist re-search until ctx is cancelled.
@@ -121,6 +125,14 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 		}
 	}
 	perfNames := s.scenePerformerNames(ctx, scene, w.PerformerName, "")
+	// Cap each scene's search so one slow indexer can't stall it. The full
+	// search fans out several queries and waits for all of them; a single slow
+	// indexer (near the 60s Prowlarr client timeout) otherwise pins a scene at
+	// ~1-2 min, making a "search all" take 20-30 min. With a tighter deadline
+	// the slow query is cancelled and the scene is judged on whatever the fast
+	// indexers returned (partial results still verify fine).
+	sctx, cancel := context.WithTimeout(ctx, watchSearchTimeout)
+	defer cancel()
 	// Use the FULL (non-lean) search. The lean 2-query set (primary performer
 	// + studio, and the title) systematically misses studio releases named by
 	// date + a NON-primary performer (e.g. a "Slim Poke + Cyber Doll" scene
@@ -129,7 +141,7 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	// existed for the collection fan-out's many-scenes-at-once load; the watch
 	// loop processes scenes sequentially (and search-now is bounded), so it can
 	// afford the complete query set — and needs it to actually find releases.
-	releases, err := s.searchSceneReleases(ctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, false /*full*/)
+	releases, err := s.searchSceneReleases(sctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, false /*full*/)
 	if err != nil || len(releases) == 0 {
 		return
 	}
