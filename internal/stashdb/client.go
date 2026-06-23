@@ -296,6 +296,47 @@ func (c *Client) QueryAllScenes(ctx context.Context, q SceneQuery, hardCap int) 
 	return all, nil
 }
 
+// QueryScenesSince is the delta-aware pager behind the persistent scene cache.
+// It returns a subject's scenes whose StashDB `updated` is at or after `since`,
+// by sorting UPDATED_AT DESC and stopping the moment it reaches an older scene
+// (everything past it is older still). since == 0 means "no watermark" — a full
+// fetch of every page (the first sync). hardCap bounds the total defensively
+// (0 = no cap). The caller advances its watermark to max(returned Updated).
+func (c *Client) QueryScenesSince(ctx context.Context, q SceneQuery, since int64, hardCap int) ([]Scene, error) {
+	if q.PerPage == 0 {
+		q.PerPage = 50
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	q.Sort = "UPDATED_AT" // QueryScenes always requests DESC → newest-updated first
+	var all []Scene
+	for {
+		res, err := c.QueryScenes(ctx, q)
+		if err != nil {
+			return nil, err
+		}
+		if len(res.Scenes) == 0 {
+			break
+		}
+		for i := range res.Scenes {
+			s := res.Scenes[i]
+			if since > 0 && s.Updated < since {
+				return all, nil // DESC by updated → the rest are older
+			}
+			all = append(all, s)
+			if hardCap > 0 && len(all) >= hardCap {
+				return all, nil
+			}
+		}
+		if len(res.Scenes) < q.PerPage {
+			break // last page
+		}
+		q.Page++
+	}
+	return all, nil
+}
+
 func (c *Client) QueryScenes(ctx context.Context, q SceneQuery) (*QueryScenesResult, error) {
 	if q.PerPage == 0 {
 		q.PerPage = 25
