@@ -1,17 +1,12 @@
 import { useState } from "react";
-import { addWatch, deleteWatch, type WatchTarget } from "./api";
+import { addWatch, deleteWatch } from "./api";
 
-// Shared watch control — track a StashDB scene for releases at a chosen
-// quality. Used by the missing-scenes + discover cards (variant
-// "overlay": a bookmark chip in the thumb's bottom strip that expands
-// inline into a quality bar, so it can't be clipped) and the
-// scene-releases hero (variant "inline": a normal-flow button for "watch
-// this if nothing here is good enough").
-
-const TARGETS: WatchTarget[] = ["any", "4k", "1080p", "720p", "480p"];
-function targetLabel(t: WatchTarget): string {
-  return t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t;
-}
+// Shared watch control — track a StashDB scene for releases. One click; no
+// quality target (the matcher surfaces the best release by your preference
+// ranking, any quality, and quality floors live in your release reject rules).
+// Used by the missing-scenes + discover cards (variant "overlay": a bookmark
+// chip in the thumb's bottom strip) and the scene-releases hero (variant
+// "inline": "watch this if nothing here is good enough").
 
 export interface WatchScene {
   stashdb_id: string;
@@ -35,11 +30,9 @@ export default function WatchControl({
   variant?: "overlay" | "inline";
 }) {
   const [watch, setWatch] = useState(initialStatus);
-  const [picking, setPicking] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  const track = async (target: WatchTarget) => {
-    setPicking(false);
+  const track = async () => {
     setBusy(true);
     try {
       await addWatch({
@@ -50,7 +43,6 @@ export default function WatchControl({
         image_url: scene.image_url,
         performer_name: performerName,
         performer_id: performerId,
-        target,
       });
       setWatch("watching");
     } catch {
@@ -60,7 +52,6 @@ export default function WatchControl({
     }
   };
   const untrack = async () => {
-    setPicking(false);
     setBusy(true);
     try {
       await deleteWatch(scene.stashdb_id);
@@ -95,32 +86,12 @@ export default function WatchControl({
           <BookmarkGlyph filled />
           Watching
         </button>
-      ) : picking ? (
-        <div className="watch-picker" role="menu" aria-label="Watch at quality">
-          {TARGETS.map((t) => (
-            <button
-              key={t}
-              className="watch-q"
-              disabled={busy}
-              onClick={() => track(t)}
-            >
-              {targetLabel(t)}
-            </button>
-          ))}
-          <button
-            className="watch-q watch-cancel"
-            onClick={() => setPicking(false)}
-            aria-label="Cancel"
-          >
-            ×
-          </button>
-        </div>
       ) : (
         <button
           className="watch-chip"
           disabled={busy}
-          onClick={() => setPicking(true)}
-          title="Watch for releases at a chosen quality"
+          onClick={track}
+          title="Watch for releases — surfaces the best by your preferences"
         >
           <BookmarkGlyph />
           Watch

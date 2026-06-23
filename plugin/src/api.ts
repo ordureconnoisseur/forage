@@ -1212,7 +1212,9 @@ export interface Watch {
   image_url?: string;
   performer_name?: string;
   performer_id?: string;
-  target: WatchTarget;
+  // Vestigial: the matcher no longer filters on a quality target (it surfaces
+  // the best release by your preference ranking). Server still returns it.
+  target?: WatchTarget;
   status: WatchStatus;
   found_title?: string;
   found_url?: string;
@@ -1249,12 +1251,12 @@ export interface AddWatchReq {
   // needs no StashDB fetch and covers every performer (releases are often
   // named under a non-tracked one).
   performers?: string[];
-  target: WatchTarget;
+  // Optional/vestigial — the matcher ignores it (best release by preference
+  // ranking; quality floors live in release reject rules). Omit it.
+  target?: WatchTarget;
 }
 
-export function addWatch(
-  req: AddWatchReq,
-): Promise<{ ok: boolean; target: WatchTarget }> {
+export function addWatch(req: AddWatchReq): Promise<{ ok: boolean }> {
   return postJSON("/watches", req);
 }
 

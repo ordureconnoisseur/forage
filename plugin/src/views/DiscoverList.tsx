@@ -8,7 +8,6 @@ import {
   fetchDiscover,
   performerImageURL,
   type AddWatchReq,
-  type WatchTarget,
 } from "../api";
 import WatchControl from "../WatchControl";
 
@@ -62,7 +61,6 @@ export default function DiscoverList({
   // compact carousel cards are navigation-first.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [watchPicking, setWatchPicking] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
   // Bumped after a bulk watch so the refetch picks up the new
@@ -137,7 +135,6 @@ export default function DiscoverList({
   useEffect(() => {
     setSelecting(false);
     setSelected(new Set());
-    setWatchPicking(false);
   }, [days, favoriteOnly]);
 
   const filtered = useMemo(() => {
@@ -168,7 +165,6 @@ export default function DiscoverList({
   const exitSelect = () => {
     setSelecting(false);
     setSelected(new Set());
-    setWatchPicking(false);
   };
 
   // Select-all works on the FILTERED grid (what the user can see); the
@@ -178,12 +174,11 @@ export default function DiscoverList({
   const allSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
-  // Watch every selected scene at one quality target as ONE batch. Each
-  // scene carries its OWN primary library performer (unlike the per-performer
-  // pages) so each watch lands in the right folder later; the batch groups
-  // them in the Watching tab as a "Discover · N scenes" run.
-  const watchSelected = async (target: WatchTarget) => {
-    setWatchPicking(false);
+  // Watch every selected scene as ONE batch. Each scene carries its OWN primary
+  // library performer (unlike the per-performer pages) so each watch lands in
+  // the right folder later; the batch groups them in the Watching tab as a
+  // "Discover · N scenes" run. No quality target (best release by preference).
+  const watchSelected = async () => {
     setWatchBusy(true);
     const chosen = data.scenes.filter((s) => selected.has(s.stashdb_id));
     const watches: AddWatchReq[] = chosen.map((s) => ({
@@ -195,7 +190,6 @@ export default function DiscoverList({
       performer_name: s.performers[0]?.name,
       performer_id: s.performers[0]?.stash_id,
       performers: s.performers.map((p) => p.name),
-      target,
     }));
     try {
       await addWatches({
@@ -337,38 +331,14 @@ export default function DiscoverList({
       {selecting && (
         <div className="ms-select-bar">
           <span className="ms-select-count">{selected.size} selected</span>
-          {watchPicking ? (
-            <div className="ms-watch-picker" role="menu">
-              <span className="ms-watch-picker-label">Watch at:</span>
-              {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
-                (t) => (
-                  <button
-                    key={t}
-                    disabled={watchBusy}
-                    onClick={() => watchSelected(t)}
-                  >
-                    {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
-                  </button>
-                ),
-              )}
-              <button
-                className="ms-watch-cancel"
-                onClick={() => setWatchPicking(false)}
-                aria-label="Cancel"
-              >
-                ×
-              </button>
-            </div>
-          ) : (
-            <button
-              className="ms-select-watch"
-              disabled={selected.size === 0 || watchBusy}
-              onClick={() => setWatchPicking(true)}
-              title="Watch all selected scenes for releases (one batch)"
-            >
-              {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
-            </button>
-          )}
+          <button
+            className="ms-select-watch"
+            disabled={selected.size === 0 || watchBusy}
+            onClick={watchSelected}
+            title="Watch all selected scenes for releases (one batch)"
+          >
+            {watchBusy ? "Watching…" : `Watch ${selected.size} selected`}
+          </button>
         </div>
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}

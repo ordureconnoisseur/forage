@@ -8,7 +8,6 @@ import {
   type MissingResponse,
   type MissingScene,
   type OwnedScene,
-  type WatchTarget,
 } from "../api";
 import { humanSize } from "../format";
 import WatchControl from "../WatchControl";
@@ -65,9 +64,6 @@ export default function MissingScenes({
   // navigating. selected holds the chosen StashDB ids.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Bulk-watch: pick a quality for selected scenes (picker="selected") or for
-  // every missing scene (picker="all"); both create one batch of watches.
-  const [picker, setPicker] = useState<null | "selected" | "all">(null);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
   // Owned · Both · Missing filter. Persisted so the choice sticks across
@@ -141,15 +137,14 @@ export default function MissingScenes({
   const exitSelect = () => {
     setSelecting(false);
     setSelected(new Set());
-    setPicker(null);
   };
 
-  // Watch a set of missing scenes at one quality target as ONE batch — the
-  // Watching tab groups them under the performer's name and shows their
-  // collective progress. Used by both "watch selected" and "watch all missing".
-  const watchScenes = async (scenes: MissingScene[], target: WatchTarget) => {
+  // Watch a set of missing scenes as ONE batch — the Watching tab groups them
+  // under the performer's name and shows their collective progress. Used by
+  // both "watch selected" and "watch all missing". No quality target (the
+  // matcher surfaces the best release by your preference ranking).
+  const watchScenes = async (scenes: MissingScene[]) => {
     if (scenes.length === 0) return;
-    setPicker(null);
     setWatchBusy(true);
     const watches: AddWatchReq[] = scenes.map((s) => {
       const place = placementFor(s);
@@ -162,7 +157,6 @@ export default function MissingScenes({
         performer_name: place.name,
         performer_id: place.id,
         performers: (s.performers || []).map((p) => p.name),
-        target,
       };
     });
     try {
@@ -267,23 +261,14 @@ export default function MissingScenes({
               >
                 Select
               </button>
-              {picker === "all" ? (
-                <QualityPicker
-                  label="Watch all at:"
-                  busy={watchBusy}
-                  onPick={(t) => watchScenes(data.missing, t)}
-                  onCancel={() => setPicker(null)}
-                />
-              ) : (
-                <button
-                  className="collection-cta"
-                  disabled={watchBusy}
-                  onClick={() => setPicker("all")}
-                  title="Watch every missing scene for releases (one batch)"
-                >
-                  {watchBusy ? "Watching…" : "Watch all missing ▾"}
-                </button>
-              )}
+              <button
+                className="collection-cta"
+                disabled={watchBusy}
+                onClick={() => watchScenes(data.missing)}
+                title="Watch every missing scene for releases (one batch)"
+              >
+                {watchBusy ? "Watching…" : "Watch all missing"}
+              </button>
             </div>
           ))}
       </div>
@@ -332,28 +317,18 @@ export default function MissingScenes({
       {view === "missing" && selecting && (
         <div className="ms-select-bar">
           <span className="ms-select-count">{selected.size} selected</span>
-          {picker === "selected" ? (
-            <QualityPicker
-              label="Watch at:"
-              busy={watchBusy}
-              onPick={(t) =>
-                watchScenes(
-                  data.missing.filter((s) => selected.has(s.stashdb_id)),
-                  t,
-                )
-              }
-              onCancel={() => setPicker(null)}
-            />
-          ) : (
-            <button
-              className="ms-select-watch"
-              disabled={selected.size === 0 || watchBusy}
-              onClick={() => setPicker("selected")}
-              title="Watch all selected scenes for releases (one batch)"
-            >
-              {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
-            </button>
-          )}
+          <button
+            className="ms-select-watch"
+            disabled={selected.size === 0 || watchBusy}
+            onClick={() =>
+              watchScenes(
+                data.missing.filter((s) => selected.has(s.stashdb_id)),
+              )
+            }
+            title="Watch all selected scenes for releases (one batch)"
+          >
+            {watchBusy ? "Watching…" : `Watch ${selected.size} selected`}
+          </button>
         </div>
       )}
       {!isStudio && view !== "dupes" && data.subject.local_id && (
@@ -363,34 +338,6 @@ export default function MissingScenes({
         />
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
-    </div>
-  );
-}
-
-// QualityPicker is the inline "watch at <quality>" target chooser, shared by
-// the "watch all missing" and "watch selected" actions.
-function QualityPicker({
-  label,
-  busy,
-  onPick,
-  onCancel,
-}: {
-  label: string;
-  busy: boolean;
-  onPick: (t: WatchTarget) => void;
-  onCancel: () => void;
-}) {
-  return (
-    <div className="ms-watch-picker" role="menu">
-      <span className="ms-watch-picker-label">{label}</span>
-      {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map((t) => (
-        <button key={t} disabled={busy} onClick={() => onPick(t)}>
-          {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
-        </button>
-      ))}
-      <button className="ms-watch-cancel" onClick={onCancel} aria-label="Cancel">
-        ×
-      </button>
     </div>
   );
 }

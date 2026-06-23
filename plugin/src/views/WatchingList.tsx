@@ -384,17 +384,6 @@ function WatchCard({
           {w.date && <span>{w.date}</span>}
           {w.date && w.studio_name && <span className="sep">·</span>}
           {w.studio_name && <span>{w.studio_name}</span>}
-          <span className="sep">·</span>
-          <span className="watch-target">
-            target:{" "}
-            {w.target === "any"
-              ? "any quality"
-              : w.target === "480p"
-                ? "SD"
-                : w.target === "4k"
-                  ? "4K"
-                  : w.target}
-          </span>
         </div>
         {(avail || isGrabbed) && w.found_title && (
           <div className="watch-found">
