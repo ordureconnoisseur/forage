@@ -249,7 +249,12 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 			log.Error("boot studio refresh failed", "err", err)
 		}
 	}
-	if scenesAt < cutoff {
+	// Force the (heavy) scene + studio aggregate passes when the persistent
+	// scene cache is empty — they populate it as a side effect, so a fresh
+	// install (or the first boot after this feature ships) backfills it without
+	// waiting up to 12h for the timestamps to age out.
+	emptyCache := cache.SceneCacheEmpty(ctx, database)
+	if scenesAt < cutoff || emptyCache {
 		sdb := pool.StashDB()
 		if sdb != nil {
 			if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
@@ -257,7 +262,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 			}
 		}
 	}
-	if studAggAt < cutoff {
+	if studAggAt < cutoff || emptyCache {
 		sdb := pool.StashDB()
 		if sdb != nil {
 			if err := cache.RefreshStudioCache(ctx, sc, sdb, database, log.With("op", "studio-aggregates")); err != nil {

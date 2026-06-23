@@ -91,6 +91,18 @@ func UpsertScene(ctx context.Context, ex sceneExecer, s stashdb.Scene, now int64
 	return nil
 }
 
+// SceneCacheEmpty reports whether the persistent scene cache holds no rows yet.
+// Used at boot to force a full sync that populates it even when the 12h
+// aggregate timestamps are still fresh (e.g. right after the feature ships).
+func SceneCacheEmpty(ctx context.Context, db *sql.DB) bool {
+	var exists int
+	if err := db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM stashdb_scene LIMIT 1)`).Scan(&exists); err != nil {
+		return false // unknown → don't force a heavy sync on a query error
+	}
+	return exists == 0
+}
+
 // UpsertSceneBatch writes a fetched batch of StashDB scenes into the persistent
 // cache in one transaction. Safe to call concurrently from the refresh workers —
 // the single DB connection serializes the transactions (fetches stay parallel;
