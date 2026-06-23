@@ -30,6 +30,8 @@ func TestGetStudios(t *testing.T) {
 		{"sdb-blacked", "10", "Blacked", `["BLACKED"]`, 1, 120, 400, 120},
 		{"sdb-vixen", "11", "Vixen", `["VIXEN"]`, 0, 80, 300, 80},
 		{"stash:12", "12", "Local Only", `[]`, 0, 5, 0, 0},
+		// scene_count 0 = not an owned studio; must be excluded from the list.
+		{"sdb-unowned", "13", "Unowned Studio", `[]`, 0, 0, 900, 0},
 	}
 	for _, s := range seed {
 		if _, err := dbh.Exec(`INSERT INTO studio_cache
@@ -57,9 +59,15 @@ func TestGetStudios(t *testing.T) {
 	}
 
 	// Default sort = scene_count DESC: Blacked(120) > Vixen(80) > Local(5).
+	// The scene_count=0 "Unowned Studio" is excluded (owned-only list).
 	def := call("")
 	if len(def.Studios) != 3 {
-		t.Fatalf("expected 3 studios, got %d", len(def.Studios))
+		t.Fatalf("expected 3 owned studios, got %d", len(def.Studios))
+	}
+	for _, st := range def.Studios {
+		if st.Name == "Unowned Studio" {
+			t.Error("a scene_count=0 studio leaked into the owned list")
+		}
 	}
 	if def.Studios[0].Name != "Blacked" || def.Studios[2].Name != "Local Only" {
 		t.Errorf("scene_count order wrong: %s … %s", def.Studios[0].Name, def.Studios[2].Name)

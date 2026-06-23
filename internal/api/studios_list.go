@@ -59,7 +59,10 @@ func (s *Server) getStudios(w http.ResponseWriter, r *http.Request) {
 }
 
 func buildStudioQuery(orderBy string, favoriteOnly bool, q string) (string, []any) {
-	var where []string
+	// Only OWNED studios — ones the user actually has scenes from. studio_cache
+	// also holds studios that exist in Stash purely as scraped metadata
+	// (scene_count 0); those aren't "your studios" and would bloat the list.
+	where := []string{"scene_count > 0"}
 	var args []any
 	if favoriteOnly {
 		where = append(where, "favorite = 1")

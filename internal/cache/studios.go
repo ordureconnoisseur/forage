@@ -234,9 +234,11 @@ func RefreshStudioCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Clie
 		ownedSet[id] = true
 	}
 
-	// ── Studios with a real StashDB cross-id (skip synthetic keys) ────
+	// ── Owned studios with a real StashDB cross-id (skip synthetic keys
+	// and studios the user has no scenes from — querying their full StashDB
+	// catalogue would be pure waste). ─────────────────────────────────
 	rows, err := db.QueryContext(ctx,
-		`SELECT stashdb_id FROM studio_cache WHERE stashdb_id NOT LIKE 'stash:%'`)
+		`SELECT stashdb_id FROM studio_cache WHERE stashdb_id NOT LIKE 'stash:%' AND scene_count > 0`)
 	if err != nil {
 		return fmt.Errorf("load studios: %w", err)
 	}
