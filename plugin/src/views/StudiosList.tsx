@@ -135,7 +135,7 @@ export default function StudiosList({
         </button>
       </div>
       {error && <div className="perf-list-err">Refresh failed: {error}</div>}
-      <div className="performer-grid">
+      <div className="performer-grid studio-grid">
         {filtered.map((st) => (
           <StudioCard
             key={st.stashdb_id}

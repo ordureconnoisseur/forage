@@ -383,20 +383,32 @@ button {
     rgba(0, 0, 0, 0.35)
   );
 }
-/* Studio logo/banner: contain (not cover) so a wide logo shows whole rather
-   than being cropped to the portrait card, on a dark wash that hides the
-   letter tile behind it. No hover zoom — logos look odd scaled. */
+/* Studio cards are LANDSCAPE — studio art is wide logos/banners, which a
+   portrait card letterboxes badly. Wider grid columns, fewer per row. */
+.studio-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+}
+.studio-card {
+  aspect-ratio: 16 / 9;
+}
+/* Studio logo/banner: contain (not cover) so a wide logo shows whole, on an
+   OPAQUE dark plate so transparent SVG logos don't reveal the letter tile
+   behind them. A subtle top highlight gives the plate some depth. No hover
+   zoom — logos look odd scaled. */
 .studio-banner {
   object-fit: contain;
-  padding: 14px;
-  background: radial-gradient(
-    120% 100% at 50% 35%,
-    rgba(255, 255, 255, 0.06),
-    rgba(0, 0, 0, 0.55)
-  );
+  padding: 16px 18px;
+  background:
+    radial-gradient(120% 90% at 50% 25%, rgba(255, 255, 255, 0.07), transparent 70%),
+    #15171c;
 }
 .performer-card:hover .studio-banner {
   transform: none;
+}
+@media (max-width: 600px) {
+  .studio-grid {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
 }
 .perf-scrim {
   position: absolute;
