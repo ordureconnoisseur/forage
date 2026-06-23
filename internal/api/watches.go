@@ -25,7 +25,12 @@ type addWatchRequest struct {
 	ImageURL      string `json:"image_url,omitempty"`
 	PerformerName string `json:"performer_name,omitempty"`
 	PerformerID   string `json:"performer_id,omitempty"`
-	// Target resolution: "any" | "720p" | "1080p" | "4k".
+	// Performers is ALL the scene's performer names (from the card), stored on
+	// the watch so a re-search needs no StashDB fetch and covers every
+	// performer. Optional — a bare add resolves it on first check.
+	Performers []string `json:"performers,omitempty"`
+	// Target resolution is vestigial (kept for request compatibility; the
+	// matcher no longer filters on it).
 	Target string `json:"target"`
 }
 
@@ -71,6 +76,7 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 		ImageURL:      req.ImageURL,
 		PerformerName: req.PerformerName,
 		PerformerID:   req.PerformerID,
+		Performers:    req.Performers,
 		Target:        target,
 	}); err != nil {
 		s.log.Error("watch add", "err", err)
@@ -299,6 +305,7 @@ func (s *Server) postWatchBatch(w http.ResponseWriter, r *http.Request) {
 			ImageURL:      it.ImageURL,
 			PerformerName: it.PerformerName,
 			PerformerID:   it.PerformerID,
+			Performers:    it.Performers,
 			Target:        normalizeTarget(it.Target),
 			BatchID:       batchID,
 			BatchLabel:    req.BatchLabel,

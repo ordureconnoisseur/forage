@@ -161,6 +161,7 @@ export default function MissingScenes({
         image_url: s.image_url,
         performer_name: place.name,
         performer_id: place.id,
+        performers: (s.performers || []).map((p) => p.name),
         target,
       };
     });

@@ -194,6 +194,7 @@ export default function DiscoverList({
       image_url: s.image_url,
       performer_name: s.performers[0]?.name,
       performer_id: s.performers[0]?.stash_id,
+      performers: s.performers.map((p) => p.name),
       target,
     }));
     try {

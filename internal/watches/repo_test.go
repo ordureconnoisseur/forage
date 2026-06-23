@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS watches (
   found_at INTEGER NOT NULL DEFAULT 0,
   ignored_urls TEXT NOT NULL DEFAULT '[]',
   batch_id TEXT NOT NULL DEFAULT '', batch_label TEXT NOT NULL DEFAULT '',
-  candidates TEXT NOT NULL DEFAULT '[]', grabbed_at INTEGER NOT NULL DEFAULT 0);`
+  candidates TEXT NOT NULL DEFAULT '[]', grabbed_at INTEGER NOT NULL DEFAULT 0,
+  performers TEXT NOT NULL DEFAULT '[]');`
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
@@ -217,6 +218,30 @@ func TestMarkGrabbedLingers(t *testing.T) {
 	}
 	if n, _ := r.CountAvailable(ctx); n != 0 {
 		t.Errorf("CountAvailable = %d, want 0 (grabbed is not available)", n)
+	}
+}
+
+func TestPerformersRoundTripAndSet(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	// Stored at add time.
+	if err := r.Add(ctx, Watch{StashDBID: "s", Title: "x", Performers: []string{"Slim Poke", "Cyber Doll"}}); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ := r.List(ctx)
+	if len(ws[0].Performers) != 2 || ws[0].Performers[1] != "Cyber Doll" {
+		t.Fatalf("performers round-trip wrong: %v", ws[0].Performers)
+	}
+	// Backfilled later (bare add path).
+	_ = r.Add(ctx, Watch{StashDBID: "bare", Title: "y"})
+	if err := r.SetPerformers(ctx, "bare", []string{"Eva Maxim"}); err != nil {
+		t.Fatal(err)
+	}
+	ws, _ = r.List(ctx)
+	for _, w := range ws {
+		if w.StashDBID == "bare" && (len(w.Performers) != 1 || w.Performers[0] != "Eva Maxim") {
+			t.Errorf("SetPerformers wrong: %v", w.Performers)
+		}
 	}
 }
 

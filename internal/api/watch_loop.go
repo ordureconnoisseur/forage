@@ -4,10 +4,33 @@ import (
 	"context"
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
+
+// capPerformerNames dedupes (case-insensitive) and caps a stored performer-name
+// list to the same ceiling the live resolver uses, keeping the query fan-out
+// bounded.
+func capPerformerNames(names []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		k := strings.ToLower(n)
+		if n == "" || seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, n)
+		if len(out) >= maxPerformerNames {
+			break
+		}
+	}
+	return out
+}
 
 // Watch loop — the background re-search that powers the watchlist. Each
 // tick it claims a batch of the least-recently-checked watches and
@@ -90,9 +113,9 @@ func (s *Server) watchBatchSize(total int) int {
 	return total
 }
 
-// checkWatch re-searches one watch and, on a verified release matching the
-// target resolution, flips it to available. last_checked was already
-// stamped by ClaimBatch.
+// checkWatch re-searches one watch and, on a verified release, flips it to
+// available (best release by preference). last_checked was already stamped by
+// ClaimBatch.
 func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	m, err := s.Matcher(ctx)
 	if err != nil {
@@ -103,43 +126,64 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	if stashDBC == nil || pc == nil {
 		return
 	}
-	scene, err := stashDBC.FindScene(ctx, w.StashDBID)
-	if err != nil || scene == nil {
-		return
+
+	// Resolve the scene's title/studio/date + the FULL performer-name set the
+	// search needs. Prefer the names stored on the watch (captured at add time)
+	// so a re-check makes NO StashDB call — re-fetching an immutable scene every
+	// check was the source of StashDB throttling. Only when none are stored
+	// (a bare API add, or a pre-migration watch) do we fetch once and backfill.
+	var (
+		scene     *stashdb.Scene
+		perfNames []string
+	)
+	if len(w.Performers) > 0 {
+		scene = &stashdb.Scene{ID: w.StashDBID, Title: w.Title, Date: w.Date}
+		if w.StudioName != "" {
+			scene.Studio = &stashdb.SceneStudio{Name: w.StudioName}
+		}
+		perfNames = capPerformerNames(w.Performers)
+	} else {
+		sc, ferr := stashDBC.FindScene(ctx, w.StashDBID)
+		if ferr != nil || sc == nil {
+			return
+		}
+		scene = sc
+		// Backfill display metadata for non-card (bare) adds.
+		if w.ImageURL == "" || w.Title == "" || w.StudioName == "" {
+			img := ""
+			if len(sc.Images) > 0 {
+				img = sc.Images[0].URL
+			}
+			studio := ""
+			if sc.Studio != nil {
+				studio = sc.Studio.Name
+			}
+			if berr := s.watches.BackfillMeta(ctx, w.StashDBID, sc.Title, sc.Date, studio, img); berr != nil {
+				s.log.Warn("watch backfill meta", "scene", w.StashDBID, "err", berr)
+			}
+		}
+		// ALL the scene's performers (ctxPerformer "" → not narrowed to the
+		// tracked one) so the search covers releases named under any of them.
+		perfNames = s.scenePerformerNames(ctx, sc, "", "")
+		if len(perfNames) > 0 {
+			if serr := s.watches.SetPerformers(ctx, w.StashDBID, perfNames); serr != nil {
+				s.log.Warn("watch store performers", "scene", w.StashDBID, "err", serr)
+			}
+		}
 	}
-	// Backfill any display metadata the watch is missing (e.g. it was
-	// added bare via the API) from the scene we just resolved — so the
-	// Watching tab can show a thumbnail/title even for non-card adds.
-	if w.ImageURL == "" || w.Title == "" || w.StudioName == "" {
-		img := ""
-		if len(scene.Images) > 0 {
-			img = scene.Images[0].URL
-		}
-		studio := ""
-		if scene.Studio != nil {
-			studio = scene.Studio.Name
-		}
-		if berr := s.watches.BackfillMeta(ctx, w.StashDBID, scene.Title, scene.Date, studio, img); berr != nil {
-			s.log.Warn("watch backfill meta", "scene", w.StashDBID, "err", berr)
-		}
+	if len(perfNames) == 0 {
+		return // nothing to search by
 	}
-	perfNames := s.scenePerformerNames(ctx, scene, w.PerformerName, "")
+
 	// Cap each scene's search so one slow indexer can't stall it. The full
 	// search fans out several queries and waits for all of them; a single slow
 	// indexer (near the 60s Prowlarr client timeout) otherwise pins a scene at
-	// ~1-2 min, making a "search all" take 20-30 min. With a tighter deadline
-	// the slow query is cancelled and the scene is judged on whatever the fast
-	// indexers returned (partial results still verify fine).
+	// ~1-2 min. With a tighter deadline the slow query is cancelled and the
+	// scene is judged on whatever the fast indexers returned (still verifies).
 	sctx, cancel := context.WithTimeout(ctx, watchSearchTimeout)
 	defer cancel()
-	// Use the FULL (non-lean) search. The lean 2-query set (primary performer
-	// + studio, and the title) systematically misses studio releases named by
-	// date + a NON-primary performer (e.g. a "Slim Poke + Cyber Doll" scene
-	// titled "Wild Open House" whose release is "BlacksOnBlondes.26.06.19.
-	// Cyber.Doll.XXX.1080p" — caught only by a bare "Cyber Doll" query). lean
-	// existed for the collection fan-out's many-scenes-at-once load; the watch
-	// loop processes scenes sequentially (and search-now is bounded), so it can
-	// afford the complete query set — and needs it to actually find releases.
+	// FULL (non-lean) search across all the performers above — lean's 2-query
+	// set misses studio releases named by date + a non-primary performer.
 	releases, err := s.searchSceneReleases(sctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, false /*full*/)
 	if err != nil || len(releases) == 0 {
 		return

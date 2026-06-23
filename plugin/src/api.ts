@@ -1245,6 +1245,10 @@ export interface AddWatchReq {
   image_url?: string;
   performer_name?: string;
   performer_id?: string;
+  // All of the scene's performer names — stored on the watch so a re-search
+  // needs no StashDB fetch and covers every performer (releases are often
+  // named under a non-tracked one).
+  performers?: string[];
   target: WatchTarget;
 }
 

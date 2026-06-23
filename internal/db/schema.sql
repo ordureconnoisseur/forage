@@ -174,10 +174,15 @@ CREATE TABLE IF NOT EXISTS watches (
   date           TEXT,
   studio_name    TEXT,
   image_url      TEXT,
-  performer_name TEXT,              -- the performer the user tracked from (folder + search scope)
+  performer_name TEXT,              -- the performer the user tracked from (folder placement)
   performer_id   TEXT,              -- local stash_id of that performer
-  -- target resolution to wait for: "any" | "720p" | "1080p" | "4k".
-  -- Exact match (4k does NOT satisfy a 1080p watch) per the chosen design.
+  -- ALL of the scene's performer names (JSON array), captured at add time so a
+  -- re-search never re-fetches the scene from StashDB (avoids throttling) AND
+  -- searches every performer — releases are often named under a non-tracked
+  -- performer. Empty until resolved (then the loop backfills it once).
+  performers     TEXT NOT NULL DEFAULT '[]',
+  -- target resolution is vestigial (the matcher no longer filters on it;
+  -- releases are ranked by preference score). Kept for schema compatibility.
   target         TEXT NOT NULL DEFAULT 'any',
   status         TEXT NOT NULL DEFAULT 'watching', -- watching | available | grabbed
   -- When available, the release that satisfied it (for one-click grab).

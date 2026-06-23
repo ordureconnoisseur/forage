@@ -290,6 +290,7 @@ func migrateGrabsColumns(db *sql.DB) error {
 			{"batch_label", `ALTER TABLE watches ADD COLUMN batch_label TEXT NOT NULL DEFAULT ''`},
 			{"candidates", `ALTER TABLE watches ADD COLUMN candidates TEXT NOT NULL DEFAULT '[]'`},
 			{"grabbed_at", `ALTER TABLE watches ADD COLUMN grabbed_at INTEGER NOT NULL DEFAULT 0`},
+			{"performers", `ALTER TABLE watches ADD COLUMN performers TEXT NOT NULL DEFAULT '[]'`},
 		}
 		for _, c := range watchCols {
 			var has int

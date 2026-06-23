@@ -73,6 +73,10 @@ type Watch struct {
 	// loop skips them so a rejected dead/over-compressed find can't
 	// re-surface. Not exposed in the API (internal to the loop's matching).
 	IgnoredURLs []string `json:"-"`
+	// Performers is ALL the scene's performer names, captured at add time. The
+	// re-search uses these directly (no StashDB round-trip per check) and
+	// searches every performer, not just the tracked one. Internal to matching.
+	Performers []string `json:"-"`
 }
 
 type Repo struct{ db *sql.DB }
@@ -119,12 +123,16 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 	if w.CreatedAt == 0 {
 		w.CreatedAt = time.Now().Unix()
 	}
+	perfsJSON, _ := json.Marshal(w.Performers)
+	if len(perfsJSON) == 0 {
+		perfsJSON = []byte("[]")
+	}
 	_, err := ex.ExecContext(ctx, `
 		INSERT INTO watches (
 		  stashdb_id, title, date, studio_name, image_url,
 		  performer_name, performer_id, target, status, created_at, last_checked,
-		  batch_id, batch_label
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?)
+		  batch_id, batch_label, performers
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?, ?)
 		ON CONFLICT(stashdb_id) DO UPDATE SET
 		  target = excluded.target,
 		  status = 'watching',
@@ -132,13 +140,27 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 		  performer_id = excluded.performer_id,
 		  batch_id = excluded.batch_id,
 		  batch_label = excluded.batch_label,
+		  performers = excluded.performers,
 		  found_title = '', found_url = '', found_indexer = '',
 		  found_protocol = '', found_size = 0, found_at = 0,
 		  candidates = '[]', grabbed_at = 0,
 		  last_checked = 0`,
 		w.StashDBID, w.Title, w.Date, w.StudioName, w.ImageURL,
 		w.PerformerName, w.PerformerID, w.Target, w.CreatedAt,
-		w.BatchID, w.BatchLabel)
+		w.BatchID, w.BatchLabel, string(perfsJSON))
+	return err
+}
+
+// SetPerformers backfills a watch's performer-name list (used by the loop the
+// first time it resolves a scene that was added without one — e.g. a bare API
+// add — so later checks skip the StashDB fetch).
+func (r *Repo) SetPerformers(ctx context.Context, stashDBID string, names []string) error {
+	b, _ := json.Marshal(names)
+	if len(b) == 0 {
+		b = []byte("[]")
+	}
+	_, err := r.db.ExecContext(ctx,
+		`UPDATE watches SET performers = ? WHERE stashdb_id = ?`, string(b), stashDBID)
 	return err
 }
 
@@ -335,7 +357,8 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(found_title,''), COALESCE(found_url,''), COALESCE(found_indexer,''),
 	COALESCE(found_protocol,''), found_size,
 	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
-	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at`
+	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at,
+	COALESCE(performers,'[]')`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -346,18 +369,21 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 	var out []Watch
 	for rows.Next() {
 		var w Watch
-		var ignoredJSON, candJSON string
+		var ignoredJSON, candJSON, perfsJSON string
 		if err := rows.Scan(
 			&w.StashDBID, &w.Title, &w.Date, &w.StudioName, &w.ImageURL,
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
-			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt,
+			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON,
 		); err != nil {
 			return nil, err
 		}
 		if ignoredJSON != "" && ignoredJSON != "[]" {
 			_ = json.Unmarshal([]byte(ignoredJSON), &w.IgnoredURLs)
+		}
+		if perfsJSON != "" && perfsJSON != "[]" {
+			_ = json.Unmarshal([]byte(perfsJSON), &w.Performers)
 		}
 		if candJSON == "" {
 			candJSON = "[]"
