@@ -386,10 +386,12 @@ func (s *Server) markSearching(ids []string, on bool) {
 }
 
 // searchNowConcurrency bounds how many watches a manual "search now" re-checks
-// at once. Deliberately low (the same gentle rate the collection crawl used)
-// so a one-shot burst can't choke Prowlarr/the trackers — the failure mode
-// that motivated removing collection Jobs.
-const searchNowConcurrency = 2
+// at once. ONE: each watch now runs the FULL search (its query terms already
+// fan out concurrently inside searchSceneReleases), so a single scene at a
+// time already keeps a handful of Prowlarr queries in flight — the same load
+// profile as the sequential background loop. Going wider risks choking the
+// torrent trackers (the failure mode that motivated removing collection Jobs).
+const searchNowConcurrency = 1
 
 // postWatchSearchNow kicks an immediate, bounded re-search of the still-
 // watching scenes (optionally scoped to one batch via {batch_id}), bypassing

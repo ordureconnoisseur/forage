@@ -121,7 +121,15 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 		}
 	}
 	perfNames := s.scenePerformerNames(ctx, scene, w.PerformerName, "")
-	releases, err := s.searchSceneReleases(ctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, true /*lean*/)
+	// Use the FULL (non-lean) search. The lean 2-query set (primary performer
+	// + studio, and the title) systematically misses studio releases named by
+	// date + a NON-primary performer (e.g. a "Slim Poke + Cyber Doll" scene
+	// titled "Wild Open House" whose release is "BlacksOnBlondes.26.06.19.
+	// Cyber.Doll.XXX.1080p" — caught only by a bare "Cyber Doll" query). lean
+	// existed for the collection fan-out's many-scenes-at-once load; the watch
+	// loop processes scenes sequentially (and search-now is bounded), so it can
+	// afford the complete query set — and needs it to actually find releases.
+	releases, err := s.searchSceneReleases(ctx, pc, scene, perfNames, s.pool.Settings().ProwlarrCategories, false /*full*/)
 	if err != nil || len(releases) == 0 {
 		return
 	}
