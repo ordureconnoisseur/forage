@@ -1220,7 +1220,9 @@ export function grabJobScene(
 //    quality appears; the server never grabs, you do) ─────────────────
 
 export type WatchTarget = "any" | "480p" | "720p" | "1080p" | "4k";
-export type WatchStatus = "watching" | "available";
+// "grabbed" is terminal: the user grabbed the release; the watch lingers
+// (greyed) so its batch's progress reads correctly until cleared.
+export type WatchStatus = "watching" | "available" | "grabbed";
 
 export interface Watch {
   stashdb_id: string;
@@ -1240,9 +1242,20 @@ export interface Watch {
   created_at: number;
   last_checked: number;
   found_at?: number;
+  // Batch grouping: watches launched together (a performer's "watch all
+  // missing", or a Discover multi-select) share batch_id; the Watching tab
+  // groups by it. Empty = an ungrouped single track.
+  batch_id?: string;
+  batch_label?: string;
+  // The verified candidate list captured when the watch went available, so
+  // the user can re-pick a different release than the auto-chosen best.
+  candidates?: SceneRelease[];
+  // When the watch was grabbed (status="grabbed").
+  grabbed_at?: number;
 }
 
-export function addWatch(req: {
+// AddWatchReq is one scene to watch — shared by the single add and the batch.
+export interface AddWatchReq {
   stashdb_id: string;
   title: string;
   date?: string;
@@ -1251,8 +1264,22 @@ export function addWatch(req: {
   performer_name?: string;
   performer_id?: string;
   target: WatchTarget;
-}): Promise<{ ok: boolean; target: WatchTarget }> {
+}
+
+export function addWatch(
+  req: AddWatchReq,
+): Promise<{ ok: boolean; target: WatchTarget }> {
   return postJSON("/watches", req);
+}
+
+// addWatches creates many watches in one request under a shared batch, so the
+// Watching tab groups them and shows their collective progress. Used by
+// "watch all missing for a performer" and Discover multi-select.
+export function addWatches(req: {
+  batch_label?: string;
+  watches: AddWatchReq[];
+}): Promise<{ ok: boolean; batch_id: string; count: number }> {
+  return postJSON("/watches/batch", req);
 }
 
 export function fetchWatches(signal?: AbortSignal): Promise<{ watches: Watch[] }> {
@@ -1285,6 +1312,27 @@ export async function deleteWatch(stashDBID: string): Promise<void> {
 
 export function grabWatch(stashDBID: string): Promise<{ ok: boolean }> {
   return postJSON(`/watches/${encodeURIComponent(stashDBID)}/grab`, {});
+}
+
+// grabWatchCandidate grabs a SPECIFIC release from the watch's stored
+// candidate list (a re-pick when the auto-chosen best isn't what you want).
+export function grabWatchCandidate(
+  stashDBID: string,
+  downloadUrl: string,
+): Promise<{ ok: boolean }> {
+  return postJSON(`/watches/${encodeURIComponent(stashDBID)}/grab-candidate`, {
+    download_url: downloadUrl,
+  });
+}
+
+// clearWatchBatch removes every watch in a batch (the per-batch "Clear",
+// typically once a collection batch is fully grabbed).
+export async function clearWatchBatch(batchId: string): Promise<void> {
+  const r = await fetch(
+    foragerBase() + `/watches/batch/${encodeURIComponent(batchId)}`,
+    { method: "DELETE", headers: authHeaders(), credentials: "include" },
+  );
+  if (!r.ok) await throwForStatus(r);
 }
 
 // dismissWatch rejects the watch's current found release (e.g. it's dead or
