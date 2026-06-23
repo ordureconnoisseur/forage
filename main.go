@@ -236,6 +236,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 	}
 	perfAt, _ := cache.PerformerRefreshedAt(ctx, database)
 	studAt, _ := cache.StudioRefreshedAt(ctx, database)
+	studAggAt, _ := cache.StudioAggregatesRefreshedAt(ctx, database)
 	scenesAt, _ := cache.ScenesRefreshedAt(ctx, database)
 	cutoff := time.Now().Add(-interval).Unix()
 	if perfAt < cutoff {
@@ -253,6 +254,14 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 		if sdb != nil {
 			if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
 				log.Error("boot scene refresh failed", "err", err)
+			}
+		}
+	}
+	if studAggAt < cutoff {
+		sdb := pool.StashDB()
+		if sdb != nil {
+			if err := cache.RefreshStudioCache(ctx, sc, sdb, database, log.With("op", "studio-aggregates")); err != nil {
+				log.Error("boot studio aggregate refresh failed", "err", err)
 			}
 		}
 	}
@@ -316,6 +325,11 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 				if sdb := pool.StashDB(); sdb != nil {
 					if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
 						log.Error("ticker scene refresh failed", "err", err)
+					}
+					// Studio aggregates run after RefreshStudios (above) has
+					// populated studio_cache rows for this pass to read.
+					if err := cache.RefreshStudioCache(ctx, sc, sdb, database, log.With("op", "studio-aggregates")); err != nil {
+						log.Error("ticker studio aggregate refresh failed", "err", err)
 					}
 				}
 			}()

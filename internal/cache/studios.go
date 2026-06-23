@@ -7,13 +7,28 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
-const metaKeyStudioRefreshed = "studio_refreshed_at"
+const (
+	metaKeyStudioRefreshed           = "studio_refreshed_at"
+	metaKeyStudioAggregatesRefreshed = "studio_aggregates_refreshed_at"
+
+	// studioStashDBFetchWorkers caps parallel per-studio StashDB queries.
+	// Lower than the performer pass's 8: a studio's catalogue is far larger
+	// (up to the 5000 hard cap, many pages each), so fewer concurrent studios
+	// keeps total in-flight request volume polite to StashDB.
+	studioStashDBFetchWorkers = 6
+
+	// studioSceneHardCap bounds how many of a studio's StashDB scenes we
+	// enumerate for the aggregate counts — a major studio can have many
+	// thousands; the count past this is academic for a completion bar.
+	studioSceneHardCap = 5000
+)
 
 // RefreshStudios pulls every studio from local Stash, then enriches
 // each studio's alias list with StashDB's current view (which can be
@@ -173,4 +188,178 @@ func StudioRefreshedAt(ctx context.Context, db *sql.DB) (int64, error) {
 	var v int64
 	_, err = fmt.Sscanf(s, "%d", &v)
 	return v, err
+}
+
+// StudioAggregatesRefreshedAt returns the last successful studio aggregate
+// refresh timestamp (unix seconds), or 0 if it has never run.
+func StudioAggregatesRefreshedAt(ctx context.Context, db *sql.DB) (int64, error) {
+	var s string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, metaKeyStudioAggregatesRefreshed).Scan(&s)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var v int64
+	_, err = fmt.Sscanf(s, "%d", &v)
+	return v, err
+}
+
+// RefreshStudioCache fills studio_cache's per-studio aggregates (total StashDB
+// scenes / owned / last release) by querying each cross-id'd studio's StashDB
+// filmography — the studio analogue of RefreshSceneCache's performer pass.
+// Studios with no StashDB cross-id (synthetic "stash:<id>" key) can't be
+// queried, so their aggregates are zeroed. A majority of query failures aborts
+// without touching the DB, keeping the previous pass's counts (so a StashDB
+// outage doesn't wipe every studio's completion bar for up to 12h).
+//
+// Runs AFTER RefreshStudios on the same ticker — it reads the studio rows that
+// pass enumerated. StashDB queries run OUTSIDE the write transaction.
+func RefreshStudioCache(ctx context.Context, sc *stash.Client, sdb *stashdb.Client, db *sql.DB, log *slog.Logger) error {
+	if sc == nil || sdb == nil {
+		log.Info("studio aggregate refresh skipped (stash or stashdb not configured)")
+		return nil
+	}
+	start := time.Now().Unix()
+	log.Info("studio aggregate refresh starting")
+
+	// ── Owned scenes sweep ───────────────────────────────────────────
+	ownedIDs, err := sc.FindAllOwnedStashDBSceneIDs(ctx)
+	if err != nil {
+		return fmt.Errorf("sweep owned scenes: %w", err)
+	}
+	ownedSet := make(map[string]bool, len(ownedIDs))
+	for _, id := range ownedIDs {
+		ownedSet[id] = true
+	}
+
+	// ── Studios with a real StashDB cross-id (skip synthetic keys) ────
+	rows, err := db.QueryContext(ctx,
+		`SELECT stashdb_id FROM studio_cache WHERE stashdb_id NOT LIKE 'stash:%'`)
+	if err != nil {
+		return fmt.Errorf("load studios: %w", err)
+	}
+	var studioIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan studio: %w", err)
+		}
+		studioIDs = append(studioIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iter studios: %w", err)
+	}
+
+	// ── Parallel StashDB fetches ──────────────────────────────────────
+	type aggUpdate struct {
+		stashdbID       string
+		totalScenes     int
+		ownedCount      int
+		lastReleaseUnix int64
+	}
+	var (
+		mu          sync.Mutex
+		aggUpdates  []aggUpdate
+		queryErrors int
+	)
+	jobs := make(chan string, len(studioIDs))
+	var wg sync.WaitGroup
+	for w := 0; w < studioStashDBFetchWorkers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := range jobs {
+				scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
+					StudioIDs: []string{id},
+					PerPage:   100,
+				}, studioSceneHardCap)
+				if err != nil {
+					log.Warn("stashdb studio scenes query failed", "studio", id, "err", err)
+					mu.Lock()
+					queryErrors++
+					mu.Unlock()
+					continue
+				}
+				agg := aggUpdate{stashdbID: id, totalScenes: len(scenes)}
+				for _, s := range scenes {
+					ts := parseStashDBDate(s.Date)
+					if ts > agg.lastReleaseUnix {
+						agg.lastReleaseUnix = ts
+					}
+					if ownedSet[s.ID] {
+						agg.ownedCount++
+					}
+				}
+				mu.Lock()
+				aggUpdates = append(aggUpdates, agg)
+				mu.Unlock()
+			}
+		}()
+	}
+	for _, id := range studioIDs {
+		jobs <- id
+	}
+	close(jobs)
+	wg.Wait()
+
+	if len(studioIDs) > 0 && queryErrors*2 > len(studioIDs) {
+		return fmt.Errorf("studio aggregate refresh aborted: %d/%d studio queries failed, keeping previous cache",
+			queryErrors, len(studioIDs))
+	}
+
+	// ── DB writes (single tx) ─────────────────────────────────────────
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Synthetic (cross-id-less) studios can never receive an update — zero
+	// them. Real studios that queried successfully get overwritten below; a
+	// real studio whose query FAILED keeps its previous values (mirrors the
+	// performer pass's failed-minority handling).
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE studio_cache
+		   SET total_stashdb_scenes = 0, owned_scenes_count = 0, last_release_unix = 0
+		 WHERE stashdb_id LIKE 'stash:%'
+	`); err != nil {
+		return fmt.Errorf("reset synthetic aggregates: %w", err)
+	}
+
+	stmt, err := tx.PrepareContext(ctx, `
+		UPDATE studio_cache
+		   SET total_stashdb_scenes = ?, owned_scenes_count = ?, last_release_unix = ?
+		 WHERE stashdb_id = ?
+	`)
+	if err != nil {
+		return fmt.Errorf("prepare agg update: %w", err)
+	}
+	defer stmt.Close()
+	for _, a := range aggUpdates {
+		if _, err := stmt.ExecContext(ctx, a.totalScenes, a.ownedCount, a.lastReleaseUnix, a.stashdbID); err != nil {
+			return fmt.Errorf("update studio agg %s: %w", a.stashdbID, err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, metaKeyStudioAggregatesRefreshed, fmt.Sprintf("%d", start)); err != nil {
+		return fmt.Errorf("update meta: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit: %w", err)
+	}
+
+	log.Info("studio aggregate refresh done",
+		"studios", len(studioIDs),
+		"studios_with_errors", queryErrors,
+		"owned_total", len(ownedSet),
+		"elapsed", time.Since(time.Unix(start, 0)))
+	return nil
 }
