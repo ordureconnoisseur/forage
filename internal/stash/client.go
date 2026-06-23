@@ -40,10 +40,12 @@ type Performer struct {
 }
 
 type Studio struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Aliases  []string  `json:"aliases"`
-	StashIDs []StashID `json:"stash_ids"`
+	ID         string    `json:"id"`
+	Name       string    `json:"name"`
+	Aliases    []string  `json:"aliases"`
+	StashIDs   []StashID `json:"stash_ids"`
+	SceneCount int       `json:"scene_count"`
+	Favorite   bool      `json:"favorite"`
 }
 
 const performersQuery = `
@@ -58,7 +60,7 @@ const studiosQuery = `
 query ForagerAllStudios($page: Int!, $perPage: Int!) {
   findStudios(filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }) {
     count
-    studios { id name aliases stash_ids { endpoint stash_id } }
+    studios { id name aliases stash_ids { endpoint stash_id } scene_count favorite }
   }
 }`
 

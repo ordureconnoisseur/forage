@@ -89,3 +89,70 @@ func TestWatchesMigrationAddsColumns(t *testing.T) {
 	}
 	d3.Close()
 }
+
+// TestStudioCacheMigrationAddsColumns proves the 2026-06-23 studios-page
+// migration brings an OLD studio_cache table (matcher-only: stashdb_id, name,
+// aliases) up to the current schema on Open, preserving rows — and that the
+// matcher's name/aliases columns still read.
+func TestStudioCacheMigrationAddsColumns(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forager.db")
+
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial Open: %v", err)
+	}
+	d1.Close()
+
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE studio_cache`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`
+		CREATE TABLE studio_cache (
+		  stashdb_id TEXT PRIMARY KEY, name TEXT NOT NULL,
+		  aliases TEXT, refreshed_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(
+		`INSERT INTO studio_cache (stashdb_id, name, aliases, refreshed_at) VALUES ('sdb-1', 'Blacked', '["BLACKED"]', 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating Open: %v", err)
+	}
+	defer d2.Close()
+
+	for _, col := range []string{"stash_id", "favorite", "scene_count", "total_stashdb_scenes", "owned_scenes_count", "last_release_unix"} {
+		var n int
+		if err := d2.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('studio_cache') WHERE name = ?`, col,
+		).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("column %q missing after migration", col)
+		}
+	}
+	// The matcher's columns still read, and the row survived with default
+	// aggregates.
+	var name, aliases string
+	var total int
+	if err := d2.QueryRow(
+		`SELECT name, aliases, total_stashdb_scenes FROM studio_cache WHERE stashdb_id = 'sdb-1'`,
+	).Scan(&name, &aliases, &total); err != nil {
+		t.Fatalf("old row lost: %v", err)
+	}
+	if name != "Blacked" || aliases != `["BLACKED"]` {
+		t.Errorf("row corrupted: name=%q aliases=%q", name, aliases)
+	}
+	if total != 0 {
+		t.Errorf("total_stashdb_scenes default = %d, want 0", total)
+	}
+}

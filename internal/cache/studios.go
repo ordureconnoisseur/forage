@@ -59,12 +59,20 @@ func RefreshStudios(ctx context.Context, sc *stash.Client, sdb *stashdb.Client, 
 	// studios that have no StashDB mapping, we fall back to a synthetic
 	// "stash:{local_id}" key so we can still cache them — matcher logic
 	// can decide later whether to use them.
+	// Upsert the local-studio fields (name, aliases, local id, favorite,
+	// scene_count). The StashDB-filmography aggregates (total/owned/
+	// last_release) are owned by RefreshStudioCache and deliberately left out
+	// of the SET list so this pass never clobbers them; a fresh INSERT gets
+	// their column defaults (0) until the aggregate pass fills them in.
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO studio_cache (stashdb_id, name, aliases, refreshed_at)
-		VALUES (?, ?, ?, ?)
+		INSERT INTO studio_cache (stashdb_id, stash_id, name, aliases, favorite, scene_count, refreshed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(stashdb_id) DO UPDATE SET
+			stash_id     = excluded.stash_id,
 			name         = excluded.name,
 			aliases      = excluded.aliases,
+			favorite     = excluded.favorite,
+			scene_count  = excluded.scene_count,
 			refreshed_at = excluded.refreshed_at
 	`)
 	if err != nil {
@@ -89,7 +97,11 @@ func RefreshStudios(ctx context.Context, sc *stash.Client, sdb *stashdb.Client, 
 			enriched++
 		}
 		aliasesJSON, _ := json.Marshal(aliases)
-		if _, err := stmt.ExecContext(ctx, key, s.Name, string(aliasesJSON), start); err != nil {
+		fav := 0
+		if s.Favorite {
+			fav = 1
+		}
+		if _, err := stmt.ExecContext(ctx, key, s.ID, s.Name, string(aliasesJSON), fav, s.SceneCount, start); err != nil {
 			return fmt.Errorf("upsert studio %s (%s): %w", s.ID, s.Name, err)
 		}
 		upserted++

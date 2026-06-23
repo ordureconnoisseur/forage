@@ -29,12 +29,32 @@ CREATE INDEX IF NOT EXISTS idx_performer_favorite     ON performer_cache(favorit
 CREATE INDEX IF NOT EXISTS idx_performer_scene_count  ON performer_cache(scene_count);
 CREATE INDEX IF NOT EXISTS idx_performer_last_release ON performer_cache(last_release_unix DESC);
 
+-- studio_cache holds the local-library studio list. Keyed by the StashDB
+-- cross-id (or a synthetic "stash:<local_id>" for studios with no cross-id).
+-- name + aliases feed the matcher (matcher.LoadStudios reads only those). The
+-- remaining columns mirror performer_cache and power the /studios page:
+--   scene_count           local owned scenes catalogued under this studio
+--   total_stashdb_scenes  count of scenes on StashDB for this studio
+--   owned_scenes_count    of those, how many the user already has
+--   last_release_unix     newest StashDB scene's date (unix seconds)
+-- The aggregates are filled by cache.RefreshStudioCache on the 12h ticker
+-- (only for studios with a real StashDB cross-id). missing_count is derived
+-- as (total_stashdb_scenes - owned_scenes_count) in the query.
 CREATE TABLE IF NOT EXISTS studio_cache (
-  stashdb_id   TEXT PRIMARY KEY,
-  name         TEXT NOT NULL,
-  aliases      TEXT,                    -- JSON array
-  refreshed_at INTEGER NOT NULL
+  stashdb_id            TEXT PRIMARY KEY,
+  stash_id              TEXT,                    -- local Stash studio id
+  name                  TEXT NOT NULL,
+  aliases               TEXT,                    -- JSON array
+  favorite              INTEGER NOT NULL DEFAULT 0,
+  scene_count           INTEGER NOT NULL DEFAULT 0,
+  total_stashdb_scenes  INTEGER NOT NULL DEFAULT 0,
+  owned_scenes_count    INTEGER NOT NULL DEFAULT 0,
+  last_release_unix     INTEGER NOT NULL DEFAULT 0,
+  refreshed_at          INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_studio_favorite     ON studio_cache(favorite);
+CREATE INDEX IF NOT EXISTS idx_studio_scene_count  ON studio_cache(scene_count);
+CREATE INDEX IF NOT EXISTS idx_studio_last_release ON studio_cache(last_release_unix DESC);
 
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,

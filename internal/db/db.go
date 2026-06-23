@@ -303,5 +303,37 @@ func migrateGrabsColumns(db *sql.DB) error {
 			}
 		}
 	}
+
+	// 2026-06-23 studios page: studio_cache gains the local stash_id +
+	// favorite/scene_count + the same total/owned/last_release aggregates
+	// performer_cache has, so it can drive the /studios list. The matcher only
+	// reads name/aliases, so these are additive. Guard on the table existing
+	// (schema.sql creates them fresh on a new DB, plus the idx_studio_* indexes
+	// which run after this migration).
+	var studioCacheExists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='studio_cache'`).Scan(&studioCacheExists); err != nil {
+		return err
+	}
+	if studioCacheExists > 0 {
+		studioCols := []struct{ name, ddl string }{
+			{"stash_id", `ALTER TABLE studio_cache ADD COLUMN stash_id TEXT`},
+			{"favorite", `ALTER TABLE studio_cache ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0`},
+			{"scene_count", `ALTER TABLE studio_cache ADD COLUMN scene_count INTEGER NOT NULL DEFAULT 0`},
+			{"total_stashdb_scenes", `ALTER TABLE studio_cache ADD COLUMN total_stashdb_scenes INTEGER NOT NULL DEFAULT 0`},
+			{"owned_scenes_count", `ALTER TABLE studio_cache ADD COLUMN owned_scenes_count INTEGER NOT NULL DEFAULT 0`},
+			{"last_release_unix", `ALTER TABLE studio_cache ADD COLUMN last_release_unix INTEGER NOT NULL DEFAULT 0`},
+		}
+		for _, c := range studioCols {
+			var has int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('studio_cache') WHERE name = ?`, c.name).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := db.Exec(c.ddl); err != nil {
+					return fmt.Errorf("add studio_cache %s column: %w", c.name, err)
+				}
+			}
+		}
+	}
 	return nil
 }
