@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import PerformersList from "./views/PerformersList";
+import StudiosList from "./views/StudiosList";
 import MissingScenes from "./views/MissingScenes";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
@@ -31,6 +32,8 @@ import {
 type Route =
   | { kind: "performers" }
   | { kind: "missing"; performerId: string }
+  | { kind: "studios" }
+  | { kind: "studio"; studioId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "watching" }
@@ -43,6 +46,14 @@ function parseRoute(hash: string): Route {
   const query = new URLSearchParams(queryPart || "");
   if (parts[0] === "performer" && parts[1]) {
     return { kind: "missing", performerId: parts[1] };
+  }
+  // Studio detail before the bare /studios list. The id is a StashDB cross-id
+  // (or a synthetic "stash:<id>"), url-encoded in the hash.
+  if (parts[0] === "studio" && parts[1]) {
+    return { kind: "studio", studioId: decodeURIComponent(parts[1]) };
+  }
+  if (parts[0] === "studios") {
+    return { kind: "studios" };
   }
   if (parts[0] === "scene" && parts[1]) {
     return {
@@ -225,10 +236,12 @@ export default function App() {
   }, [ready, healthNonce, route]);
 
   const goPerformers = () => setHash("#/");
+  const goStudios = () => setHash("#/studios");
   const goDiscover = () => setHash("#/discover");
   const goWatching = () => setHash("#/watching");
   const goGrabs = () => setHash("#/grabs");
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
+  const goStudio = (id: string) => setHash(`#/studio/${encodeURIComponent(id)}`);
   const goScene = (id: string, performerName?: string) => {
     const suffix = performerName
       ? `?p=${encodeURIComponent(performerName)}`
@@ -269,6 +282,21 @@ export default function App() {
           >
             <NavIcon name="performers" />
             Performers
+          </a>
+          <a
+            href="#/studios"
+            onClick={(e) => {
+              e.preventDefault();
+              goStudios();
+            }}
+            className={
+              route.kind === "studios" || route.kind === "studio"
+                ? "active"
+                : ""
+            }
+          >
+            <NavIcon name="studios" />
+            Studios
           </a>
           <a
             href="#/discover"
@@ -340,7 +368,18 @@ export default function App() {
         )}
         {ready && route.kind === "missing" && (
           <MissingScenes
-            performerId={route.performerId}
+            key={"performer:" + route.performerId}
+            subject={{ kind: "performer", id: route.performerId }}
+            onPickScene={goScene}
+          />
+        )}
+        {ready && route.kind === "studios" && (
+          <StudiosList onPick={goStudio} />
+        )}
+        {ready && route.kind === "studio" && (
+          <MissingScenes
+            key={"studio:" + route.studioId}
+            subject={{ kind: "studio", id: route.studioId }}
             onPickScene={goScene}
           />
         )}

@@ -373,6 +373,16 @@ button {
   background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(0, 0, 0, 0.3));
   text-transform: uppercase;
 }
+/* Studios have no portrait — give their letter tile a faint accent wash so a
+   studio card reads as intentional, not a broken performer image. */
+.studio-img {
+  color: rgba(var(--accent-rgb, 22, 163, 74), 0.22);
+  background: linear-gradient(
+    135deg,
+    rgba(var(--accent-rgb, 22, 163, 74), 0.1),
+    rgba(0, 0, 0, 0.35)
+  );
+}
 .perf-scrim {
   position: absolute;
   left: 0;

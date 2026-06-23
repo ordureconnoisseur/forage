@@ -47,13 +47,15 @@ function grabStatusLabel(status: string): string {
 }
 
 export default function MissingScenes({
-  performerId,
+  subject,
   onPickScene,
 }: {
-  performerId: string;
-  // Receives the performer name too so the scene-releases page can
-  // pass it through to /grab — the placer needs to know which library
-  // folder to drop the file in.
+  // Who/what this page is about. A performer page and a studio page share the
+  // entire view; they differ only in placement (see placementFor below).
+  subject: { kind: "performer" | "studio"; id: string };
+  // Receives the placement performer name too so the scene-releases page can
+  // pass it through to /grab — the placer needs to know which library folder
+  // to drop the file in.
   onPickScene: (stashDBID: string, performerName: string) => void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
@@ -89,10 +91,14 @@ export default function MissingScenes({
     setLoading(true);
     setData(null);
     setError(null);
-    // Reset selection when switching performers.
+    // Reset selection when switching subjects.
     setSelecting(false);
     setSelected(new Set());
-    fetchMissing(performerId)
+    fetchMissing(
+      subject.kind === "studio"
+        ? { studio: subject.id }
+        : { performer: subject.id },
+    )
       .then((r) => {
         if (cancelled) return;
         setData(r);
@@ -108,11 +114,21 @@ export default function MissingScenes({
     return () => {
       cancelled = true;
     };
-  }, [performerId, reloadKey]);
+  }, [subject.kind, subject.id, reloadKey]);
 
   if (loading) return <div className="empty">Loading missing scenes…</div>;
   if (error) return <div className="empty error">Failed to load: {error}</div>;
   if (!data) return null;
+
+  const isStudio = subject.kind === "studio";
+  // The library folder a grab/watch for a given scene lands in. A performer
+  // page uses the page performer; a studio is not a folder, so a studio page
+  // uses each scene's own primary performer (per-scene). performer_id is only
+  // available for the performer-page case.
+  const placementFor = (s: { performers?: { name: string }[] }) =>
+    isStudio
+      ? { name: s.performers?.[0]?.name ?? "", id: "" }
+      : { name: data.subject.name, id: data.subject.local_id };
 
   const toggleSelected = (id: string) =>
     setSelected((prev) => {
@@ -135,18 +151,21 @@ export default function MissingScenes({
     if (scenes.length === 0) return;
     setPicker(null);
     setWatchBusy(true);
-    const watches: AddWatchReq[] = scenes.map((s) => ({
-      stashdb_id: s.stashdb_id,
-      title: s.title,
-      date: s.date,
-      studio: s.studio,
-      image_url: s.image_url,
-      performer_name: data.performer.name,
-      performer_id: data.performer.local_id,
-      target,
-    }));
+    const watches: AddWatchReq[] = scenes.map((s) => {
+      const place = placementFor(s);
+      return {
+        stashdb_id: s.stashdb_id,
+        title: s.title,
+        date: s.date,
+        studio: s.studio,
+        image_url: s.image_url,
+        performer_name: place.name,
+        performer_id: place.id,
+        target,
+      };
+    });
     try {
-      await addWatches({ batch_label: data.performer.name, watches });
+      await addWatches({ batch_label: data.subject.name, watches });
     } catch {
       // best-effort; the toast still confirms intent
     }
@@ -184,18 +203,19 @@ export default function MissingScenes({
   } else {
     entries = data.missing.map((s) => ({ kind: "missing", s }));
   }
+  const subjectNoun = isStudio ? "studio" : "performer";
   const emptyMessage =
     view === "owned"
-      ? "You don't own any of this performer's StashDB scenes yet."
+      ? `You don't own any of this ${subjectNoun}'s StashDB scenes yet.`
       : view === "both"
-        ? "No StashDB scenes found for this performer."
-        : "You have every StashDB scene for this performer in your library.";
+        ? `No StashDB scenes found for this ${subjectNoun}.`
+        : `You have every StashDB scene for this ${subjectNoun} in your library.`;
 
   return (
     <div>
       <div className="page-header page-header-row">
         <div>
-          <h2>{data.performer.name}</h2>
+          <h2>{data.subject.name}</h2>
           <div className="meta">
             {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
             <strong>{data.missing.length} missing</strong>
@@ -286,23 +306,26 @@ export default function MissingScenes({
         <div className="empty">{emptyMessage}</div>
       ) : (
         <div className="scene-grid">
-          {entries.map((e) => (
-            <SceneCard
-              key={e.s.stashdb_id}
-              s={e.s}
-              performerName={data.performer.name}
-              performerId={data.performer.local_id}
-              selecting={selecting}
-              selected={selected.has(e.s.stashdb_id)}
-              owned={e.kind === "owned"}
-              resolution={e.kind === "owned" ? e.s.resolution : undefined}
-              onPick={() =>
-                selecting
-                  ? toggleSelected(e.s.stashdb_id)
-                  : onPickScene(e.s.stashdb_id, data.performer.name)
-              }
-            />
-          ))}
+          {entries.map((e) => {
+            const place = placementFor(e.s);
+            return (
+              <SceneCard
+                key={e.s.stashdb_id}
+                s={e.s}
+                performerName={place.name}
+                performerId={place.id}
+                selecting={selecting}
+                selected={selected.has(e.s.stashdb_id)}
+                owned={e.kind === "owned"}
+                resolution={e.kind === "owned" ? e.s.resolution : undefined}
+                onPick={() =>
+                  selecting
+                    ? toggleSelected(e.s.stashdb_id)
+                    : onPickScene(e.s.stashdb_id, place.name)
+                }
+              />
+            );
+          })}
         </div>
       )}
       {view === "missing" && selecting && (
@@ -332,10 +355,10 @@ export default function MissingScenes({
           )}
         </div>
       )}
-      {view !== "dupes" && (
+      {!isStudio && view !== "dupes" && data.subject.local_id && (
         <PerformerPacks
-          performerId={data.performer.local_id}
-          performerName={data.performer.name}
+          performerId={data.subject.local_id}
+          performerName={data.subject.name}
         />
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}

@@ -143,6 +143,42 @@ export function fetchPerformers(opts?: {
   return get<PerformersResponse>("/performers?" + params.toString());
 }
 
+// ── Studios (parity with Performers) ─────────────────────────────────
+// A studio's navigation id is its StashDB cross-id (stashdb_id), or a
+// synthetic "stash:<local_id>" for studios with no cross-id (which can't be
+// queried for a catalogue, so their aggregates stay zero).
+export interface Studio {
+  stashdb_id: string;
+  stash_id?: string;
+  name: string;
+  aliases?: string[];
+  favorite?: boolean;
+  scene_count: number;
+  total_stashdb_scenes: number;
+  owned_scenes_count: number;
+  last_release_unix: number;
+}
+
+export interface StudiosResponse {
+  studios: Studio[];
+  refreshed_at: number;
+}
+
+// Studios reuse the performer sort vocabulary (same backend sortClause).
+export type StudioSort = PerformerSort;
+
+export function fetchStudios(opts?: {
+  sort?: StudioSort;
+  favoriteOnly?: boolean;
+  q?: string;
+}): Promise<StudiosResponse> {
+  const params = new URLSearchParams();
+  if (opts?.sort) params.set("sort", opts.sort);
+  if (opts?.favoriteOnly) params.set("favorite_only", "true");
+  if (opts?.q) params.set("q", opts.q);
+  return get<StudiosResponse>("/studios?" + params.toString());
+}
+
 // ── Discover (recent unowned StashDB scenes) ─────────────────────────
 //
 // Backed by recent_scene_cache on the daemon, which rebuilds every 12h.
@@ -272,8 +308,20 @@ export interface DuplicateScene {
   copies: SceneCopyView[];
 }
 
+// Subject is who/what a missing-scenes page is about — a performer or a
+// studio. They share the whole owned/missing/dupes pipeline; only the StashDB
+// query and grab placement differ.
+export interface Subject {
+  kind: "performer" | "studio";
+  local_id: string;
+  stashdb_id: string;
+  name: string;
+}
+
 export interface MissingResponse {
-  performer: {
+  subject: Subject;
+  // Retained for back-compat (performer subject only); new code reads subject.
+  performer?: {
     local_id: string;
     stashdb_id: string;
     name: string;
@@ -291,8 +339,15 @@ export function destroyScene(sceneId: string): Promise<{ ok: boolean }> {
   return postJSON(`/scenes/${encodeURIComponent(sceneId)}/destroy`, {});
 }
 
-export function fetchMissing(localPerformerID: string): Promise<MissingResponse> {
-  return get<MissingResponse>(`/missing-scenes?performer=${encodeURIComponent(localPerformerID)}`);
+// fetchMissing loads the gap analysis for a performer or a studio. The studio
+// id is the studio_cache key (its StashDB cross-id).
+export function fetchMissing(
+  subject: { performer: string } | { studio: string },
+): Promise<MissingResponse> {
+  const params = new URLSearchParams();
+  if ("performer" in subject) params.set("performer", subject.performer);
+  else params.set("studio", subject.studio);
+  return get<MissingResponse>("/missing-scenes?" + params.toString());
 }
 
 // ── Scene releases ─────────────────────────────────────────────────
@@ -1102,6 +1157,10 @@ export async function stashDBFromStash(
 // up in search right away instead of waiting for the 6h cache tick.
 export function refreshPerformers(): Promise<{ ok: boolean }> {
   return postJSON("/refresh/performers", {});
+}
+
+export function refreshStudios(): Promise<{ ok: boolean }> {
+  return postJSON("/refresh/studios", {});
 }
 
 // ── Download-client setup check (read-only diagnostic) ─────────────────

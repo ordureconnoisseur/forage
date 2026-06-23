@@ -19,6 +19,16 @@ const ICONS: Record<string, ReactNode> = {
       <polygon points="16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88 16.24 7.76" />
     </>
   ),
+  // Studios — a film-strip clapper/frame, distinct from the performers people
+  // glyph. Lucide-style "clapperboard".
+  studios: (
+    <>
+      <path d="M20.2 6 3 11l-.9-2.4c-.3-1 .3-2.1 1.3-2.4l13.5-4c1-.3 2.1.3 2.4 1.3Z" />
+      <path d="m6.2 5.3 3.1 3.9" />
+      <path d="m12.4 3.4 3.1 4" />
+      <path d="M3 11h18v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" />
+    </>
+  ),
   watching: <path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z" />,
   grabs: (
     <>
