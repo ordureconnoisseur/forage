@@ -74,6 +74,7 @@ export default function WatchingList({
   const [watches, setWatches] = useState<Watch[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [searchBusy, setSearchBusy] = useState(false);
   const timer = useRef<number | undefined>(undefined);
 
   const load = async (): Promise<Watch[] | null> => {
@@ -109,6 +110,20 @@ export default function WatchingList({
     window.setTimeout(() => setToast(null), 4500);
   };
 
+  // Search every still-watching scene now (no scope), bounded server-side.
+  const searchAll = async () => {
+    setSearchBusy(true);
+    try {
+      const r = await searchWatches();
+      flashToast(`Searching ${r.searching} scene${r.searching === 1 ? "" : "s"}…`);
+      await load(); // pick up the searching flags + kick the fast poll
+    } catch (e) {
+      flashToast((e as Error).message || "Search failed");
+    } finally {
+      setSearchBusy(false);
+    }
+  };
+
   if (error && !watches)
     return <div className="empty error">Failed to load watches: {error}</div>;
   if (!watches) return <div className="empty">Loading…</div>;
@@ -125,14 +140,36 @@ export default function WatchingList({
 
   const groups = groupWatches(watches);
   const totalAvailable = watches.filter((w) => w.status === "available").length;
+  const totalWatching = watches.filter((w) => w.status === "watching").length;
+  const totalSearching = watches.filter((w) => w.searching).length;
 
   return (
     <div>
-      <div className="page-header">
-        <h2>Watching</h2>
-        <div className="meta">
-          {totalAvailable > 0 && <strong>{totalAvailable} ready to grab</strong>}
+      <div className="page-header page-header-row">
+        <div>
+          <h2>Watching</h2>
+          <div className="meta">
+            {totalAvailable > 0 && (
+              <strong>{totalAvailable} ready to grab</strong>
+            )}
+            {totalAvailable > 0 && totalWatching > 0 && " · "}
+            {totalWatching > 0 && `${totalWatching} watching`}
+          </div>
         </div>
+        {totalWatching > 0 && (
+          <button
+            className="watch-clear watch-search-now"
+            disabled={searchBusy || totalSearching > 0}
+            onClick={searchAll}
+            title="Search every watching scene for releases now, instead of waiting for the background loop"
+          >
+            {totalSearching > 0
+              ? `Searching ${totalSearching}…`
+              : searchBusy
+                ? "Searching…"
+                : `Search all ${totalWatching} ↻`}
+          </button>
+        )}
       </div>
 
       {toast && <div className="ms-toast">{toast}</div>}
@@ -163,7 +200,6 @@ function WatchGroup({
 }) {
   const [grabAllBusy, setGrabAllBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
-  const [searchBusy, setSearchBusy] = useState(false);
 
   const items = group.items;
   const available = items.filter((w) => w.status === "available");
@@ -171,27 +207,6 @@ function WatchGroup({
   const grabbed = items.filter((w) => w.status === "grabbed");
   const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
-
-  const searchNow = async () => {
-    setSearchBusy(true);
-    try {
-      // Pass this group's exact watching ids so the search is scoped precisely
-      // (works the same for a batch or the ungrouped "Single tracks" group).
-      const r = await searchWatches({
-        ids: items
-          .filter((w) => w.status === "watching")
-          .map((w) => w.stashdb_id),
-      });
-      onToast(
-        `Searching ${r.searching} scene${r.searching === 1 ? "" : "s"}…`,
-      );
-      onChanged(); // pick up the searching flags + kick the fast poll
-    } catch (e) {
-      onToast((e as Error).message || "Search failed");
-    } finally {
-      setSearchBusy(false);
-    }
-  };
 
   const grabAll = async () => {
     setGrabAllBusy(true);
@@ -245,20 +260,6 @@ function WatchGroup({
           <span className="watch-group-progress">{progress}</span>
         </div>
         <div className="watch-group-actions">
-          {watching.length > 0 && (
-            <button
-              className="watch-clear watch-search-now"
-              disabled={searchBusy || searchingCount > 0}
-              onClick={searchNow}
-              title="Search these scenes for releases now, instead of waiting for the background loop"
-            >
-              {searchingCount > 0
-                ? `Searching ${searchingCount}…`
-                : searchBusy
-                  ? "Searching…"
-                  : "Search now ↻"}
-            </button>
-          )}
           {available.length > 0 && (
             <button
               className="collection-cta"
