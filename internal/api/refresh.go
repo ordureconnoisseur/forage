@@ -77,3 +77,30 @@ func (s *Server) postRefreshPerformers(w http.ResponseWriter, r *http.Request) {
 	perfAt, _ := cache.PerformerRefreshedAt(ctx, s.db)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "performerRefreshedAt": perfAt})
 }
+
+// postRefreshStudios re-enumerates the local studio list (name, aliases,
+// favorite, scene_count). Like the performer refresh, it does NOT recompute
+// the heavy per-studio StashDB aggregates — those land on the 12h ticker via
+// RefreshStudioCache.
+func (s *Server) postRefreshStudios(w http.ResponseWriter, r *http.Request) {
+	if !s.refreshMu.TryLock() {
+		writeErr(w, http.StatusConflict, "refresh already in progress")
+		return
+	}
+	defer s.refreshMu.Unlock()
+
+	stashC := s.pool.Stash()
+	if stashC == nil {
+		writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	if err := cache.RefreshStudios(ctx, stashC, s.pool.StashDB(), s.db, s.log.With("op", "studios")); err != nil {
+		s.log.Error("studio refresh failed", "err", err)
+		writeErr(w, http.StatusInternalServerError, "studio refresh: "+err.Error())
+		return
+	}
+	studAt, _ := cache.StudioRefreshedAt(ctx, s.db)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "studioRefreshedAt": studAt})
+}

@@ -182,8 +182,10 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.adminAuthMiddleware)
 		r.Get("/performers", s.getPerformers)
+		r.Get("/studios", s.getStudios)
 		r.Post("/refresh", s.postRefresh)
 		r.Post("/refresh/performers", s.postRefreshPerformers)
+		r.Post("/refresh/studios", s.postRefreshStudios)
 		r.Post("/match", s.postMatch)
 		r.Get("/search", s.getSearch)
 		r.Post("/grab", s.postGrab)
@@ -322,6 +324,32 @@ func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, 
 		return nil, err
 	}
 	s.filmoCache[stashDBPerformerID] = filmoEntry{scenes: scenes, fetched: time.Now()}
+	return scenes, nil
+}
+
+// studioFilmography returns a studio's full StashDB catalogue, memoised like
+// performerFilmography. Shares filmoCache under a distinct "studio:" key
+// namespace so a studio id can't collide with a performer id (both are
+// StashDB UUIDs from separate namespaces). A studio's catalogue is far larger
+// than a performer's, so it pages at 100 and shares the 5000 hard cap.
+func (s *Server) studioFilmography(ctx context.Context, sdb *stashdb.Client, stashDBStudioID string) ([]stashdb.Scene, error) {
+	s.filmoMu.Lock()
+	defer s.filmoMu.Unlock()
+	if s.filmoCache == nil {
+		s.filmoCache = map[string]filmoEntry{}
+	}
+	key := "studio:" + stashDBStudioID
+	if e, ok := s.filmoCache[key]; ok && time.Since(e.fetched) < filmoTTL {
+		return e.scenes, nil
+	}
+	scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
+		StudioIDs: []string{stashDBStudioID},
+		PerPage:   100,
+	}, 5000)
+	if err != nil {
+		return nil, err
+	}
+	s.filmoCache[key] = filmoEntry{scenes: scenes, fetched: time.Now()}
 	return scenes, nil
 }
 

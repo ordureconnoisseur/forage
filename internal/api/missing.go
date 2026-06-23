@@ -82,15 +82,28 @@ type sceneCopyView struct {
 // the cleanup surface (keep the best, delete the rest). Copies is sorted
 // best-resolution-first.
 type duplicateScene struct {
-	StashDBID string         `json:"stashdb_id"`
-	Title     string         `json:"title"`
-	Date      string         `json:"date,omitempty"`
-	Studio    string         `json:"studio,omitempty"`
-	ImageURL  string         `json:"image_url,omitempty"`
+	StashDBID string          `json:"stashdb_id"`
+	Title     string          `json:"title"`
+	Date      string          `json:"date,omitempty"`
+	Studio    string          `json:"studio,omitempty"`
+	ImageURL  string          `json:"image_url,omitempty"`
 	Copies    []sceneCopyView `json:"copies"`
 }
 
+// subject is who/what the missing-scenes page is about — a performer or a
+// studio. The two share the entire gap-analysis pipeline; only the StashDB
+// query (PerformerIDs vs StudioIDs) and the placement of grabs differ.
+type subject struct {
+	Kind      string `json:"kind"` // "performer" | "studio"
+	LocalID   string `json:"local_id"`
+	StashDBID string `json:"stashdb_id"`
+	Name      string `json:"name"`
+}
+
 type missingResponse struct {
+	Subject subject `json:"subject"`
+	// Performer is retained for back-compat (populated only for a performer
+	// subject); new code reads Subject.
 	Performer struct {
 		LocalID   string `json:"local_id"`
 		StashDBID string `json:"stashdb_id"`
@@ -112,9 +125,10 @@ type missingResponse struct {
 // show me the gap between "what StashDB knows about this performer"
 // and "what I have."
 func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
-	localID := r.URL.Query().Get("performer")
-	if localID == "" {
-		writeErr(w, http.StatusBadRequest, "performer query param required")
+	performerID := r.URL.Query().Get("performer")
+	studioID := r.URL.Query().Get("studio")
+	if performerID == "" && studioID == "" {
+		writeErr(w, http.StatusBadRequest, "performer or studio query param required")
 		return
 	}
 	stashC := s.pool.Stash()
@@ -124,36 +138,65 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 1. Resolve local performer → StashDB cross-id. Without one we
-	// can't query StashDB for the performer's filmography.
-	perf, err := loadPerformerByID(r.Context(), s.db, localID)
-	if err == sql.ErrNoRows {
-		writeErr(w, http.StatusNotFound, "performer not found")
-		return
-	}
-	if err != nil {
-		s.log.Error("performer lookup", "err", err)
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	stashDBPerformerID, err := lookupStashDBPerformerID(r.Context(), s.db, localID)
-	if err != nil {
-		s.log.Error("stashdb cross-id lookup", "err", err)
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	if stashDBPerformerID == "" {
-		writeErr(w, http.StatusUnprocessableEntity, "performer has no StashDB cross-id; can't query StashDB for their filmography")
-		return
-	}
-
-	// 2. Pull every StashDB scene featuring this performer (memoised per
-	// performer — this pagination dominates a cold load).
-	scenes, err := s.performerFilmography(r.Context(), stashDBC, stashDBPerformerID)
-	if err != nil {
-		s.log.Error("stashdb scenes by performer", "err", err)
-		writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
-		return
+	// 1. Resolve the subject (performer or studio) → its StashDB id + name,
+	// then pull its full StashDB catalogue (memoised — this pagination
+	// dominates a cold load). The studio param IS the studio_cache key (the
+	// StashDB cross-id); a synthetic "stash:" key has no cross-id to query.
+	var (
+		subj   subject
+		scenes []stashdb.Scene
+		err    error
+	)
+	if studioID != "" {
+		if strings.HasPrefix(studioID, "stash:") {
+			writeErr(w, http.StatusUnprocessableEntity, "studio has no StashDB cross-id; can't query its catalogue")
+			return
+		}
+		name, localID, lerr := lookupStudio(r.Context(), s.db, studioID)
+		if lerr == sql.ErrNoRows {
+			writeErr(w, http.StatusNotFound, "studio not found")
+			return
+		}
+		if lerr != nil {
+			s.log.Error("studio lookup", "err", lerr)
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		subj = subject{Kind: "studio", LocalID: localID, StashDBID: studioID, Name: name}
+		scenes, err = s.studioFilmography(r.Context(), stashDBC, studioID)
+		if err != nil {
+			s.log.Error("stashdb scenes by studio", "err", err)
+			writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
+			return
+		}
+	} else {
+		perf, perr := loadPerformerByID(r.Context(), s.db, performerID)
+		if perr == sql.ErrNoRows {
+			writeErr(w, http.StatusNotFound, "performer not found")
+			return
+		}
+		if perr != nil {
+			s.log.Error("performer lookup", "err", perr)
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		stashDBPerformerID, lerr := lookupStashDBPerformerID(r.Context(), s.db, performerID)
+		if lerr != nil {
+			s.log.Error("stashdb cross-id lookup", "err", lerr)
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
+		if stashDBPerformerID == "" {
+			writeErr(w, http.StatusUnprocessableEntity, "performer has no StashDB cross-id; can't query StashDB for their filmography")
+			return
+		}
+		subj = subject{Kind: "performer", LocalID: perf.StashID, StashDBID: stashDBPerformerID, Name: perf.Name}
+		scenes, err = s.performerFilmography(r.Context(), stashDBC, stashDBPerformerID)
+		if err != nil {
+			s.log.Error("stashdb scenes by performer", "err", err)
+			writeErr(w, http.StatusBadGateway, "stashdb: "+err.Error())
+			return
+		}
 	}
 
 	// 3. Set of StashDB scene ids the user owns ANYWHERE in their library
@@ -236,17 +279,39 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := missingResponse{
+		Subject:     subj,
 		TotalScenes: len(scenes),
 		OwnedCount:  len(owned),
 		Missing:     missing,
 		Owned:       owned,
 		Duplicates:  duplicates,
 	}
-	out.Performer.LocalID = perf.StashID
-	out.Performer.StashDBID = stashDBPerformerID
-	out.Performer.Name = perf.Name
+	// Back-compat: populate the legacy `performer` block for a performer
+	// subject so older clients keep working until they read `subject`.
+	if subj.Kind == "performer" {
+		out.Performer.LocalID = subj.LocalID
+		out.Performer.StashDBID = subj.StashDBID
+		out.Performer.Name = subj.Name
+	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// lookupStudio reads a studio's display name and local Stash id from
+// studio_cache by its StashDB cross-id (the studio_cache key). Returns
+// sql.ErrNoRows when the studio isn't cached.
+func lookupStudio(ctx context.Context, db *sql.DB, stashDBID string) (name, localID string, err error) {
+	var lid sql.NullString
+	err = db.QueryRowContext(ctx,
+		`SELECT name, stash_id FROM studio_cache WHERE stashdb_id = ?`, stashDBID,
+	).Scan(&name, &lid)
+	if err != nil {
+		return "", "", err
+	}
+	if lid.Valid {
+		localID = lid.String
+	}
+	return name, localID, nil
 }
 
 // lookupStashDBPerformerID reads the local performer's StashDB cross-id
