@@ -136,10 +136,18 @@ CREATE INDEX IF NOT EXISTS idx_recent_trending ON recent_scene_cache(trending_ra
 -- watches: user-tracked StashDB scenes. A watch says "tell me when this
 -- scene has a release at quality `target`". A background loop re-searches
 -- watching rows on a spread-over-24h cadence; on a verified release that
--- matches the target resolution it flips status watching → available and
--- records the found release. It never grabs — the user grabs from the
--- Watching tab. Denormalised scene display fields so the tab renders
--- without a StashDB round-trip.
+-- matches the target resolution it flips status watching → available,
+-- records the found release AND the full verified candidate list (so the
+-- user can re-pick a different release than the auto-chosen best). It never
+-- grabs — the user grabs from the Watching tab; grabbing flips the watch to
+-- `grabbed` (it lingers, it is NOT deleted, so a batch's progress reads
+-- correctly). Denormalised scene display fields so the tab renders without
+-- a StashDB round-trip.
+--
+-- Batches: watches created together in one request (e.g. "watch all missing
+-- for a performer", or a Discover multi-select) share a batch_id, so the
+-- Watching tab can group them with a progress line. A batch is emergent from
+-- GROUP BY batch_id — there is no separate batch entity.
 CREATE TABLE IF NOT EXISTS watches (
   stashdb_id     TEXT PRIMARY KEY,
   title          TEXT,
@@ -151,7 +159,7 @@ CREATE TABLE IF NOT EXISTS watches (
   -- target resolution to wait for: "any" | "720p" | "1080p" | "4k".
   -- Exact match (4k does NOT satisfy a 1080p watch) per the chosen design.
   target         TEXT NOT NULL DEFAULT 'any',
-  status         TEXT NOT NULL DEFAULT 'watching', -- watching | available
+  status         TEXT NOT NULL DEFAULT 'watching', -- watching | available | grabbed
   -- When available, the release that satisfied it (for one-click grab).
   found_title    TEXT,
   found_url      TEXT,
@@ -164,10 +172,20 @@ CREATE TABLE IF NOT EXISTS watches (
   -- download URLs the user dismissed for this watch (JSON array). The watch
   -- loop skips these so a rejected dead/over-compressed find can't
   -- re-surface; the watch keeps looking for a different release.
-  ignored_urls   TEXT NOT NULL DEFAULT '[]'
+  ignored_urls   TEXT NOT NULL DEFAULT '[]',
+  -- batch grouping (see header). batch_id empty = an ungrouped single track.
+  batch_id       TEXT NOT NULL DEFAULT '',
+  batch_label    TEXT NOT NULL DEFAULT '',
+  -- the full verified candidate list captured when the watch flipped
+  -- available (JSON array of releases), so the user can re-pick. Empty until
+  -- available.
+  candidates     TEXT NOT NULL DEFAULT '[]',
+  -- when the watch was grabbed (status='grabbed'); 0 otherwise.
+  grabbed_at     INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
+CREATE INDEX IF NOT EXISTS idx_watches_batch   ON watches(batch_id);
 
 -- pack_duplicate: one row per (pack grab, StashDB scene) collision that the
 -- review-mode dedup path (PackDedupKeep="review") found — a scene the pack

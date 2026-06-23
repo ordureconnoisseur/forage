@@ -28,6 +28,10 @@ const (
 const (
 	StatusWatching  = "watching"
 	StatusAvailable = "available"
+	// StatusGrabbed is terminal: the user grabbed the watch's release. The
+	// row LINGERS (it is not deleted) so a batch's progress reads correctly
+	// ("9 of 30 grabbed"); the user clears it (or the whole batch) when done.
+	StatusGrabbed = "grabbed"
 )
 
 // Watch is the in-memory row.
@@ -49,6 +53,17 @@ type Watch struct {
 	CreatedAt     int64  `json:"created_at"`
 	LastChecked   int64  `json:"last_checked"`
 	FoundAt       int64  `json:"found_at,omitempty"`
+	// BatchID/BatchLabel group watches launched together (the Watching tab
+	// groups by BatchID). Empty BatchID = an ungrouped single track.
+	BatchID    string `json:"batch_id,omitempty"`
+	BatchLabel string `json:"batch_label,omitempty"`
+	// Candidates is the full verified release list captured when the watch
+	// flipped available, stored as raw JSON (an array of the api layer's
+	// sceneRelease) so this package needn't import api. Lets the UI re-pick a
+	// different release than the auto-chosen best. Empty ("[]") until available.
+	Candidates json.RawMessage `json:"candidates,omitempty"`
+	// GrabbedAt is when the watch was grabbed (status='grabbed'); 0 otherwise.
+	GrabbedAt int64 `json:"grabbed_at,omitempty"`
 	// IgnoredURLs are download URLs the user dismissed for this watch — the
 	// loop skips them so a rejected dead/over-compressed find can't
 	// re-surface. Not exposed in the API (internal to the loop's matching).
@@ -60,29 +75,65 @@ type Repo struct{ db *sql.DB }
 func NewRepo(db *sql.DB) *Repo { return &Repo{db: db} }
 
 // Add inserts (or replaces) a watch. Re-watching an existing scene resets
-// it to watching at the new target.
+// it to watching at the new target (and re-stamps its batch, clears any
+// stored candidates / grabbed state).
 func (r *Repo) Add(ctx context.Context, w Watch) error {
+	return r.add(ctx, r.db, w)
+}
+
+// AddBatch inserts many watches sharing a batch in one transaction. Used by
+// the bulk-create endpoint ("watch all missing", Discover multi-select); the
+// caller stamps every watch's BatchID/BatchLabel before calling.
+func (r *Repo) AddBatch(ctx context.Context, ws []Watch) error {
+	if len(ws) == 0 {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, w := range ws {
+		if err := r.add(ctx, tx, w); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// execer is satisfied by both *sql.DB and *sql.Tx so add() can run inside or
+// outside a transaction.
+type execer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 	if w.Target == "" {
 		w.Target = TargetAny
 	}
 	if w.CreatedAt == 0 {
 		w.CreatedAt = time.Now().Unix()
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := ex.ExecContext(ctx, `
 		INSERT INTO watches (
 		  stashdb_id, title, date, studio_name, image_url,
-		  performer_name, performer_id, target, status, created_at, last_checked
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0)
+		  performer_name, performer_id, target, status, created_at, last_checked,
+		  batch_id, batch_label
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?)
 		ON CONFLICT(stashdb_id) DO UPDATE SET
 		  target = excluded.target,
 		  status = 'watching',
 		  performer_name = excluded.performer_name,
 		  performer_id = excluded.performer_id,
+		  batch_id = excluded.batch_id,
+		  batch_label = excluded.batch_label,
 		  found_title = '', found_url = '', found_indexer = '',
 		  found_protocol = '', found_size = 0, found_at = 0,
+		  candidates = '[]', grabbed_at = 0,
 		  last_checked = 0`,
 		w.StashDBID, w.Title, w.Date, w.StudioName, w.ImageURL,
-		w.PerformerName, w.PerformerID, w.Target, w.CreatedAt)
+		w.PerformerName, w.PerformerID, w.Target, w.CreatedAt,
+		w.BatchID, w.BatchLabel)
 	return err
 }
 
@@ -173,15 +224,50 @@ func (r *Repo) BackfillMeta(ctx context.Context, stashDBID, title, date, studio,
 	return err
 }
 
-// MarkAvailable flips a watch to available and records the found release.
-func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer, protocol string, size int64) error {
+// MarkAvailable flips a watch to available, records the found (best) release,
+// and stores the full verified candidate list (raw JSON) so the UI can offer
+// a re-pick. candidates may be nil/empty, in which case the column is left as
+// an empty array.
+func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer, protocol string, size int64, candidates json.RawMessage) error {
+	cands := string(candidates)
+	if cands == "" {
+		cands = "[]"
+	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE watches SET
 		  status = 'available',
 		  found_title = ?, found_url = ?, found_indexer = ?,
-		  found_protocol = ?, found_size = ?, found_at = ?
+		  found_protocol = ?, found_size = ?, found_at = ?,
+		  candidates = ?
+		WHERE stashdb_id = ?`,
+		title, url, indexer, protocol, size, time.Now().Unix(), cands, stashDBID)
+	return err
+}
+
+// MarkGrabbed flips a watch to the terminal 'grabbed' status and records the
+// release that was actually grabbed (which may differ from the auto-picked
+// best when the user re-picked a candidate). The row is NOT deleted — it
+// lingers so a batch's progress reads correctly; the user clears it (or the
+// batch) when done.
+func (r *Repo) MarkGrabbed(ctx context.Context, stashDBID, title, url, indexer, protocol string, size int64) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  status = 'grabbed',
+		  found_title = ?, found_url = ?, found_indexer = ?,
+		  found_protocol = ?, found_size = ?, grabbed_at = ?
 		WHERE stashdb_id = ?`,
 		title, url, indexer, protocol, size, time.Now().Unix(), stashDBID)
+	return err
+}
+
+// DeleteBatch removes every watch in a batch (the Watching tab's per-batch
+// "Clear"). Refuses an empty batchID — that would match every ungrouped
+// single track and wipe them all.
+func (r *Repo) DeleteBatch(ctx context.Context, batchID string) error {
+	if batchID == "" {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `DELETE FROM watches WHERE batch_id = ?`, batchID)
 	return err
 }
 
@@ -234,7 +320,8 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(performer_name,''), COALESCE(performer_id,''), target, status,
 	COALESCE(found_title,''), COALESCE(found_url,''), COALESCE(found_indexer,''),
 	COALESCE(found_protocol,''), found_size,
-	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]')`
+	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
+	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -245,18 +332,23 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 	var out []Watch
 	for rows.Next() {
 		var w Watch
-		var ignoredJSON string
+		var ignoredJSON, candJSON string
 		if err := rows.Scan(
 			&w.StashDBID, &w.Title, &w.Date, &w.StudioName, &w.ImageURL,
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
+			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt,
 		); err != nil {
 			return nil, err
 		}
 		if ignoredJSON != "" && ignoredJSON != "[]" {
 			_ = json.Unmarshal([]byte(ignoredJSON), &w.IgnoredURLs)
 		}
+		if candJSON == "" {
+			candJSON = "[]"
+		}
+		w.Candidates = json.RawMessage(candJSON)
 		out = append(out, w)
 	}
 	return out, rows.Err()

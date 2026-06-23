@@ -275,6 +275,33 @@ func migrateGrabsColumns(db *sql.DB) error {
 				return fmt.Errorf("add watches ignored_urls column: %w", err)
 			}
 		}
+
+		// 2026-06-23 watch batches + candidate re-pick + persist-through-grab:
+		// batch_id/batch_label group watches launched together (the Watching
+		// tab groups by them); candidates stores the full verified release list
+		// captured when a watch flips available (so the user can re-pick a
+		// different release); grabbed_at records when a watch was grabbed
+		// (status='grabbed' — a grabbed watch lingers instead of being deleted
+		// so batch progress reads correctly). status gaining the 'grabbed'
+		// value needs no DDL. Add each column only if missing; schema.sql
+		// creates them on a fresh DB, and the idx_watches_batch index.
+		watchCols := []struct{ name, ddl string }{
+			{"batch_id", `ALTER TABLE watches ADD COLUMN batch_id TEXT NOT NULL DEFAULT ''`},
+			{"batch_label", `ALTER TABLE watches ADD COLUMN batch_label TEXT NOT NULL DEFAULT ''`},
+			{"candidates", `ALTER TABLE watches ADD COLUMN candidates TEXT NOT NULL DEFAULT '[]'`},
+			{"grabbed_at", `ALTER TABLE watches ADD COLUMN grabbed_at INTEGER NOT NULL DEFAULT 0`},
+		}
+		for _, c := range watchCols {
+			var has int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('watches') WHERE name = ?`, c.name).Scan(&has); err != nil {
+				return err
+			}
+			if has == 0 {
+				if _, err := db.Exec(c.ddl); err != nil {
+					return fmt.Errorf("add watches %s column: %w", c.name, err)
+				}
+			}
+		}
 	}
 	return nil
 }

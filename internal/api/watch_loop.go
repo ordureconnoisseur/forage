@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/scoring"
@@ -132,13 +134,46 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	if best == nil {
 		return
 	}
+	// Store the verified candidate list alongside the best pick so the
+	// Watching tab can offer a re-pick when the auto-chosen release isn't what
+	// the user wants (the #1 watch pain). Capped to keep the row small.
 	if err := s.watches.MarkAvailable(ctx, w.StashDBID,
-		best.Title, best.DownloadURL, best.Indexer, best.Protocol, best.Size); err != nil {
+		best.Title, best.DownloadURL, best.Indexer, best.Protocol, best.Size,
+		watchCandidatesJSON(cands)); err != nil {
 		s.log.Warn("watch mark available", "scene", w.StashDBID, "err", err)
 		return
 	}
 	s.log.Info("watch available", "scene", w.StashDBID, "title", scene.Title,
 		"target", w.Target, "release", best.Title)
+}
+
+// watchCandidateCap bounds how many candidates a watch stores (verified,
+// non-rejected, best-scoring first) so an available watch's row stays small.
+const watchCandidateCap = 25
+
+// watchCandidatesJSON marshals the verified, non-rejected releases (all
+// resolutions, best score first) for storage on the watch — the re-pick list.
+// All resolutions are kept (not just the target tier) so the user can pick a
+// higher- or lower-res release than the one the target auto-selected.
+func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
+	picks := make([]sceneRelease, 0, len(cands))
+	for _, c := range cands {
+		if c.Verified && !c.Rejected {
+			picks = append(picks, c)
+		}
+	}
+	sort.SliceStable(picks, func(i, j int) bool { return picks[i].Score > picks[j].Score })
+	if len(picks) > watchCandidateCap {
+		picks = picks[:watchCandidateCap]
+	}
+	if len(picks) == 0 {
+		return json.RawMessage("[]")
+	}
+	b, err := json.Marshal(picks)
+	if err != nil {
+		return json.RawMessage("[]")
+	}
+	return json.RawMessage(b)
 }
 
 // bestWatchMatch returns the best verified, non-rejected release matching
