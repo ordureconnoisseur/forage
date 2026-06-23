@@ -183,6 +183,123 @@ func queryCachedScenes(ctx context.Context, db *sql.DB, q string, args ...any) (
 	return out, rows.Err()
 }
 
+// RebuildRecentSceneCache regenerates recent_scene_cache (the Discover source)
+// from the persistent scene cache: every cached scene inside the recency window
+// that features at least one owned performer, with that scene's owned-performer
+// local ids and an owned flag. Trending rows (trending_rank > 0, managed by
+// RefreshTrending) are preserved. Needed once the delta sync stops fetching the
+// full per-pass scene set — Discover now reads from the accumulated cache.
+func RebuildRecentSceneCache(ctx context.Context, db *sql.DB, cutoff, start int64, ownedIDs []string) error {
+	ownedSet := make(map[string]bool, len(ownedIDs))
+	for _, id := range ownedIDs {
+		ownedSet[id] = true
+	}
+
+	// One JOIN yields (scene, owned-performer-local-id) rows; group in Go to
+	// collect each recent scene's owned-performer local ids.
+	rows, err := db.QueryContext(ctx, `
+		SELECT s.stashdb_id, COALESCE(s.title,''), COALESCE(s.release_date,''),
+		       s.release_unix, COALESCE(s.studio_name,''), COALESCE(s.image_url,''),
+		       pc.stash_id
+		FROM stashdb_scene s
+		JOIN scene_performer sp ON sp.scene_id = s.stashdb_id
+		JOIN performer_cache pc ON pc.stashdb_id = sp.performer_stashdb_id
+		WHERE s.release_unix >= ?`, cutoff)
+	if err != nil {
+		return err
+	}
+	type rec struct {
+		title, date, studio, image string
+		releaseUnix                int64
+		localIDs                   []string
+	}
+	recs := map[string]*rec{}
+	order := []string{}
+	for rows.Next() {
+		var id, title, date, studio, image, localID string
+		var ru int64
+		if err := rows.Scan(&id, &title, &date, &ru, &studio, &image, &localID); err != nil {
+			rows.Close()
+			return err
+		}
+		r := recs[id]
+		if r == nil {
+			r = &rec{title: title, date: date, studio: studio, image: image, releaseUnix: ru}
+			recs[id] = r
+			order = append(order, id)
+		}
+		if localID != "" {
+			r.localIDs = append(r.localIDs, localID)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO recent_scene_cache (
+		  stashdb_id, title, release_date, release_unix,
+		  studio_name, image_url, local_performer_ids, owned, cached_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(stashdb_id) DO UPDATE SET
+		  title=excluded.title, release_date=excluded.release_date,
+		  release_unix=excluded.release_unix, studio_name=excluded.studio_name,
+		  image_url=excluded.image_url, local_performer_ids=excluded.local_performer_ids,
+		  owned=excluded.owned, cached_at=excluded.cached_at`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+	for _, id := range order {
+		r := recs[id]
+		idsJSON, _ := json.Marshal(r.localIDs)
+		ownedFlag := 0
+		if ownedSet[id] {
+			ownedFlag = 1
+		}
+		if _, err := stmt.ExecContext(ctx, id, r.title, r.date, r.releaseUnix,
+			r.studio, r.image, string(idsJSON), ownedFlag, start); err != nil {
+			return err
+		}
+	}
+
+	// Prune: rows outside the window or not re-stamped this pass, except
+	// trending rows (those are RefreshTrending's to manage).
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM recent_scene_cache WHERE (release_unix < ? OR cached_at < ?) AND trending_rank <= 0`,
+		cutoff, start); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// PruneStaleScenes deletes persistent-cache scenes whose cached_at predates the
+// given full-reconcile start (they were not re-fetched, i.e. they have vanished
+// from every owned subject's StashDB catalogue), plus the now-orphaned
+// scene_performer rows. ONLY safe after a FULL reconcile pass (which re-stamps
+// cached_at on every scene still live in StashDB) — never after a delta pass,
+// which leaves unchanged scenes' cached_at untouched.
+func PruneStaleScenes(ctx context.Context, db *sql.DB, reconcileStart int64) (int64, error) {
+	res, err := db.ExecContext(ctx,
+		`DELETE FROM stashdb_scene WHERE cached_at < ?`, reconcileStart)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	if _, err := db.ExecContext(ctx,
+		`DELETE FROM scene_performer WHERE scene_id NOT IN (SELECT stashdb_id FROM stashdb_scene)`); err != nil {
+		return n, err
+	}
+	return n, nil
+}
+
 // RecomputeAggregates recomputes the performer_cache and studio_cache scene
 // aggregates (total / owned / last_release) purely from the persistent scene
 // cache and the given owned StashDB scene-id set — no StashDB queries.

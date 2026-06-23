@@ -104,3 +104,31 @@ func (s *Server) postRefreshStudios(w http.ResponseWriter, r *http.Request) {
 	studAt, _ := cache.StudioRefreshedAt(ctx, s.db)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "studioRefreshedAt": studAt})
 }
+
+// postRefreshScenes forces a scene-cache sync (delta, or a full reconcile when
+// due) — the StashDB pass that drives the persistent scene cache, the
+// performer/studio aggregates and Discover. Runs DETACHED in the background
+// (a full reconcile can take minutes) and returns immediately; a TryLock keeps
+// two from overlapping.
+func (s *Server) postRefreshScenes(w http.ResponseWriter, r *http.Request) {
+	if !s.sceneSyncMu.TryLock() {
+		writeErr(w, http.StatusConflict, "a scene sync is already running")
+		return
+	}
+	stashC := s.pool.Stash()
+	stashDBC := s.pool.StashDB()
+	if stashC == nil || stashDBC == nil {
+		s.sceneSyncMu.Unlock()
+		writeErr(w, http.StatusServiceUnavailable, "stash and stashdb must be configured (see Settings)")
+		return
+	}
+	go func() {
+		defer s.sceneSyncMu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := cache.SyncStashDBScenes(ctx, stashC, stashDBC, s.db, s.log.With("op", "scene-sync")); err != nil {
+			s.log.Error("manual scene sync failed", "err", err)
+		}
+	}()
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "started": true})
+}

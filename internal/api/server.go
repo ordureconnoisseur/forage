@@ -51,6 +51,8 @@ type Server struct {
 	torrentGate fetchGate
 
 	refreshMu sync.Mutex
+	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
+	sceneSyncMu sync.Mutex
 
 	// searchNow state. searchNowMu (TryLock) enforces ONE manual "search now"
 	// at a time, so repeated clicks can't stack concurrent Prowlarr load (the
@@ -195,6 +197,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/refresh", s.postRefresh)
 		r.Post("/refresh/performers", s.postRefreshPerformers)
 		r.Post("/refresh/studios", s.postRefreshStudios)
+		r.Post("/refresh/scenes", s.postRefreshScenes)
 		r.Post("/match", s.postMatch)
 		r.Get("/search", s.getSearch)
 		r.Post("/grab", s.postGrab)

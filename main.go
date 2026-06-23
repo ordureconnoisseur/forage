@@ -236,7 +236,6 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 	}
 	perfAt, _ := cache.PerformerRefreshedAt(ctx, database)
 	studAt, _ := cache.StudioRefreshedAt(ctx, database)
-	studAggAt, _ := cache.StudioAggregatesRefreshedAt(ctx, database)
 	scenesAt, _ := cache.ScenesRefreshedAt(ctx, database)
 	cutoff := time.Now().Add(-interval).Unix()
 	if perfAt < cutoff {
@@ -249,24 +248,17 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 			log.Error("boot studio refresh failed", "err", err)
 		}
 	}
-	// Force the (heavy) scene + studio aggregate passes when the persistent
-	// scene cache is empty — they populate it as a side effect, so a fresh
-	// install (or the first boot after this feature ships) backfills it without
-	// waiting up to 12h for the timestamps to age out.
-	emptyCache := cache.SceneCacheEmpty(ctx, database)
-	if scenesAt < cutoff || emptyCache {
+	// The scene-cache sync (delta, or a full reconcile when stale/empty) drives
+	// both the persistent scene cache and the performer/studio aggregates +
+	// Discover. Run it when the timestamps are stale, the cache is empty, or the
+	// delta sync has never reconciled yet (first boot after the feature ships);
+	// the sync decides internally whether to do a full or delta fetch.
+	reconciledAt, _ := cache.SceneReconciledAt(ctx, database)
+	if scenesAt < cutoff || reconciledAt == 0 || cache.SceneCacheEmpty(ctx, database) {
 		sdb := pool.StashDB()
 		if sdb != nil {
-			if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
-				log.Error("boot scene refresh failed", "err", err)
-			}
-		}
-	}
-	if studAggAt < cutoff || emptyCache {
-		sdb := pool.StashDB()
-		if sdb != nil {
-			if err := cache.RefreshStudioCache(ctx, sc, sdb, database, log.With("op", "studio-aggregates")); err != nil {
-				log.Error("boot studio aggregate refresh failed", "err", err)
+			if err := cache.SyncStashDBScenes(ctx, sc, sdb, database, log.With("op", "scene-sync")); err != nil {
+				log.Error("boot scene sync failed", "err", err)
 			}
 		}
 	}
@@ -325,16 +317,13 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 				if err := cache.RefreshStudios(ctx, sc, pool.StashDB(), database, log.With("op", "studios")); err != nil {
 					log.Error("ticker studio refresh failed", "err", err)
 				}
-				// Scene cache piggy-backs on the same tick. Needs StashDB
-				// too — skip the run when it's not configured.
+				// Scene-cache sync (delta / periodic full reconcile) piggy-backs
+				// on the same tick — drives the persistent cache, aggregates and
+				// Discover. Needs StashDB; skip when it's not configured. Runs
+				// after RefreshStudios (above) so studio_cache rows exist.
 				if sdb := pool.StashDB(); sdb != nil {
-					if err := cache.RefreshSceneCache(ctx, sc, sdb, database, log.With("op", "scenes")); err != nil {
-						log.Error("ticker scene refresh failed", "err", err)
-					}
-					// Studio aggregates run after RefreshStudios (above) has
-					// populated studio_cache rows for this pass to read.
-					if err := cache.RefreshStudioCache(ctx, sc, sdb, database, log.With("op", "studio-aggregates")); err != nil {
-						log.Error("ticker studio aggregate refresh failed", "err", err)
+					if err := cache.SyncStashDBScenes(ctx, sc, sdb, database, log.With("op", "scene-sync")); err != nil {
+						log.Error("ticker scene sync failed", "err", err)
 					}
 				}
 			}()

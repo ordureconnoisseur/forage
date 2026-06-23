@@ -18,6 +18,70 @@ func sc(id, title, date, studioID, studioName string, perfs ...stashdb.ScenePerf
 	return s
 }
 
+func TestRebuildRecentAndPrune(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(filepath.Join(t.TempDir(), "forager.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+	if _, err := dbh.Exec(`INSERT INTO performer_cache (stash_id, stashdb_id, name, refreshed_at) VALUES ('1','perf-A','A',0)`); err != nil {
+		t.Fatal(err)
+	}
+	A := stashdb.ScenePerformer{ID: "perf-A", Name: "A"}
+	Z := stashdb.ScenePerformer{ID: "perf-Z", Name: "Z"} // not owned (no performer_cache row)
+	now := int64(2_000_000)
+	for _, s := range []stashdb.Scene{
+		sc("rc-recent", "Recent", "2026-06-01", "stud-X", "S", A),     // recent + owned performer → in Discover
+		sc("rc-old", "Old", "2000-01-01", "stud-X", "S", A),           // outside window → excluded
+		sc("rc-studio", "StudioOnly", "2026-06-01", "stud-X", "S", Z), // no owned performer → excluded
+	} {
+		if err := UpsertScene(ctx, dbh, s, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	cutoff := parseStashDBDate("2026-01-01")
+	if err := RebuildRecentSceneCache(ctx, dbh, cutoff, now, []string{"rc-recent"}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	dbh.QueryRow(`SELECT COUNT(*) FROM recent_scene_cache`).Scan(&n)
+	if n != 1 {
+		t.Fatalf("recent_scene_cache = %d rows, want 1 (only rc-recent)", n)
+	}
+	var ids, owned string
+	dbh.QueryRow(`SELECT local_performer_ids, owned FROM recent_scene_cache WHERE stashdb_id='rc-recent'`).Scan(&ids, &owned)
+	if ids != `["1"]` || owned != "1" {
+		t.Errorf("rc-recent local_ids=%s owned=%s, want [\"1\"]/1", ids, owned)
+	}
+
+	// Prune: a scene not re-stamped this reconcile (older cached_at) is dropped
+	// along with its membership; freshly-stamped ones survive.
+	if err := UpsertScene(ctx, dbh, sc("stale", "x", "2026-06-01", "", "", A), now-100); err != nil {
+		t.Fatal(err)
+	}
+	pruned, err := PruneStaleScenes(ctx, dbh, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pruned != 1 {
+		t.Errorf("pruned %d, want 1 (stale)", pruned)
+	}
+	dbh.QueryRow(`SELECT COUNT(*) FROM stashdb_scene WHERE stashdb_id='stale'`).Scan(&n)
+	if n != 0 {
+		t.Error("stale scene survived prune")
+	}
+	dbh.QueryRow(`SELECT COUNT(*) FROM scene_performer WHERE scene_id='stale'`).Scan(&n)
+	if n != 0 {
+		t.Error("stale scene's membership not cleaned")
+	}
+	dbh.QueryRow(`SELECT COUNT(*) FROM stashdb_scene WHERE stashdb_id='rc-recent'`).Scan(&n)
+	if n != 1 {
+		t.Error("freshly-stamped scene wrongly pruned")
+	}
+}
+
 func TestSceneCacheUpsertReadAggregate(t *testing.T) {
 	ctx := context.Background()
 	dbh, err := db.Open(filepath.Join(t.TempDir(), "forager.db"))
