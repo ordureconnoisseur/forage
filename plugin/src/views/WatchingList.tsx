@@ -10,7 +10,7 @@ import {
   type SceneRelease,
   type Watch,
 } from "../api";
-import { ResBadge } from "../ResBadge";
+import { ResBadge, resolution } from "../ResBadge";
 import { humanSize } from "../format";
 
 // Poll cadence: the watch loop runs server-side on a 30m cadence, so the
@@ -130,11 +130,10 @@ export default function WatchingList({
   if (watches.length === 0)
     return (
       <div className="empty">
-        Not watching any scenes. Hit <b>Track ▾</b> on a scene card to be told
-        when a release at your chosen quality shows up, or <b>Watch all
-        missing</b> on a performer to collect them as a batch — the server
-        checks in the background and you grab them here. Nothing is grabbed
-        automatically.
+        Not watching any scenes. Hit <b>Watch</b> on a scene card to be told when
+        a release shows up, or <b>Watch all missing</b> on a performer to collect
+        them as a batch — the server checks in the background and you grab the
+        best release here. Nothing is grabbed automatically.
       </div>
     );
 
@@ -353,6 +352,58 @@ function WatchCard({
 
   const avail = w.status === "available";
   const isGrabbed = w.status === "grabbed";
+  const pickedRel = cands.find((c) => c.download_url === picked) || null;
+  const pickedRes = pickedRel ? resolution(pickedRel.title) : null;
+  const openScene = () => onPickScene(w.stashdb_id, w.performer_name);
+
+  // The release rows shown under the scene. Collapsed → just the chosen one;
+  // expanded → every candidate (radio-selectable). Falls back to a synthetic
+  // row from the found_* fields for an older watch with no stored candidates.
+  type RowData = {
+    key: string;
+    title: string;
+    downloadUrl: string;
+    indexer: string;
+    protocol: string;
+    size: number;
+    grabs: number;
+    seeders: number;
+  };
+  let rows: RowData[] = [];
+  if (avail || isGrabbed) {
+    if (cands.length > 0) {
+      const src = expanded
+        ? cands
+        : cands.filter((c) => c.download_url === picked).slice(0, 1);
+      const chosen = src.length > 0 ? src : cands.slice(0, 1);
+      rows = chosen.map((r) => ({
+        key: relKey(r),
+        title: r.title,
+        downloadUrl: r.download_url,
+        indexer: r.indexer,
+        protocol: r.protocol,
+        size: r.size,
+        grabs: r.grabs,
+        seeders: r.seeders,
+      }));
+    } else if (w.found_title) {
+      rows = [
+        {
+          key: "found",
+          title: w.found_title,
+          downloadUrl: w.found_url || "",
+          indexer: w.found_indexer || "",
+          protocol: w.found_protocol || "",
+          size: w.found_size || 0,
+          grabs: 0,
+          seeders: 0,
+        },
+      ];
+    }
+  }
+  const selectable = avail && expanded && cands.length > 0;
+  const others = cands.length - 1;
+
   return (
     <li
       className={
@@ -365,7 +416,7 @@ function WatchCard({
         className="watch-thumb"
         role="button"
         tabIndex={0}
-        onClick={() => onPickScene(w.stashdb_id, w.performer_name)}
+        onClick={openScene}
       >
         {w.image_url ? (
           <img
@@ -378,111 +429,123 @@ function WatchCard({
           />
         ) : null}
       </div>
-      <div className="watch-main">
-        <div className="watch-title">{w.title || "(untitled)"}</div>
-        <div className="watch-meta">
-          {w.date && <span>{w.date}</span>}
-          {w.date && w.studio_name && <span className="sep">·</span>}
-          {w.studio_name && <span>{w.studio_name}</span>}
-        </div>
-        {(avail || isGrabbed) && w.found_title && (
-          <div className="watch-found">
-            <code>{w.found_title}</code>
-            <span className="watch-found-meta">
-              {w.found_indexer} · {w.found_protocol} ·{" "}
-              {humanSize(w.found_size || 0, "?")}
-            </span>
-            {avail && canExpand && (
-              <button
-                className="coll-expand watch-cand-toggle"
-                onClick={() => setExpanded((e) => !e)}
-                title="Show all releases this watch found — pick a different one"
-              >
-                {expanded ? "▾" : "▸"}{" "}
-                <span className="coll-expand-n">{cands.length}</span>
-              </button>
-            )}
+
+      <div className="watch-body">
+        <div className="watch-head">
+          <div
+            className="watch-headinfo"
+            role="button"
+            tabIndex={0}
+            onClick={openScene}
+          >
+            <div className="watch-title">{w.title || "(untitled)"}</div>
+            <div className="watch-meta">
+              {w.date && <span>{w.date}</span>}
+              {w.date && w.studio_name && <span className="sep">·</span>}
+              {w.studio_name && <span>{w.studio_name}</span>}
+            </div>
           </div>
-        )}
-        {avail && expanded && canExpand && (
-          <div className="coll-cands">
-            {cands.map((rel) => (
-              <label
-                key={relKey(rel)}
-                className={
-                  "coll-cand" + (rel.download_url === picked ? " sel" : "")
-                }
-              >
-                <input
-                  type="radio"
-                  name={"pick-" + w.stashdb_id}
-                  checked={rel.download_url === picked}
-                  disabled={rel.download_url === ""}
-                  title={
-                    rel.download_url === ""
-                      ? "indexer provided no download link"
-                      : undefined
-                  }
-                  onChange={() => setPicked(rel.download_url)}
-                />
-                <span
-                  className={
-                    "coll-cand-tag " + (rel.verified ? "verified" : "guess")
-                  }
+          <div className="watch-actions">
+            {isGrabbed ? (
+              <span className="watch-grabbed-label">grabbed ✓</span>
+            ) : avail ? (
+              <>
+                <button
+                  className="watch-grab"
+                  disabled={busy || queued}
+                  onClick={grab}
                 >
-                  {rel.verified ? "verified" : "unverified"}{" "}
-                  {rel.confidence.toFixed(2)}
-                </span>
-                <ResBadge title={rel.title} />
-                <span className="coll-cand-body">
-                  <code className="coll-cand-file">{rel.title}</code>
-                  <span className="coll-cand-meta">
-                    {rel.indexer} · {rel.protocol} · {humanSize(rel.size, "?")} ·{" "}
-                    {rel.protocol === "usenet"
-                      ? `${rel.grabs} grabs`
-                      : `${rel.seeders} seeders`}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="watch-actions">
-        {isGrabbed ? (
-          <span className="watch-grabbed-label">grabbed ✓</span>
-        ) : avail ? (
-          <>
+                  {queued
+                    ? "Queued ✓"
+                    : busy
+                      ? "Grabbing…"
+                      : `Grab${pickedRes ? " " + pickedRes.label : ""} ↓`}
+                </button>
+                {!queued && (
+                  <button
+                    className="watch-dismiss"
+                    disabled={busy}
+                    onClick={dismiss}
+                    title="Not this one — ignore this release and keep watching for a better one"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </>
+            ) : w.searching ? (
+              <span className="watch-spinner-label searching">
+                <span className="coll-spinner" /> searching…
+              </span>
+            ) : (
+              <span className="watch-spinner-label">
+                <span className="coll-spinner" /> watching
+              </span>
+            )}
             <button
-              className="watch-grab"
-              disabled={busy || queued}
-              onClick={grab}
+              className="watch-remove"
+              disabled={busy}
+              onClick={remove}
+              title="Stop watching this scene"
+              aria-label="Stop watching"
             >
-              {queued ? "Queued ✓" : busy ? "Grabbing…" : "Grab ↓"}
+              ✕
             </button>
-            {!queued && (
+          </div>
+        </div>
+
+        {rows.length > 0 && (
+          <div className="watch-rel">
+            {rows.map((r) => {
+              const sel = r.downloadUrl === picked;
+              const noLink = r.downloadUrl === "";
+              return (
+                <label
+                  key={r.key}
+                  className={"watch-rel-row" + (sel ? " is-selected" : "")}
+                >
+                  {selectable ? (
+                    <input
+                      type="radio"
+                      name={"pick-" + w.stashdb_id}
+                      checked={sel}
+                      disabled={noLink}
+                      title={
+                        noLink ? "indexer provided no download link" : undefined
+                      }
+                      onChange={() => setPicked(r.downloadUrl)}
+                    />
+                  ) : (
+                    <span className="watch-rel-dot" aria-hidden="true" />
+                  )}
+                  <span className="watch-rel-q">
+                    <ResBadge title={r.title} />
+                  </span>
+                  <code className="watch-rel-file">{r.title}</code>
+                  <span className="watch-rel-meta">
+                    {humanSize(r.size, "?")} · {r.indexer} ·{" "}
+                    {r.protocol === "usenet"
+                      ? `${r.grabs} grabs`
+                      : `${r.seeders} seeders`}
+                  </span>
+                </label>
+              );
+            })}
+            {avail && canExpand && others > 0 && (
               <button
-                className="watch-dismiss"
-                disabled={busy}
-                onClick={dismiss}
-                title="Not this one — ignore this release and keep watching for a better one"
+                className="watch-rel-more"
+                onClick={() => setExpanded((e) => !e)}
+                title="Show every release this watch found — pick a different one"
               >
-                Dismiss
+                {expanded
+                  ? "Show fewer"
+                  : `${others} other release${others === 1 ? "" : "s"}`}
+                <span className={"watch-rel-chev" + (expanded ? " open" : "")}>
+                  ▾
+                </span>
               </button>
             )}
-          </>
-        ) : w.searching ? (
-          <span className="watch-spinner-label searching">
-            <span className="coll-spinner" /> searching…
-          </span>
-        ) : (
-          <span className="watch-spinner-label">
-            <span className="coll-spinner" /> watching
-          </span>
+          </div>
         )}
-        <button className="watch-remove" disabled={busy} onClick={remove}>
-          ✕
-        </button>
       </div>
     </li>
   );

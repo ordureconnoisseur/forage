@@ -4984,17 +4984,22 @@ code.grab-fact-v,
 .watch-list section + section {
   margin-top: 24px;
 }
+/* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
+   actions ride with the scene title and never float against the middle of an
+   expanded release list. */
 .watch-card {
-  display: flex;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
   gap: 14px;
-  padding: 10px;
+  align-items: start;
+  padding: 12px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-sm, 12px);
   background: var(--surface, rgba(255, 255, 255, 0.02));
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 .watch-card.is-available {
-  border-color: rgba(var(--accent-rgb), 0.5);
+  border-color: rgba(var(--accent-rgb), 0.45);
   background: rgba(var(--accent-rgb), 0.05);
 }
 .watch-thumb {
@@ -5013,22 +5018,32 @@ code.grab-fact-v,
   object-fit: cover;
   display: block;
 }
-.watch-main {
-  flex: 1 1 auto;
+.watch-body {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 4px;
+  gap: 10px;
+}
+.watch-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.watch-headinfo {
+  min-width: 0;
+  flex: 1 1 auto;
+  cursor: pointer;
 }
 .watch-title {
   font-weight: 600;
   font-size: 15px;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .watch-meta {
+  margin-top: 2px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -5038,27 +5053,6 @@ code.grab-fact-v,
 }
 .watch-meta .sep {
   opacity: 0.5;
-}
-.watch-target {
-  color: var(--accent-bright, #22c55e);
-  font-weight: 600;
-}
-.watch-found {
-  margin-top: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.watch-found code {
-  font-size: 12px;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.watch-found-meta {
-  font-size: 11px;
-  color: var(--text-muted);
 }
 .watch-actions {
   flex: none;
@@ -5074,8 +5068,13 @@ code.grab-fact-v,
   color: #0a0a0a;
   font-weight: 600;
   font-size: 13px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
-  transition: opacity 0.12s ease;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+.watch-grab:hover:not(:disabled) {
+  transform: translateY(-1px);
 }
 .watch-grab:disabled {
   opacity: 0.6;
@@ -5087,6 +5086,7 @@ code.grab-fact-v,
   gap: 6px;
   color: var(--text-muted);
   font-size: 12px;
+  white-space: nowrap;
 }
 /* Dismiss — reject this find but keep watching. Quiet outlined pill,
    between the primary Grab and the remove ✕. */
@@ -5109,6 +5109,7 @@ code.grab-fact-v,
   cursor: default;
 }
 .watch-remove {
+  flex: none;
   width: 30px;
   height: 30px;
   border-radius: 50%;
@@ -5122,6 +5123,102 @@ code.grab-fact-v,
 .watch-remove:hover:not(:disabled) {
   color: var(--danger, #f87171);
   border-color: var(--danger, #f87171);
+}
+
+/* Release picker — the chosen release sits highlighted at the top; the
+   "N other releases" toggle reveals the rest as radio choices. Every row is
+   the same 4-column grid (select · quality · filename · size/source/health)
+   so the columns line up and the quality badges stack into a tidy spine. */
+.watch-rel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+}
+.watch-rel-row {
+  display: grid;
+  grid-template-columns: 14px 46px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+.watch-rel-row:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.watch-rel-row.is-selected {
+  background: rgba(var(--accent-rgb), 0.12);
+  box-shadow: inset 2px 0 0 var(--accent-bright);
+}
+.watch-rel-row input[type="radio"] {
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+  justify-self: center;
+}
+.watch-rel-row input[type="radio"]:disabled {
+  cursor: not-allowed;
+  opacity: 0.4;
+}
+.watch-rel-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  justify-self: center;
+  background: var(--accent-bright);
+  box-shadow: 0 0 0 3px rgba(var(--accent-rgb), 0.18);
+}
+.watch-rel-q {
+  display: flex;
+  align-items: center;
+}
+.watch-rel-q .res-badge {
+  margin: 0;
+}
+.watch-rel-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-rel-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-align: right;
+}
+.watch-rel-more {
+  align-self: flex-start;
+  margin: 4px 0 0 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 11px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.watch-rel-more:hover {
+  color: var(--text);
+  border-color: var(--glass-border-bright);
+}
+.watch-rel-chev {
+  display: inline-block;
+  font-size: 9px;
+  transition: transform 0.15s ease;
+}
+.watch-rel-chev.open {
+  transform: rotate(180deg);
 }
 
 /* ─── First-run setup wizard ─────────────────────────────────────────
@@ -6354,12 +6451,21 @@ code.grab-fact-v,
     justify-self: end;
   }
 
-  /* Watch cards: actions drop below the text instead of crushing it. */
+  /* Watch cards: narrower thumb; on a phone the head stacks the title over
+     its actions so neither gets crushed, and the release meta drops under the
+     filename instead of fighting it for width. */
   .watch-card {
-    flex-wrap: wrap;
+    grid-template-columns: 104px minmax(0, 1fr);
+    gap: 12px;
   }
   .watch-thumb {
     width: 104px;
+  }
+  .watch-head {
+    flex-wrap: wrap;
+  }
+  .watch-headinfo {
+    flex-basis: 100%;
   }
   .watch-actions {
     width: 100%;
@@ -6367,6 +6473,14 @@ code.grab-fact-v,
   }
   .watch-title {
     white-space: normal;
+  }
+  .watch-rel-row {
+    grid-template-columns: 14px 46px minmax(0, 1fr);
+    row-gap: 1px;
+  }
+  .watch-rel-meta {
+    grid-column: 2 / -1;
+    text-align: left;
   }
 
   /* Collection rows: smaller thumb, titles may wrap to two lines. */
