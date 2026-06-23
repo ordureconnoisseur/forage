@@ -13,10 +13,11 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
-// TestReconcileWatches verifies a watch is dropped once forage has a grab
-// for its scene (by any path — not just the Watching tab's grab button),
-// while a watch for an un-grabbed scene survives. This is the fix for a
-// scene you downloaded elsewhere lingering in Watching forever.
+// TestReconcileWatches verifies a watch flips to 'grabbed' once forage has a
+// grab for its scene (by any path — not just the Watching tab's grab button),
+// while a watch for an un-grabbed scene stays 'watching'. The grabbed watch
+// LINGERS (not deleted) so its batch progress reads correctly; the user
+// clears it (or the batch) later.
 func TestReconcileWatches(t *testing.T) {
 	ctx := context.Background()
 	// A real, fully-migrated DB so both repos share one schema.
@@ -59,15 +60,17 @@ func TestReconcileWatches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]bool{}
+	status := map[string]string{}
 	for _, w := range list {
-		got[w.StashDBID] = true
+		status[w.StashDBID] = w.Status
 	}
-	if got["grabbed-scene"] {
-		t.Error("watch for an already-grabbed scene should have been removed")
+	// Both watches survive (nothing is deleted by reconcile now), but the
+	// grabbed scene's watch flips to terminal 'grabbed' while the other stays.
+	if status["grabbed-scene"] != watches.StatusGrabbed {
+		t.Errorf("watch for an already-grabbed scene = %q, want grabbed", status["grabbed-scene"])
 	}
-	if !got["still-waiting"] {
-		t.Error("watch for an un-grabbed scene should survive reconcile")
+	if status["still-waiting"] != watches.StatusWatching {
+		t.Errorf("watch for an un-grabbed scene = %q, want watching", status["still-waiting"])
 	}
 }
 

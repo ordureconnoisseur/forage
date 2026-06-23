@@ -403,9 +403,9 @@ func seedTier(r sceneRelease) int {
 // verifyReleases runs the matcher over a set of Prowlarr releases and
 // shapes each into a sceneRelease (verified flag, confidence, best-other
 // scene, reason breakdown) for the target scene. Shared by the
-// /scenes/{id}/releases endpoint and the collection-job worker so the
-// verify/badge logic — and the stored candidate list a job exposes for
-// re-pick — is identical to the interactive view.
+// /scenes/{id}/releases endpoint (the interactive Grab view) and the watch
+// loop, so the verify/badge logic — and the candidate list a watch stores
+// for re-pick — is identical to the interactive view.
 // javCodeConf is the confidence assigned to a release verified purely by a
 // matching JAV code — same floor the matcher uses for a code auto-verify.
 const javCodeConf = 0.85

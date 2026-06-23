@@ -60,20 +60,12 @@ type Server struct {
 	matcherMu sync.Mutex
 	matcher   *matcher.Matcher
 
-	// ownedCache memoises the full-library owned StashDB-id set. The sweep
-	// (FindAllOwnedStashDBSceneIDs) paginates the entire Stash library —
-	// seconds for a big library — and /missing-scenes needs it on every
-	// load. A short TTL keeps loads instant without going stale in any way
-	// that matters (you don't un-own scenes mid-session).
-	ownedMu      sync.Mutex
-	ownedSet     map[string]bool
-	ownedFetched time.Time
-
 	// ownedCopies memoises StashDB scene id → the local copies the user owns,
 	// each carrying resolution/size (via the enriched FindAllSceneStashDBIDs
-	// sweep). Backs the performer page's "owned scenes" upgrade view, which
-	// shows the current quality per scene. Same TTL + lock-across-sweep
-	// coalescing as ownedSet.
+	// sweep), memoised for ownedTTL. Backs the performer page's missing/owned/
+	// dupes views. The lock is held across the (slow) library sweep so
+	// concurrent loads coalesce onto one fetch rather than each launching their
+	// own.
 	ownedCopiesMu      sync.Mutex
 	ownedCopies        map[string][]stash.SceneRef
 	ownedCopiesFetched time.Time
@@ -85,11 +77,6 @@ type Server struct {
 	// filmography changes rarely.
 	filmoMu    sync.Mutex
 	filmoCache map[string]filmoEntry
-
-	// jobs is the in-memory registry of server-side collection crawls
-	// (multi-scene "complete the collection" runs that survive the
-	// browser closing). Lost on daemon restart; queued grabs persist.
-	jobs *jobStore
 
 	// scorer ranks releases by the user's preference rules (config
 	// ReleaseRules). Lazily built from the composed config, rebuilt on a
@@ -157,7 +144,6 @@ func New(opts Options) *Server {
 		log:        opts.Log,
 		version:    opts.Version,
 		adoptNow:   opts.AdoptNow,
-		jobs:       newJobStore(),
 		sessionKey: loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 }
@@ -213,15 +199,13 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/{id}/retry", s.postGrabRetry)
 		r.Delete("/grabs/{id}", s.deleteGrab)
 		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
-		r.Post("/jobs", s.postCollectionJob)
-		r.Get("/jobs", s.getCollectionJobs)
-		r.Get("/jobs/{id}", s.getCollectionJobDetail)
-		r.Post("/jobs/{id}/grab", s.postCollectionJobGrab)
-		r.Delete("/jobs/{id}", s.deleteCollectionJob)
 		r.Post("/watches", s.postWatch)
+		r.Post("/watches/batch", s.postWatchBatch)
 		r.Get("/watches", s.getWatches)
+		r.Delete("/watches/batch/{batchId}", s.clearBatch)
 		r.Delete("/watches/{id}", s.deleteWatch)
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
+		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
 		r.Post("/watches/{id}/dismiss", s.postWatchDismiss)
 		r.Get("/missing-scenes", s.getMissingScenes)
 		r.Get("/performers/{id}/packs", s.getPerformerPacks)
@@ -278,40 +262,10 @@ func (s *Server) invalidateMatcher() {
 // ownedTTL is how long a fetched owned-set is reused before re-sweeping.
 const ownedTTL = 60 * time.Second
 
-// ownedStashDBSet returns the set of StashDB scene ids the user owns
-// anywhere in their library, memoised for ownedTTL. The underlying sweep
-// paginates the whole Stash library, so without this every
-// /missing-scenes load paid seconds for data that barely changes. The
-// lock is held across the (slow) sweep so concurrent loads coalesce onto
-// one fetch rather than each launching their own.
-func (s *Server) ownedStashDBSet(ctx context.Context) (map[string]bool, error) {
-	s.ownedMu.Lock()
-	defer s.ownedMu.Unlock()
-	if s.ownedSet != nil && time.Since(s.ownedFetched) < ownedTTL {
-		return s.ownedSet, nil
-	}
-	sc := s.pool.Stash()
-	if sc == nil {
-		return nil, errNotConfigured("stash")
-	}
-	ids, err := sc.FindAllOwnedStashDBSceneIDs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	set := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		set[id] = true
-	}
-	s.ownedSet = set
-	s.ownedFetched = time.Now()
-	return set, nil
-}
-
 // ownedSceneCopies returns StashDB scene id → the local copies the user owns,
-// each with resolution/size, memoised for ownedTTL. Heavier than
-// ownedStashDBSet (it carries file metadata), so it's a separate memo used
-// only by the performer page's owned-scenes view. The lock is held across the
-// sweep so concurrent loads coalesce onto one fetch.
+// each with resolution/size, memoised for ownedTTL. Backs the performer
+// page's missing/owned/dupes views (it carries file metadata). The lock is
+// held across the sweep so concurrent loads coalesce onto one fetch.
 func (s *Server) ownedSceneCopies(ctx context.Context) (map[string][]stash.SceneRef, error) {
 	s.ownedCopiesMu.Lock()
 	defer s.ownedCopiesMu.Unlock()
@@ -331,13 +285,10 @@ func (s *Server) ownedSceneCopies(ctx context.Context) (map[string][]stash.Scene
 	return s.ownedCopies, nil
 }
 
-// invalidateOwned drops both owned-set memos so the next /missing-scenes load
+// invalidateOwned drops the owned-copies memo so the next /missing-scenes load
 // reflects a just-deleted copy (the duplicates-cleanup destroy path) instead
 // of serving a stale owned/duplicate list for up to ownedTTL.
 func (s *Server) invalidateOwned() {
-	s.ownedMu.Lock()
-	s.ownedSet = nil
-	s.ownedMu.Unlock()
 	s.ownedCopiesMu.Lock()
 	s.ownedCopies = nil
 	s.ownedCopiesMu.Unlock()

@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/watches"
@@ -99,10 +101,13 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"watches": ws})
 }
 
-// reconcileWatches deletes watches for scenes forage already has a grab for
-// (queued → confirmed, the same set Discover hides). A watch's job is "tell
-// me when I can get this scene"; once a grab exists for it, that job is done
-// regardless of where the grab came from. Best-effort: logs and moves on.
+// reconcileWatches flips watches to 'grabbed' for scenes forage already has a
+// grab for (queued → confirmed, the same set Discover hides), regardless of
+// where the grab came from — a watch's job is "tell me when I can get this
+// scene", and once a grab exists that job is done. It flips rather than
+// deletes so the watch lingers in its batch and the batch's progress reads
+// correctly; the user clears it (or the whole batch) when done. Preserves any
+// found_* release fields already on the watch. Best-effort: logs and moves on.
 func (s *Server) reconcileWatches(ctx context.Context) {
 	grabbed := s.grabbedSceneSet(ctx)
 	if len(grabbed) == 0 {
@@ -113,14 +118,33 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 		return
 	}
 	for _, wt := range list {
+		if wt.Status == watches.StatusGrabbed {
+			continue // already terminal
+		}
 		if grabbed[wt.StashDBID] {
-			if err := s.watches.Delete(ctx, wt.StashDBID); err != nil {
-				s.log.Warn("watch reconcile delete", "scene", wt.StashDBID, "err", err)
+			if err := s.watches.MarkGrabbed(ctx, wt.StashDBID,
+				wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
+				s.log.Warn("watch reconcile mark grabbed", "scene", wt.StashDBID, "err", err)
 				continue
 			}
 			s.log.Info("watch resolved — scene already grabbed", "scene", wt.StashDBID)
 		}
 	}
+}
+
+// findWatch loads a single watch by id, or nil. Small wrapper over List —
+// the watch list is tiny, so a dedicated lookup isn't worth a repo method.
+func (s *Server) findWatch(ctx context.Context, id string) *watches.Watch {
+	list, err := s.watches.List(ctx)
+	if err != nil {
+		return nil
+	}
+	for i := range list {
+		if list[i].StashDBID == id {
+			return &list[i]
+		}
+	}
+	return nil
 }
 
 func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
@@ -133,23 +157,14 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// postWatchGrab grabs the available release recorded on a watch, then
-// removes the watch (its job is done). The user clicks this from the
-// Watching tab when a watch goes available.
+// postWatchGrab grabs the auto-picked (best) release recorded on a watch and
+// flips it to 'grabbed' — the watch LINGERS (it is not deleted) so its batch
+// progress reads correctly. The user clicks this from the Watching tab when a
+// watch goes available. To grab a DIFFERENT release than the best, see
+// postWatchGrabCandidate.
 func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	list, err := s.watches.List(r.Context())
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
-	}
-	var wt *watches.Watch
-	for i := range list {
-		if list[i].StashDBID == id {
-			wt = &list[i]
-			break
-		}
-	}
+	wt := s.findWatch(r.Context(), id)
 	if wt == nil {
 		writeErr(w, http.StatusNotFound, "watch not found")
 		return
@@ -170,8 +185,141 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 		writeMappedErr(w, err, http.StatusBadGateway)
 		return
 	}
-	// Grabbed → the watch is done; remove it.
-	_ = s.watches.Delete(r.Context(), id)
+	if err := s.watches.MarkGrabbed(r.Context(), id,
+		wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
+		s.log.Warn("watch mark grabbed", "scene", id, "err", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// postWatchGrabCandidate grabs a SPECIFIC release from a watch's stored
+// candidate list (a re-pick when the auto-chosen best isn't what the user
+// wants) and flips the watch to 'grabbed'. The candidate is matched by its
+// download URL against the list captured when the watch went available.
+func (s *Server) postWatchGrabCandidate(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var req struct {
+		DownloadURL string `json:"download_url"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if req.DownloadURL == "" {
+		writeErr(w, http.StatusBadRequest, "download_url required")
+		return
+	}
+	wt := s.findWatch(r.Context(), id)
+	if wt == nil {
+		writeErr(w, http.StatusNotFound, "watch not found")
+		return
+	}
+	if wt.Status != watches.StatusAvailable {
+		writeErr(w, http.StatusUnprocessableEntity, "watch has no candidates to pick from")
+		return
+	}
+	var cands []sceneRelease
+	if len(wt.Candidates) > 0 {
+		_ = json.Unmarshal(wt.Candidates, &cands)
+	}
+	var cand *sceneRelease
+	for i := range cands {
+		if cands[i].DownloadURL == req.DownloadURL {
+			cand = &cands[i]
+			break
+		}
+	}
+	if cand == nil {
+		writeErr(w, http.StatusNotFound, "candidate not found on this watch")
+		return
+	}
+	if _, err := s.doGrab(r.Context(), grabRequest{
+		DownloadURL:    cand.DownloadURL,
+		ReleaseTitle:   cand.Title,
+		ReleaseSize:    cand.Size,
+		ReleaseIndexer: cand.Indexer,
+		Protocol:       cand.Protocol,
+		SceneID:        wt.StashDBID,
+		Confidence:     cand.Confidence,
+		PerformerName:  wt.PerformerName,
+	}); err != nil {
+		writeMappedErr(w, err, http.StatusBadGateway)
+		return
+	}
+	if err := s.watches.MarkGrabbed(r.Context(), id,
+		cand.Title, cand.DownloadURL, cand.Indexer, cand.Protocol, cand.Size); err != nil {
+		s.log.Warn("watch mark grabbed (candidate)", "scene", id, "err", err)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// addWatchBatchRequest is the bulk-create body: many watches sharing a batch.
+// Used by "watch all missing for a performer" and Discover multi-select.
+type addWatchBatchRequest struct {
+	BatchLabel string            `json:"batch_label"`
+	Watches    []addWatchRequest `json:"watches"`
+}
+
+// postWatchBatch creates many watches at once under a generated batch id, so
+// the Watching tab can group + show their collective progress. Unlike
+// postWatch it does NOT hydrate each scene's display metadata from StashDB
+// (that would be N round-trips); callers pass card metadata they already have,
+// and the watch loop's BackfillMeta fills any gaps later.
+func (s *Server) postWatchBatch(w http.ResponseWriter, r *http.Request) {
+	var req addWatchBatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json")
+		return
+	}
+	if len(req.Watches) == 0 {
+		writeErr(w, http.StatusBadRequest, "no watches")
+		return
+	}
+	batchID := fmt.Sprintf("b%d", time.Now().UnixNano())
+	ws := make([]watches.Watch, 0, len(req.Watches))
+	for _, it := range req.Watches {
+		if it.StashDBID == "" {
+			continue
+		}
+		ws = append(ws, watches.Watch{
+			StashDBID:     it.StashDBID,
+			Title:         it.Title,
+			Date:          it.Date,
+			StudioName:    it.Studio,
+			ImageURL:      it.ImageURL,
+			PerformerName: it.PerformerName,
+			PerformerID:   it.PerformerID,
+			Target:        normalizeTarget(it.Target),
+			BatchID:       batchID,
+			BatchLabel:    req.BatchLabel,
+		})
+	}
+	if len(ws) == 0 {
+		writeErr(w, http.StatusBadRequest, "no valid watches")
+		return
+	}
+	if err := s.watches.AddBatch(r.Context(), ws); err != nil {
+		s.log.Error("watch batch add", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	s.log.Info("watch batch added", "batch", batchID, "label", req.BatchLabel, "count", len(ws))
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "batch_id": batchID, "count": len(ws)})
+}
+
+// clearBatch removes every watch in a batch (the Watching tab's per-batch
+// "Clear", typically used once a collection batch is fully grabbed).
+func (s *Server) clearBatch(w http.ResponseWriter, r *http.Request) {
+	batchID := chi.URLParam(r, "batchId")
+	if batchID == "" {
+		writeErr(w, http.StatusBadRequest, "batch id required")
+		return
+	}
+	if err := s.watches.DeleteBatch(r.Context(), batchID); err != nil {
+		s.log.Error("watch batch clear", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
