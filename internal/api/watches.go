@@ -399,9 +399,10 @@ const searchNowConcurrency = 2
 // and results land via the normal list poll.
 func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BatchID string `json:"batch_id"`
+		BatchID string   `json:"batch_id"`
+		IDs     []string `json:"ids"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req) // body optional (no batch = all watching)
+	_ = json.NewDecoder(r.Body).Decode(&req) // body optional (nothing = all watching)
 
 	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
 		writeErr(w, http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)")
@@ -418,12 +419,23 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
+	// Scope, most specific first: an explicit id set (a UI group's exact
+	// watching rows — unambiguous for both batches and ungrouped singles),
+	// else a batch, else every watching row.
+	idSet := make(map[string]bool, len(req.IDs))
+	for _, id := range req.IDs {
+		idSet[id] = true
+	}
 	var targets []watches.Watch
 	for _, wt := range list {
 		if wt.Status != watches.StatusWatching {
 			continue // already available / grabbed — nothing to search
 		}
-		if req.BatchID != "" && wt.BatchID != req.BatchID {
+		if len(idSet) > 0 {
+			if !idSet[wt.StashDBID] {
+				continue
+			}
+		} else if req.BatchID != "" && wt.BatchID != req.BatchID {
 			continue
 		}
 		targets = append(targets, wt)

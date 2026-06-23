@@ -1307,15 +1307,19 @@ export function grabWatchCandidate(
   });
 }
 
-// searchWatches kicks an immediate, server-bounded re-search of the still-
-// watching scenes (optionally scoped to one batch), bypassing the 30-min loop
-// so a fresh batch surfaces releases now. Returns how many it's searching; the
-// per-watch `searching` flag + list poll show progress. 409 if one's running.
-export function searchWatches(batchId?: string): Promise<{
-  ok: boolean;
-  searching: number;
-}> {
-  return postJSON("/watches/search-now", batchId ? { batch_id: batchId } : {});
+// searchWatches kicks an immediate, server-bounded re-search of still-watching
+// scenes, bypassing the 30-min loop so they surface releases now. Scope by an
+// explicit id set (a group's exact rows) or a batch, or nothing for all
+// watching. Returns how many it's searching; the per-watch `searching` flag +
+// list poll show progress. 409 if one's already running.
+export function searchWatches(opts?: {
+  ids?: string[];
+  batchId?: string;
+}): Promise<{ ok: boolean; searching: number }> {
+  const body: { ids?: string[]; batch_id?: string } = {};
+  if (opts?.ids?.length) body.ids = opts.ids;
+  else if (opts?.batchId) body.batch_id = opts.batchId;
+  return postJSON("/watches/search-now", body);
 }
 
 // clearWatchBatch removes every watch in a batch (the per-batch "Clear",

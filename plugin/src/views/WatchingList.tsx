@@ -175,7 +175,13 @@ function WatchGroup({
   const searchNow = async () => {
     setSearchBusy(true);
     try {
-      const r = await searchWatches(group.id);
+      // Pass this group's exact watching ids so the search is scoped precisely
+      // (works the same for a batch or the ungrouped "Single tracks" group).
+      const r = await searchWatches({
+        ids: items
+          .filter((w) => w.status === "watching")
+          .map((w) => w.stashdb_id),
+      });
       onToast(
         `Searching ${r.searching} scene${r.searching === 1 ? "" : "s"}…`,
       );
@@ -239,7 +245,7 @@ function WatchGroup({
           <span className="watch-group-progress">{progress}</span>
         </div>
         <div className="watch-group-actions">
-          {isBatch && watching.length > 0 && (
+          {watching.length > 0 && (
             <button
               className="watch-clear watch-search-now"
               disabled={searchBusy || searchingCount > 0}
