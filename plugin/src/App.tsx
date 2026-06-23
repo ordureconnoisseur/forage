@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import PerformersList from "./views/PerformersList";
 import MissingScenes from "./views/MissingScenes";
-import CollectionMode from "./views/CollectionMode";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
-import JobsList from "./views/JobsList";
 import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
 import Setup from "./views/Setup";
@@ -22,7 +20,6 @@ import {
   mixedContentBlocked,
   NotificationCounts,
   setUnauthorizedHandler,
-  startCollectionJob,
   verifyToken,
 } from "./api";
 
@@ -34,13 +31,10 @@ import {
 type Route =
   | { kind: "performers" }
   | { kind: "missing"; performerId: string }
-  | { kind: "collection"; performerId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "watching" }
-  | { kind: "grabs" }
-  | { kind: "jobs" }
-  | { kind: "job"; jobId: string; performerId: string };
+  | { kind: "grabs" };
 
 function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -48,9 +42,6 @@ function parseRoute(hash: string): Route {
   const parts = pathPart.split("/").filter(Boolean);
   const query = new URLSearchParams(queryPart || "");
   if (parts[0] === "performer" && parts[1]) {
-    if (parts[2] === "collection") {
-      return { kind: "collection", performerId: parts[1] };
-    }
     return { kind: "missing", performerId: parts[1] };
   }
   if (parts[0] === "scene" && parts[1]) {
@@ -62,14 +53,6 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "grabs") {
     return { kind: "grabs" };
-  }
-  if (parts[0] === "jobs") {
-    return { kind: "jobs" };
-  }
-  // #/job/<jobId>/<performerId> — re-open a finished job as the
-  // interactive collection view (performerId carried for folder context).
-  if (parts[0] === "job" && parts[1] && parts[2]) {
-    return { kind: "job", jobId: parts[1], performerId: parts[2] };
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
@@ -87,14 +70,6 @@ function setHash(h: string) {
 export default function App() {
   const [route, setRoute] = useState<Route>(parseRoute(location.hash));
   const [settingsOpen, setSettingsOpen] = useState(false);
-  // Optional scene-id subset for the next collection view, set when the
-  // user launches "grab selected" from MissingScenes. In-memory (not in
-  // the hash) since it's a transient list; cleared when it no longer
-  // matches the active performer so a plain collection link is unscoped.
-  const [collectionScope, setCollectionScope] = useState<{
-    performerId: string;
-    sceneIds: string[];
-  } | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
   // Bumped by the setup wizard on completion to force a fresh health
   // probe (so needsSetup re-evaluates and the wizard unmounts) without a
@@ -253,70 +228,12 @@ export default function App() {
   const goDiscover = () => setHash("#/discover");
   const goWatching = () => setHash("#/watching");
   const goGrabs = () => setHash("#/grabs");
-  const goJobs = () => setHash("#/jobs");
-  const goJobReview = (jobId: string, performerId: string) =>
-    setHash(`#/job/${jobId}/${performerId}`);
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
-  const goCollection = (id: string) => {
-    setCollectionScope(null); // full collection
-    setHash(`#/performer/${id}/collection`);
-  };
-  // Launch the collection view scoped to a hand-picked subset of scenes.
-  const goCollectionSelected = (id: string, sceneIds: string[]) => {
-    setCollectionScope({ performerId: id, sceneIds });
-    setHash(`#/performer/${id}/collection`);
-  };
   const goScene = (id: string, performerName?: string) => {
     const suffix = performerName
       ? `?p=${encodeURIComponent(performerName)}`
       : "";
     setHash(`#/scene/${id}${suffix}`);
-  };
-  // Hand a collection crawl to the daemon, then jump to the Jobs tab.
-  const runCollectionOnServer = async (id: string, sceneIds?: string[]) => {
-    try {
-      await startCollectionJob(id, sceneIds);
-    } catch (e) {
-      // Surface minimally; the Jobs tab will show nothing if it failed.
-      alert("Couldn't start server job: " + (e as Error).message);
-      return;
-    }
-    goJobs();
-  };
-  // Grab a Discover selection. The collection flow is per-performer, so
-  // a single-performer selection opens the same interactive collection
-  // view the missing page uses; a multi-performer selection fans out one
-  // server job per performer and lands on the Jobs tab for review.
-  const grabDiscoverSelection = async (
-    groups: Array<{ performerId: string; sceneIds: string[] }>,
-  ) => {
-    if (groups.length === 0) return;
-    if (groups.length === 1) {
-      goCollectionSelected(groups[0].performerId, groups[0].sceneIds);
-      return;
-    }
-    const results = await Promise.allSettled(
-      groups.map((g) => startCollectionJob(g.performerId, g.sceneIds)),
-    );
-    const failed = results.filter((r) => r.status === "rejected").length;
-    if (failed > 0) {
-      alert(
-        `Started ${groups.length - failed} of ${groups.length} server jobs — ` +
-          `${failed} failed. The Jobs tab shows what's running.`,
-      );
-    }
-    goJobs();
-  };
-  // Start an UPGRADE crawl over owned scenes (sceneIds = the selection, or
-  // omitted = every owned scene) and jump straight to its review — the job
-  // only suggests releases that beat each scene's current resolution.
-  const goUpgrade = async (id: string, sceneIds?: string[]) => {
-    try {
-      const job = await startCollectionJob(id, sceneIds, { upgrade: true });
-      goJobReview(job.id, id);
-    } catch (e) {
-      alert("Couldn't start upgrade job: " + (e as Error).message);
-    }
   };
 
   const blocked = mixedContentBlocked();
@@ -345,7 +262,6 @@ export default function App() {
             className={
               route.kind === "performers" ||
               route.kind === "missing" ||
-              route.kind === "collection" ||
               route.kind === "scene"
                 ? "active"
                 : ""
@@ -392,17 +308,6 @@ export default function App() {
             <NavIcon name="grabs" />
             Grabs
           </a>
-          <a
-            href="#/jobs"
-            onClick={(e) => {
-              e.preventDefault();
-              goJobs();
-            }}
-            className={route.kind === "jobs" ? "active" : ""}
-          >
-            <NavIcon name="jobs" />
-            Jobs
-          </a>
         </nav>
         <div className="header-right">
           {ready && (
@@ -437,22 +342,6 @@ export default function App() {
           <MissingScenes
             performerId={route.performerId}
             onPickScene={goScene}
-            onCollection={goCollection}
-            onGrabSelected={goCollectionSelected}
-            onUpgrade={goUpgrade}
-          />
-        )}
-        {ready && route.kind === "collection" && (
-          <CollectionMode
-            performerId={route.performerId}
-            onBack={goPerformer}
-            onRunOnServer={runCollectionOnServer}
-            sceneIds={
-              collectionScope &&
-              collectionScope.performerId === route.performerId
-                ? collectionScope.sceneIds
-                : undefined
-            }
           />
         )}
         {ready && route.kind === "scene" && (
@@ -463,28 +352,13 @@ export default function App() {
           />
         )}
         {ready && route.kind === "discover" && (
-          <DiscoverList
-            onPickPerformer={goPerformer}
-            onPickScene={goScene}
-            onGrabSelected={grabDiscoverSelection}
-          />
+          <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
         )}
         {ready && route.kind === "watching" && (
           <WatchingList onPickScene={goScene} />
         )}
         {ready && route.kind === "grabs" && (
           <GrabsList onPickScene={goScene} />
-        )}
-        {ready && route.kind === "jobs" && (
-          <JobsList onPickPerformer={goPerformer} onReview={goJobReview} />
-        )}
-        {ready && route.kind === "job" && (
-          <CollectionMode
-            performerId={route.performerId}
-            jobId={route.jobId}
-            onBack={() => goJobs()}
-            onRunOnServer={runCollectionOnServer}
-          />
         )}
         {loading && (
           <div className="app-loading" role="status" aria-live="polite">

@@ -586,6 +586,66 @@ button {
 .watch-available-head .section-header {
   margin: 0;
 }
+/* Watch batches — each group of watches launched together. */
+.watch-group {
+  margin-bottom: 8px;
+}
+.watch-group-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 28px 0 12px 0;
+  flex-wrap: wrap;
+}
+.watch-group-title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.watch-group-title .section-header {
+  margin: 0;
+}
+.watch-group-progress {
+  font-size: 12px;
+  color: var(--text-dim, #9aa);
+}
+.watch-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.watch-clear {
+  background: transparent;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.15));
+  color: var(--text-dim, #9aa);
+  border-radius: var(--radius-pill, 999px);
+  padding: 5px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.watch-clear:hover:not(:disabled) {
+  color: var(--text, #eee);
+  border-color: var(--glass-border-bright, rgba(255, 255, 255, 0.3));
+}
+.watch-clear:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* A grabbed watch lingers, greyed, so batch progress reads correctly. */
+.watch-card.is-grabbed {
+  opacity: 0.6;
+}
+.watch-grabbed-label {
+  font-size: 12px;
+  color: var(--accent-bright, #22c55e);
+  white-space: nowrap;
+}
+.watch-cand-toggle {
+  margin-left: 8px;
+}
 .ms-select-bar {
   position: sticky;
   bottom: 0;

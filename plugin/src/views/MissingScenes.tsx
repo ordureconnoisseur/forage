@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  addWatch,
+  addWatches,
   destroyScene,
   fetchMissing,
+  type AddWatchReq,
   type DuplicateScene,
   type MissingResponse,
   type MissingScene,
@@ -11,6 +12,7 @@ import {
 } from "../api";
 import { humanSize } from "../format";
 import WatchControl from "../WatchControl";
+import PerformerPacks from "./PerformerPacks";
 
 // SceneView is the Owned · Both · Missing · Dupes filter on the performer page.
 type SceneView = "owned" | "both" | "missing" | "dupes";
@@ -47,24 +49,12 @@ function grabStatusLabel(status: string): string {
 export default function MissingScenes({
   performerId,
   onPickScene,
-  onCollection,
-  onGrabSelected,
-  onUpgrade,
 }: {
   performerId: string;
   // Receives the performer name too so the scene-releases page can
   // pass it through to /grab — the placer needs to know which library
   // folder to drop the file in.
   onPickScene: (stashDBID: string, performerName: string) => void;
-  // Launches "complete the collection" mode for this performer.
-  onCollection: (performerId: string) => void;
-  // Launches the collection flow scoped to a hand-picked scene subset.
-  onGrabSelected: (performerId: string, sceneIds: string[]) => void;
-  // Starts an upgrade crawl over owned scenes (sceneIds = the selection, or
-  // omitted = every owned scene) and jumps to its review. Async so the
-  // buttons can show progress and refuse double-clicks while the job
-  // setup round-trips.
-  onUpgrade: (performerId: string, sceneIds?: string[]) => Promise<void> | void;
 }) {
   const [data, setData] = useState<MissingResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -73,21 +63,11 @@ export default function MissingScenes({
   // navigating. selected holds the chosen StashDB ids.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  // Bulk-watch: pick a quality for all selected scenes at once.
-  const [watchPicking, setWatchPicking] = useState(false);
+  // Bulk-watch: pick a quality for selected scenes (picker="selected") or for
+  // every missing scene (picker="all"); both create one batch of watches.
+  const [picker, setPicker] = useState<null | "selected" | "all">(null);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
-  // An upgrade job is being started on the server (seconds of setup);
-  // disables the upgrade buttons so a second click can't double-submit.
-  const [upgradeBusy, setUpgradeBusy] = useState(false);
-  const startUpgrade = async (sceneIds?: string[]) => {
-    setUpgradeBusy(true);
-    try {
-      await onUpgrade(performerId, sceneIds);
-    } finally {
-      setUpgradeBusy(false); // re-arms only when starting failed
-    }
-  };
   // Owned · Both · Missing filter. Persisted so the choice sticks across
   // performers and sessions; defaults to Missing (the original behaviour).
   const [view, setView] = useState<SceneView>(() => {
@@ -145,41 +125,42 @@ export default function MissingScenes({
   const exitSelect = () => {
     setSelecting(false);
     setSelected(new Set());
-    setWatchPicking(false);
+    setPicker(null);
   };
 
-  // Watch every selected scene at one quality target, in parallel.
-  const watchSelected = async (target: WatchTarget) => {
-    setWatchPicking(false);
+  // Watch a set of missing scenes at one quality target as ONE batch — the
+  // Watching tab groups them under the performer's name and shows their
+  // collective progress. Used by both "watch selected" and "watch all missing".
+  const watchScenes = async (scenes: MissingScene[], target: WatchTarget) => {
+    if (scenes.length === 0) return;
+    setPicker(null);
     setWatchBusy(true);
-    const chosen = data.missing.filter((s) => selected.has(s.stashdb_id));
-    await Promise.all(
-      chosen.map((s) =>
-        addWatch({
-          stashdb_id: s.stashdb_id,
-          title: s.title,
-          date: s.date,
-          studio: s.studio,
-          image_url: s.image_url,
-          performer_name: data.performer.name,
-          performer_id: data.performer.local_id,
-          target,
-        }).catch(() => {}),
-      ),
-    );
+    const watches: AddWatchReq[] = scenes.map((s) => ({
+      stashdb_id: s.stashdb_id,
+      title: s.title,
+      date: s.date,
+      studio: s.studio,
+      image_url: s.image_url,
+      performer_name: data.performer.name,
+      performer_id: data.performer.local_id,
+      target,
+    }));
+    try {
+      await addWatches({ batch_label: data.performer.name, watches });
+    } catch {
+      // best-effort; the toast still confirms intent
+    }
     setWatchBusy(false);
-    const n = chosen.length;
+    const n = scenes.length;
     exitSelect();
     setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
     window.setTimeout(() => setWatchedMsg(null), 3500);
   };
 
-  // Selection works in Missing (grab/watch) and Owned (upgrade) views — not
-  // in Both (mixed kinds, ambiguous action). allIds is the current view's set.
-  const selectable = view === "missing" || view === "owned";
-  const allIds = (view === "owned" ? data.owned : data.missing).map(
-    (s) => s.stashdb_id,
-  );
+  // Selection works in the Missing view only (Watch a hand-picked subset).
+  // Owned/Both have no bulk action now that upgrades are gone.
+  const selectable = view === "missing";
+  const allIds = data.missing.map((s) => s.stashdb_id);
   const allSelected = selected.size === allIds.length && allIds.length > 0;
 
   // The cards to show for the current view. Owned scenes are tagged so the
@@ -265,21 +246,21 @@ export default function MissingScenes({
               >
                 Select
               </button>
-              {view === "owned" ? (
-                <button
-                  className="collection-cta"
-                  disabled={upgradeBusy}
-                  onClick={() => startUpgrade()}
-                  title="Search every owned scene for a higher-quality release"
-                >
-                  {upgradeBusy ? "Starting…" : "Upgrade collection →"}
-                </button>
+              {picker === "all" ? (
+                <QualityPicker
+                  label="Watch all at:"
+                  busy={watchBusy}
+                  onPick={(t) => watchScenes(data.missing, t)}
+                  onCancel={() => setPicker(null)}
+                />
               ) : (
                 <button
                   className="collection-cta"
-                  onClick={() => onCollection(performerId)}
+                  disabled={watchBusy}
+                  onClick={() => setPicker("all")}
+                  title="Watch every missing scene for releases (one batch)"
                 >
-                  Complete collection →
+                  {watchBusy ? "Watching…" : "Watch all missing ▾"}
                 </button>
               )}
             </div>
@@ -327,61 +308,65 @@ export default function MissingScenes({
       {view === "missing" && selecting && (
         <div className="ms-select-bar">
           <span className="ms-select-count">{selected.size} selected</span>
-          {watchPicking ? (
-            <div className="ms-watch-picker" role="menu">
-              <span className="ms-watch-picker-label">Watch at:</span>
-              {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map(
-                (t) => (
-                  <button
-                    key={t}
-                    disabled={watchBusy}
-                    onClick={() => watchSelected(t)}
-                  >
-                    {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
-                  </button>
-                ),
-              )}
-              <button
-                className="ms-watch-cancel"
-                onClick={() => setWatchPicking(false)}
-                aria-label="Cancel"
-              >
-                ×
-              </button>
-            </div>
+          {picker === "selected" ? (
+            <QualityPicker
+              label="Watch at:"
+              busy={watchBusy}
+              onPick={(t) =>
+                watchScenes(
+                  data.missing.filter((s) => selected.has(s.stashdb_id)),
+                  t,
+                )
+              }
+              onCancel={() => setPicker(null)}
+            />
           ) : (
             <button
               className="ms-select-watch"
               disabled={selected.size === 0 || watchBusy}
-              onClick={() => setWatchPicking(true)}
-              title="Watch all selected scenes for releases"
+              onClick={() => setPicker("selected")}
+              title="Watch all selected scenes for releases (one batch)"
             >
               {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
             </button>
           )}
-          <button
-            className="ms-select-grab"
-            disabled={selected.size === 0}
-            onClick={() => onGrabSelected(performerId, Array.from(selected))}
-          >
-            Grab {selected.size} selected →
-          </button>
         </div>
       )}
-      {view === "owned" && selecting && (
-        <div className="ms-select-bar">
-          <span className="ms-select-count">{selected.size} selected</span>
-          <button
-            className="ms-select-grab"
-            disabled={selected.size === 0 || upgradeBusy}
-            onClick={() => startUpgrade(Array.from(selected))}
-            title="Search the selected scenes for a higher-quality release"
-          >
-            {upgradeBusy ? "Starting…" : `Upgrade ${selected.size} selected →`}
-          </button>
-        </div>
+      {view !== "dupes" && (
+        <PerformerPacks
+          performerId={data.performer.local_id}
+          performerName={data.performer.name}
+        />
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
+    </div>
+  );
+}
+
+// QualityPicker is the inline "watch at <quality>" target chooser, shared by
+// the "watch all missing" and "watch selected" actions.
+function QualityPicker({
+  label,
+  busy,
+  onPick,
+  onCancel,
+}: {
+  label: string;
+  busy: boolean;
+  onPick: (t: WatchTarget) => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="ms-watch-picker" role="menu">
+      <span className="ms-watch-picker-label">{label}</span>
+      {(["any", "4k", "1080p", "720p", "480p"] as WatchTarget[]).map((t) => (
+        <button key={t} disabled={busy} onClick={() => onPick(t)}>
+          {t === "any" ? "Any" : t === "4k" ? "4K" : t === "480p" ? "SD" : t}
+        </button>
+      ))}
+      <button className="ms-watch-cancel" onClick={onCancel} aria-label="Cancel">
+        ×
+      </button>
     </div>
   );
 }

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  addWatch,
+  addWatches,
   DiscoverPerformer,
   DiscoverResponse,
   DiscoverScene,
   fetchDiscover,
   performerImageURL,
+  type AddWatchReq,
   type WatchTarget,
 } from "../api";
 import WatchControl from "../WatchControl";
@@ -32,20 +33,12 @@ const TRENDING_LIMIT = 50;
 export default function DiscoverList({
   onPickPerformer,
   onPickScene,
-  onGrabSelected,
 }: {
   onPickPerformer: (localID: string) => void;
   // Navigate straight to a scene's release-search page. Carries the
   // optional performer name so the placer can drop the file under
   // <library>/<performer>/ when the user grabs from this jump-point.
   onPickScene: (stashDBID: string, performerName?: string) => void;
-  // Grab the selection, grouped per performer (the collection flow is
-  // per-performer): one group opens the interactive collection view,
-  // several start one server job each. Async so the button can show
-  // progress while jobs start.
-  onGrabSelected: (
-    groups: Array<{ performerId: string; sceneIds: string[] }>,
-  ) => Promise<void> | void;
 }) {
   const [data, setData] = useState<DiscoverResponse | null>(null);
   const [loading, setLoading] = useState(true);
@@ -72,9 +65,6 @@ export default function DiscoverList({
   const [watchPicking, setWatchPicking] = useState(false);
   const [watchBusy, setWatchBusy] = useState(false);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
-  // Grab-selected is starting server jobs (multi-performer selections);
-  // disable + show progress so it can't double-submit.
-  const [grabBusy, setGrabBusy] = useState(false);
   // Bumped after a bulk watch so the refetch picks up the new
   // watch_status badges without waiting for the next poll.
   const [reloadKey, setReloadKey] = useState(0);
@@ -188,56 +178,38 @@ export default function DiscoverList({
   const allSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
-  // Watch every selected scene at one quality target, in parallel. Each
-  // scene carries its OWN primary library performer (unlike the
-  // per-performer pages) so the watch lands in the right folder later.
+  // Watch every selected scene at one quality target as ONE batch. Each
+  // scene carries its OWN primary library performer (unlike the per-performer
+  // pages) so each watch lands in the right folder later; the batch groups
+  // them in the Watching tab as a "Discover · N scenes" run.
   const watchSelected = async (target: WatchTarget) => {
     setWatchPicking(false);
     setWatchBusy(true);
     const chosen = data.scenes.filter((s) => selected.has(s.stashdb_id));
-    await Promise.all(
-      chosen.map((s) =>
-        addWatch({
-          stashdb_id: s.stashdb_id,
-          title: s.title || "",
-          date: s.release_date,
-          studio: s.studio_name,
-          image_url: s.image_url,
-          performer_name: s.performers[0]?.name,
-          performer_id: s.performers[0]?.stash_id,
-          target,
-        }).catch(() => {}),
-      ),
-    );
+    const watches: AddWatchReq[] = chosen.map((s) => ({
+      stashdb_id: s.stashdb_id,
+      title: s.title || "",
+      date: s.release_date,
+      studio: s.studio_name,
+      image_url: s.image_url,
+      performer_name: s.performers[0]?.name,
+      performer_id: s.performers[0]?.stash_id,
+      target,
+    }));
+    try {
+      await addWatches({
+        batch_label: `Discover · ${chosen.length} scene${chosen.length === 1 ? "" : "s"}`,
+        watches,
+      });
+    } catch {
+      // best-effort; the toast still confirms intent
+    }
     setWatchBusy(false);
     const n = chosen.length;
     exitSelect();
     setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
     window.setTimeout(() => setWatchedMsg(null), 3500);
     setReloadKey((k) => k + 1);
-  };
-
-  // Grab the selection: group scenes by their primary library performer
-  // (the unit the collection flow works in) and hand the groups up.
-  const grabSelected = async () => {
-    const byPerformer = new Map<string, string[]>();
-    for (const s of data.scenes) {
-      if (!selected.has(s.stashdb_id)) continue;
-      const pid = s.performers[0]?.stash_id;
-      if (!pid) continue; // not in the library — nothing to file under
-      byPerformer.set(pid, [...(byPerformer.get(pid) || []), s.stashdb_id]);
-    }
-    const groups = Array.from(byPerformer, ([performerId, sceneIds]) => ({
-      performerId,
-      sceneIds,
-    }));
-    if (groups.length === 0) return;
-    setGrabBusy(true);
-    try {
-      await onGrabSelected(groups);
-    } finally {
-      setGrabBusy(false); // re-arms only when starting failed / no navigation
-    }
   };
 
   return (
@@ -391,19 +363,11 @@ export default function DiscoverList({
               className="ms-select-watch"
               disabled={selected.size === 0 || watchBusy}
               onClick={() => setWatchPicking(true)}
-              title="Watch all selected scenes for releases"
+              title="Watch all selected scenes for releases (one batch)"
             >
               {watchBusy ? "Watching…" : `Watch ${selected.size} selected ▾`}
             </button>
           )}
-          <button
-            className="ms-select-grab"
-            disabled={selected.size === 0 || grabBusy}
-            onClick={grabSelected}
-            title="Search the selected scenes for releases — one performer opens the collection view; several start a server job each (review from the Jobs tab)"
-          >
-            {grabBusy ? "Starting…" : `Grab ${selected.size} selected →`}
-          </button>
         </div>
       )}
       {watchedMsg && <div className="ms-toast">{watchedMsg}</div>}
