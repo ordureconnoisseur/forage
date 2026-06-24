@@ -18,7 +18,7 @@ func sc(id, title, date, studioID, studioName string, perfs ...stashdb.ScenePerf
 	return s
 }
 
-func TestRebuildRecentAndPrune(t *testing.T) {
+func TestRebuildRecent(t *testing.T) {
 	ctx := context.Background()
 	dbh, err := db.Open(filepath.Join(t.TempDir(), "forager.db"))
 	if err != nil {
@@ -54,31 +54,6 @@ func TestRebuildRecentAndPrune(t *testing.T) {
 	dbh.QueryRow(`SELECT local_performer_ids, owned FROM recent_scene_cache WHERE stashdb_id='rc-recent'`).Scan(&ids, &owned)
 	if ids != `["1"]` || owned != "1" {
 		t.Errorf("rc-recent local_ids=%s owned=%s, want [\"1\"]/1", ids, owned)
-	}
-
-	// Prune: a scene not re-stamped this reconcile (older cached_at) is dropped
-	// along with its membership; freshly-stamped ones survive.
-	if err := UpsertScene(ctx, dbh, sc("stale", "x", "2026-06-01", "", "", A), now-100); err != nil {
-		t.Fatal(err)
-	}
-	pruned, err := PruneStaleScenes(ctx, dbh, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if pruned != 1 {
-		t.Errorf("pruned %d, want 1 (stale)", pruned)
-	}
-	dbh.QueryRow(`SELECT COUNT(*) FROM stashdb_scene WHERE stashdb_id='stale'`).Scan(&n)
-	if n != 0 {
-		t.Error("stale scene survived prune")
-	}
-	dbh.QueryRow(`SELECT COUNT(*) FROM scene_performer WHERE scene_id='stale'`).Scan(&n)
-	if n != 0 {
-		t.Error("stale scene's membership not cleaned")
-	}
-	dbh.QueryRow(`SELECT COUNT(*) FROM stashdb_scene WHERE stashdb_id='rc-recent'`).Scan(&n)
-	if n != 1 {
-		t.Error("freshly-stamped scene wrongly pruned")
 	}
 }
 
@@ -137,22 +112,5 @@ func TestSceneCacheUpsertReadAggregate(t *testing.T) {
 	st, _ := ScenesForStudio(ctx, dbh, "stud-X")
 	if len(st) != 2 {
 		t.Fatalf("stud-X scenes = %d, want 2", len(st))
-	}
-
-	// Recompute aggregates with sc-1 owned.
-	if err := RecomputeAggregates(ctx, dbh, []string{"sc-1"}); err != nil {
-		t.Fatal(err)
-	}
-	row := func(table, id string) (total, owned int, last int64) {
-		dbh.QueryRow(`SELECT total_stashdb_scenes, owned_scenes_count, last_release_unix FROM `+table+` WHERE stashdb_id = ?`, id).Scan(&total, &owned, &last)
-		return
-	}
-	tA, oA, _ := row("performer_cache", "perf-A")
-	if tA != 2 || oA != 1 { // A in sc-1(owned) + sc-3 → total 2, owned 1
-		t.Errorf("perf-A agg total=%d owned=%d, want 2/1", tA, oA)
-	}
-	tX, oX, _ := row("studio_cache", "stud-X")
-	if tX != 2 || oX != 1 { // stud-X in sc-1(owned) + sc-2 → total 2, owned 1
-		t.Errorf("stud-X agg total=%d owned=%d, want 2/1", tX, oX)
 	}
 }

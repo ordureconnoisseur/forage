@@ -334,3 +334,41 @@ func ScenesForSubjectLazy(ctx context.Context, db *sql.DB, sdb *stashdb.Client, 
 		`UPDATE `+table+` SET scenes_synced_at = ? WHERE stashdb_id = ?`, time.Now().Unix(), stashDBID)
 	return scenes, nil
 }
+
+// subjectKind distinguishes the performer vs studio passes/lazy loads.
+type subjectKind int
+
+const (
+	subjectPerformer subjectKind = iota
+	subjectStudio
+)
+
+func (k subjectKind) String() string {
+	if k == subjectStudio {
+		return "studio"
+	}
+	return "performer"
+}
+
+// readMetaInt / writeMetaInt are small helpers over the meta key/value table.
+func readMetaInt(ctx context.Context, db *sql.DB, key string) (int64, error) {
+	var s string
+	err := db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&s)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var v int64
+	_, err = fmt.Sscanf(s, "%d", &v)
+	return v, err
+}
+
+func writeMetaInt(ctx context.Context, db *sql.DB, key string, v int64) error {
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, fmt.Sprintf("%d", v))
+	return err
+}

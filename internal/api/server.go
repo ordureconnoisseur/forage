@@ -81,14 +81,6 @@ type Server struct {
 	ownedCopies        map[string][]stash.SceneRef
 	ownedCopiesFetched time.Time
 
-	// filmoCache memoises each performer's full StashDB filmography
-	// (QueryAllScenes), keyed by StashDB performer id. The query paginates
-	// a prolific performer's entire catalogue — seconds — and dominates a
-	// cold /missing-scenes load. Per-entry TTL; a performer's StashDB
-	// filmography changes rarely.
-	filmoMu    sync.Mutex
-	filmoCache map[string]filmoEntry
-
 	// scorer ranks releases by the user's preference rules (config
 	// ReleaseRules). Lazily built from the composed config, rebuilt on a
 	// /config save. Guarded by scorerMu.
@@ -120,11 +112,6 @@ type Server struct {
 
 type sceneTitleEntry struct {
 	title   string
-	fetched time.Time
-}
-
-type filmoEntry struct {
-	scenes  []stashdb.Scene
 	fetched time.Time
 }
 
@@ -198,8 +185,6 @@ func (s *Server) Router() http.Handler {
 		r.Post("/refresh/performers", s.postRefreshPerformers)
 		r.Post("/refresh/studios", s.postRefreshStudios)
 		r.Post("/refresh/scenes", s.postRefreshScenes)
-		r.Get("/debug/owned-count-check", s.getOwnedCountCheck)
-		r.Get("/debug/idcount-check", s.getIDCountCheck)
 		r.Post("/match", s.postMatch)
 		r.Get("/search", s.getSearch)
 		r.Post("/grab", s.postGrab)
@@ -311,12 +296,6 @@ func (s *Server) invalidateOwned() {
 	s.ownedCopies = nil
 	s.ownedCopiesMu.Unlock()
 }
-
-// filmoTTL is how long a performer's cached StashDB filmography is reused.
-// Longer than ownedTTL: a performer's StashDB catalogue is very stable
-// (new scenes arrive over days, not seconds), and there are hundreds of
-// performers, so a short window would re-fetch on every revisit.
-const filmoTTL = 10 * time.Minute
 
 // performerFilmography returns a performer's full StashDB filmography via the
 // LAZY loader: served from the persistent cache when fresh, otherwise fetched

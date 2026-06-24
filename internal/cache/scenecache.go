@@ -91,18 +91,6 @@ func UpsertScene(ctx context.Context, ex sceneExecer, s stashdb.Scene, now int64
 	return nil
 }
 
-// SceneCacheEmpty reports whether the persistent scene cache holds no rows yet.
-// Used at boot to force a full sync that populates it even when the 12h
-// aggregate timestamps are still fresh (e.g. right after the feature ships).
-func SceneCacheEmpty(ctx context.Context, db *sql.DB) bool {
-	var exists int
-	if err := db.QueryRowContext(ctx,
-		`SELECT EXISTS(SELECT 1 FROM stashdb_scene LIMIT 1)`).Scan(&exists); err != nil {
-		return false // unknown → don't force a heavy sync on a query error
-	}
-	return exists == 0
-}
-
 // UpsertSceneBatch writes a fetched batch of StashDB scenes into the persistent
 // cache in one transaction. Safe to call concurrently from the refresh workers —
 // the single DB connection serializes the transactions (fetches stay parallel;
@@ -275,76 +263,6 @@ func RebuildRecentSceneCache(ctx context.Context, db *sql.DB, cutoff, start int6
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM recent_scene_cache WHERE (release_unix < ? OR cached_at < ?) AND trending_rank <= 0`,
 		cutoff, start); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-// PruneStaleScenes deletes persistent-cache scenes whose cached_at predates the
-// given full-reconcile start (they were not re-fetched, i.e. they have vanished
-// from every owned subject's StashDB catalogue), plus the now-orphaned
-// scene_performer rows. ONLY safe after a FULL reconcile pass (which re-stamps
-// cached_at on every scene still live in StashDB) — never after a delta pass,
-// which leaves unchanged scenes' cached_at untouched.
-func PruneStaleScenes(ctx context.Context, db *sql.DB, reconcileStart int64) (int64, error) {
-	res, err := db.ExecContext(ctx,
-		`DELETE FROM stashdb_scene WHERE cached_at < ?`, reconcileStart)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := res.RowsAffected()
-	if _, err := db.ExecContext(ctx,
-		`DELETE FROM scene_performer WHERE scene_id NOT IN (SELECT stashdb_id FROM stashdb_scene)`); err != nil {
-		return n, err
-	}
-	return n, nil
-}
-
-// RecomputeAggregates recomputes the performer_cache and studio_cache scene
-// aggregates (total / owned / last_release) purely from the persistent scene
-// cache and the given owned StashDB scene-id set — no StashDB queries.
-func RecomputeAggregates(ctx context.Context, db *sql.DB, ownedIDs []string) error {
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	if _, err := tx.ExecContext(ctx,
-		`CREATE TEMP TABLE IF NOT EXISTS _owned_scene (stashdb_id TEXT PRIMARY KEY)`); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM _owned_scene`); err != nil {
-		return err
-	}
-	ins, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO _owned_scene (stashdb_id) VALUES (?)`)
-	if err != nil {
-		return err
-	}
-	for _, id := range ownedIDs {
-		if _, err := ins.ExecContext(ctx, id); err != nil {
-			ins.Close()
-			return err
-		}
-	}
-	ins.Close()
-
-	// Performers: derived from scene_performer membership.
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE performer_cache SET
-		  total_stashdb_scenes = (SELECT COUNT(*) FROM scene_performer sp WHERE sp.performer_stashdb_id = performer_cache.stashdb_id),
-		  owned_scenes_count   = (SELECT COUNT(*) FROM scene_performer sp JOIN _owned_scene o ON o.stashdb_id = sp.scene_id WHERE sp.performer_stashdb_id = performer_cache.stashdb_id),
-		  last_release_unix    = COALESCE((SELECT MAX(s.release_unix) FROM scene_performer sp JOIN stashdb_scene s ON s.stashdb_id = sp.scene_id WHERE sp.performer_stashdb_id = performer_cache.stashdb_id), 0)
-		WHERE stashdb_id IS NOT NULL AND stashdb_id != ''`); err != nil {
-		return err
-	}
-	// Studios: derived from stashdb_scene.studio_id (one studio per scene).
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE studio_cache SET
-		  total_stashdb_scenes = (SELECT COUNT(*) FROM stashdb_scene s WHERE s.studio_id = studio_cache.stashdb_id),
-		  owned_scenes_count   = (SELECT COUNT(*) FROM stashdb_scene s JOIN _owned_scene o ON o.stashdb_id = s.stashdb_id WHERE s.studio_id = studio_cache.stashdb_id),
-		  last_release_unix    = COALESCE((SELECT MAX(s.release_unix) FROM stashdb_scene s WHERE s.studio_id = studio_cache.stashdb_id), 0)
-		WHERE stashdb_id NOT LIKE 'stash:%'`); err != nil {
 		return err
 	}
 	return tx.Commit()
