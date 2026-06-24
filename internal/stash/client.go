@@ -326,6 +326,39 @@ func (c *Client) FindAllOwnedStashDBSceneIDs(ctx context.Context) ([]string, err
 	return out, nil
 }
 
+// countUnidentifiedQuery counts a subject's local scenes that carry NO StashDB
+// cross-id — the ones invisible to the StashDB-based owned/missing bars.
+const countUnidentifiedQuery = `
+query ForagerUnidentified($filter: SceneFilterType!) {
+  findScenes(scene_filter: $filter, filter: { per_page: 1 }) { count }
+}`
+
+// CountUnidentifiedScenes returns how many local scenes are tagged with the given
+// performer OR studio (by LOCAL id) but have no StashDB cross-id — so they don't
+// count toward owned and can surface as false "missing" on the gap bar. Pass
+// exactly one of performerLocalID / studioLocalID.
+func (c *Client) CountUnidentifiedScenes(ctx context.Context, performerLocalID, studioLocalID string) (int, error) {
+	endpoint := "https://" + StashDBEndpointHost + "/graphql"
+	filter := map[string]any{
+		"stash_id_endpoint": map[string]any{"endpoint": endpoint, "modifier": "NULL"},
+	}
+	if performerLocalID != "" {
+		filter["performers"] = map[string]any{"value": []string{performerLocalID}, "modifier": "INCLUDES"}
+	}
+	if studioLocalID != "" {
+		filter["studios"] = map[string]any{"value": []string{studioLocalID}, "modifier": "INCLUDES"}
+	}
+	var resp struct {
+		FindScenes struct {
+			Count int `json:"count"`
+		} `json:"findScenes"`
+	}
+	if err := c.do(ctx, countUnidentifiedQuery, map[string]any{"filter": filter}, &resp); err != nil {
+		return 0, err
+	}
+	return resp.FindScenes.Count, nil
+}
+
 // findOwnedAttributionQuery pulls each local scene's StashDB cross-id plus its
 // studio's and performers' cross-ids — the source for per-subject owned-scene
 // counts in the lazy cache redesign (no StashDB round-trips).

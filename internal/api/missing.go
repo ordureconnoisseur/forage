@@ -114,6 +114,11 @@ type missingResponse struct {
 	Missing     []missingScene   `json:"missing"`
 	Owned       []ownedScene     `json:"owned"`
 	Duplicates  []duplicateScene `json:"duplicates"`
+	// UnidentifiedLocal is how many of your local scenes are tagged with this
+	// subject but carry NO StashDB cross-id — so they're invisible to the
+	// owned/missing math above (a scene you actually hold but never identified
+	// can otherwise show as "missing"). 0 when the count couldn't be fetched.
+	UnidentifiedLocal int `json:"unidentified_local"`
 }
 
 // getMissingScenes returns the StashDB scenes featuring the given
@@ -278,13 +283,32 @@ func (s *Server) getMissingScenes(w http.ResponseWriter, r *http.Request) {
 		missing = append(missing, ms)
 	}
 
+	// Count this subject's local scenes that lack a StashDB cross-id — they
+	// don't participate in the owned/missing diff above, so surface them so the
+	// bar doesn't imply you're missing scenes you actually hold un-identified.
+	// Best-effort: a failure just leaves it 0.
+	unidentified := 0
+	if pl, sl := "", ""; subj.LocalID != "" {
+		if subj.Kind == "studio" {
+			sl = subj.LocalID
+		} else {
+			pl = subj.LocalID
+		}
+		if n, uerr := stashC.CountUnidentifiedScenes(r.Context(), pl, sl); uerr != nil {
+			s.log.Warn("unidentified scene count", "subject", subj.LocalID, "err", uerr)
+		} else {
+			unidentified = n
+		}
+	}
+
 	out := missingResponse{
-		Subject:     subj,
-		TotalScenes: len(scenes),
-		OwnedCount:  len(owned),
-		Missing:     missing,
-		Owned:       owned,
-		Duplicates:  duplicates,
+		Subject:           subj,
+		TotalScenes:       len(scenes),
+		OwnedCount:        len(owned),
+		Missing:           missing,
+		Owned:             owned,
+		Duplicates:        duplicates,
+		UnidentifiedLocal: unidentified,
 	}
 	// Back-compat: populate the legacy `performer` block for a performer
 	// subject so older clients keep working until they read `subject`.
