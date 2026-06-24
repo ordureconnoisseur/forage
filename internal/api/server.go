@@ -318,64 +318,17 @@ func (s *Server) invalidateOwned() {
 // performers, so a short window would re-fetch on every revisit.
 const filmoTTL = 10 * time.Minute
 
-// performerFilmography returns a performer's full StashDB filmography. It reads
-// from the PERSISTENT scene cache (no StashDB round-trip) — the cache is filled
-// by the 12h refresh. Only when the cache has nothing for this performer (not
-// yet synced, or the window before the first populate completes) does it fall
-// back to a live StashDB query, memoised per performer for filmoTTL.
+// performerFilmography returns a performer's full StashDB filmography via the
+// LAZY loader: served from the persistent cache when fresh, otherwise fetched
+// from StashDB on this visit, cached, and stamped (see
+// cache.ScenesForSubjectLazy). No eager pre-fetch.
 func (s *Server) performerFilmography(ctx context.Context, sdb *stashdb.Client, stashDBPerformerID string) ([]stashdb.Scene, error) {
-	if scenes, err := cache.ScenesForPerformer(ctx, s.db, stashDBPerformerID); err != nil {
-		s.log.Warn("scene cache read failed; falling back to live query", "performer", stashDBPerformerID, "err", err)
-	} else if len(scenes) > 0 {
-		return scenes, nil
-	}
-	// Fallback: live query (memoised). Coalesce concurrent loads under the lock.
-	s.filmoMu.Lock()
-	defer s.filmoMu.Unlock()
-	if s.filmoCache == nil {
-		s.filmoCache = map[string]filmoEntry{}
-	}
-	if e, ok := s.filmoCache[stashDBPerformerID]; ok && time.Since(e.fetched) < filmoTTL {
-		return e.scenes, nil
-	}
-	scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
-		PerformerIDs: []string{stashDBPerformerID},
-		PerPage:      50,
-	}, 5000) // hardCap matches the scene-cache cap so card/page counts agree
-	if err != nil {
-		return nil, err
-	}
-	s.filmoCache[stashDBPerformerID] = filmoEntry{scenes: scenes, fetched: time.Now()}
-	return scenes, nil
+	return cache.ScenesForPerformerLazy(ctx, s.db, sdb, stashDBPerformerID)
 }
 
-// studioFilmography returns a studio's full StashDB catalogue. Cache-first like
-// performerFilmography, falling back to a live (memoised) query under the
-// "studio:" key namespace when the cache has nothing for this studio yet.
+// studioFilmography is the studio analogue of performerFilmography.
 func (s *Server) studioFilmography(ctx context.Context, sdb *stashdb.Client, stashDBStudioID string) ([]stashdb.Scene, error) {
-	if scenes, err := cache.ScenesForStudio(ctx, s.db, stashDBStudioID); err != nil {
-		s.log.Warn("studio scene cache read failed; falling back to live query", "studio", stashDBStudioID, "err", err)
-	} else if len(scenes) > 0 {
-		return scenes, nil
-	}
-	s.filmoMu.Lock()
-	defer s.filmoMu.Unlock()
-	if s.filmoCache == nil {
-		s.filmoCache = map[string]filmoEntry{}
-	}
-	key := "studio:" + stashDBStudioID
-	if e, ok := s.filmoCache[key]; ok && time.Since(e.fetched) < filmoTTL {
-		return e.scenes, nil
-	}
-	scenes, err := sdb.QueryAllScenes(ctx, stashdb.SceneQuery{
-		StudioIDs: []string{stashDBStudioID},
-		PerPage:   100,
-	}, 5000)
-	if err != nil {
-		return nil, err
-	}
-	s.filmoCache[key] = filmoEntry{scenes: scenes, fetched: time.Now()}
-	return scenes, nil
+	return cache.ScenesForStudioLazy(ctx, s.db, sdb, stashDBStudioID)
 }
 
 // releaseScorer returns the Scorer for the user's current release rules,

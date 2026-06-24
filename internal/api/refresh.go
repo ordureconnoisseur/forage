@@ -126,8 +126,8 @@ func (s *Server) postRefreshScenes(w http.ResponseWriter, r *http.Request) {
 		defer s.sceneSyncMu.Unlock()
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 		defer cancel()
-		if err := cache.SyncStashDBScenes(ctx, stashC, stashDBC, s.db, s.log.With("op", "scene-sync")); err != nil {
-			s.log.Error("manual scene sync failed", "err", err)
+		if err := cache.SyncStashDBCounts(ctx, stashC, stashDBC, s.db, s.log.With("op", "count-sync")); err != nil {
+			s.log.Error("manual count sync failed", "err", err)
 		}
 	}()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "started": true})
