@@ -1,8 +1,10 @@
 # Lazy scene cache + cheap counts (redesign)
 
-Status: planned, not started. Supersedes the eager scene-cache sync that phases
-1–5 shipped (commits `a19b1f5`…`eac68aa`). Tonight's eager cache works and stays
-live until this lands.
+Status: SHIPPED 2026-06-24 (commit `439230a`). Replaced the eager scene-cache
+sync from phases 1–5. Verified live: bars match/improve, Discover intact, lazy
+loads exact, count sync 2min (was 5.5). The eager machinery (SyncStashDBScenes,
+delta/reconcile/prune, RefreshSceneCache/RefreshStudioCache, RecomputeAggregates,
+the /debug endpoints) is now dead code awaiting a tidy-up commit.
 
 ## Verification results (2026-06-24) — read before building
 
