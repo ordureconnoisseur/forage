@@ -331,6 +331,10 @@ export interface MissingResponse {
   missing: MissingScene[];
   owned: OwnedScene[];
   duplicates: DuplicateScene[];
+  // Local scenes tagged with this subject that have NO StashDB id — invisible to
+  // the owned/missing math (a scene you hold but never identified can otherwise
+  // read as "missing"). Common with amateur creators.
+  unidentified_local: number;
 }
 
 // destroyScene deletes one local Stash scene (and its file) by LOCAL scene id

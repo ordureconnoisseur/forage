@@ -214,6 +214,14 @@ export default function MissingScenes({
           <div className="meta">
             {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
             <strong>{data.missing.length} missing</strong>
+            {data.unidentified_local > 0 && (
+              <span
+                className="ms-unidentified"
+                title="Local scenes tagged with this name that carry no StashDB id, so they aren't matched against StashDB's catalogue. Some of what shows as 'missing' may already be here, just un-identified — run Stash's identify/scrape to fold them in."
+              >
+                {" · "}+{data.unidentified_local.toLocaleString()} un-identified
+              </span>
+            )}
           </div>
           <div className="scene-view-toggle" role="tablist" aria-label="Scene filter">
             {(

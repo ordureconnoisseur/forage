@@ -6037,6 +6037,16 @@ code.grab-fact-v,
   border-color: transparent;
 }
 /* Transient confirmation after a bulk watch. */
+/* Un-identified-scene heads-up in the gap-analysis meta line: local scenes with
+   no StashDB id that the owned/missing math can't see. Muted amber + dotted
+   underline to read as an informational footnote (tooltip explains). */
+.ms-unidentified {
+  color: var(--status-downloading, #d4a14a);
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+  white-space: nowrap;
+}
+
 .ms-toast {
   position: fixed;
   bottom: 24px;
