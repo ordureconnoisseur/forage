@@ -4,6 +4,31 @@ Status: planned, not started. Supersedes the eager scene-cache sync that phases
 1–5 shipped (commits `a19b1f5`…`eac68aa`). Tonight's eager cache works and stays
 live until this lands.
 
+## Verification results (2026-06-24) — read before building
+
+Two owned-count approaches were shadow-tested against the live eager numbers
+(via `GET /debug/owned-count-check` and `GET /debug/idcount-check`, both still
+in the tree):
+
+- **Local-tag attribution (DEAD).** Counting owned scenes from the *local*
+  scene→studio/performer cross-ids undercounts badly — 402/757 performers
+  differ, because local tagging is less complete than StashDB's matching (e.g.
+  Jia Lissa: StashDB knows she's in 36 owned scenes, locally only 5 are tagged).
+  Studios diverge both ways (parent vs sub-label). **Do not use local tags for
+  owned counts.**
+- **ID-only attribution (PROVEN — use this).** Fetch just the subject's scene
+  *ids* from StashDB (`QuerySceneIDs`, ~10x lighter than bodies) and intersect
+  with the owned set — same semantics as the eager pass. Sampled top-owned
+  subjects matched **20/20 performers, 18/20 studios**; the 2 studio diffs are
+  >5,000-scene mega-studios where both methods are cap-limited. The `count`
+  field also returns the TRUE total (fixes the eager method's capped/inflated
+  mega-studio totals). Because id payloads are light, **raise the id cap** (e.g.
+  20k) so even mega-studios get exact owned counts.
+
+Net change to the plan below: owned counts come from **ID-only StashDB fetches**
+(NOT local tags), and the count pass is still per-subject (can't be skipped) but
+fetches ids only. Everything else (lazy bodies, scoped Discover) stands.
+
 ## Why
 
 The eager sync downloads **every** owned performer's and studio's full StashDB
@@ -29,14 +54,15 @@ performer/studio, one StashDB query `per_page: 1, sort: DATE, direction: DESC` �
 read `count` (→ `total_stashdb_scenes`) and the first scene's date (→
 `last_release_unix`). ~2,400 tiny queries, ~1 min, vs 5+ min of downloads.
 
-`owned_scenes_count` comes from the **local** library, no StashDB: one Stash
-sweep returning each owned scene's `stashdb_id` + its studio `stashdb_id` +
-performer `stashdb_id`s, grouped per subject in Go. (Extend the existing
-`FindAllOwnedStashDBSceneIDs` sweep, or add a richer sibling.) This is the
-trickiest piece — the owned-count attribution — resolve it first.
+`owned_scenes_count` comes from **intersecting the id list with the owned set**
+(`FindAllOwnedStashDBSceneIDs`) — same as the eager pass, proven to match (see
+Verification above). NOT from local tags. Use a high id cap (~20k) so mega-
+studios are exact. So the count pass IS still per-subject (can't be skipped —
+owned counts need StashDB's view), but fetches ids only, not bodies.
 
 These three numbers drive the list-page bars exactly as today; nothing else
-about `performer_cache` / `studio_cache` changes.
+about `performer_cache` / `studio_cache` changes. Replaces the body-fetch +
+`RecomputeAggregates` path — aggregates are written directly from the count pass.
 
 ### 2. Scene bodies — lazy, cached on click
 `performerFilmography` / `studioFilmography` (`internal/api/server.go`) already
