@@ -340,7 +340,7 @@ query ForagerUnidentified($filter: SceneFilterType!) {
 func (c *Client) CountUnidentifiedScenes(ctx context.Context, performerLocalID, studioLocalID string) (int, error) {
 	endpoint := "https://" + StashDBEndpointHost + "/graphql"
 	filter := map[string]any{
-		"stash_id_endpoint": map[string]any{"endpoint": endpoint, "modifier": "NULL"},
+		"stash_id_endpoint": map[string]any{"endpoint": endpoint, "modifier": "IS_NULL"},
 	}
 	if performerLocalID != "" {
 		filter["performers"] = map[string]any{"value": []string{performerLocalID}, "modifier": "INCLUDES"}
