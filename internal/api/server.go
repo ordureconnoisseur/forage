@@ -199,6 +199,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/refresh/studios", s.postRefreshStudios)
 		r.Post("/refresh/scenes", s.postRefreshScenes)
 		r.Get("/debug/owned-count-check", s.getOwnedCountCheck)
+		r.Get("/debug/idcount-check", s.getIDCountCheck)
 		r.Post("/match", s.postMatch)
 		r.Get("/search", s.getSearch)
 		r.Post("/grab", s.postGrab)

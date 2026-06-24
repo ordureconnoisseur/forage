@@ -262,6 +262,82 @@ query ForagerFindScene($id: ID!) {
 	return &s, nil
 }
 
+// querySceneIDsGQL is the minimal projection used for COUNTING: just the total
+// `count` and each scene's id + date. ~10x smaller payload than the full scene
+// fragment — enough to compute a subject's total + owned (intersect ids with the
+// owned set) + last-release, without downloading bodies.
+const querySceneIDsGQL = `
+query ForagerSceneIDs($input: SceneQueryInput!) {
+  queryScenes(input: $input) {
+    count
+    scenes { id date }
+  }
+}`
+
+// SceneCount is the lightweight count result for one subject: the StashDB total,
+// the scene ids (to intersect with the owned set), and the newest release date.
+type SceneCount struct {
+	Total           int
+	IDs             []string
+	LastReleaseUnix int64
+}
+
+// QuerySceneIDs paginates a subject's scenes pulling ONLY id + date (and the
+// total `count`). For the lazy cache's count pass: total + owned (caller
+// intersects IDs with the owned set) + last release, without fetching bodies.
+func (c *Client) QuerySceneIDs(ctx context.Context, q SceneQuery, hardCap int) (SceneCount, error) {
+	if q.PerPage == 0 {
+		q.PerPage = 100
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	sort := q.Sort
+	if sort == "" {
+		sort = "DATE"
+	}
+	var out SceneCount
+	for {
+		input := map[string]any{"page": q.Page, "per_page": q.PerPage, "sort": sort, "direction": "DESC"}
+		if len(q.PerformerIDs) > 0 {
+			input["performers"] = map[string]any{"value": q.PerformerIDs, "modifier": "INCLUDES_ALL"}
+		}
+		if len(q.StudioIDs) > 0 {
+			input["studios"] = map[string]any{"value": q.StudioIDs, "modifier": "INCLUDES"}
+		}
+		var resp struct {
+			QueryScenes struct {
+				Count  int `json:"count"`
+				Scenes []struct {
+					ID   string `json:"id"`
+					Date string `json:"date"`
+				} `json:"scenes"`
+			} `json:"queryScenes"`
+		}
+		if err := c.do(ctx, querySceneIDsGQL, map[string]any{"input": input}, &resp); err != nil {
+			return SceneCount{}, err
+		}
+		out.Total = resp.QueryScenes.Count
+		if len(resp.QueryScenes.Scenes) == 0 {
+			break
+		}
+		for _, s := range resp.QueryScenes.Scenes {
+			out.IDs = append(out.IDs, s.ID)
+			if t, err := time.Parse("2006-01-02", s.Date); err == nil && t.Unix() > out.LastReleaseUnix {
+				out.LastReleaseUnix = t.Unix()
+			}
+		}
+		if len(resp.QueryScenes.Scenes) < q.PerPage {
+			break
+		}
+		if hardCap > 0 && len(out.IDs) >= hardCap {
+			break
+		}
+		q.Page++
+	}
+	return out, nil
+}
+
 // QueryAllScenes loops QueryScenes through every page until the result
 // set is exhausted. Use sparingly — a popular performer can have
 // hundreds of scenes (≥10 round-trips). hardCap stops the loop early

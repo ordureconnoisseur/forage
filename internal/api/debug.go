@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/cache"
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
 // getOwnedCountCheck is a SHADOW diagnostic for the lazy cache redesign: it
@@ -111,4 +112,89 @@ func abs(n int) int {
 		return -n
 	}
 	return n
+}
+
+// getIDCountCheck verifies the ID-ONLY count path: for a sample of subjects it
+// fetches just the scene ids from StashDB (the lightweight count query),
+// computes total + owned (ids ∩ owned set), and diffs against the live cache
+// numbers. Unlike the local-tag method, this uses the same
+// StashDB-scene-ids-∩-owned semantics as the eager pass, so it SHOULD match
+// exactly — proving the lighter count path preserves the bars before we wire it.
+func (s *Server) getIDCountCheck(w http.ResponseWriter, r *http.Request) {
+	sc := s.pool.Stash()
+	sdb := s.pool.StashDB()
+	if sc == nil || sdb == nil {
+		writeErr(w, http.StatusServiceUnavailable, "stash and stashdb required")
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+
+	ownedIDs, err := sc.FindAllOwnedStashDBSceneIDs(ctx)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "owned sweep: "+err.Error())
+		return
+	}
+	owned := make(map[string]bool, len(ownedIDs))
+	for _, id := range ownedIDs {
+		owned[id] = true
+	}
+
+	type sample struct {
+		Name       string `json:"name"`
+		OldTotal   int    `json:"old_total"`
+		NewTotal   int    `json:"new_total"`
+		OldOwned   int    `json:"old_owned"`
+		NewOwned   int    `json:"new_owned"`
+		OwnedMatch bool   `json:"owned_match"`
+	}
+	check := func(table string, isStudio bool) ([]sample, int, int) {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT stashdb_id, COALESCE(name,''), owned_scenes_count, total_stashdb_scenes
+			  FROM `+table+`
+			 WHERE stashdb_id IS NOT NULL AND stashdb_id != '' AND stashdb_id NOT LIKE 'stash:%'
+			 ORDER BY owned_scenes_count DESC LIMIT 20`)
+		if err != nil {
+			return nil, 0, 0
+		}
+		defer rows.Close()
+		var out []sample
+		matched := 0
+		for rows.Next() {
+			var id, name string
+			var oldOwned, oldTotal int
+			if err := rows.Scan(&id, &name, &oldOwned, &oldTotal); err != nil {
+				continue
+			}
+			q := stashdb.SceneQuery{}
+			if isStudio {
+				q.StudioIDs = []string{id}
+			} else {
+				q.PerformerIDs = []string{id}
+			}
+			cnt, err := sdb.QuerySceneIDs(ctx, q, 5000)
+			if err != nil {
+				continue
+			}
+			newOwned := 0
+			for _, sid := range cnt.IDs {
+				if owned[sid] {
+					newOwned++
+				}
+			}
+			ok := newOwned == oldOwned
+			if ok {
+				matched++
+			}
+			out = append(out, sample{Name: name, OldTotal: oldTotal, NewTotal: cnt.Total, OldOwned: oldOwned, NewOwned: newOwned, OwnedMatch: ok})
+		}
+		return out, matched, len(out)
+	}
+
+	perf, pm, pn := check("performer_cache", false)
+	stud, sm, sn := check("studio_cache", true)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"performers": map[string]any{"sampled": pn, "owned_matched": pm, "samples": perf},
+		"studios":    map[string]any{"sampled": sn, "owned_matched": sm, "samples": stud},
+	})
 }
