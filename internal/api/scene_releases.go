@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +19,19 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
+
+// packRe flags a release that is a multi-scene PACK / collection rather than a
+// single scene — e.g. a performer "MegaPACK", a "Performer Pack", a
+// "Collection", or a "50 scenes" bundle. Such a release can share a performer
+// name with a single-scene watch and so verify on title overlap (the performer
+// name appears in both titles), but grabbing it pulls tens of GB of the wrong
+// thing. SiteRip/compilation are deliberately NOT here — a single scene is
+// often released as a SiteRip, and a compilation can be a legitimate StashDB
+// scene in its own right.
+var packRe = regexp.MustCompile(`(?i)(mega[\s._-]?pack|\bpack\b|\bcollection\b|\b\d{2,}\s?(scene|video|clip)s\b)`)
+
+// isPackRelease reports whether a release title looks like a multi-scene pack.
+func isPackRelease(title string) bool { return packRe.MatchString(title) }
 
 type sceneReleasesResponse struct {
 	Scene struct {
@@ -478,6 +492,15 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 			}
 			reasons = append(reasons, "jav code matches scene")
 			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
+		}
+		// A multi-scene PACK is never a single scene, even when it shares the
+		// performer name (which inflates title overlap enough to verify). Strip
+		// the verification so it can't be auto-grabbed for a single-scene watch
+		// — grabbing a performer megapack for one scene pulls tens of GB of the
+		// wrong content.
+		if verified && isPackRelease(rel.Title) {
+			verified = false
+			reasons = append(reasons, "looks like a multi-scene pack, not this scene")
 		}
 		sc := scorer.Score(rel.Title, rel.Indexer, rel.Protocol)
 		out[res.Index] = sceneRelease{
