@@ -307,6 +307,9 @@ function WatchCard({
   const [busy, setBusy] = useState(false);
   const [queued, setQueued] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // Which release row has its score-justification ("why ranked here") panel
+  // open. One at a time, keyed by row key. null = all collapsed.
+  const [whyKey, setWhyKey] = useState<string | null>(null);
   // The release the user intends to grab — defaults to the auto-picked best
   // (found_url). Choosing a different candidate re-picks via the candidate
   // endpoint instead of the plain best-grab.
@@ -368,6 +371,9 @@ function WatchCard({
     size: number;
     grabs: number;
     seeders: number;
+    score: number;
+    scoreHits?: { label: string; points: number; reject?: boolean }[];
+    reasons?: string[];
   };
   let rows: RowData[] = [];
   if (avail || isGrabbed) {
@@ -385,6 +391,9 @@ function WatchCard({
         size: r.size,
         grabs: r.grabs,
         seeders: r.seeders,
+        score: r.score ?? 0,
+        scoreHits: r.score_hits,
+        reasons: r.reasons,
       }));
     } else if (w.found_title) {
       rows = [
@@ -397,6 +406,7 @@ function WatchCard({
           size: w.found_size || 0,
           grabs: 0,
           seeders: 0,
+          score: 0,
         },
       ];
     }
@@ -498,36 +508,95 @@ function WatchCard({
             {rows.map((r) => {
               const sel = r.downloadUrl === picked;
               const noLink = r.downloadUrl === "";
+              // The justification: the per-rule preference breakdown that
+              // produced this release's score, plus the matcher's component
+              // reasons. Only offer the toggle when there's something to show.
+              const hits = r.scoreHits || [];
+              const reasons = r.reasons || [];
+              const hasWhy = hits.length > 0 || reasons.length > 0;
+              const whyOpen = whyKey === r.key;
               return (
-                <label
-                  key={r.key}
-                  className={"watch-rel-row" + (sel ? " is-selected" : "")}
-                >
-                  {selectable ? (
-                    <input
-                      type="radio"
-                      name={"pick-" + w.stashdb_id}
-                      checked={sel}
-                      disabled={noLink}
-                      title={
-                        noLink ? "indexer provided no download link" : undefined
-                      }
-                      onChange={() => setPicked(r.downloadUrl)}
-                    />
-                  ) : (
-                    <span className="watch-rel-dot" aria-hidden="true" />
+                <div key={r.key} className="watch-rel-item">
+                  <label
+                    className={"watch-rel-row" + (sel ? " is-selected" : "")}
+                  >
+                    {selectable ? (
+                      <input
+                        type="radio"
+                        name={"pick-" + w.stashdb_id}
+                        checked={sel}
+                        disabled={noLink}
+                        title={
+                          noLink
+                            ? "indexer provided no download link"
+                            : undefined
+                        }
+                        onChange={() => setPicked(r.downloadUrl)}
+                      />
+                    ) : (
+                      <span className="watch-rel-dot" aria-hidden="true" />
+                    )}
+                    <span className="watch-rel-q">
+                      <ResBadge title={r.title} />
+                    </span>
+                    <code className="watch-rel-file">{r.title}</code>
+                    <span className="watch-rel-meta">
+                      {humanSize(r.size, "?")} · {r.indexer} ·{" "}
+                      {r.protocol === "usenet"
+                        ? `${r.grabs} grabs`
+                        : `${r.seeders} seeders`}
+                    </span>
+                    {hasWhy && (
+                      <button
+                        type="button"
+                        className={
+                          "watch-rel-why" + (whyOpen ? " open" : "")
+                        }
+                        aria-expanded={whyOpen}
+                        title="Why this release ranks here"
+                        onClick={(e) => {
+                          // Inside a <label>: stop the click from toggling
+                          // the row's radio selection.
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setWhyKey(whyOpen ? null : r.key);
+                        }}
+                      >
+                        <span className="watch-rel-score">
+                          {r.score >= 0 ? "+" : ""}
+                          {r.score}
+                        </span>
+                        <span className="watch-rel-why-chev">▾</span>
+                      </button>
+                    )}
+                  </label>
+                  {whyOpen && (
+                    <div className="watch-rel-why-panel">
+                      {hits.length > 0 && (
+                        <ul className="watch-rel-why-hits">
+                          {hits.map((h, i) => (
+                            <li
+                              key={i}
+                              className={h.reject ? "is-reject" : ""}
+                            >
+                              <span className="why-label">{h.label}</span>
+                              <span className="why-pts">
+                                {h.points >= 0 ? "+" : ""}
+                                {h.points}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {reasons.length > 0 && (
+                        <div className="watch-rel-why-match">
+                          <span className="why-cap">match</span>{" "}
+                          {reasons.join(" · ")}
+                        </div>
+                      )}
+                    </div>
                   )}
-                  <span className="watch-rel-q">
-                    <ResBadge title={r.title} />
-                  </span>
-                  <code className="watch-rel-file">{r.title}</code>
-                  <span className="watch-rel-meta">
-                    {humanSize(r.size, "?")} · {r.indexer} ·{" "}
-                    {r.protocol === "usenet"
-                      ? `${r.grabs} grabs`
-                      : `${r.seeders} seeders`}
-                  </span>
-                </label>
+                </div>
               );
             })}
             {avail && canExpand && others > 0 && (

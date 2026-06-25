@@ -5136,9 +5136,13 @@ code.grab-fact-v,
   padding-top: 10px;
   border-top: 1px solid var(--glass-border);
 }
+.watch-rel-item {
+  display: flex;
+  flex-direction: column;
+}
 .watch-rel-row {
   display: grid;
-  grid-template-columns: 14px 46px minmax(0, 1fr) auto;
+  grid-template-columns: 14px 46px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
@@ -5226,6 +5230,100 @@ code.grab-fact-v,
 }
 .watch-rel-chev.open {
   transform: rotate(180deg);
+}
+
+/* ─── Per-release score "why" toggle ─────────────────────────────────
+   A quiet pill at the end of each release row showing the preference
+   score. Click it to expand the rule-by-rule justification for why the
+   release ranks where it does. Lives inside the row <label>, so its
+   click is stopped from toggling the radio. */
+.watch-rel-why {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.1s ease, border-color 0.12s ease;
+}
+.watch-rel-why:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  border-color: var(--glass-border-strong, var(--glass-border));
+}
+.watch-rel-why.open {
+  color: var(--text);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.1);
+}
+.watch-rel-score {
+  font-weight: 600;
+}
+.watch-rel-why-chev {
+  font-size: 8px;
+  color: var(--text-dim);
+  transition: transform 0.15s ease;
+}
+.watch-rel-why.open .watch-rel-why-chev {
+  transform: rotate(180deg);
+}
+
+/* The expandable justification panel, indented to align under the file
+   name column (radio 14 + gap 10 + badge 46 + gap 10 = 80px). */
+.watch-rel-why-panel {
+  padding: 6px 8px 8px 80px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.watch-rel-why-hits {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.watch-rel-why-hits li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.watch-rel-why-hits li .why-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-rel-why-hits li .why-pts {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text-dim);
+  flex: none;
+}
+.watch-rel-why-hits li.is-reject .why-label,
+.watch-rel-why-hits li.is-reject .why-pts {
+  color: var(--danger, #e0696a);
+}
+.watch-rel-why-match {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.watch-rel-why-match .why-cap {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9.5px;
+  opacity: 0.7;
+  margin-right: 2px;
 }
 
 /* ─── First-run setup wizard ─────────────────────────────────────────
@@ -6492,12 +6590,15 @@ code.grab-fact-v,
     white-space: normal;
   }
   .watch-rel-row {
-    grid-template-columns: 14px 46px minmax(0, 1fr);
+    grid-template-columns: 14px 46px minmax(0, 1fr) auto;
     row-gap: 1px;
   }
   .watch-rel-meta {
     grid-column: 2 / -1;
     text-align: left;
+  }
+  .watch-rel-why-panel {
+    padding-left: 36px;
   }
 
   /* Collection rows: smaller thumb, titles may wrap to two lines. */
