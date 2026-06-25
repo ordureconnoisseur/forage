@@ -33,6 +33,20 @@ var packRe = regexp.MustCompile(`(?i)(mega[\s._-]?pack|\bpack\b|\bcollection\b|\
 // isPackRelease reports whether a release title looks like a multi-scene pack.
 func isPackRelease(title string) bool { return packRe.MatchString(title) }
 
+// linkSpamRe flags a release whose title advertises a streaming / file-locker
+// link or a "watch full video" CTA. These come from tube-aggregator indexers
+// (e.g. MyPornClub) and are SEO/affiliate spam: the torrent itself is a short
+// teaser or a crushed low-bitrate rip, and the title shoves a stream host to
+// drive traffic there. A real scene/p2p release title never contains a URL or
+// "watch full video", so this is a near-zero-false-positive junk signal. We
+// match an explicit URL, the CTA phrasing, and the common file-locker hosts
+// (which sometimes appear without a scheme).
+var linkSpamRe = regexp.MustCompile(`(?i)(https?://|watch[\s._-]+full[\s._-]+video|\b(lulustream|luluvid|streamtape|mixdrop|doodstream|dood\.|filemoon|streamlare|vidoza|streamsb|earnvids|vidguard|streamwish)\b)`)
+
+// isLinkSpamRelease reports whether a release title is streaming-link spam
+// rather than a real downloadable scene.
+func isLinkSpamRelease(title string) bool { return linkSpamRe.MatchString(title) }
+
 type sceneReleasesResponse struct {
 	Scene struct {
 		StashDBID  string             `json:"stashdb_id"`
@@ -501,6 +515,13 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		if verified && isPackRelease(rel.Title) {
 			verified = false
 			reasons = append(reasons, "looks like a multi-scene pack, not this scene")
+		}
+		// A title advertising a streaming link / "watch full video" is tube
+		// spam — a teaser or crushed rip, not the full release. Un-verify so it
+		// can't be auto-grabbed or stored as a watch candidate.
+		if verified && isLinkSpamRelease(rel.Title) {
+			verified = false
+			reasons = append(reasons, "title advertises a streaming link — looks like spam, not the full release")
 		}
 		sc := scorer.Score(rel.Title, rel.Indexer, rel.Protocol)
 		out[res.Index] = sceneRelease{

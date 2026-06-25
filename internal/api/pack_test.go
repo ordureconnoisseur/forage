@@ -31,3 +31,29 @@ func TestIsPackRelease(t *testing.T) {
 		}
 	}
 }
+
+func TestIsLinkSpamRelease(t *testing.T) {
+	spam := []string{
+		"New Onlyfans Comatozze Real Couple Having Sensual Sex in the Morning WATCH FULL VIDEO FHD: https://lulustream.com/n0r8ehugwpoz",
+		"Hot Amateur Teen - Watch Full Video here streamtape.com/v/abc",
+		"Leaked OF - full video fhd mixdrop",
+		"Watch.Full.Video doodstream",
+	}
+	for _, s := range spam {
+		if !isLinkSpamRelease(s) {
+			t.Errorf("isLinkSpamRelease(%q) = false, want true (streaming-link spam)", s)
+		}
+	}
+
+	clean := []string{
+		"BlacksOnBlondes.26.06.19.Cyber.Doll.XXX.1080p.MP4-WRB",
+		"[ManyVids.com] Sweetie Fox - Busty Stranger on a Bicycle [2026-06-12, Anal, 1080p, SiteRip]",
+		"Wild Open House XXX 2160p",
+		"OAE302",
+	}
+	for _, s := range clean {
+		if isLinkSpamRelease(s) {
+			t.Errorf("isLinkSpamRelease(%q) = true, want false (real release)", s)
+		}
+	}
+}
