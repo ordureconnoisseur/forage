@@ -280,9 +280,10 @@ function WatchGroup({
             }
           }}
         >
-          <span className={"watch-group-chev" + (collapsed ? "" : " open")}>
-            ▾
-          </span>
+          <span
+            className={"fchev" + (collapsed ? "" : " open")}
+            aria-hidden="true"
+          />
           <h3 className="section-header">{group.label}</h3>
           <span className="watch-group-progress">{progress}</span>
         </div>
@@ -634,7 +635,10 @@ function WatchCard({
                           {r.score >= 0 ? "+" : ""}
                           {r.score}
                         </span>
-                        <span className="watch-rel-why-chev">▾</span>
+                        <span
+                          className={"fchev" + (whyOpen ? " open" : "")}
+                          aria-hidden="true"
+                        />
                       </button>
                     )}
                   </label>
@@ -673,9 +677,10 @@ function WatchCard({
                 onClick={() => setExpanded((e) => !e)}
                 title="Show every release this watch found — pick a different one"
               >
-                <span className={"watch-rel-chev" + (expanded ? " open" : "")}>
-                  ▾
-                </span>
+                <span
+                  className={"fchev" + (expanded ? " open" : "")}
+                  aria-hidden="true"
+                />
                 {expanded
                   ? "Show fewer"
                   : `${others} other release${others === 1 ? "" : "s"}`}

@@ -1855,7 +1855,10 @@ function GrabRow({
             <span>{relativeTime(g.updated_at)}</span>
           </div>
         </div>
-        <span className="grab-caret">{expanded ? "▼" : "▶"}</span>
+        <span
+          className={"grab-caret fchev" + (expanded ? " open" : "")}
+          aria-hidden="true"
+        />
       </button>
 
       {expanded && (

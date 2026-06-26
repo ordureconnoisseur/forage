@@ -426,8 +426,12 @@ export default function SceneReleases({
                 className="section-header collapsible"
                 onClick={() => setShowUnverified((v) => !v)}
               >
-                {showUnverified ? "▼" : "▶"} Unverified ({unverified.length}) — different
-                scenes that share a title token
+                <span
+                  className={"fchev" + (showUnverified ? " open" : "")}
+                  aria-hidden="true"
+                />{" "}
+                Unverified ({unverified.length}) — different scenes that share a
+                title token
               </h3>
               {showUnverified && (
                 <ReleaseList releases={unverified} grabs={grabs} onGrab={grab} />

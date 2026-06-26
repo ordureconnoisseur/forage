@@ -25,6 +25,11 @@
   --text-muted: rgba(255, 255, 255, 0.55);
   --text-dim: rgba(255, 255, 255, 0.45);
 
+  /* Shared disclosure chevron — the rounded-stroke glyph from the refract
+     theme, as a mask so its colour follows the element's color. Used by
+     .fchev and the <details> summary markers. */
+  --fchev: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M2.5 4.5 L6 8 L9.5 4.5'/%3E%3C/svg%3E");
+
   --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-bg-strong: rgba(255, 255, 255, 0.10);
   --glass-border: rgba(255, 255, 255, 0.12);
@@ -64,6 +69,25 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* Shared disclosure chevron. Rounded-stroke glyph (refract theme) drawn via
+   mask so it tints with `color`. Default points right (collapsed); .open
+   rotates it down (expanded) — the conventional foldable-group affordance. */
+.fchev {
+  display: inline-block;
+  flex: none;
+  width: 13px;
+  height: 13px;
+  vertical-align: middle;
+  background-color: currentColor;
+  -webkit-mask: var(--fchev) center / contain no-repeat;
+  mask: var(--fchev) center / contain no-repeat;
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
+}
+.fchev.open {
+  transform: rotate(0deg);
 }
 
 html,
@@ -650,16 +674,16 @@ button {
 .watch-group-title .section-header {
   margin: 0;
 }
-/* Collapse chevron — points right when collapsed, down when expanded. */
-.watch-group-chev {
+/* The group header's collapse chevron is bigger so it reads clearly as a
+   foldable group/batch. */
+.watch-group-title .fchev {
+  width: 17px;
+  height: 17px;
   align-self: center;
-  font-size: 10px;
-  color: var(--text-dim);
-  transform: rotate(-90deg);
-  transition: transform 0.15s ease;
+  color: var(--text-muted);
 }
-.watch-group-chev.open {
-  transform: rotate(0deg);
+.watch-group-title:hover .fchev {
+  color: var(--accent-bright, #22c55e);
 }
 .watch-group-progress {
   font-size: 12px;
@@ -1254,12 +1278,21 @@ button {
   display: none;
 }
 .match-why > summary::before {
-  content: "▸ ";
-  font-size: 9px;
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: middle;
   opacity: 0.7;
+  background-color: currentColor;
+  -webkit-mask: var(--fchev) center / contain no-repeat;
+  mask: var(--fchev) center / contain no-repeat;
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
 }
 .match-why[open] > summary::before {
-  content: "▾ ";
+  transform: rotate(0deg);
 }
 .match-why > summary:hover {
   color: var(--accent-bright);
@@ -1563,8 +1596,6 @@ button {
 }
 .settings-section-head .caret {
   color: var(--text-muted);
-  font-size: 10px;
-  width: 12px;
 }
 .settings-section-head .title {
   flex: 1;
@@ -2184,8 +2215,6 @@ button {
 }
 .grab-caret {
   color: var(--text-dim);
-  font-size: 10px;
-  text-align: center;
 }
 
 /* ── Expanded grab: the "dossier" ──────────────────────────────────
@@ -4435,11 +4464,20 @@ code.grab-fact-v,
   width: fit-content;
 }
 .job-scenes > summary::before {
-  content: "▸ ";
-  font-size: 9px;
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 4px;
+  vertical-align: middle;
+  background-color: currentColor;
+  -webkit-mask: var(--fchev) center / contain no-repeat;
+  mask: var(--fchev) center / contain no-repeat;
+  transform: rotate(-90deg);
+  transition: transform 0.18s ease;
 }
 .job-scenes[open] > summary::before {
-  content: "▾ ";
+  transform: rotate(0deg);
 }
 .job-scene-list {
   list-style: none;
@@ -5235,17 +5273,8 @@ code.grab-fact-v,
   color: var(--text-muted);
   background: rgba(255, 255, 255, 0.03);
 }
-.watch-rel-chev {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 14px;
-  font-size: 9px;
+.watch-rel-more .fchev {
   color: var(--text-dim);
-  transition: transform 0.15s ease;
-}
-.watch-rel-chev.open {
-  transform: rotate(180deg);
 }
 
 /* ─── Per-release score "why" toggle ─────────────────────────────────
@@ -5281,13 +5310,14 @@ code.grab-fact-v,
 .watch-rel-score {
   font-weight: 600;
 }
-.watch-rel-why-chev {
-  font-size: 8px;
+/* The "why" pill is compact, so its chevron is a touch smaller. */
+.watch-rel-why .fchev {
+  width: 11px;
+  height: 11px;
   color: var(--text-dim);
-  transition: transform 0.15s ease;
 }
-.watch-rel-why.open .watch-rel-why-chev {
-  transform: rotate(180deg);
+.watch-rel-why.open .fchev {
+  color: var(--text-muted);
 }
 
 /* The expandable justification panel, indented to align under the file

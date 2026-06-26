@@ -1024,7 +1024,10 @@ function Section({
   return (
     <div className={"settings-section" + (isOpen ? " open" : "")}>
       <button className="settings-section-head" onClick={onToggle}>
-        <span className="caret">{isOpen ? "▼" : "▶"}</span>
+        <span
+          className={"caret fchev" + (isOpen ? " open" : "")}
+          aria-hidden="true"
+        />
         <span className="title">{title}</span>
         {probe && <ProbeChip result={probe} />}
         {subProbe && <ProbeChip result={subProbe} />}
