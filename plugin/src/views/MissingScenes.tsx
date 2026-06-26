@@ -406,6 +406,16 @@ function SceneCard({
             }}
           />
         ) : null}
+        <a
+          href={`https://stashdb.org/scenes/${s.stashdb_id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="thumb-external"
+          title="Open on StashDB"
+          onClick={(e) => e.stopPropagation()}
+        >
+          ↗
+        </a>
         {owned && resolution && (
           <span
             className={"scene-res-badge res-" + resTierFromLabel(resolution)}
