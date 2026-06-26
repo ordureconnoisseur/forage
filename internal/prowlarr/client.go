@@ -40,12 +40,12 @@ func New(baseURL, apiKey string) *Client {
 // Popularity is "seeders" for torrents and "grabs" for usenet so callers
 // can sort across protocols with one comparable signal.
 type Release struct {
-	Title       string
-	Indexer     string
-	IndexerID   int
-	Protocol    string // "torrent" | "usenet"
-	Size    int64
-	Seeders int // torrent only; 0 for usenet
+	Title     string
+	Indexer   string
+	IndexerID int
+	Protocol  string // "torrent" | "usenet"
+	Size      int64
+	Seeders   int // torrent only; 0 for usenet
 	// SeedersKnown distinguishes a real zero from an indexer that simply
 	// omits the seeders field (cookie/HTML-scraped trackers do): a
 	// seeder floor must not erase such an indexer's whole catalog.
@@ -53,8 +53,8 @@ type Release struct {
 	Grabs        int // present for both; the dominant signal for usenet
 	Popularity   int
 	PublishDate  string // RFC3339
-	InfoURL     string
-	DownloadURL string
+	InfoURL      string
+	DownloadURL  string
 	// Magnet is a magnet: URI when the indexer is magnet-only (e.g. The
 	// Pirate Bay, whose downloadUrl is empty). GrabURL falls back to it.
 	Magnet     string

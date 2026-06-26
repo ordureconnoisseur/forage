@@ -1,0 +1,7 @@
+# Go tooling (gofmt, the CI gofmt check) expects LF. On Windows checkouts
+# autocrlf would otherwise leave CRLF in the working tree, which makes local
+# `gofmt -l` flag every file and hides real formatting drift. Pin Go sources
+# (and other text the toolchain reads) to LF in the working tree too.
+*.go text eol=lf
+go.mod text eol=lf
+go.sum text eol=lf
