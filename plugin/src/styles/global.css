@@ -5693,6 +5693,18 @@ code.grab-fact-v,
   color: var(--accent-bright, #22c55e);
   border-color: rgba(var(--accent-rgb), 0.6);
 }
+/* "Add all" — a solid accent-tinted chip so it reads as the primary
+   shortcut among the dashed per-tag suggestions. */
+.tag-suggest-all {
+  border-style: solid;
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.14);
+  color: var(--text);
+  font-weight: 600;
+}
+.tag-suggest-all:hover {
+  background: rgba(var(--accent-rgb), 0.22);
+}
 
 /* Stalled badge — a torrent stuck with no progress. An annotation on a
    downloading grab (not a pipeline state), so it's a sibling pill to the

@@ -824,9 +824,10 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           <p className="settings-tip">
             Scenes carrying any of these StashDB tags are dropped from the
             missing-scenes view and from the owned/missing counts — so
-            compilations, PMVs and the like don't clutter the gap analysis or
-            skew your completion stats. Matched case-insensitively; names must
-            match StashDB's tag names.
+            compilations, PMVs, remasters and the like don't clutter the gap
+            analysis or skew your completion stats. Use the suggested chips (or
+            "Add all") for the common noise tags. Matched case-insensitively;
+            names must match StashDB's tag names exactly.
           </p>
         </Section>
 
@@ -1049,13 +1050,16 @@ function Field({
 }
 
 // Common StashDB noise tags, offered as one-click suggestions so the user
-// doesn't have to know exact names. Matching on the backend is
-// case-insensitive, so close spellings still work.
+// doesn't have to know exact names. These are the ACTUAL StashDB tag names
+// (verified against stashdb.org) — the backend match is case-insensitive but
+// exact, so a name that isn't a real StashDB tag (e.g. "Porn Music Video",
+// which doesn't exist — the tag is "PMV") would silently match nothing.
 const TAG_SUGGESTIONS = [
   "Compilation",
-  "Porn Music Video",
   "PMV",
-  "Music Video",
+  "Remaster",
+  "Trailer",
+  "Behind the Scenes",
 ];
 
 function ExcludedTagsEditor({
@@ -1075,6 +1079,12 @@ function ExcludedTagsEditor({
   };
   const remove = (t: string) => onChange(value.filter((v) => v !== t));
   const suggestions = TAG_SUGGESTIONS.filter((t) => !has(t));
+  // Add every not-yet-present suggestion in one shot. Done as a single
+  // onChange so it can't lose entries to stale state across rapid clicks.
+  const addAll = () => {
+    if (suggestions.length) onChange([...value, ...suggestions]);
+    setDraft("");
+  };
 
   return (
     <div className="tags-editor">
@@ -1120,6 +1130,16 @@ function ExcludedTagsEditor({
               + {t}
             </button>
           ))}
+          {suggestions.length > 1 && (
+            <button
+              type="button"
+              className="tag-suggest-chip tag-suggest-all"
+              onClick={addAll}
+              title="Exclude all of these common noise tags at once"
+            >
+              + Add all
+            </button>
+          )}
         </div>
       )}
     </div>
