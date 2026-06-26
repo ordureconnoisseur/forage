@@ -6,6 +6,7 @@ import {
   fetchWatches,
   grabWatch,
   grabWatchCandidate,
+  redoWatch,
   searchWatches,
   type SceneRelease,
   type Watch,
@@ -352,6 +353,26 @@ function WatchCard({
       setBusy(false);
     }
   };
+  // Discard a grabbed release that turned out bad: purge the grab (download +
+  // any placed file/scene), ignore that release, flip back to watching, and
+  // kick an immediate re-search for a different one.
+  const redo = async () => {
+    setBusy(true);
+    try {
+      await redoWatch(w.stashdb_id);
+      // Best-effort immediate re-search of just this scene. A search already
+      // in flight returns 409 — fine, the watch is back to watching and the
+      // loop (or next manual search) will pick it up.
+      try {
+        await searchWatches({ ids: [w.stashdb_id] });
+      } catch {
+        /* ignore — redo already succeeded */
+      }
+      onChanged();
+    } catch {
+      setBusy(false);
+    }
+  };
 
   const avail = w.status === "available";
   const isGrabbed = w.status === "grabbed";
@@ -457,7 +478,17 @@ function WatchCard({
           </div>
           <div className="watch-actions">
             {isGrabbed ? (
-              <span className="watch-grabbed-label">grabbed ✓</span>
+              <>
+                <span className="watch-grabbed-label">grabbed ✓</span>
+                <button
+                  className="watch-dismiss"
+                  disabled={busy}
+                  onClick={redo}
+                  title="This grab was bad — remove it and search for a different release"
+                >
+                  Find another
+                </button>
+              </>
             ) : avail ? (
               <>
                 <button

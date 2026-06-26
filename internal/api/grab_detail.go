@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 )
 
@@ -186,8 +188,18 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id := g.ID
+	out := s.purgeGrab(r.Context(), g)
+	writeJSON(w, http.StatusOK, out)
+}
 
+// purgeGrab tears down a grab and every trace of its download, returning
+// which teardown steps ran (so callers can surface partial failures). It is
+// shared by DELETE /grabs/{id} and the watch "find another" flow, which
+// re-searches a scene after discarding a bad grab. Best-effort per step (a
+// failure in one doesn't block the rest); the grab row is always removed
+// last so a partial failure can't strand it.
+func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabResponse {
+	id := g.ID
 	out := deleteGrabResponse{}
 	addErr := func(label string, err error) {
 		s.log.Warn("grab purge step failed", "id", id, "step", label, "err", err)
@@ -210,12 +222,12 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 			// below remove the files — Stash drops the now-missing scenes
 			// on its next scan.
 			if needle := pathmap.Translate(g.PlacedPath, s.pool.Settings().StashPathMapping); needle != "" {
-				if scenes, ferr := sc.FindScenesUnderPath(r.Context(), needle); ferr != nil {
+				if scenes, ferr := sc.FindScenesUnderPath(ctx, needle); ferr != nil {
 					addErr("find pack scenes", ferr)
 				} else {
 					n := 0
 					for _, sm := range scenes {
-						if derr := sc.SceneDestroy(r.Context(), sm.ID, true, true); derr != nil {
+						if derr := sc.SceneDestroy(ctx, sm.ID, true, true); derr != nil {
 							addErr("stash scene "+sm.ID, derr)
 							continue
 						}
@@ -228,7 +240,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		case sc != nil:
-			scene, ferr := sc.FindSceneByPathContains(r.Context(), filepath.Base(g.PlacedPath))
+			scene, ferr := sc.FindSceneByPathContains(ctx, filepath.Base(g.PlacedPath))
 			if ferr != nil && !errors.Is(ferr, clienterr.ErrNotFound) {
 				addErr("find stash scene", ferr)
 			} else if scene != nil && !sameParentDir(scene.FilePath, g.PlacedPath) {
@@ -242,7 +254,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 					"basename matched scene %s in a different directory (%s), refusing to destroy it",
 					scene.ID, scene.FilePath))
 			} else if scene != nil {
-				if derr := sc.SceneDestroy(r.Context(), scene.ID, true, true); derr != nil {
+				if derr := sc.SceneDestroy(ctx, scene.ID, true, true); derr != nil {
 					addErr("stash scene", derr)
 				} else {
 					stashHandled = true
@@ -271,7 +283,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 		switch g.Client {
 		case "qbit":
 			if qb := s.pool.Qbit(); qb != nil {
-				if derr := qb.DeleteTorrent(r.Context(), g.ClientID, true); derr != nil {
+				if derr := qb.DeleteTorrent(ctx, g.ClientID, true); derr != nil {
 					addErr("qbit torrent", derr)
 				} else {
 					out.Removed = append(out.Removed, "qbit torrent + files")
@@ -282,7 +294,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 				// May already be gone if sabDeleteAfterPlace ran; that
 				// surfaces as a refused delete, which we log but don't
 				// treat as fatal.
-				if derr := sb.DeleteHistory(r.Context(), g.ClientID, true); derr != nil {
+				if derr := sb.DeleteHistory(ctx, g.ClientID, true); derr != nil {
 					addErr("sab download", derr)
 				} else {
 					out.Removed = append(out.Removed, "sab download")
@@ -293,12 +305,12 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 
 	// 4. Pending review-duplicate rows for this pack — they reference scenes
 	// we just destroyed, so drop them so they can't linger as stale reviews.
-	if derr := s.grabs.DeleteDuplicatesByGrab(r.Context(), id); derr != nil {
+	if derr := s.grabs.DeleteDuplicatesByGrab(ctx, id); derr != nil {
 		addErr("duplicate records", derr)
 	}
 
 	// 5. The grab row — always, so a partial failure can't strand it.
-	if derr := s.grabs.Delete(r.Context(), id); derr != nil {
+	if derr := s.grabs.Delete(ctx, id); derr != nil {
 		addErr("grab record", derr)
 	} else {
 		out.Removed = append(out.Removed, "grab record")
@@ -306,7 +318,7 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 
 	out.OK = len(out.Errors) == 0
 	s.log.Info("grab purged", "id", id, "removed", out.Removed, "errors", out.Errors)
-	writeJSON(w, http.StatusOK, out)
+	return out
 }
 
 // sameParentDir reports whether the Stash-side file belongs to the

@@ -1348,3 +1348,13 @@ export async function clearWatchBatch(batchId: string): Promise<void> {
 export function dismissWatch(stashDBID: string): Promise<{ ok: boolean }> {
   return postJSON(`/watches/${encodeURIComponent(stashDBID)}/dismiss`, {});
 }
+
+// redoWatch discards a grabbed (or found) release the user decided was bad —
+// it purges the grab (download + any placed file/scene) so it can't re-flip
+// the watch, ignores that release going forward, and flips the watch back to
+// watching so it can be re-searched for a different one.
+export function redoWatch(
+  stashDBID: string,
+): Promise<{ ok: boolean; purged?: string[] }> {
+  return postJSON(`/watches/${encodeURIComponent(stashDBID)}/redo`, {});
+}

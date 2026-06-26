@@ -375,6 +375,53 @@ func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// postWatchRedo discards a grabbed (or available) release the user decided
+// was bad and re-searches the scene for a different one. It is the
+// "dismiss this release AND find another" action: unlike plain Dismiss, it
+// first PURGES the grab — download-client copy, any placed file/Stash scene,
+// and the grab record — because otherwise reconcileWatches would just flip
+// the watch straight back to 'grabbed' on the next list load (the grab still
+// exists). It then ignores that release's URL and flips the watch back to
+// watching; the caller kicks an immediate re-search.
+func (s *Server) postWatchRedo(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	wt := s.findWatch(r.Context(), id)
+	if wt == nil {
+		writeErr(w, http.StatusNotFound, "watch not found")
+		return
+	}
+	if wt.Status != watches.StatusGrabbed && wt.Status != watches.StatusAvailable {
+		writeErr(w, http.StatusUnprocessableEntity, "watch has no grabbed or found release to redo")
+		return
+	}
+	if wt.FoundURL == "" {
+		writeErr(w, http.StatusUnprocessableEntity, "watch has no release to redo")
+		return
+	}
+
+	// Purge the underlying grab (if any) so reconcile can't re-flip the watch
+	// to grabbed and so the bad download/file is actually removed. A watch
+	// stores the grabbed release's download URL in found_url, which is the
+	// grab's download_url. Best-effort: if there's no grab row (e.g. the watch
+	// only ever went 'available'), there's simply nothing to purge.
+	var purge deleteGrabResponse
+	if g, err := s.grabs.ByDownloadURL(r.Context(), wt.FoundURL); err != nil {
+		s.log.Warn("watch redo: grab lookup", "scene", id, "err", err)
+	} else if g != nil {
+		purge = s.purgeGrab(r.Context(), g)
+	}
+
+	// Ignore this exact release going forward + flip back to watching.
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+		s.log.Error("watch redo dismiss", "scene", id, "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	s.log.Info("watch redo — release discarded, back to watching",
+		"scene", id, "ignored", wt.FoundURL, "purged", purge.Removed)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "purged": purge.Removed})
+}
+
 // markSearching adds or removes a set of watch ids from the in-memory
 // "searching now" set (overlaid as the transient Watch.Searching flag).
 func (s *Server) markSearching(ids []string, on bool) {

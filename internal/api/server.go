@@ -209,6 +209,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
 		r.Post("/watches/{id}/dismiss", s.postWatchDismiss)
+		r.Post("/watches/{id}/redo", s.postWatchRedo)
 		r.Get("/missing-scenes", s.getMissingScenes)
 		r.Get("/performers/{id}/packs", s.getPerformerPacks)
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
