@@ -228,6 +228,39 @@ func TestVerifyCastListRivalDoesNotVeto(t *testing.T) {
 	}
 }
 
+// TestVerifyGenericTitleNeedsCorroboration guards the "Doggy Anal" class: a
+// scene whose title is entirely generic sex vocabulary must NOT verify on
+// title overlap alone — a release naming the same acts identifies no specific
+// scene. A distinctive short title with the same overlap still verifies, and a
+// generic title still verifies when a real overall match corroborates it.
+func TestVerifyGenericTitleNeedsCorroboration(t *testing.T) {
+	// All-generic title, title overlap only (no performer/date) → must refuse.
+	cands := []Candidate{
+		{Scene: stashdb.Scene{ID: "doggy", Title: "Doggy Anal"}, Confidence: 0.20, TitleOverlap: 0.67},
+	}
+	if Verify(cands, "doggy", "Doggy Anal", "ATK Girlfriends - Doggy And Anal 1080p").Verified {
+		t.Errorf("an all-generic title must not verify on title overlap alone")
+	}
+
+	// Distinctive short title, same overlap, same lack of corroboration →
+	// still verifies (the release names it by something specific).
+	cands = []Candidate{
+		{Scene: stashdb.Scene{ID: "cyber", Title: "Cyber Doll"}, Confidence: 0.20, TitleOverlap: 0.67},
+	}
+	if !Verify(cands, "cyber", "Cyber Doll", "ATK Girlfriends - Cyber Doll On Demand 1080p").Verified {
+		t.Errorf("a distinctive title must still verify on strong title overlap")
+	}
+
+	// Generic title BUT a real overall match (conf past the floor) → the
+	// corroborated path still verifies; only the title-alone shortcut is gated.
+	cands = []Candidate{
+		{Scene: stashdb.Scene{ID: "doggy", Title: "Doggy Anal"}, Confidence: 0.55, TitleOverlap: 0.67},
+	}
+	if !Verify(cands, "doggy", "Doggy Anal", "ATK Girlfriends - Doggy And Anal 1080p").Verified {
+		t.Errorf("a generic title with real corroboration (conf 0.55) must still verify")
+	}
+}
+
 // TestVerifyStrongMatchOnlyForTop confirms the strong-match path only
 // applies to the #1 candidate — a high-conf scene ranked below the top
 // pick shouldn't verify off conf alone.

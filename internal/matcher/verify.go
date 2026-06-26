@@ -81,6 +81,54 @@ type VerifyResult struct {
 	Confidence float64
 }
 
+// genericTitleWord lists common sex-act / anatomy / quality vocabulary that
+// recurs across unrelated releases. These stay SIGNIFICANT tokens for ranking
+// overlap (a scene really can be titled "Doggy Anal", and dropping them from
+// titleStopwords would cost recall — see that var's comment); the set is used
+// ONLY by the verifier. A title made entirely of these words ("Doggy Anal")
+// overlaps any release that names the same acts but identifies no specific
+// scene, so the title-ALONE verification path (strong overlap with no
+// performer/date corroboration) requires at least one NON-generic shared
+// token. Deliberately excludes role/setting words (stepmom, maid, office, …):
+// those are frequently the distinctive part of a real title.
+var genericTitleWord = map[string]bool{
+	"anal": true, "doggy": true, "doggystyle": true, "blowjob": true, "bj": true,
+	"handjob": true, "footjob": true, "deepthroat": true, "facial": true,
+	"creampie": true, "cumshot": true, "cum": true, "threesome": true,
+	"foursome": true, "gangbang": true, "bukkake": true, "blowbang": true,
+	"squirt": true, "squirting": true, "fisting": true, "rimming": true,
+	"cowgirl": true, "missionary": true, "pov": true, "hardcore": true,
+	"sex": true, "fuck": true, "fucking": true, "fucked": true, "fucks": true,
+	"pussy": true, "cock": true, "dick": true, "ass": true, "asshole": true,
+	"tits": true, "boobs": true, "masturbation": true, "solo": true,
+	"lesbian": true, "interracial": true, "bbc": true, "dp": true,
+}
+
+// distinctiveTitleHits counts the scene title's significant, NON-generic
+// tokens that the release name also contains — the title's discriminating
+// signal net of generic sex vocabulary and of release-tag stopwords. One or
+// more means the release names the scene by something more specific than the
+// acts it depicts, so the title alone can carry a verification.
+func distinctiveTitleHits(sceneTitle, releaseName string) int {
+	st := filterTitleStopwords(Tokenize(sceneTitle))
+	if len(st) == 0 {
+		return 0
+	}
+	rel := tokenSet(filterTitleStopwords(Tokenize(releaseName)))
+	seen := map[string]bool{}
+	n := 0
+	for _, t := range st {
+		if genericTitleWord[t] || seen[t] {
+			continue
+		}
+		seen[t] = true
+		if rel[t] {
+			n++
+		}
+	}
+	return n
+}
+
 // dateAnchored reports whether the viewed scene's exact release date is
 // (a) the release name's CONVENTIONAL date reading and (b) unique to
 // the viewed scene within the candidate set. Both halves matter: (a)
@@ -287,9 +335,18 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	// short-title scenes with no precision cost.
 	if isTop {
 		shortTitle := nTok > 0 && nTok <= verifyShortTitleMaxTokens
+		// The strong-title-overlap shortcut verifies on the title ALONE (no
+		// performer/date corroboration), so it must only fire when the title
+		// names the scene distinctively. A title built entirely from generic
+		// sex vocabulary ("Doggy Anal") clears the overlap threshold against
+		// any release that lists the same acts but points at no specific
+		// scene — require at least one non-generic shared token before
+		// trusting the title by itself.
+		strongTitle := overlap >= verifyStrongTitleOverlap &&
+			distinctiveTitleHits(sceneTitle, releaseName) >= 1
 		switch {
 		case overlap >= verifyRankMinTitleOverlap &&
-			(conf >= verifyTitleMinConf || overlap >= verifyStrongTitleOverlap):
+			(conf >= verifyTitleMinConf || strongTitle):
 			return VerifyResult{Verified: true, Confidence: conf}
 		case shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
 			return VerifyResult{Verified: true, Confidence: conf}
