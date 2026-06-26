@@ -342,12 +342,20 @@ function WatchCard({
       setBusy(false);
     }
   };
-  // Reject this find but keep watching — ignores this exact release and
-  // flips back to watching for a different one.
+  // Reject this find AND look for another now — ignores this exact release,
+  // flips back to watching, then kicks an immediate re-search rather than
+  // waiting for the background loop.
   const dismiss = async () => {
     setBusy(true);
     try {
       await dismissWatch(w.stashdb_id);
+      // Best-effort search kick. A search already in flight returns 409 —
+      // fine, the watch is back to watching and the loop will pick it up.
+      try {
+        await searchWatches({ ids: [w.stashdb_id] });
+      } catch {
+        /* ignore — dismiss already succeeded */
+      }
       onChanged();
     } catch {
       setBusy(false);
@@ -507,7 +515,7 @@ function WatchCard({
                     className="watch-dismiss"
                     disabled={busy}
                     onClick={dismiss}
-                    title="Not this one — ignore this release and keep watching for a better one"
+                    title="Not this one — ignore this release and search for a different one now"
                   >
                     Dismiss
                   </button>
