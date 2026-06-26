@@ -641,9 +641,25 @@ button {
   gap: 12px;
   flex-wrap: wrap;
   min-width: 0;
+  cursor: pointer;
+  user-select: none;
+}
+.watch-group-title:hover .section-header {
+  color: var(--accent-bright, #22c55e);
 }
 .watch-group-title .section-header {
   margin: 0;
+}
+/* Collapse chevron — points right when collapsed, down when expanded. */
+.watch-group-chev {
+  align-self: center;
+  font-size: 10px;
+  color: var(--text-dim);
+  transform: rotate(-90deg);
+  transition: transform 0.15s ease;
+}
+.watch-group-chev.open {
+  transform: rotate(0deg);
 }
 .watch-group-progress {
   font-size: 12px;

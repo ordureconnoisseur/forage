@@ -208,6 +208,17 @@ function WatchGroup({
   const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
 
+  // Collapse a group's card list. Default-collapse a batch that's fully done
+  // (everything grabbed, nothing left to act on) so finished batches fold
+  // away; otherwise start expanded. Runs once on mount — the user's later
+  // toggles win.
+  const [collapsed, setCollapsed] = useState(
+    isBatch &&
+      available.length === 0 &&
+      watching.length === 0 &&
+      grabbed.length > 0,
+  );
+
   const grabAll = async () => {
     setGrabAllBusy(true);
     const ids = available.map((w) => w.stashdb_id);
@@ -255,7 +266,23 @@ function WatchGroup({
   return (
     <section className="watch-group">
       <div className="watch-group-head">
-        <div className="watch-group-title">
+        <div
+          className="watch-group-title"
+          role="button"
+          tabIndex={0}
+          aria-expanded={!collapsed}
+          title={collapsed ? "Expand" : "Collapse"}
+          onClick={() => setCollapsed((c) => !c)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setCollapsed((c) => !c);
+            }
+          }}
+        >
+          <span className={"watch-group-chev" + (collapsed ? "" : " open")}>
+            ▾
+          </span>
           <h3 className="section-header">{group.label}</h3>
           <span className="watch-group-progress">{progress}</span>
         </div>
@@ -282,16 +309,18 @@ function WatchGroup({
           )}
         </div>
       </div>
-      <ul className="watch-list">
-        {items.map((w) => (
-          <WatchCard
-            key={w.stashdb_id}
-            w={w}
-            onChanged={onChanged}
-            onPickScene={onPickScene}
-          />
-        ))}
-      </ul>
+      {!collapsed && (
+        <ul className="watch-list">
+          {items.map((w) => (
+            <WatchCard
+              key={w.stashdb_id}
+              w={w}
+              onChanged={onChanged}
+              onPickScene={onPickScene}
+            />
+          ))}
+        </ul>
+      )}
     </section>
   );
 }
