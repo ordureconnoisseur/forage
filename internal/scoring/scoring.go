@@ -42,13 +42,22 @@ var (
 )
 
 // CanonicalizeResolution rewrites resolution synonyms in a release title to
-// the standard token rules key off — currently FHD/FHDC → 1080p. Applied
-// before OnTitle rule matching and inside Resolution(), so a user's existing
-// `\b1080p?\b` rule catches JAV Full-HD releases without re-saving anything.
-// Like the matcher's diacritic folding: a normalization layer, not magic
-// scoring — the rules stay clean and synonym-agnostic.
+// the standard token rules key off — currently FHD/FHDC → 1080p — and
+// normalizes underscore separators to spaces. Applied before OnTitle rule
+// matching and inside Resolution(), so a user's existing `\b1080p?\b` rule
+// catches JAV Full-HD releases without re-saving anything. Like the matcher's
+// diacritic folding: a normalization layer, not magic scoring — the rules stay
+// clean and synonym-agnostic.
+//
+// Underscore folding matters because `\b` (every resolution rule's boundary)
+// is a regex word boundary, and `_` is a word char: a release ending
+// "…29.07.2022._1080p" has no boundary between the underscore and the digit,
+// so `\b1080p\b` never matches and the release scores as no-resolution. Dots
+// and dashes (the usual separators) are non-word chars and already fire `\b`;
+// underscore was the lone separator that didn't.
 func CanonicalizeResolution(title string) string {
-	return fhdToken.ReplaceAllString(title, "1080p")
+	title = fhdToken.ReplaceAllString(title, "1080p")
+	return strings.ReplaceAll(title, "_", " ")
 }
 
 // Resolution classifies a release title into its highest resolution tier

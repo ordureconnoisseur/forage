@@ -6,7 +6,11 @@
 export function resolution(
   title: string,
 ): { label: string; cls: string } | null {
-  const t = title.toLowerCase();
+  // Underscores fold to spaces: `\b` (the boundary in each token below) is a
+  // regex word boundary and `_` is a word char, so a release ending
+  // "…2022._1080p" has no boundary before the digit and `\b1080p\b` misses it.
+  // Dots/dashes already separate cleanly; underscore was the lone gap.
+  const t = title.toLowerCase().replace(/_/g, " ");
   // 4K is named both by height (2160p) and width (3840p) in the wild.
   if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return { label: "4K", cls: "res-4k" };
   // FHD / FHDC (JAV/sukebei "Full HD") are 1080p.

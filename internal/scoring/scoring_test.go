@@ -112,6 +112,8 @@ func TestDefaultsResolution(t *testing.T) {
 		{"Performer Scene 720p", 30},
 		{"Performer Scene 480p", -50},
 		{"Performer SiteRip", 0},
+		// Underscore before the token must still score (was 0 before the fix).
+		{"Kenzie.Reeves.Is.The.Anal.Fuck.Buddy.29.07.2022._1080p", 100},
 	}
 	for _, c := range cases {
 		if got := s.Score(c.title, "idx", "").Score; got != c.want {
@@ -178,6 +180,10 @@ func TestResolution(t *testing.T) {
 		"SD 480p":                  Res480,
 		"Performer SiteRip":        ResNone,
 		"Both 1080p and 2160p cut": Res4K, // 4K wins when both present
+		// Underscore-adjacent token: \b never fires between _ and a digit, so
+		// without underscore folding this scored as no-resolution.
+		"Kenzie.Reeves.Anal.Fuck.Buddy.29.07.2022._1080p": Res1080,
+		"Studio_2160p_release":                            Res4K,
 	}
 	for title, want := range cases {
 		if got := Resolution(title); got != want {
