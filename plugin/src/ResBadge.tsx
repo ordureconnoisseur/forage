@@ -11,8 +11,24 @@ export function resolution(
   // "…2022._1080p" has no boundary before the digit and `\b1080p\b` misses it.
   // Dots/dashes already separate cleanly; underscore was the lone gap.
   const t = title.toLowerCase().replace(/_/g, " ");
+  // VR "NK" labels (5K–8K) — VR rips are labelled by a "K" width (Oculus 7K)
+  // and outrank flat 4K. Shown with the 4K gold styling (all high-res).
+  const k = t.match(/\b([5-8])k\b/);
+  if (k) return { label: k[1] + "K", cls: "res-4k" };
   // 4K is named both by height (2160p) and width (3840p) in the wild.
   if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return { label: "4K", cls: "res-4k" };
+  // VR pixel-height labels (e.g. VR180 3600p). 2160/3840 are flat-4K labels
+  // caught above; a tall 4-digit height maps to the matching VR K tier, while
+  // 1081–2159 (e.g. an Oculus Go 1920p cut) shows its own height.
+  const ph = t.match(/\b(\d{4})p\b/);
+  if (ph) {
+    const n = +ph[1];
+    if (n >= 4000) return { label: "8K", cls: "res-4k" };
+    if (n >= 3200) return { label: "7K", cls: "res-4k" };
+    if (n >= 2700) return { label: "6K", cls: "res-4k" };
+    if (n >= 2160) return { label: "5K", cls: "res-4k" };
+    if (n > 1080) return { label: ph[1] + "p", cls: "res-1080" };
+  }
   // FHD / FHDC (JAV/sukebei "Full HD") are 1080p.
   if (/\b(1080p?|fhdc?)\b/.test(t)) return { label: "1080p", cls: "res-1080" };
   if (/\b720p?\b/.test(t)) return { label: "720p", cls: "res-720" };

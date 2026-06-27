@@ -101,6 +101,24 @@ func TestInvalidRegexSkipped(t *testing.T) {
 	}
 }
 
+// TestVRResolutionScoring pins the VR tiers: DefaultRules scores 5K–8K above
+// flat 1080p and ordered by K, VR pixel-height labels canonicalize into a K
+// tier and score, and a FOV-only ("180x180") title earns no resolution score.
+func TestVRResolutionScoring(t *testing.T) {
+	s := New(DefaultRules())
+	sc := func(title string) int { return s.Score(title, "idx", "").Score }
+	k8, k7, k6, k5, flat := sc("Scene 8K"), sc("Scene 7K"), sc("Scene 6K"), sc("Scene 5K"), sc("Scene 1080p")
+	if !(k8 > k7 && k7 > k6 && k6 > k5 && k5 > flat) {
+		t.Errorf("VR ordering wrong: 8K=%d 7K=%d 6K=%d 5K=%d 1080p=%d", k8, k7, k6, k5, flat)
+	}
+	if got := sc("WankzVR Kenzie VR180 3600p MP4"); got <= flat {
+		t.Errorf("VR180 3600p should canonicalize to a VR K tier scoring > 1080p(%d), got %d", flat, got)
+	}
+	if got := sc("wankzvr wetty dreams 180 180x180 3dh LR"); got != 0 {
+		t.Errorf("FOV-only title must earn no resolution score, got %d", got)
+	}
+}
+
 func TestDefaultsResolution(t *testing.T) {
 	s := New(DefaultRules())
 	cases := []struct {
@@ -184,6 +202,13 @@ func TestResolution(t *testing.T) {
 		// without underscore folding this scored as no-resolution.
 		"Kenzie.Reeves.Anal.Fuck.Buddy.29.07.2022._1080p": Res1080,
 		"Studio_2160p_release":                            Res4K,
+		// VR: "NK" width labels and tall pixel-height labels (the screenshot
+		// release names). 180x180 is a FOV, NOT a resolution — must stay None.
+		"WankzVR.20.10.08.Kenzie.Reeves.Wetty.Dreams.May.Cum.XXX.VR180.3600p.MP4-WURSTHALL": Res7K,
+		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 7K)":                         Res7K,
+		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 5K)":                         Res5K,
+		"Scene 8K VR":                              Res8K,
+		"wankzvr-wetty-dreams-may-cum-180_180x180_3dh_LR": ResNone,
 	}
 	for title, want := range cases {
 		if got := Resolution(title); got != want {

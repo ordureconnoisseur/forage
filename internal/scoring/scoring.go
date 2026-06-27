@@ -12,11 +12,18 @@ package scoring
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Resolution tiers — normalized labels matching the watch targets.
+// Resolution tiers — normalized labels matching the watch targets. The VR
+// tiers (5K–8K) sit above 4K: VR rips are labelled by a "K" width (Oculus 7K)
+// or a tall pixel height (VR180 3600p), both of which exceed flat 4K.
 const (
+	Res8K   = "8k"
+	Res7K   = "7k"
+	Res6K   = "6k"
+	Res5K   = "5k"
 	Res4K   = "4k"
 	Res1080 = "1080p"
 	Res720  = "720p"
@@ -25,6 +32,9 @@ const (
 )
 
 var (
+	// reVRK matches the VR "NK" resolution labels (5K–8K). 4K is handled by
+	// re4k below; 1K–3K aren't real video labels.
+	reVRK  = regexp.MustCompile(`(?i)\b([5-8])k\b`)
 	re4k   = regexp.MustCompile(`(?i)\b(2160p?|3840p?|4k|uhd)\b`)
 	re1080 = regexp.MustCompile(`(?i)\b1080p?\b`)
 	re720  = regexp.MustCompile(`(?i)\b720p?\b`)
@@ -39,6 +49,10 @@ var (
 	// canonicalizing them a 1080p rule (and the resolution classifier) misses
 	// them entirely and the release scores as no-resolution.
 	fhdToken = regexp.MustCompile(`(?i)\bfhdc?\b`)
+	// vrHeightRe matches a 4-digit pixel-height label (e.g. "3600p" on a
+	// VR180 rip). Canonicalized to the nearest "NK" token so the K-based
+	// rules + classifier catch it.
+	vrHeightRe = regexp.MustCompile(`(?i)\b(\d{4})p\b`)
 )
 
 // CanonicalizeResolution rewrites resolution synonyms in a release title to
@@ -57,7 +71,35 @@ var (
 // underscore was the lone separator that didn't.
 func CanonicalizeResolution(title string) string {
 	title = fhdToken.ReplaceAllString(title, "1080p")
-	return strings.ReplaceAll(title, "_", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	return canonicalizeVRHeights(title)
+}
+
+// canonicalizeVRHeights rewrites a VR pixel-height label (the tall single
+// number some VR rips carry, e.g. "3600p" on a VR180 cut) to the equivalent
+// "NK" token, so the K-based resolution rules and the classifier pick it up.
+// 2160p/3840p are left alone — those are the standard flat-4K labels handled
+// by the 4K tier — and sub-2160 heights (e.g. 1920p on an Oculus Go cut) are
+// left to the flat tiers. The height→K thresholds are approximate: VR "K"
+// naming is by width while these labels are heights, so the mapping only needs
+// to land VR rips in a sensible high tier and order them, not be pixel-exact.
+func canonicalizeVRHeights(title string) string {
+	return vrHeightRe.ReplaceAllStringFunc(title, func(tok string) string {
+		n, _ := strconv.Atoi(vrHeightRe.FindStringSubmatch(tok)[1])
+		switch {
+		case n == 2160 || n == 3840:
+			return tok // standard flat-4K labels
+		case n >= 4000:
+			return "8k"
+		case n >= 3200:
+			return "7k"
+		case n >= 2700:
+			return "6k"
+		case n >= 2161:
+			return "5k"
+		}
+		return tok // sub-2160 — leave to the flat tiers
+	})
 }
 
 // Resolution classifies a release title into its highest resolution tier
@@ -66,6 +108,20 @@ func CanonicalizeResolution(title string) string {
 // common bare-SiteRip case. Used by the watch loop's exact-match target.
 func Resolution(title string) string {
 	title = CanonicalizeResolution(title)
+	// VR "NK" tiers win over 4K when present (a VR rip is higher-res). After
+	// canonicalization, VR pixel-heights are already "NK" tokens too.
+	if m := reVRK.FindStringSubmatch(title); m != nil {
+		switch m[1] {
+		case "8":
+			return Res8K
+		case "7":
+			return Res7K
+		case "6":
+			return Res6K
+		case "5":
+			return Res5K
+		}
+	}
 	switch {
 	case re4k.MatchString(title):
 		return Res4K
@@ -90,6 +146,14 @@ func Resolution(title string) string {
 // resolution as an "upgrade".
 func ResolutionHeight(title string) int {
 	switch Resolution(title) {
+	case Res8K:
+		return 4320
+	case Res7K:
+		return 3360
+	case Res6K:
+		return 3072
+	case Res5K:
+		return 2880
 	case Res4K:
 		return 2160
 	case Res1080:
@@ -213,6 +277,15 @@ func (s *Scorer) Score(title, indexer, protocol string) Result {
 // Users reorder/retune in Settings.
 func DefaultRules() []Rule {
 	return []Rule{
+		// VR tiers (5K–8K) score above flat resolutions and are ordered by K,
+		// so the best VR rip wins among a VR scene's releases. VR pixel-height
+		// labels (VR180 3600p, etc.) are canonicalized to these K tokens, so
+		// these patterns catch them too. Higher than 1080p because a VR scene's
+		// releases are all VR — the comparison that matters is VR-vs-VR.
+		{Label: "8K (VR)", On: OnTitle, Pattern: `\b8k\b`, Points: 130},
+		{Label: "7K (VR)", On: OnTitle, Pattern: `\b7k\b`, Points: 125},
+		{Label: "6K (VR)", On: OnTitle, Pattern: `\b6k\b`, Points: 120},
+		{Label: "5K (VR)", On: OnTitle, Pattern: `\b5k\b`, Points: 115},
 		{Label: "1080p", On: OnTitle, Pattern: `\b1080p?\b`, Points: 100},
 		{Label: "4K / 2160p", On: OnTitle, Pattern: `\b(2160p?|3840p?|4k|uhd)\b`, Points: 70},
 		{Label: "720p", On: OnTitle, Pattern: `\b720p?\b`, Points: 30},
