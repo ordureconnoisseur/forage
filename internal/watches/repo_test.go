@@ -95,6 +95,43 @@ func TestClaimBatchOldestFirst(t *testing.T) {
 	}
 }
 
+// TestClaimBatchRoundRobin pins the fairness fix: a huge batch must NOT starve
+// the ungrouped singles. With everything unchecked (last_checked=0) and the big
+// batch inserted FIRST (lower created_at), the old flat oldest-first claim
+// returned only big-batch rows; round-robin must split the budget across groups.
+func TestClaimBatchRoundRobin(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	// A 6-row batch, created first (lower created_at than the singles).
+	for i, id := range []string{"big1", "big2", "big3", "big4", "big5", "big6"} {
+		_ = r.Add(ctx, Watch{StashDBID: id, Title: id, BatchID: "big", BatchLabel: "Big", CreatedAt: int64(100 + i)})
+	}
+	// Two ungrouped singles added AFTER (higher created_at) — these are the
+	// rows the old flat claim left at the back forever.
+	_ = r.Add(ctx, Watch{StashDBID: "s1", Title: "s1", CreatedAt: 200})
+	_ = r.Add(ctx, Watch{StashDBID: "s2", Title: "s2", CreatedAt: 201})
+
+	got, err := r.ClaimBatch(ctx, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 {
+		t.Fatalf("claimed %d, want 4", len(got))
+	}
+	var singles, big int
+	for _, w := range got {
+		if w.BatchID == "" {
+			singles++
+		} else {
+			big++
+		}
+	}
+	// Round-robin between two groups → an even split, not 4 big + 0 singles.
+	if singles != 2 || big != 2 {
+		t.Errorf("round-robin split = %d singles / %d big, want 2 / 2 (singles starved?)", singles, big)
+	}
+}
+
 func TestMarkAvailable(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()

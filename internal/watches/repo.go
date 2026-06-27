@@ -195,10 +195,20 @@ func (r *Repo) IDs(ctx context.Context) (map[string]string, error) {
 	return out, rows.Err()
 }
 
-// ClaimBatch returns up to n watching rows that haven't been checked
-// recently (oldest last_checked first) and stamps their last_checked NOW
-// so concurrent ticks don't re-claim them. The loop searches the returned
-// scenes, then calls MarkAvailable on any hit.
+// ClaimBatch returns up to n watching rows to re-check this tick and stamps
+// their last_checked NOW so concurrent ticks don't re-claim them. The loop
+// searches the returned scenes, then calls MarkAvailable on any hit.
+//
+// Selection is ROUND-ROBIN across batches, not a flat oldest-first: each
+// batch (and the ungrouped singles, which all share an empty batch_id) is a
+// group, and we take every group's oldest-checked, then the second-oldest,
+// and so on (ROW_NUMBER per batch). A plain `ORDER BY last_checked ASC` let a
+// single huge batch (e.g. a 600-scene performer backfill) monopolise the tick
+// budget and starve everything added after it — the singles would sit at
+// last_checked=0 forever behind the batch. Round-robin gives a 600-row batch
+// and a handful of singles each a fair share of the budget, so both progress.
+// Within a group's rank, oldest-checked wins (never-checked rows surface
+// first); created_at/stashdb_id break remaining ties deterministically.
 func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 	if n <= 0 {
 		return nil, nil
@@ -206,7 +216,10 @@ func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 	ws, err := r.query(ctx, `
 		SELECT `+cols+` FROM watches
 		WHERE status = 'watching'
-		ORDER BY last_checked ASC
+		ORDER BY ROW_NUMBER() OVER (
+		           PARTITION BY batch_id
+		           ORDER BY last_checked ASC, created_at ASC, stashdb_id ASC) ASC,
+		         last_checked ASC, created_at ASC, stashdb_id ASC
 		LIMIT ?`, n)
 	if err != nil || len(ws) == 0 {
 		return ws, err

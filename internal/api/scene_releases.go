@@ -10,7 +10,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
@@ -568,57 +567,62 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 }
 
 // searchSceneReleases runs the scene's derived queries against Prowlarr
-// concurrently and returns the merged, deduped release set. A single
-// query failing doesn't fail the whole search — we return whatever the
-// others found.
+// SEQUENTIALLY and returns the merged, deduped release set. A single query
+// failing doesn't fail the whole search — we return whatever the others found.
+//
+// Sequential, not concurrent, on purpose: Prowlarr fans out to all indexers in
+// parallel WITHIN one query, but rate-limits repeat requests to the SAME
+// indexer (~2s apart). Every derived term hits every indexer, so firing the
+// terms concurrently doesn't finish any faster — Prowlarr just queues them at
+// the per-indexer rate limit — while dumping N× the load at once and (under a
+// deadline) getting the later terms cancelled, the work already wasted. Running
+// them one at a time is the same wall-clock under the rate limit, lets each
+// term complete, and stops firing the instant the caller's deadline/cancel
+// trips (so a slow scene doesn't keep hammering Prowlarr after we've given up).
 func (s *Server) searchSceneReleases(ctx context.Context, pc *prowlarr.Client, scene *stashdb.Scene, perfNames []string, cats []int, lean bool) ([]prowlarr.Release, error) {
 	terms := sceneSearchTerms(scene, perfNames, lean)
 	if len(terms) == 0 {
 		return nil, nil
 	}
 	var (
-		mu       sync.Mutex
 		merged   []prowlarr.Release
 		seen     = map[string]bool{}
 		firstErr error
-		wg       sync.WaitGroup
 	)
 	for _, term := range terms {
-		wg.Add(1)
-		go func(term string) {
-			defer wg.Done()
-			rels, err := pc.Search(ctx, term, cats)
-			mu.Lock()
-			defer mu.Unlock()
-			if err != nil {
-				if firstErr == nil {
-					firstErr = err
-				}
-				s.log.Warn("scene release query", "term", term, "err", err)
-				return
+		// Stop firing once the caller has given up — no point queuing more
+		// rate-limited work against a deadline we've already blown.
+		if ctx.Err() != nil {
+			break
+		}
+		rels, err := pc.Search(ctx, term, cats)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
 			}
-			for _, rel := range rels {
-				// Dedup by grab URL (cheap, catches exact repeats) AND by a
-				// content key (title+indexer+size+protocol). Trackers like
-				// PornoLab hand back the same torrent with a different
-				// tokenised download URL across queries, so the URL key
-				// alone leaves visible duplicate rows.
-				urlKey := rel.GrabURL()
-				if urlKey == "" {
-					urlKey = rel.Title
-				}
-				ck := "c|" + releaseContentKey(rel)
-				uk := "u|" + urlKey
-				if seen[uk] || seen[ck] {
-					continue
-				}
-				seen[uk] = true
-				seen[ck] = true
-				merged = append(merged, rel)
+			s.log.Warn("scene release query", "term", term, "err", err)
+			continue
+		}
+		for _, rel := range rels {
+			// Dedup by grab URL (cheap, catches exact repeats) AND by a
+			// content key (title+indexer+size+protocol). Trackers like
+			// PornoLab hand back the same torrent with a different
+			// tokenised download URL across queries, so the URL key
+			// alone leaves visible duplicate rows.
+			urlKey := rel.GrabURL()
+			if urlKey == "" {
+				urlKey = rel.Title
 			}
-		}(term)
+			ck := "c|" + releaseContentKey(rel)
+			uk := "u|" + urlKey
+			if seen[uk] || seen[ck] {
+				continue
+			}
+			seen[uk] = true
+			seen[ck] = true
+			merged = append(merged, rel)
+		}
 	}
-	wg.Wait()
 	// Only surface an error when every query failed (nothing to show).
 	if len(merged) == 0 && firstErr != nil {
 		return nil, firstErr

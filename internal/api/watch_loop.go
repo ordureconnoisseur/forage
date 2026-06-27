@@ -49,9 +49,16 @@ const (
 	// every ceil(total/8) ticks) to keep Prowlarr load bounded.
 	watchMaxBatch = 8
 	// watchSearchTimeout caps how long one watch's release search may run
-	// before a slow indexer is abandoned and the scene is judged on the fast
-	// indexers' results. Bounds per-scene latency so "search all" stays usable.
-	watchSearchTimeout = 25 * time.Second
+	// before it's abandoned and the scene is judged on whatever returned so
+	// far. A scene fans out several queries that now run SEQUENTIALLY, and
+	// Prowlarr rate-limits requests to the same indexer (~2s apart) — so a
+	// prolific performer's full fan-out (8+ queries, each hitting every
+	// indexer) legitimately needs ~40s to complete. The old 25s budget
+	// guillotined those mid-search, producing a flood of "context deadline
+	// exceeded" and never flipping the watch. 60s lets the rate-limited
+	// queries actually finish; a 30-min tick still fits a full batch
+	// (8 scenes x ~40s = ~5 min).
+	watchSearchTimeout = 60 * time.Second
 )
 
 // RunWatchLoop drives the watchlist re-search until ctx is cancelled.
