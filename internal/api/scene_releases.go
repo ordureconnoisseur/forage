@@ -47,6 +47,17 @@ var linkSpamRe = regexp.MustCompile(`(?i)(https?://|watch[\s._-]+full[\s._-]+vid
 // rather than a real downloadable scene.
 func isLinkSpamRelease(title string) bool { return linkSpamRe.MatchString(title) }
 
+// imageSetRe flags a photo/image set rather than a video. Studios release the
+// same scene's stills as a separate "iMAGESET" / "photoset" pack that shares
+// the performer + date, so it verifies against a scene watch on that overlap —
+// but a watch tracks the VIDEO, and grabbing the gallery is never what the user
+// wants. Requires the literal "...set" token so a stray "pic"/"image" in a real
+// title can't trip it.
+var imageSetRe = regexp.MustCompile(`(?i)\b(image|photo|pic)[\s._-]?sets?\b`)
+
+// isImageSetRelease reports whether a release is a photo set, not a video.
+func isImageSetRelease(title string) bool { return imageSetRe.MatchString(title) }
+
 type sceneReleasesResponse struct {
 	Scene struct {
 		StashDBID  string             `json:"stashdb_id"`
@@ -522,6 +533,13 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		if verified && isLinkSpamRelease(rel.Title) {
 			verified = false
 			reasons = append(reasons, "title advertises a streaming link — looks like spam, not the full release")
+		}
+		// A photo/image set shares the scene's performer + date and so verifies
+		// on that overlap, but a watch tracks the VIDEO — never surface the
+		// gallery as a grabbable candidate.
+		if verified && isImageSetRelease(rel.Title) {
+			verified = false
+			reasons = append(reasons, "looks like a photo image set, not the video scene")
 		}
 		sc := scorer.Score(rel.Title, rel.Indexer, rel.Protocol)
 		out[res.Index] = sceneRelease{

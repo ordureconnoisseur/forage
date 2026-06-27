@@ -57,3 +57,30 @@ func TestIsLinkSpamRelease(t *testing.T) {
 		}
 	}
 }
+
+func TestIsImageSetRelease(t *testing.T) {
+	sets := []string{
+		"ATKGirlfriends.com_19.08.16.Kenzie.Reeves.XXX.iMAGESET-LEWD",
+		"ATKGirlfriends com 19 08 16 Kenzie Reeves XXX iMAGESET-LEWD [XC]",
+		"Studio.Performer.photoset.2024",
+		"Performer Photo Set 2024",
+		"Performer.Pic-Set.XXX",
+	}
+	for _, s := range sets {
+		if !isImageSetRelease(s) {
+			t.Errorf("isImageSetRelease(%q) = false, want true (photo set)", s)
+		}
+	}
+	// Real videos (and a stray "image"/"pic" without "set") must not trip.
+	videos := []string{
+		"ATKGirlfriends.19.08.16.Kenzie.Reeves.BTS.XXX.1080p.MP4-KTR-Pornfuscated",
+		"BadoinkVR.20.02.13.Kenzie.Reeves.Lovestruck.REMASTERED.XXX.VR180.4096p",
+		"Studio.Perfect.Picture.XXX.1080p",
+		"Performer Image Of Lust 1080p",
+	}
+	for _, s := range videos {
+		if isImageSetRelease(s) {
+			t.Errorf("isImageSetRelease(%q) = true, want false (video)", s)
+		}
+	}
+}
