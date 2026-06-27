@@ -205,9 +205,9 @@ func TestResolution(t *testing.T) {
 		// VR: "NK" width labels and tall pixel-height labels (the screenshot
 		// release names). 180x180 is a FOV, NOT a resolution — must stay None.
 		"WankzVR.20.10.08.Kenzie.Reeves.Wetty.Dreams.May.Cum.XXX.VR180.3600p.MP4-WURSTHALL": Res7K,
-		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 7K)":                         Res7K,
-		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 5K)":                         Res5K,
-		"Scene 8K VR":                              Res8K,
+		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 7K)":                        Res7K,
+		"WankzVR - Wetty Dreams May Cum - Kenzie Reeves (Oculus 5K)":                        Res5K,
+		"Scene 8K VR": Res8K,
 		"wankzvr-wetty-dreams-may-cum-180_180x180_3dh_LR": ResNone,
 	}
 	for title, want := range cases {
