@@ -19,6 +19,46 @@ func newTestRepo(t *testing.T) *Repo {
 	return NewRepo(dbh)
 }
 
+// TestHasLiveGrabForRelease pins the adoption duplicate guard: a release with
+// a live grab (any non-failed status) reports as already-held so adoption
+// skips re-placing it; a failed prior attempt does not, so a genuine re-grab
+// still proceeds; an unrelated title is unaffected.
+func TestHasLiveGrabForRelease(t *testing.T) {
+	r := newTestRepo(t)
+	ctx := context.Background()
+	title := "Onlyfans.Siterip.Ari.Kytsya._video.001"
+
+	if has, err := r.HasLiveGrabForRelease(ctx, title); err != nil || has {
+		t.Fatalf("no grab yet: got has=%v err=%v, want false/nil", has, err)
+	}
+
+	id, err := r.Insert(ctx, Grab{ReleaseTitle: title, Client: "sabnzbd", Status: "placed", GrabbedAt: 1})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if has, err := r.HasLiveGrabForRelease(ctx, title); err != nil || !has {
+		t.Fatalf("placed grab: got has=%v err=%v, want true/nil", has, err)
+	}
+	// An unrelated title must not match.
+	if has, _ := r.HasLiveGrabForRelease(ctx, title+".002"); has {
+		t.Fatal("different title must not report as held")
+	}
+	// Empty title is a no-op (never blocks).
+	if has, _ := r.HasLiveGrabForRelease(ctx, ""); has {
+		t.Fatal("empty title must not report as held")
+	}
+
+	// A failed prior attempt is NOT live — a re-grab should be allowed.
+	g, _ := r.Get(ctx, id)
+	g.Status = "failed"
+	if err := r.Update(ctx, *g); err != nil {
+		t.Fatalf("update to failed: %v", err)
+	}
+	if has, err := r.HasLiveGrabForRelease(ctx, title); err != nil || has {
+		t.Fatalf("failed grab: got has=%v err=%v, want false/nil (re-grab allowed)", has, err)
+	}
+}
+
 // TestUpdateOptimisticLock pins the rev compare-and-set: two readers load the
 // same row; the first write wins and bumps rev; the second (stale) write is
 // rejected with ErrStaleUpdate rather than silently clobbering — the

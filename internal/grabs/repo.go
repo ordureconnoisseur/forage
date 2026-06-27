@@ -257,6 +257,27 @@ func statusRank(s string) int {
 	}
 }
 
+// HasLiveGrabForRelease reports whether a non-failed grab already exists for
+// this exact release title — i.e. forager already has, or is downloading,
+// this content. Adoption uses it to skip re-adopting a release it already
+// grabbed: the StashDB-cross-id dedup can't see non-StashDB content (OnlyFans
+// siterips and the like, which never resolve to a StashDB scene), so without
+// this an identical re-download landing under the forage category gets placed
+// as a second copy. failed/orphaned/mismatched are excluded so a genuine
+// re-grab after a dead attempt still proceeds.
+func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, error) {
+	if title == "" {
+		return false, nil
+	}
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(1) FROM grabs
+		WHERE release_title = ?
+		  AND status IN ('queued','downloading','completed','placed','scanned','confirmed')`,
+		title).Scan(&n)
+	return n > 0, err
+}
+
 // List returns the most recent grabs first, filtered by status if
 // nonempty. Used by the GET /grabs endpoint.
 func (r *Repo) List(ctx context.Context, status string, limit, offset int) ([]Grab, error) {

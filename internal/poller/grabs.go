@@ -1559,6 +1559,17 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 			skippedRecent++
 			continue
 		}
+		// Duplicate guard (see adoptSabOrphans): forager already has this exact
+		// release, and the StashDB dedup can't catch non-StashDB content. Skip
+		// re-adopting it so it isn't placed a second time. Unlike SAB we DON'T
+		// delete the torrent — it may be seeding for ratio; leaving it untracked
+		// under the forage category is harmless (it just won't be re-adopted).
+		if dup, derr := p.repo.HasLiveGrabForRelease(ctx, t.Name); derr != nil {
+			p.log.Warn("adopt: dup check", "name", t.Name, "err", derr)
+		} else if dup {
+			p.log.Info("adopt: skipping duplicate, release already grabbed", "name", t.Name, "hash", t.Hash)
+			continue
+		}
 		kind, videos, ok := p.classifyTorrent(ctx, qb, t.Hash)
 		if !ok {
 			// The file list isn't available yet — a magnet still resolving
@@ -1664,6 +1675,21 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 			continue
 		}
 		if it.Completed > 0 && now-it.Completed > int64(sabAdoptWindow/time.Second) {
+			continue
+		}
+		// Duplicate guard: forager already has (or is downloading) this exact
+		// release. The StashDB-cross-id dedup can't catch non-StashDB content
+		// (OnlyFans siterips, etc.), so a re-download under the forage category
+		// would otherwise be placed as a second copy. Drop the redundant SAB
+		// download (files included) and skip. A failed/orphaned prior attempt
+		// is NOT "live", so a genuine re-grab still proceeds.
+		if dup, derr := p.repo.HasLiveGrabForRelease(ctx, it.Name); derr != nil {
+			p.log.Warn("adopt: dup check", "name", it.Name, "err", derr)
+		} else if dup {
+			p.log.Info("adopt: skipping duplicate, release already grabbed", "name", it.Name, "nzo_id", it.NzoID)
+			if err := sb.DeleteHistory(ctx, it.NzoID, true); err != nil {
+				p.log.Warn("adopt: remove duplicate sab download", "nzo_id", it.NzoID, "err", err)
+			}
 			continue
 		}
 		kind, videos, ok := classifyDownloadPath(it.Path)
