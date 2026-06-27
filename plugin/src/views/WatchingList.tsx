@@ -545,9 +545,9 @@ function WatchCard({
                     className="watch-dismiss"
                     disabled={busy}
                     onClick={dismiss}
-                    title="Not this one — ignore this release and search for a different one now"
+                    title="Ignore this release and search for a different one now"
                   >
-                    Dismiss
+                    Not this one
                   </button>
                 )}
               </>
