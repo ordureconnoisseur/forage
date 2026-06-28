@@ -558,6 +558,15 @@ function WatchCard({
             ) : (
               <span className="watch-spinner-label">
                 <span className="coll-spinner" /> watching
+                {(w.search_count ?? 0) > 0 && (
+                  <span
+                    className="watch-search-count"
+                    title={`Searched ${w.search_count} time${w.search_count === 1 ? "" : "s"} with no release found yet`}
+                  >
+                    {" · "}
+                    {w.search_count}× searched
+                  </span>
+                )}
               </span>
             )}
             <button

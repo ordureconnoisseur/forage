@@ -291,6 +291,7 @@ func migrateGrabsColumns(db *sql.DB) error {
 			{"candidates", `ALTER TABLE watches ADD COLUMN candidates TEXT NOT NULL DEFAULT '[]'`},
 			{"grabbed_at", `ALTER TABLE watches ADD COLUMN grabbed_at INTEGER NOT NULL DEFAULT 0`},
 			{"performers", `ALTER TABLE watches ADD COLUMN performers TEXT NOT NULL DEFAULT '[]'`},
+			{"search_count", `ALTER TABLE watches ADD COLUMN search_count INTEGER NOT NULL DEFAULT 0`},
 		}
 		for _, c := range watchCols {
 			var has int

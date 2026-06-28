@@ -1238,6 +1238,9 @@ export interface Watch {
   candidates?: SceneRelease[];
   // When the watch was grabbed (status="grabbed").
   grabbed_at?: number;
+  // How many times this scene has been re-searched for a release (loop claims +
+  // manual search-now). Shown as a badge so you can see how hard forage tried.
+  search_count?: number;
   // Transient: a manual "search now" is actively re-searching this watch.
   searching?: boolean;
 }

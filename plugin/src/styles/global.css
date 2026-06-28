@@ -5142,6 +5142,12 @@ code.grab-fact-v,
   font-size: 12px;
   white-space: nowrap;
 }
+/* "N× searched" count appended to the watching label — dimmer than the label
+   so it reads as a quiet attempt counter, not a status. */
+.watch-search-count {
+  opacity: 0.7;
+  font-variant-numeric: tabular-nums;
+}
 /* Dismiss — reject this find but keep watching. Quiet outlined pill,
    between the primary Grab and the remove ✕. */
 .watch-dismiss {

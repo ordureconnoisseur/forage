@@ -64,6 +64,10 @@ type Watch struct {
 	Candidates json.RawMessage `json:"candidates,omitempty"`
 	// GrabbedAt is when the watch was grabbed (status='grabbed'); 0 otherwise.
 	GrabbedAt int64 `json:"grabbed_at,omitempty"`
+	// SearchCount is how many times this scene has been re-searched for a
+	// release (bumped on every loop claim and manual search-now). Lets the
+	// Watching tab show how many attempts a still-unfound scene has had.
+	SearchCount int `json:"search_count"`
 	// Searching is a transient, NON-persisted view flag: true while a manual
 	// "search now" is actively re-searching this watch. Set by the API layer
 	// from an in-memory set (never read from / written to the DB), so the UI
@@ -226,7 +230,9 @@ func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 	}
 	now := time.Now().Unix()
 	for _, w := range ws {
-		_, _ = r.db.ExecContext(ctx, `UPDATE watches SET last_checked = ? WHERE stashdb_id = ?`, now, w.StashDBID)
+		_, _ = r.db.ExecContext(ctx,
+			`UPDATE watches SET last_checked = ?, search_count = search_count + 1 WHERE stashdb_id = ?`,
+			now, w.StashDBID)
 	}
 	return ws, nil
 }
@@ -289,7 +295,8 @@ func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer
 // deprioritises rows that were just searched.
 func (r *Repo) MarkChecked(ctx context.Context, stashDBID string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE watches SET last_checked = ? WHERE stashdb_id = ?`, time.Now().Unix(), stashDBID)
+		`UPDATE watches SET last_checked = ?, search_count = search_count + 1 WHERE stashdb_id = ?`,
+		time.Now().Unix(), stashDBID)
 	return err
 }
 
@@ -371,7 +378,7 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(found_protocol,''), found_size,
 	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
 	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at,
-	COALESCE(performers,'[]')`
+	COALESCE(performers,'[]'), search_count`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -388,7 +395,7 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
-			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON,
+			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON, &w.SearchCount,
 		); err != nil {
 			return nil, err
 		}

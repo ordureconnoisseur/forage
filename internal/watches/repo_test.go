@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS watches (
   ignored_urls TEXT NOT NULL DEFAULT '[]',
   batch_id TEXT NOT NULL DEFAULT '', batch_label TEXT NOT NULL DEFAULT '',
   candidates TEXT NOT NULL DEFAULT '[]', grabbed_at INTEGER NOT NULL DEFAULT 0,
-  performers TEXT NOT NULL DEFAULT '[]');`
+  performers TEXT NOT NULL DEFAULT '[]',
+  search_count INTEGER NOT NULL DEFAULT 0);`
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
@@ -129,6 +130,34 @@ func TestClaimBatchRoundRobin(t *testing.T) {
 	// Round-robin between two groups → an even split, not 4 big + 0 singles.
 	if singles != 2 || big != 2 {
 		t.Errorf("round-robin split = %d singles / %d big, want 2 / 2 (singles starved?)", singles, big)
+	}
+}
+
+// TestSearchCountIncrements pins the search-count badge data: each claim and
+// each manual MarkChecked bumps search_count, so the Watching tab can show how
+// many times a still-unfound scene has been searched.
+func TestSearchCountIncrements(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	_ = r.Add(ctx, Watch{StashDBID: "s", Title: "x"})
+	if ws, _ := r.List(ctx); ws[0].SearchCount != 0 {
+		t.Fatalf("fresh watch search_count = %d, want 0", ws[0].SearchCount)
+	}
+	// A claim counts as a search.
+	if _, err := r.ClaimBatch(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	// Reset last_checked so the next claim re-selects it.
+	r.db.Exec(`UPDATE watches SET last_checked = 0 WHERE stashdb_id = 's'`)
+	if _, err := r.ClaimBatch(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	// And a manual search-now bumps it too.
+	if err := r.MarkChecked(ctx, "s"); err != nil {
+		t.Fatal(err)
+	}
+	if ws, _ := r.List(ctx); ws[0].SearchCount != 3 {
+		t.Errorf("search_count = %d, want 3 (2 claims + 1 MarkChecked)", ws[0].SearchCount)
 	}
 }
 

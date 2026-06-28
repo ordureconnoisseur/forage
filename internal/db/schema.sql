@@ -245,7 +245,11 @@ CREATE TABLE IF NOT EXISTS watches (
   -- available.
   candidates     TEXT NOT NULL DEFAULT '[]',
   -- when the watch was grabbed (status='grabbed'); 0 otherwise.
-  grabbed_at     INTEGER NOT NULL DEFAULT 0
+  grabbed_at     INTEGER NOT NULL DEFAULT 0,
+  -- how many times this scene has been re-searched for a release (incremented
+  -- on every loop claim and manual search-now). Surfaced in the Watching tab
+  -- so you can see how hard forage has tried on a still-unfound scene.
+  search_count   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
