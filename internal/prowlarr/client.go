@@ -148,6 +148,10 @@ func (c *Client) Search(ctx context.Context, term string, categories []int) ([]R
 // SearchScoped is Search restricted to specific indexer ids — used to
 // fan a search out per-indexer (each with its own timeout) so one slow
 // indexer can't stall the whole query. Empty indexerIDs = all indexers.
+//
+// An empty term is intentionally sent as `query=` (not rejected): Prowlarr
+// treats a query-less search as the indexers' recent-uploads feed, which
+// RecentReleases relies on. Keep emitting the empty query param.
 func (c *Client) SearchScoped(ctx context.Context, term string, categories, indexerIDs []int) ([]Release, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("prowlarr base URL not configured")
@@ -172,6 +176,19 @@ func (c *Client) SearchScoped(ctx context.Context, term string, categories, inde
 		return nil
 	})
 	return out, err
+}
+
+// RecentReleases returns each indexer's most-recent uploads — the RSS-style
+// "what's new" feed — by issuing a QUERY-LESS search (empty term). Prowlarr
+// answers an empty query with the indexers' recent items rather than a keyword
+// search, so this is the cheap forward-looking complement to per-scene Search:
+// one aggregate request whose results the caller matches locally against the
+// watchlist. categories filters by Newznab type as usual (empty = all). Each
+// Release carries PublishDate (RFC3339) and IndexerID so the caller can
+// watermark per indexer. Verified behaviour: GET /api/v1/search?query=&categories=…
+// returns recent releases across all indexers.
+func (c *Client) RecentReleases(ctx context.Context, categories []int) ([]Release, error) {
+	return c.SearchScoped(ctx, "", categories, nil)
 }
 
 // searchOnce performs one /api/v1/search request and decodes it. Errors are
