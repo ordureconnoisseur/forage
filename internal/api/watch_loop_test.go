@@ -32,6 +32,34 @@ func TestBestWatchMatch(t *testing.T) {
 	}
 }
 
+// TestBestWatchMatchConfidenceWithinTier pins the fix for the dated-release
+// case: among same-resolution candidates, the surer match (higher confidence —
+// e.g. the one carrying the exact scene date) must win even when a fine indexer
+// nudge gives a rival a slightly higher preference score.
+func TestBestWatchMatchConfidenceWithinTier(t *testing.T) {
+	s := &Server{}
+	cands := []sceneRelease{
+		// Higher score (a 2-point indexer nudge) but a weak match.
+		{Title: "Bang Surprise - Angela White 1080p", DownloadURL: "weak",
+			Verified: true, Score: 137, Protocol: "usenet", Confidence: 0.45},
+		// Lower score but a far surer match (carries the exact scene date).
+		{Title: "Bang.26.06.29.Angela.White.XXX.1080p", DownloadURL: "dated",
+			Verified: true, Score: 135, Protocol: "usenet", Confidence: 0.90},
+	}
+	if best := s.bestWatchMatch(cands, nil); best == nil || best.DownloadURL != "dated" {
+		t.Fatalf("same-resolution: higher-confidence (dated) must beat higher-score, got %+v", best)
+	}
+	// But a genuine resolution difference still defers to the user's score: a
+	// 4K with lower confidence beats a 1080p only if the score says so.
+	cross := []sceneRelease{
+		{Title: "Scene 1080p", DownloadURL: "hd", Verified: true, Score: 100, Protocol: "usenet", Confidence: 0.95},
+		{Title: "Scene 2160p", DownloadURL: "uhd", Verified: true, Score: 60, Protocol: "usenet", Confidence: 0.50},
+	}
+	if best := s.bestWatchMatch(cross, nil); best == nil || best.DownloadURL != "hd" {
+		t.Fatalf("cross-resolution: user score (1080p>4K) must decide, not confidence, got %+v", best)
+	}
+}
+
 func TestWatchBatchSize(t *testing.T) {
 	s := &Server{}
 	// Small lists are fully checked each tick (responsive).

@@ -189,10 +189,10 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// Verify which releases are this scene + shape them for the UI.
 	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases)
 
-	// Rank: verified-first, then by the user's preference SCORE (the
-	// quality ranking — x265/1080p/etc.), then popularity as the final
-	// tiebreaker. Rejected releases sort to the bottom of their group so
-	// they're visible but never lead.
+	// Rank: verified-first, then non-rejected, then the canonical betterRelease
+	// comparator (resolution by score, then match confidence within a tier, then
+	// availability/size, indexer/protocol nudge last). Sharing betterRelease
+	// keeps this list's leading release identical to the watcher's auto-pick.
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].Verified != out[j].Verified {
 			return out[i].Verified
@@ -200,29 +200,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 		if out[i].Rejected != out[j].Rejected {
 			return !out[i].Rejected // non-rejected first
 		}
-		// Deliverability gate: a 0-seeder torrent can't actually be
-		// downloaded, so it sinks below everything grabbable regardless of
-		// quality — otherwise a dead 1080p outranks a healthy 720p and the
-		// top pick stalls.
-		if gi, gj := grabbable(out[i]), grabbable(out[j]); gi != gj {
-			return gi
-		}
-		if out[i].Score != out[j].Score {
-			return out[i].Score > out[j].Score
-		}
-		// Seed health before file size: a marginally-larger file mustn't
-		// promote a barely-seeded release over a well-seeded one of equal
-		// score (the "picked the 1-seeder over the 49-seeder" bug). Tiers are
-		// coarse, so a real encode-size edge still breaks a same-health tie.
-		if ti, tj := seedTier(out[i]), seedTier(out[j]); ti != tj {
-			return ti > tj
-		}
-		// Within equal score + seed health, the larger file is the better
-		// encode — prefer it over an over-compressed sibling.
-		if out[i].Size != out[j].Size {
-			return out[i].Size > out[j].Size
-		}
-		return out[i].Popularity > out[j].Popularity
+		return betterRelease(out[i], out[j])
 	})
 
 	resp := sceneReleasesResponse{Releases: out}

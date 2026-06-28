@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -233,7 +234,9 @@ func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 			picks = append(picks, c)
 		}
 	}
-	sort.SliceStable(picks, func(i, j int) bool { return picks[i].Score > picks[j].Score })
+	// Order by the same comparator that chooses the auto-pick, so the stored
+	// re-pick list leads with the release the watcher actually selected.
+	sort.SliceStable(picks, func(i, j int) bool { return betterRelease(picks[i], picks[j]) })
 	if len(picks) > watchCandidateCap {
 		picks = picks[:watchCandidateCap]
 	}
@@ -278,18 +281,45 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 	return &cands[bestIdx]
 }
 
-// betterRelease reports whether a should rank above b for auto-selection:
-// grabbable first, then preference score, then seed health, then popularity —
-// the precedence the release list sorts on.
+// confidenceTiebreakEpsilon is the smallest match-confidence gap that counts as
+// "one is a meaningfully surer match". Below it the two are treated as equally
+// confident, so scoring noise can't flip the pick on a near-coin-toss.
+const confidenceTiebreakEpsilon = 0.05
+
+// betterRelease reports whether a should rank above b for auto-selection — the
+// single comparator both the watch pick and the per-scene release list use.
+//
+// Precedence:
+//  1. grabbable — a dead torrent (0 seeders) can never win, whatever its score.
+//  2. DIFFERENT resolution → the user's full preference SCORE decides. Resolution,
+//     protocol and reject preferences all live in the score, including
+//     idiosyncratic ones (1080p ranked above 4K, usenet weighted so a 1080p
+//     usenet beats a VR torrent). Comparing whole scores across tiers preserves
+//     all of that.
+//  3. SAME resolution → the candidates are the same scene at the same quality, so
+//     a tiny preference-score gap shouldn't decide it. Prefer the SURER match
+//     first (a weakly-verified release is a mis-grab risk — e.g. one with the
+//     exact scene date beats one matched only on performer+studio), then seed
+//     health, then popularity (grabs), then the bigger encode, and only then the
+//     score's fine indexer/protocol nudge as the last word.
 func betterRelease(a, b sceneRelease) bool {
 	if ga, gb := grabbable(a), grabbable(b); ga != gb {
 		return ga
 	}
-	if a.Score != b.Score {
+	if scoring.Resolution(a.Title) != scoring.Resolution(b.Title) {
 		return a.Score > b.Score
+	}
+	if d := a.Confidence - b.Confidence; d > confidenceTiebreakEpsilon || d < -confidenceTiebreakEpsilon {
+		return d > 0
 	}
 	if sa, sb := seedTier(a), seedTier(b); sa != sb {
 		return sa > sb
 	}
-	return a.Popularity > b.Popularity
+	if a.Popularity != b.Popularity {
+		return a.Popularity > b.Popularity
+	}
+	if a.Size != b.Size {
+		return a.Size > b.Size
+	}
+	return a.Score > b.Score
 }
