@@ -21,6 +21,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/rss"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
@@ -41,6 +42,7 @@ type Server struct {
 	store     *configstore.Store
 	grabs     *grabs.Repo   // never nil
 	watches   *watches.Repo // never nil
+	rss       *rss.Repo     // never nil; RSS-sync watermark store
 	log       *slog.Logger
 	version   string
 	adoptNow  func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
@@ -139,6 +141,7 @@ func New(opts Options) *Server {
 		store:      opts.Store,
 		grabs:      opts.Grabs,
 		watches:    opts.Watches,
+		rss:        rss.NewRepo(opts.DB),
 		log:        opts.Log,
 		version:    opts.Version,
 		adoptNow:   opts.AdoptNow,

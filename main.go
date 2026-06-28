@@ -116,6 +116,13 @@ func main() {
 	// over-24h cadence and flips them to "available" (never grabs).
 	launch(func() { server.RunWatchLoop(ctx) })
 
+	// RSS-sync loop — the cheap forward-looking complement: pulls each
+	// indexer's recent-uploads feed, matches it against the watchlist locally,
+	// and triggers a full per-scene search when a watched scene's release drops
+	// (so freshly posted releases are caught without speculative per-scene
+	// searching). Never grabs.
+	launch(func() { server.RunRSSLoop(ctx) })
+
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,
 		Handler:           server.Router(),

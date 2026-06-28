@@ -31,6 +31,26 @@ type Matcher struct {
 	studioScanner     *Scanner
 	performerStashDB  map[string]string
 	studioRealStashDB map[string]bool
+	// perfNameByID maps a corpus performer's local id to its canonical name,
+	// so PerformersInTitle can report names (not ids) without a StashDB call.
+	perfNameByID map[string]string
+}
+
+// PerformersInTitle returns the canonical names of corpus performers detected
+// in a release title using the LOCAL scanner only — no StashDB roundtrip. The
+// RSS pre-filter uses it to cheaply discard recent releases that involve no
+// watched performer before paying for a full Match(). A performer must be in
+// the matcher corpus to be detected; releases naming a non-corpus performer
+// fall through to the per-scene search loop (graceful degradation).
+func (m *Matcher) PerformersInTitle(title string) []string {
+	ids := m.perfScanner.Match(title)
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if n, ok := m.perfNameByID[id]; ok && n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
 type Candidate struct {
@@ -103,6 +123,11 @@ func New(ctx context.Context, db *sql.DB, stashDBClient *stashdb.Client) (*Match
 		studiosForScanner = append(studiosForScanner, s)
 	}
 
+	perfNameByID := make(map[string]string, len(performers))
+	for _, p := range performers {
+		perfNameByID[p.ID] = p.Name
+	}
+
 	return &Matcher{
 		stashDB:     stashDBClient,
 		perfScanner: NewScanner(performers, DefaultScannerOptions()),
@@ -112,6 +137,7 @@ func New(ctx context.Context, db *sql.DB, stashDBClient *stashdb.Client) (*Match
 		studioScanner:     NewScanner(studiosForScanner, StudioScannerOptions()),
 		performerStashDB:  perfMap,
 		studioRealStashDB: studioReal,
+		perfNameByID:      perfNameByID,
 	}, nil
 }
 

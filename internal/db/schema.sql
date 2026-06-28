@@ -251,6 +251,18 @@ CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
 CREATE INDEX IF NOT EXISTS idx_watches_batch   ON watches(batch_id);
 
+-- rss_sync_state: the RSS-sync high-watermark per indexer — the most-recent
+-- release publishDate (unix) the sync has already processed for that indexer.
+-- The RSS loop pulls each indexer's recent-uploads feed and only matches
+-- releases newer than this mark (minus a small overlap), so each tick handles
+-- just the genuinely-new uploads instead of re-matching the whole recent
+-- window. Keyed by Prowlarr's indexer id; absent row = never synced (first run
+-- uses a bounded lookback instead of the watermark).
+CREATE TABLE IF NOT EXISTS rss_sync_state (
+  indexer_id        INTEGER PRIMARY KEY,
+  last_publish_unix INTEGER NOT NULL DEFAULT 0
+);
+
 -- pack_duplicate: one row per (pack grab, StashDB scene) collision that the
 -- review-mode dedup path (PackDedupKeep="review") found — a scene the pack
 -- delivered that the library ALREADY had elsewhere. Instead of the auto
