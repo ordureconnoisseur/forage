@@ -4328,6 +4328,12 @@ code.grab-fact-v,
   color: var(--text-muted);
   opacity: 0.85;
 }
+/* Codec marker (XviD/DivX) — not a resolution; a low-quality warning. Amber
+   tint to read as "caution, old SD rip", distinct from the neutral res tiers. */
+.res-badge.res-codec {
+  background: rgba(217, 119, 87, 0.16);
+  color: #d97757;
+}
 .coll-pick .res-badge,
 .coll-cand .res-badge {
   align-self: center;

@@ -36,8 +36,32 @@ export function resolution(
   return null;
 }
 
+// codec pulls an SD-era codec marker (XviD/DivX) out of a release title. These
+// are NOT resolutions — they're MPEG-4 ASP codecs — but in practice they mark
+// an old, low-quality SD rip (HD XviD essentially doesn't exist), and such
+// titles often carry no resolution token at all. Surfaced as its own muted
+// badge so an otherwise-blank release reads as "old SD codec", not a mystery.
+export function codec(title: string): string | null {
+  const m = title.toLowerCase().match(/\b(xvid|divx)\b/);
+  if (!m) return null;
+  return m[1] === "divx" ? "DivX" : "XviD";
+}
+
 export function ResBadge({ title }: { title: string }) {
   const res = resolution(title);
-  if (!res) return null;
-  return <span className={"res-badge " + res.cls}>{res.label}</span>;
+  const cod = codec(title);
+  if (!res && !cod) return null;
+  return (
+    <>
+      {res && <span className={"res-badge " + res.cls}>{res.label}</span>}
+      {cod && (
+        <span
+          className="res-badge res-codec"
+          title="Old SD-era codec (XviD/DivX) — low quality"
+        >
+          {cod}
+        </span>
+      )}
+    </>
+  );
 }

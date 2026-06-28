@@ -119,6 +119,31 @@ func TestVRResolutionScoring(t *testing.T) {
 	}
 }
 
+// TestXviDPenalty: XviD/DivX are codecs, not resolutions — they must NOT
+// classify as a resolution, but DefaultRules penalises them as SD-era rips so
+// they sink below proper-resolution releases.
+func TestXviDPenalty(t *testing.T) {
+	s := New(DefaultRules())
+	for _, title := range []string{
+		"Studio.Performer.XXX.XviD-GROUP",
+		"Studio Performer DivX",
+	} {
+		if got := s.Score(title, "idx", "").Score; got != -50 {
+			t.Errorf("Score(%q) = %d, want -50 (XviD/DivX SD penalty)", title, got)
+		}
+		// Codec is not a resolution.
+		if r := Resolution(title); r != ResNone {
+			t.Errorf("Resolution(%q) = %q, want ResNone (codec is not a resolution)", title, r)
+		}
+	}
+	// A proper 1080p release still beats an XviD one.
+	hd := s.Score("Studio Performer 1080p", "idx", "").Score
+	xvid := s.Score("Studio Performer XviD", "idx", "").Score
+	if !(hd > xvid) {
+		t.Errorf("1080p (%d) should outrank XviD (%d)", hd, xvid)
+	}
+}
+
 func TestDefaultsResolution(t *testing.T) {
 	s := New(DefaultRules())
 	cases := []struct {
