@@ -166,7 +166,12 @@ func (s *Server) rssTick(ctx context.Context) {
 			if !ok {
 				continue
 			}
-			if matcher.Verify(cands, w.StashDBID, w.Title, r.Title).Verified {
+			vr := matcher.Verify(cands, w.StashDBID, w.Title, r.Title)
+			// Low-volume: only fires when a recent release maps to a WATCHING
+			// scene — the near-miss/hit signal worth keeping for observability.
+			s.log.Info("rss watched candidate", "release", r.Title,
+				"watch_title", w.Title, "verified", vr.Verified, "conf", vr.Confidence)
+			if vr.Verified {
 				triggers[w.StashDBID] = w
 				break // one scene per release
 			}
