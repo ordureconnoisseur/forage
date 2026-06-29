@@ -67,6 +67,28 @@ func TestFetchTorrentBytesNoRetryOn4xx(t *testing.T) {
 	}
 }
 
+// TestFetchTorrentBytesMagnetRedirect: an aggregator (Knaben) 301s its
+// /download proxy to a magnet: URI. The Go client can't GET a magnet:, so the
+// fetch must NOT follow it and fail — it captures the magnet from the redirect
+// and returns it as the body, which the caller hands to qBit's urls field.
+func TestFetchTorrentBytesMagnetRedirect(t *testing.T) {
+	const magnet = "magnet:?xt=urn:btih:F5FACE375541B93C5A9BECE66FD824CCF065DF4A&dn=x"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", magnet)
+		w.WriteHeader(http.StatusMovedPermanently) // 301 -> magnet, as Knaben does
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
+	body, err := c.fetchTorrentBytes(context.Background(), srv.URL+"/download?link=z")
+	if err != nil {
+		t.Fatalf("magnet redirect should resolve to the magnet, got err %v", err)
+	}
+	if string(body) != magnet {
+		t.Errorf("body = %q, want the magnet URI", string(body))
+	}
+}
+
 // TestAuthedDoReloginsOn403 is the regression guard for the bug where
 // authedOnce latched true for the life of the process: once qBit expired
 // the SID cookie (or restarted) mid-pack, every subsequent poll got 403

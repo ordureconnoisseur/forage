@@ -230,7 +230,7 @@ const watchCandidateCap = 25
 func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 	picks := make([]sceneRelease, 0, len(cands))
 	for _, c := range cands {
-		if c.Verified && !c.Rejected {
+		if c.Verified && !c.Rejected && c.DownloadURL != "" {
 			picks = append(picks, c)
 		}
 	}
@@ -266,9 +266,12 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 	bestIdx := -1
 	for i := range cands {
 		c := &cands[i]
-		// Skip unverified/rejected, and releases the user dismissed for this
-		// watch (a dead/over-compressed find must not re-surface).
-		if !c.Verified || c.Rejected || ignoredSet[c.DownloadURL] {
+		// Skip unverified/rejected, releases with no grab link (a release we
+		// can't actually download must never be the "found" one — it'd flip
+		// the watch to available but fail silently on grab), and releases the
+		// user dismissed for this watch (a dead/over-compressed find must not
+		// re-surface).
+		if !c.Verified || c.Rejected || c.DownloadURL == "" || ignoredSet[c.DownloadURL] {
 			continue
 		}
 		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {

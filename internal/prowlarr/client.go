@@ -125,6 +125,16 @@ func (r rawRelease) toRelease() Release {
 	case strings.HasPrefix(r.MagnetURL, "magnet:"):
 		out.Magnet = r.MagnetURL
 	}
+	// Aggregators (Knaben) leave downloadUrl empty and expose the grab link
+	// ONLY as magnetUrl — but as a Prowlarr DOWNLOAD-PROXY http URL that 301s
+	// to a magnet, not a raw magnet:. The magnet checks above miss it, so
+	// GrabURL would be empty and the release looks grabbable (it has seeders)
+	// yet can't be grabbed. Treat that proxy URL as the download URL; the qbit
+	// client follows its magnet redirect when it fetches.
+	if out.DownloadURL == "" && out.Magnet == "" &&
+		(strings.HasPrefix(r.MagnetURL, "http://") || strings.HasPrefix(r.MagnetURL, "https://")) {
+		out.DownloadURL = r.MagnetURL
+	}
 	for _, c := range r.Categories {
 		out.Categories = append(out.Categories, c.ID)
 	}

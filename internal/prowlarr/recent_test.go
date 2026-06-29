@@ -7,6 +7,32 @@ import (
 	"testing"
 )
 
+// TestToReleaseGrabURL pins how a grab link is derived across indexer shapes —
+// especially aggregators (Knaben) that expose it ONLY as an http magnetUrl
+// proxy (which 301s to a magnet), not a downloadUrl or raw magnet:. That proxy
+// must become the DownloadURL or the release looks grabbable but isn't.
+func TestToReleaseGrabURL(t *testing.T) {
+	cases := []struct {
+		name        string
+		raw         rawRelease
+		wantGrabURL string
+	}{
+		{"plain downloadUrl", rawRelease{DownloadURL: "http://x/a.torrent"}, "http://x/a.torrent"},
+		{"raw magnet in magnetUrl", rawRelease{MagnetURL: "magnet:?xt=urn:btih:abc"}, "magnet:?xt=urn:btih:abc"},
+		{"raw magnet in guid", rawRelease{GUID: "magnet:?xt=urn:btih:def"}, "magnet:?xt=urn:btih:def"},
+		{"Knaben proxy magnetUrl (http)", rawRelease{MagnetURL: "http://prowlarr/16/download?link=z"}, "http://prowlarr/16/download?link=z"},
+		{"downloadUrl wins over proxy", rawRelease{DownloadURL: "http://x/a.torrent", MagnetURL: "http://prowlarr/16/download?link=z"}, "http://x/a.torrent"},
+		{"nothing grabbable", rawRelease{GUID: "https://site/description?id=1"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := c.raw.toRelease().GrabURL(); got != c.wantGrabURL {
+				t.Errorf("GrabURL = %q, want %q", got, c.wantGrabURL)
+			}
+		})
+	}
+}
+
 // TestRecentReleasesQueryless pins the RSS-feed behaviour: RecentReleases must
 // hit /api/v1/search with an EMPTY query (the query-less recent feed), pass the
 // categories through, and parse publishDate/indexerId onto the Release.

@@ -67,6 +67,20 @@ func New(baseURL, username, password string) *Client {
 		fetchHTTP: &http.Client{
 			Timeout: torrentFetchTimeout,
 			Jar:     jar,
+			// Follow http(s) redirects normally, but STOP before a magnet:
+			// (or any non-http) target — the Go client can't GET those and
+			// would fail the whole fetch. Surfacing the 3xx lets
+			// fetchTorrentBytes hand the magnet straight to qBit. Aggregators
+			// like Knaben 301 their /download proxy to a magnet.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.URL != nil && req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+					return http.ErrUseLastResponse
+				}
+				if len(via) >= 10 {
+					return http.ErrUseLastResponse
+				}
+				return nil
+			},
 		},
 	}
 }
@@ -243,6 +257,18 @@ func (c *Client) fetchTorrentBytes(ctx context.Context, downloadURL string) ([]b
 		if err != nil {
 			lastErr = clienterr.Transport("fetch torrent", err)
 			continue // transient (timeout / reset) — retry
+		}
+		// A redirect we deliberately didn't follow (CheckRedirect stops at a
+		// magnet: target). Hand the magnet back as the "body" so the caller's
+		// magnet-body path adds it via qBit's urls field. http(s) redirects
+		// were already followed, so a 3xx here is a non-http target.
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			loc := resp.Header.Get("Location")
+			resp.Body.Close()
+			if strings.HasPrefix(loc, "magnet:") {
+				return []byte(loc), nil
+			}
+			return nil, fmt.Errorf("fetch torrent: redirect to unusable target %q", loc)
 		}
 		if resp.StatusCode >= 400 {
 			b, _ := io.ReadAll(resp.Body)
