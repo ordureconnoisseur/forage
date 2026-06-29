@@ -161,6 +161,45 @@ func TestSearchCountIncrements(t *testing.T) {
 	}
 }
 
+// TestResetUngrabbableAvailable pins the self-heal: an available row with an
+// empty found_url is reset to watching (and re-queued via last_checked=0) while
+// keeping its batch; a valid available row (real found_url) is left untouched.
+func TestResetUngrabbableAvailable(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	_ = r.Add(ctx, Watch{StashDBID: "good", Title: "g", BatchID: "b1", BatchLabel: "B"})
+	_ = r.MarkAvailable(ctx, "good", "rel", "http://x", "ix", "torrent", 1, nil)
+	_ = r.Add(ctx, Watch{StashDBID: "bad", Title: "b", BatchID: "b1", BatchLabel: "B"})
+	_ = r.MarkAvailable(ctx, "bad", "rel2", "", "Knaben", "torrent", 1, nil) // empty url = invalid
+
+	n, err := r.ResetUngrabbableAvailable(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("reset %d rows, want 1 (only the empty-url one)", n)
+	}
+	ws, _ := r.List(ctx)
+	for _, w := range ws {
+		switch w.StashDBID {
+		case "bad":
+			if w.Status != StatusWatching {
+				t.Errorf("bad should be back to watching, got %q", w.Status)
+			}
+			if w.LastChecked != 0 {
+				t.Errorf("bad should re-queue (last_checked=0), got %d", w.LastChecked)
+			}
+			if w.BatchID != "b1" {
+				t.Errorf("bad lost its batch: %q", w.BatchID)
+			}
+		case "good":
+			if w.Status != StatusAvailable {
+				t.Errorf("good (real url) must stay available, got %q", w.Status)
+			}
+		}
+	}
+}
+
 func TestMarkAvailable(t *testing.T) {
 	r := testRepo(t)
 	ctx := context.Background()

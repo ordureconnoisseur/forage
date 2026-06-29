@@ -125,6 +125,16 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 // correctly; the user clears it (or the whole batch) when done. Preserves any
 // found_* release fields already on the watch. Best-effort: logs and moves on.
 func (s *Server) reconcileWatches(ctx context.Context) {
+	// Self-heal invalid "available but no grab link" rows back to watching, so
+	// a release that slipped through before the no-URL selection guard (or any
+	// future regression) re-searches instead of sitting un-grabbable. Runs
+	// every tick, independent of whether anything was grabbed.
+	if n, err := s.watches.ResetUngrabbableAvailable(ctx); err != nil {
+		s.log.Warn("watch reset ungrabbable available", "err", err)
+	} else if n > 0 {
+		s.log.Info("watch reset ungrabbable available → watching", "count", n)
+	}
+
 	grabbed := s.grabbedSceneSet(ctx)
 	if len(grabbed) == 0 {
 		return

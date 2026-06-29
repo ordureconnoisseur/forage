@@ -290,6 +290,28 @@ func (r *Repo) MarkAvailable(ctx context.Context, stashDBID, title, url, indexer
 	return err
 }
 
+// ResetUngrabbableAvailable flips back to 'watching' any rows wedged in an
+// invalid state: status='available' with no found_url. New finds can't reach
+// that state (selection now requires a grab link), but a release saved before
+// that guard would otherwise sit "available" yet fail every grab with nothing
+// to dismiss — un-actionable from the UI. Clearing the bogus found_* and
+// resetting last_checked=0 puts them at the front of the re-search queue;
+// batch_id/label and performers are left intact so they keep their grouping.
+// Returns the number of rows reset.
+func (r *Repo) ResetUngrabbableAvailable(ctx context.Context) (int64, error) {
+	res, err := r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  status = 'watching', last_checked = 0,
+		  found_title = '', found_url = '', found_indexer = '',
+		  found_protocol = '', found_size = 0, found_at = 0, candidates = '[]'
+		WHERE status = 'available' AND COALESCE(found_url, '') = ''`)
+	if err != nil {
+		return 0, err
+	}
+	n, _ := res.RowsAffected()
+	return n, nil
+}
+
 // MarkChecked stamps a watch's last_checked to now — used after a manual
 // "search now" so the background loop (which claims oldest-checked first)
 // deprioritises rows that were just searched.
