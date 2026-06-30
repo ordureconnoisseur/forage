@@ -31,6 +31,9 @@ import {
   resolveDuplicate,
   type DuplicateReview,
   type SceneCopy,
+  fetchPackScenes,
+  applyPackPerformer,
+  type PackScenes,
   GrabsResponse,
   GrabStatus,
   isActiveStatus,
@@ -1420,6 +1423,158 @@ function resLabel(c?: SceneCopy): string {
 
 // DupCopyRow renders one copy line in a duplicate compare: tag (yours/pack),
 // resolution, size, and the path (truncated, full path on hover).
+// PackPerformerReviewer lets the user add the pack's performer to the scenes
+// Stash COULDN'T identify (amateur content), shown on an expanded pack grab.
+// Identified/mismatched scenes are never offered — the endpoint returns only
+// unidentified ones. Covers are default-checked; deselect a stray, then apply
+// (additive — existing performers preserved). Self-fetches; renders nothing when
+// there's nothing unidentified or stash is unreachable.
+function PackPerformerReviewer({
+  grabId,
+  performerName,
+}: {
+  grabId: number;
+  performerName: string;
+}) {
+  const [data, setData] = useState<PackScenes | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tagged, setTagged] = useState<Set<string>>(new Set());
+  const [applying, setApplying] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    fetchPackScenes(grabId)
+      .then((d) => {
+        if (!alive) return;
+        setData(d);
+        setSelected(new Set(d.scenes.map((s) => s.scene_id)));
+      })
+      .catch(() => {}) // silent — stash down / not critical to the card
+      .finally(() => {
+        if (alive) setLoading(false);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [grabId]);
+
+  if (loading || !data || data.scenes.length === 0) return null;
+
+  const untagged = data.scenes.filter((s) => !tagged.has(s.scene_id));
+  const allDone = untagged.length === 0;
+  const selIds = untagged
+    .filter((s) => selected.has(s.scene_id))
+    .map((s) => s.scene_id);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id);
+      else n.add(id);
+      return n;
+    });
+
+  const apply = async () => {
+    if (selIds.length === 0 || applying) return;
+    setApplying(true);
+    setErr("");
+    try {
+      await applyPackPerformer(grabId, selIds);
+      setTagged((prev) => new Set([...prev, ...selIds]));
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="grab-pack-tag">
+      <div className="grab-pack-tag-head">
+        {allDone ? (
+          <span className="grab-pack-tag-done">
+            Tagged ✓ — {data.scenes.length} unidentified scene
+            {data.scenes.length === 1 ? "" : "s"} credited to {performerName}
+          </span>
+        ) : (
+          <>
+            {untagged.length} scene{untagged.length === 1 ? "" : "s"} Stash
+            couldn&rsquo;t identify
+            <span className="grab-pack-tag-sub">
+              {" — tag with "}
+              <strong>{performerName}</strong>
+              {!data.performer_resolvable &&
+                " (not in your Stash library — can't apply)"}
+            </span>
+          </>
+        )}
+      </div>
+      {!allDone && (
+        <>
+          <div className="scene-grid">
+            {untagged.map((s) => {
+              const sel = selected.has(s.scene_id);
+              const img = proxiedImageURL(s.image_url) || "";
+              return (
+                <div
+                  key={s.scene_id}
+                  className={"scene-card selectable" + (sel ? " selected" : "")}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={sel}
+                  onClick={() => toggle(s.scene_id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") toggle(s.scene_id);
+                  }}
+                >
+                  <span className="scene-check" aria-hidden="true">
+                    {sel ? "✓" : ""}
+                  </span>
+                  <div className="scene-thumb">
+                    {img ? (
+                      <img
+                        src={img}
+                        alt=""
+                        loading="lazy"
+                        onError={(e) => {
+                          (e.currentTarget as HTMLImageElement).style.display =
+                            "none";
+                        }}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="scene-info">
+                    <div className="title">{s.title || "(untitled)"}</div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="grab-pack-tag-foot">
+            <button
+              className="collection-cta"
+              disabled={
+                applying ||
+                selIds.length === 0 ||
+                !data.performer_resolvable
+              }
+              onClick={apply}
+            >
+              {applying
+                ? "Tagging…"
+                : `Add ${performerName} to ${selIds.length} scene${selIds.length === 1 ? "" : "s"}`}
+            </button>
+            {err && <span className="grab-delete-err">{err}</span>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function DupCopyRow({ tag, copy }: { tag: string; copy?: SceneCopy }) {
   return (
     <div className="grab-dup-copy">
@@ -1983,6 +2138,16 @@ function GrabRow({
               </div>
             );
           })()}
+
+          {/* Pack: tag the scenes Stash couldn't identify (amateur content)
+              with the pack's performer. Renders only for pack grabs that have
+              unidentified scenes. */}
+          {g.kind === "pack" && g.performer_name && (
+            <PackPerformerReviewer
+              grabId={g.id}
+              performerName={g.performer_name}
+            />
+          )}
 
           {/* Live download progress — full-width band, only in flight. */}
           {g.progress && (

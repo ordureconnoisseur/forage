@@ -906,6 +906,38 @@ export function setGrabPerformer(
   return postJSON(`/grabs/${id}/performer`, { performer_name: performerName });
 }
 
+// One taggable scene in a pack: a placed file Stash scanned but could NOT
+// cross-id against StashDB (amateur content). image_url is the daemon-relative
+// /img/scene/{id}/screenshot (works for unidentified locals).
+export interface PackScene {
+  scene_id: string;
+  title?: string;
+  image_url: string;
+}
+export interface PackScenes {
+  performer_name: string;
+  performer_local_id?: string;
+  performer_resolvable: boolean;
+  scenes: PackScene[];
+}
+
+// fetchPackScenes lists a pack grab's UNIDENTIFIED scenes (with covers) + the
+// performer it's filed under — the "tag amateur scenes with the performer"
+// reviewer on the pack grab card.
+export function fetchPackScenes(grabId: number): Promise<PackScenes> {
+  return get<PackScenes>(`/grabs/${grabId}/pack-scenes`);
+}
+
+// applyPackPerformer adds the pack's performer to the selected scenes, additively
+// (existing performers preserved). The server re-validates each id against the
+// pack's unidentified set, so it can never touch identified or non-pack scenes.
+export function applyPackPerformer(
+  grabId: number,
+  sceneIds: string[],
+): Promise<{ ok: boolean; applied: number }> {
+  return postJSON(`/grabs/${grabId}/apply-performer`, { scene_ids: sceneIds });
+}
+
 export interface DeleteGrabResult {
   ok: boolean;
   removed: string[];

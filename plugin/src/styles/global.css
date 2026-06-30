@@ -6295,6 +6295,40 @@ code.grab-fact-v,
   font-weight: 400;
   color: var(--text-muted);
 }
+/* Pack performer-tagging reviewer (the scenes Stash couldn't identify). A
+   positive action, so neutral chrome rather than the amber dups warning. */
+.grab-pack-tag {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grab-pack-tag-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.grab-pack-tag-sub {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.grab-pack-tag-done {
+  font-weight: 600;
+  color: #4ec07a;
+}
+.grab-pack-tag-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .grab-dup-card {
   padding: 10px 12px;
   border: 1px solid var(--glass-border);
