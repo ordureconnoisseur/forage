@@ -321,7 +321,7 @@ export default function App() {
             Watching
             {notif && notif.watches_available > 0 && (
               <span className="nav-badge" title="Ready to grab">
-                {notif.watches_available > 9 ? "9+" : notif.watches_available}
+                {notif.watches_available > 99 ? "99+" : notif.watches_available}
               </span>
             )}
           </a>
