@@ -1005,6 +1005,42 @@ func (c *Client) ApplySceneMetadata(ctx context.Context, sceneID string, a Scene
 	return nil
 }
 
+// AddScenePerformer adds one LOCAL Stash performer to the given scenes WITHOUT
+// removing any performers they already have, in a single mutation. It uses
+// bulkSceneUpdate with performer_ids mode ADD — Stash's additive primitive for
+// exactly this. Returns the number of scenes Stash reported updated.
+//
+// Pass an EXPLICIT scene-id list, never a path/filter: a word-based path filter
+// has mass-mistagged the whole library before (see the path-filter footgun).
+// No-op on an empty id list.
+func (c *Client) AddScenePerformer(ctx context.Context, sceneIDs []string, performerLocalID string) (int, error) {
+	if len(sceneIDs) == 0 {
+		return 0, nil
+	}
+	if performerLocalID == "" {
+		return 0, fmt.Errorf("performer id is empty")
+	}
+	input := map[string]any{
+		"ids": sceneIDs,
+		"performer_ids": map[string]any{
+			"ids":  []string{performerLocalID},
+			"mode": "ADD",
+		},
+	}
+	q := `mutation ForagerBulkAddPerformer($input: BulkSceneUpdateInput!) {
+  bulkSceneUpdate(input: $input) { id }
+}`
+	var resp struct {
+		BulkSceneUpdate []struct {
+			ID string `json:"id"`
+		} `json:"bulkSceneUpdate"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return 0, fmt.Errorf("bulkSceneUpdate: %w", err)
+	}
+	return len(resp.BulkSceneUpdate), nil
+}
+
 // sceneStashIDs returns the cross-ids currently on a scene, so
 // ApplySceneMetadata can merge rather than clobber them.
 func (c *Client) sceneStashIDs(ctx context.Context, sceneID string) ([]StashID, error) {
