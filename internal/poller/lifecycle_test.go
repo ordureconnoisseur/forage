@@ -98,9 +98,10 @@ type fakeScene struct {
 type fakeStash struct {
 	mu        sync.Mutex
 	scenes    []fakeScene
-	reqs      int  // total GraphQL requests served (lets a test prove a code path made no calls)
-	generated int  // metadataGenerate calls served (proves deferred preview/sprite generation fired)
-	scanned   int  // metadataScan calls served (proves a (re-)scan fired)
+	reqs      int        // total GraphQL requests served (lets a test prove a code path made no calls)
+	generated int        // metadataGenerate calls served (proves deferred preview/sprite generation fired)
+	scanned   int        // metadataScan calls served (proves a (re-)scan fired)
+	scanPaths [][]string // paths sent to each metadataScan, in order (proves scan scoping)
 	boxErr    bool // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
 	jobErr    bool // when true, findJob queries 500 (simulates a JobStatus query failure)
 	jobStatus string
@@ -129,6 +130,17 @@ func (f *fakeStash) scanCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.scanned
+}
+
+// lastScanPaths returns the paths sent to the most recent metadataScan
+// (nil if none fired), so a test can assert scan scoping.
+func (f *fakeStash) lastScanPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.scanPaths) == 0 {
+		return nil
+	}
+	return f.scanPaths[len(f.scanPaths)-1]
 }
 
 func (f *fakeStash) reqCount() int {
@@ -160,8 +172,17 @@ func (f *fakeStash) handler() http.Handler {
 		case strings.Contains(q, "metadataIdentify"):
 			writeRaw(w, `{"data":{"metadataIdentify":"identify-job-1"}}`)
 		case strings.Contains(q, "metadataScan"):
+			var req struct {
+				Variables struct {
+					Input struct {
+						Paths []string `json:"paths"`
+					} `json:"input"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(body, &req)
 			f.mu.Lock()
 			f.scanned++
+			f.scanPaths = append(f.scanPaths, req.Variables.Input.Paths)
 			f.mu.Unlock()
 			writeRaw(w, `{"data":{"metadataScan":"scan-job-1"}}`)
 		case strings.Contains(q, "findJob"):
@@ -1442,8 +1463,39 @@ func TestPackRescansWhenSettledBelowCoverage(t *testing.T) {
 	if r.stash.scanCount() == before {
 		t.Fatalf("expected a re-scan for a settled-but-incomplete pack, none fired")
 	}
+	// The re-scan must be scoped to the pack directory itself, not its parent
+	// (/lib/P) — the parent holds every other pack/single under that performer.
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/Pack" {
+		t.Fatalf("pack re-scan must be scoped to the pack dir, got %v", got)
+	}
 	if g.Status == "confirmed" {
 		t.Fatalf("pack must not confirm below the coverage floor, got %q", g.Status)
+	}
+}
+
+// TestPlacementScanScopedToPlacedPath pins that the post-placement scan is
+// scoped to exactly the placed path — the file for a single grab, the pack
+// directory for a pack — and never the parent folder. Scanning the parent
+// re-walks every sibling (other performers' scenes, other packs, screenshot
+// subfolders) on each retry, which is what let Stash's job queue balloon into
+// thousands of redundant scans under a slowdown.
+func TestPlacementScanScopedToPlacedPath(t *testing.T) {
+	r := newRig(t, "")
+	// Identity mapping so the Stash-side path equals the forage-side path.
+	r.setConfig(func(c *config.Config) { c.StashPathMapping = "/lib:/lib" })
+	sc := r.poller.pool.Stash()
+
+	// Single: placedPath is the file → scan the file, not /lib/P.
+	r.poller.triggerPlacementScan(context.Background(), sc, 1, "/lib/P/scene.mp4")
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/scene.mp4" {
+		t.Fatalf("single scan must be file-scoped, got %v", got)
+	}
+
+	// Pack: placedPath is the directory → scan the dir (Stash recurses into
+	// it), not the parent /lib/P.
+	r.poller.triggerPlacementScan(context.Background(), sc, 2, "/lib/P/Pack")
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/Pack" {
+		t.Fatalf("pack scan must be dir-scoped to the pack folder, got %v", got)
 	}
 }
 

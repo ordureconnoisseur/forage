@@ -1995,20 +1995,28 @@ func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {
 	return nil
 }
 
-// triggerPlacementScan asks Stash to scan the directory the placed
-// file lives in, so the placed → confirmed transition takes minutes
-// rather than waiting on Stash's scheduled scan. Records the attempt
-// time so the confirmation step can throttle retries. Best-effort.
+// triggerPlacementScan asks Stash to scan the placed path itself, so the
+// placed → confirmed transition takes minutes rather than waiting on
+// Stash's scheduled scan. Records the attempt time so the confirmation
+// step can throttle retries. Best-effort.
 //
-// The scan is ALWAYS scoped to the placed file's parent folder via
-// FORAGER_STASH_PATH_MAPPING. If the placed path can't be mapped to a
-// Stash-side path (no mapping configured, or a stale path prefix left by
-// a mount rename), we deliberately skip the scan instead of falling back
-// to a full-library scan — re-scanning the whole library per grab is far
-// too expensive, and the grab still confirms via basename lookup once
-// Stash's next scheduled scan indexes the file.
+// The scan is scoped to exactly what was placed, at the grab's natural
+// granularity: a single grab's placedPath is the file (or its own download
+// folder), a pack's placedPath is the pack directory. Stash's metadataScan
+// accepts a file path and scans just that file, so we no longer re-walk the
+// whole containing performer/Unsorted folder (with its siblings + screenshot
+// subfolders) on every retry — that per-grab over-scan is what let the job
+// queue balloon under a Stash slowdown. A directory placedPath (packs) still
+// scans recursively, so pack coverage counting is unchanged.
+//
+// The path is mapped Stash-side via FORAGER_STASH_PATH_MAPPING. If it can't
+// be mapped (no mapping configured, or a stale prefix left by a mount
+// rename), we deliberately skip the scan instead of falling back to a
+// full-library scan — re-scanning the whole library per grab is far too
+// expensive, and the grab still confirms via basename lookup once Stash's
+// next scheduled scan indexes the file.
 func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, grabID int64, placedPath string) {
-	stashSidePath := pathmap.Translate(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
+	stashSidePath := pathmap.Translate(placedPath, p.pool.Settings().StashPathMapping)
 	// Stamp the throttle even when we skip, so an unmappable grab doesn't
 	// re-enter this path on every tick.
 	p.scanMu.Lock()
