@@ -94,6 +94,10 @@ type grabOut struct {
 type grabsResponse struct {
 	Grabs  []grabOut      `json:"grabs"`
 	Totals map[string]int `json:"totals"`
+	// MatchTotal is how many grabs match the current status+q filter across
+	// the whole table (not just this page), so the UI can show a result count
+	// and know when "load more" has reached the end.
+	MatchTotal int `json:"match_total"`
 }
 
 // isStalled reports whether a torrent grab still "downloading" has made
@@ -146,12 +150,13 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, grabsResponse{Grabs: []grabOut{}, Totals: map[string]int{}})
 		return
 	}
-	q := r.URL.Query()
-	status := q.Get("status")
-	limit, _ := strconv.Atoi(q.Get("limit"))
-	offset, _ := strconv.Atoi(q.Get("offset"))
+	query := r.URL.Query()
+	status := query.Get("status")
+	search := query.Get("q")
+	limit, _ := strconv.Atoi(query.Get("limit"))
+	offset, _ := strconv.Atoi(query.Get("offset"))
 
-	rows, err := s.grabs.List(r.Context(), status, limit, offset)
+	rows, err := s.grabs.List(r.Context(), status, search, limit, offset)
 	if err != nil {
 		s.log.Error("grabs list", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -160,6 +165,12 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 	totals, err := s.grabs.Totals(r.Context())
 	if err != nil {
 		s.log.Error("grabs totals", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	matchTotal, err := s.grabs.CountFiltered(r.Context(), status, search)
+	if err != nil {
+		s.log.Error("grabs count", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
@@ -210,7 +221,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 
 	s.enrichProgress(r, out)
 	s.enrichSceneTitles(r, out)
-	writeJSON(w, http.StatusOK, grabsResponse{Grabs: out, Totals: totals})
+	writeJSON(w, http.StatusOK, grabsResponse{Grabs: out, Totals: totals, MatchTotal: matchTotal})
 }
 
 // sceneTitleTTL: a found title is immutable, so this is effectively

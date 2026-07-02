@@ -503,7 +503,7 @@ func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "grabs unavailable")
 		return
 	}
-	failed, err := s.grabs.List(r.Context(), "failed", 500, 0)
+	failed, err := s.grabs.List(r.Context(), "failed", "", 500, 0)
 	if err != nil {
 		s.log.Error("retry-all list", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")

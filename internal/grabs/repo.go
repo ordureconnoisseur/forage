@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -278,20 +279,54 @@ func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, e
 	return n > 0, err
 }
 
-// List returns the most recent grabs first, filtered by status if
-// nonempty. Used by the GET /grabs endpoint.
-func (r *Repo) List(ctx context.Context, status string, limit, offset int) ([]Grab, error) {
+// List returns the most recent grabs first, narrowed by status (unless ""
+// or "any") and by a free-text query q that matches release_title,
+// performer_name, release_indexer, or client_name (case-insensitive
+// substring). Used by the GET /grabs endpoint. q is what lets the UI search
+// the WHOLE grab history rather than just the newest page it holds in memory.
+func (r *Repo) List(ctx context.Context, status, q string, limit, offset int) ([]Grab, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	if status == "" || status == "any" {
-		return r.query(ctx, `
-			SELECT * FROM grabs ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`,
-			limit, offset)
+	where, args := grabFilter(status, q)
+	args = append(args, limit, offset)
+	return r.query(ctx,
+		`SELECT * FROM grabs `+where+` ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`, args...)
+}
+
+// CountFiltered returns how many grabs match the same status+q filter List
+// applies, ignoring limit/offset — so the UI can show a result count and tell
+// when it has paged to the end of the matches.
+func (r *Repo) CountFiltered(ctx context.Context, status, q string) (int, error) {
+	where, args := grabFilter(status, q)
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM grabs `+where, args...).Scan(&n)
+	return n, err
+}
+
+// grabFilter builds the shared WHERE clause (and bound args) for List and
+// CountFiltered. An empty/"any" status and an empty q each drop out; with
+// neither set it returns a bare "" clause (whole table). q is matched as a
+// case-insensitive substring across the human-searchable text columns; it's
+// always parameterized, so a `%`/`_` in the query reads as a LIKE wildcard
+// (acceptable for a search box) but can never inject.
+func grabFilter(status, q string) (string, []any) {
+	var conds []string
+	var args []any
+	if status != "" && status != "any" {
+		conds = append(conds, "status = ?")
+		args = append(args, status)
 	}
-	return r.query(ctx, `
-		SELECT * FROM grabs WHERE status = ? ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`,
-		status, limit, offset)
+	if s := strings.TrimSpace(q); s != "" {
+		like := "%" + s + "%"
+		conds = append(conds,
+			"(release_title LIKE ? OR performer_name LIKE ? OR release_indexer LIKE ? OR client_name LIKE ?)")
+		args = append(args, like, like, like, like)
+	}
+	if len(conds) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(conds, " AND "), args
 }
 
 // CountRecentFailed counts grabs that failed at/after `since` (unix). Old
