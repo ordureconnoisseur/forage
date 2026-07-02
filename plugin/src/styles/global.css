@@ -6631,6 +6631,33 @@ code.grab-fact-v,
   cursor: default;
 }
 
+/* "Load more" pager under the grab list — pulls the next server-side page. */
+.grab-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 8px;
+}
+.grab-loadmore-btn {
+  padding: 8px 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.grab-loadmore-btn:hover:not(:disabled) {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+}
+.grab-loadmore-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── Mobile (phones + small tablets) ─────────────────────────────
    One consolidated responsive layer. The desktop layout is the source
    of truth; these overrides only re-flow what genuinely cannot fit.

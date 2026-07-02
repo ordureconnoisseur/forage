@@ -34,7 +34,6 @@ import {
   fetchPackScenes,
   applyPackPerformer,
   type PackScenes,
-  GrabsResponse,
   GrabStatus,
   isActiveStatus,
   proxiedImageURL,
@@ -57,6 +56,10 @@ import { createPortal } from "react-dom";
 
 const FAST_POLL_MS = 5_000;
 const SLOW_POLL_MS = 30_000;
+// How many grabs one page fetches. The live view shows the newest page and
+// polls it; searching/filtering re-queries the whole table server-side, and
+// "Load more" appends further pages.
+const PAGE_SIZE = 100;
 
 // The filter pills mirror the poller's state machine in two visual
 // groups: the in-flight pipeline (linear progression, shown with
@@ -85,11 +88,20 @@ export default function GrabsList({
   // performer to place under.
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  const [data, setData] = useState<GrabsResponse | null>(null);
+  const [grabs, setGrabs] = useState<Grab[]>([]);
+  const [totals, setTotals] = useState<Partial<Record<GrabStatus, number>>>({});
+  // Total grabs matching the current status+q filter across the whole table
+  // (from the daemon). Drives the result count and "load more" end-detection;
+  // undefined until the first response (or on an older daemon that omits it).
+  const [matchTotal, setMatchTotal] = useState<number | undefined>(undefined);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<GrabStatus | "any">("any");
   const [q, setQ] = useState("");
+  // Debounced copy of q — the server query runs off this so each keystroke
+  // doesn't fire a request.
+  const [qDebounced, setQDebounced] = useState("");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);
@@ -106,17 +118,57 @@ export default function GrabsList({
   // Whether the LAST SUCCESSFUL poll saw active grabs — drives the
   // fast/slow cadence and survives a transient fetch failure.
   const lastActive = useRef(false);
+  // How many rows are currently loaded (page 0 + any "load more" pages), so
+  // a refetch after a mutation re-pulls the same span rather than snapping
+  // back to one page.
+  const loadedRef = useRef(0);
+  // Set once the user pages past the first page: freezes the live poll so a
+  // tick can't wipe the appended history out from under them. Reset whenever
+  // the filter/query changes (the effect re-runs from a clean page 0).
+  const pagedRef = useRef(false);
 
-  // Immediate refetch, used after a delete so the row disappears
-  // without waiting for the next poll tick.
+  // Immediate refetch of the current view (same filter + query), used after a
+  // mutation so the row updates without waiting for the next poll tick.
   const refresh = useCallback(async () => {
     try {
-      const r = await fetchGrabs({ limit: 200 });
-      setData(r);
+      const limit = Math.min(500, Math.max(PAGE_SIZE, loadedRef.current));
+      const r = await fetchGrabs({ status: filter, q: qDebounced, limit });
+      setGrabs(r.grabs);
+      setTotals(r.totals || {});
+      setMatchTotal(r.match_total);
+      loadedRef.current = r.grabs.length;
     } catch {
       /* next poll tick will recover */
     }
-  }, []);
+  }, [filter, qDebounced]);
+
+  // Append the next page of matches. Freezes the live poll (pagedRef) so the
+  // accumulated list survives; dedupes by id in case a poll/insert shifted
+  // the offset.
+  const loadMore = useCallback(async () => {
+    if (loadingMore) return;
+    setLoadingMore(true);
+    pagedRef.current = true;
+    try {
+      const r = await fetchGrabs({
+        status: filter,
+        q: qDebounced,
+        limit: PAGE_SIZE,
+        offset: loadedRef.current,
+      });
+      setGrabs((prev) => {
+        const seen = new Set(prev.map((g) => g.id));
+        const merged = prev.concat(r.grabs.filter((g) => !seen.has(g.id)));
+        loadedRef.current = merged.length;
+        return merged;
+      });
+      setMatchTotal(r.match_total);
+    } catch (e) {
+      setNotice("Load more failed: " + (e as Error).message);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [filter, qDebounced, loadingMore]);
 
   // Force-adopt torrents added to the download client manually, now —
   // bypassing the 5-minute grace, so a bulk manual add shows up immediately
@@ -230,12 +282,27 @@ export default function GrabsList({
     [refresh],
   );
 
-  // Poll loop — uses setTimeout (not setInterval) so we can adapt the
-  // delay between ticks based on whether there are active grabs.
+  // Debounce the search box → qDebounced, which the server query runs off, so
+  // each keystroke doesn't fire a request.
+  useEffect(() => {
+    const t = window.setTimeout(() => setQDebounced(q.trim()), 300);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  // Load + (in the default view only) live-poll the grabs list. Re-runs
+  // whenever the status filter or debounced search changes, resetting to a
+  // clean page 0. The fast/slow cadence for in-flight download progress runs
+  // only for the unfiltered default view; once you filter, search, or page
+  // past the first page (pagedRef), the view is a static server-side query so
+  // a poll tick can't clobber what you're reading. Uses setTimeout (not
+  // setInterval) so the delay adapts to whether anything is active.
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
     let inFlight = false;
+    const live = filter === "any" && qDebounced === "";
+    pagedRef.current = false;
+    setLoading(true);
 
     async function tick() {
       if (cancelled || inFlight) return;
@@ -245,19 +312,20 @@ export default function GrabsList({
         timer = window.setTimeout(tick, SLOW_POLL_MS);
         return;
       }
-      // The cadence decision reads the response we JUST fetched. This
-      // effect mounts once with an empty dep list, so the `data` state
-      // variable in this closure is the mount render's value (null,
-      // forever) — deciding off it meant the fast cadence never engaged
-      // and active downloads only refreshed every SLOW_POLL_MS. On a
-      // FAILED fetch, reuse the last successful answer: one transient
-      // blip mid-download shouldn't drop an active grab to the slow
-      // cadence.
+      // On a FAILED fetch, reuse the last successful answer: one transient
+      // blip mid-download shouldn't drop an active grab to the slow cadence.
       inFlight = true;
       try {
-        const r = await fetchGrabs({ limit: 200 });
+        const r = await fetchGrabs({
+          status: filter,
+          q: qDebounced,
+          limit: PAGE_SIZE,
+        });
         if (cancelled) return;
-        setData(r);
+        setGrabs(r.grabs);
+        setTotals(r.totals || {});
+        setMatchTotal(r.match_total);
+        loadedRef.current = r.grabs.length;
         setError(null);
         lastFetch.current = Date.now();
         lastActive.current = r.grabs.some((g) => isActiveStatus(g.status));
@@ -268,13 +336,20 @@ export default function GrabsList({
         inFlight = false;
         if (!cancelled) setLoading(false);
       }
-      if (cancelled) return;
+      // Only the live default view keeps polling, and only until the user
+      // pages (pagedRef) — otherwise a tick would wipe the appended history.
+      if (cancelled || !live || pagedRef.current) return;
       timer = window.setTimeout(tick, lastActive.current ? FAST_POLL_MS : SLOW_POLL_MS);
     }
 
     tick();
     const onVis = () => {
-      if (!document.hidden && Date.now() - lastFetch.current > FAST_POLL_MS) {
+      if (
+        live &&
+        !pagedRef.current &&
+        !document.hidden &&
+        Date.now() - lastFetch.current > FAST_POLL_MS
+      ) {
         // Tab refocused after a hidden period — refetch immediately.
         // The inFlight guard keeps this from FORKING the loop: while a
         // tick's fetch is awaited, `timer` still holds an already-fired
@@ -291,45 +366,32 @@ export default function GrabsList({
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
     };
-    // Dependency list intentionally empty: we don't want the effect
-    // to re-run on every render. The cadence decision uses the freshly
-    // fetched response, never component state, so nothing here goes
-    // stale.
+    // Re-runs only on filter/query change. refresh/loadMore mutate the same
+    // state via their own closures and are intentionally not deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [filter, qDebounced]);
 
-  const filtered = useMemo(() => {
-    if (!data) return [];
-    const needle = q.trim().toLowerCase();
-    return data.grabs.filter((g) => {
-      if (filter !== "any" && g.status !== filter) return false;
-      if (!needle) return true;
-      return (
-        g.release_title.toLowerCase().includes(needle) ||
-        (g.performer_name || "").toLowerCase().includes(needle) ||
-        (g.release_indexer || "").toLowerCase().includes(needle)
-      );
-    });
-  }, [data, filter, q]);
-
-  // Group the filtered grabs into render items: a scene with 2+ attempts
-  // becomes a single SceneGroup card; everything else (lone grabs, packs,
-  // and grabs with no scene id) stays a standalone row. This is what makes
-  // "how many torrents am I trying for this scene" legible — every retry /
-  // pick-another for one scene shares its stashdb id, so they collapse into
-  // one card. Order follows the first attempt's position in `filtered`, so
-  // the existing newest-first ordering is preserved.
+  // Group the loaded grabs (already filtered server-side) into render items: a
+  // scene with 2+ attempts becomes a single SceneGroup card; everything else
+  // (lone grabs, packs, and grabs with no scene id) stays a standalone row.
+  // This is what makes "how many torrents am I trying for this scene" legible
+  // — every retry / pick-another for one scene shares its stashdb id, so they
+  // collapse into one card. Order follows each grab's position, so the
+  // newest-first ordering is preserved.
   const items = useMemo<GrabListItem[]>(
-    () => groupGrabsByScene(filtered),
-    [filtered],
+    () => groupGrabsByScene(grabs),
+    [grabs],
   );
 
-  if (loading) return <div className="empty">Loading grabs…</div>;
-  if (error) return <div className="empty error">Failed to load: {error}</div>;
-  if (!data) return null;
+  // Only block on the very first load; keep the list visible during
+  // background refetches (filter changes, polls) so it doesn't flash.
+  if (loading && grabs.length === 0)
+    return <div className="empty">Loading grabs…</div>;
+  if (error && grabs.length === 0)
+    return <div className="empty error">Failed to load: {error}</div>;
 
-  const totals = data.totals || {};
   const anyTotal = Object.values(totals).reduce((s, n) => s + (n || 0), 0);
+  const searching = qDebounced !== "" || filter !== "any";
 
   return (
     <div>
@@ -359,15 +421,15 @@ export default function GrabsList({
           </button>
           <input
             type="text"
-            placeholder="Filter by title, performer, indexer…"
+            placeholder="Search all grabs by title, performer, indexer…"
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
-          {/* Only meaningful when the text filter is narrowing the
-              list — "200/200" is noise. */}
-          {filtered.length !== data.grabs.length && (
+          {/* Result count across the WHOLE table for the active filter — only
+              shown when a filter/search is narrowing (a bare total is noise). */}
+          {searching && matchTotal !== undefined && (
             <span className="grab-toolbar-count">
-              {filtered.length}/{data.grabs.length}
+              {matchTotal} match{matchTotal === 1 ? "" : "es"}
             </span>
           )}
         </div>
@@ -544,8 +606,10 @@ export default function GrabsList({
         </div>
       )}
 
-      {filtered.length === 0 ? (
-        <div className="empty">No grabs match this filter.</div>
+      {grabs.length === 0 ? (
+        <div className="empty">
+          {searching ? "No grabs match this filter." : "No grabs yet."}
+        </div>
       ) : (
         <ul className="grab-list">
           {items.map((item) => {
@@ -590,6 +654,20 @@ export default function GrabsList({
             return <GrabRow key={item.grab.id} {...rowProps(item.grab)} />;
           })}
         </ul>
+      )}
+
+      {matchTotal !== undefined && grabs.length < matchTotal && (
+        <div className="grab-loadmore">
+          <button
+            className="grab-loadmore-btn"
+            onClick={loadMore}
+            disabled={loadingMore}
+          >
+            {loadingMore
+              ? "Loading…"
+              : `Load more — showing ${grabs.length} of ${matchTotal}`}
+          </button>
+        </div>
       )}
     </div>
   );

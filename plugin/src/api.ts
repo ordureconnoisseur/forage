@@ -741,6 +741,11 @@ export interface Grab {
 export interface GrabsResponse {
   grabs: Grab[];
   totals: Partial<Record<GrabStatus, number>>;
+  // How many grabs match the current status+q filter across the WHOLE table
+  // (not just this page). Lets the view show a result count and know when
+  // "load more" has reached the end. Absent on older daemons → treat as
+  // unknown (fall back to page-length heuristics).
+  match_total?: number;
 }
 
 // adoptDownloads force-adopts forage-category downloads the user added to a
@@ -769,11 +774,13 @@ export function retryFailedGrabs(): Promise<{
 
 export function fetchGrabs(opts?: {
   status?: GrabStatus | "any";
+  q?: string;
   limit?: number;
   offset?: number;
 }): Promise<GrabsResponse> {
   const params = new URLSearchParams();
   if (opts?.status && opts.status !== "any") params.set("status", opts.status);
+  if (opts?.q && opts.q.trim()) params.set("q", opts.q.trim());
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
