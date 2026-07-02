@@ -6700,25 +6700,43 @@ code.grab-fact-v,
   /* Watch cards: narrower thumb; on a phone the head stacks the title over
      its actions so neither gets crushed, and the release meta drops under the
      filename instead of fighting it for width. */
+  /* Phone card: float the thumbnail instead of giving it a fixed grid
+     column. In the 2-column grid the whole body was boxed into the narrow
+     right column, leaving dead space under the short thumbnail. Floating it
+     lets the title wrap beside it and the buttons + release lane span the
+     FULL card width once they clear the thumbnail's bottom. flow-root
+     contains the float so a short card can't spill. */
   .watch-card {
-    grid-template-columns: 104px minmax(0, 1fr);
-    gap: 12px;
+    display: flow-root;
+    padding: 12px;
   }
   .watch-thumb {
+    float: left;
     width: 104px;
+    margin: 0 12px 6px 0;
+  }
+  .watch-body {
+    display: block;
   }
   .watch-head {
-    flex-wrap: wrap;
+    display: block;
   }
   .watch-headinfo {
-    flex-basis: 100%;
+    flex-basis: auto;
   }
   .watch-actions {
-    width: 100%;
-    justify-content: flex-end;
+    clear: left;
+    width: auto;
+    justify-content: flex-start;
+    margin-top: 8px;
   }
   .watch-title {
     white-space: normal;
+  }
+  /* The release lane always drops below the thumbnail to span the full
+     width — that's where the "grab details" get the whole card. */
+  .watch-rel {
+    clear: left;
   }
   /* Release lane on a phone: rebuild as two tidy rows. The desktop res-badge
      column is dropped entirely here — it's empty for the amateur scenes that
