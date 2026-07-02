@@ -1583,3 +1583,43 @@ func TestIdentifyInFlightAssumesInFlightOnError(t *testing.T) {
 		t.Fatalf("a drained/finished job must not be in flight")
 	}
 }
+
+// TestScanInFlightGuard pins the metadataScan de-duplication guard: while a
+// grab's last placement scan is still queued/running, forage must report it
+// in flight and skip re-firing, so a throttled re-scan can't stack duplicate
+// scans behind a busy Stash queue. Same failure-mode contract as identify: a
+// JobStatus error is treated as in flight; a drained job frees a re-fire.
+func TestScanInFlightGuard(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	ctx := context.Background()
+
+	// No remembered scan → free to fire.
+	if r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("no remembered scan should not be in flight")
+	}
+
+	r.poller.rememberScanJob(1, "scan-job-1")
+
+	// Still queued/running → in flight, so a re-scan is suppressed.
+	r.stash.setJob(false, "READY")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a READY scan must be in flight")
+	}
+	r.stash.setJob(false, "RUNNING")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a RUNNING scan must be in flight")
+	}
+
+	// JobStatus error → assume in flight (don't fire against an unreachable Stash).
+	r.stash.setJob(true, "")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a JobStatus error must be treated as in flight")
+	}
+
+	// Job drained/finished → free to fire the next scan.
+	r.stash.setJob(false, "")
+	if r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a drained/finished scan must not be in flight")
+	}
+}

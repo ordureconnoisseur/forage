@@ -104,6 +104,18 @@ type Poller struct {
 	// restart, which merely permits one extra re-fire. Pruned in tickOnce.
 	identifyJobMu sync.Mutex
 	identifyJob   map[int64]string
+
+	// scanJob records the most recent Stash metadataScan job id fired per
+	// grab. Before re-firing a placement scan (the throttled retry that waits
+	// for Stash to index a placed file), we check whether that job is still
+	// queued or running; if so we skip. Without this, a Stash serial queue
+	// backed up behind other work (e.g. slow phash generation while the box is
+	// also transcoding) leaves grabs at "placed" long enough that every 90s
+	// tick re-queues the same scan, piling up thousands of redundant jobs.
+	// In-memory: lost on restart, which merely permits one extra re-fire.
+	// Pruned in tickOnce alongside identifyJob.
+	scanJobMu sync.Mutex
+	scanJob   map[int64]string
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -170,6 +182,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		packScan:    map[int64]packScanState{},
 		grace:       map[int64]time.Time{},
 		identifyJob: map[int64]string{},
+		scanJob:     map[int64]string{},
 	}
 }
 
@@ -270,6 +283,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.identifyJobMu.Unlock()
+	p.scanJobMu.Lock()
+	for id := range p.scanJob {
+		if !activeIDs[id] {
+			delete(p.scanJob, id)
+		}
+	}
+	p.scanJobMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -644,7 +664,8 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 				// throttled, until Stash picks it up. Without this the
 				// grab sits at "placed" until it wrongly orphans, despite
 				// the file being right there on disk.
-				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) {
+				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) &&
+					!p.scanInFlight(ctx, stashC, g.ID) {
 					p.triggerPlacementScan(ctx, stashC, g.ID, g.PlacedPath)
 				}
 			}
@@ -756,7 +777,8 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			}
 			return dirty, nil
 		}
-		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) {
+		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) &&
+			!p.scanInFlight(ctx, sc, g.ID) {
 			// Surface a persistent miss: if this keeps logging after the pack
 			// has landed + Stash scanned, `needle` doesn't match how Stash
 			// indexed the files (a path-mapping issue) — and identify never
@@ -799,7 +821,8 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// Shares the scan throttle with identify: getting the rest of the files
 	// in takes priority while coverage is incomplete; identify resumes once
 	// the scan grows again (settled flips false) or coverage is reached. [C7]
-	if settled && !coverageOK && downloadDone && sinceDone <= p.orphan && p.scanThrottleElapsed(g.ID) {
+	if settled && !coverageOK && downloadDone && sinceDone <= p.orphan &&
+		p.scanThrottleElapsed(g.ID) && !p.scanInFlight(ctx, sc, g.ID) {
 		p.log.Info("pack: scan settled below expected count, re-scanning",
 			"id", g.ID, "found", found, "packFiles", g.PackFiles, "placed", g.PlacedPath)
 		p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
@@ -1174,6 +1197,47 @@ func (p *Poller) rememberIdentifyJob(grabID int64, jobID string) {
 	p.identifyJobMu.Lock()
 	p.identifyJob[grabID] = jobID
 	p.identifyJobMu.Unlock()
+}
+
+// scanInFlight reports whether the last placement scan fired for this grab is
+// still queued or running in Stash — the metadataScan analogue of
+// identifyInFlight. It exists to stop the throttled re-scan from stacking
+// redundant identical scans behind an earlier one while Stash's serial queue
+// is backed up (the pileup that buried the queue in thousands of duplicate
+// scans when the box was busy transcoding). Same failure-mode handling: a
+// JobStatus query error reports true (assume still in flight) rather than
+// firing a doomed scan against an unreachable Stash; it can't block forever
+// because the query recovers when Stash does.
+func (p *Poller) scanInFlight(ctx context.Context, sc *stash.Client, grabID int64) bool {
+	p.scanJobMu.Lock()
+	jobID := p.scanJob[grabID]
+	p.scanJobMu.Unlock()
+	if jobID == "" {
+		return false
+	}
+	status, err := sc.JobStatus(ctx, jobID)
+	if err != nil {
+		p.log.Warn("scan job status check failed; assuming still in flight", "id", grabID, "job_id", jobID, "err", err)
+		return true
+	}
+	switch status {
+	case "READY", "RUNNING", "STOPPING":
+		return true
+	default:
+		// FINISHED, CANCELLED, FAILED, or "" (no longer in the queue).
+		return false
+	}
+}
+
+// rememberScanJob records the metadataScan job id last fired for a grab so a
+// subsequent tick can see it's still in flight (see scanInFlight).
+func (p *Poller) rememberScanJob(grabID int64, jobID string) {
+	if jobID == "" {
+		return
+	}
+	p.scanJobMu.Lock()
+	p.scanJob[grabID] = jobID
+	p.scanJobMu.Unlock()
 }
 
 // triggerIdentifyBatch fires Stash's Identify task over a set of scene
@@ -2031,6 +2095,9 @@ func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, gra
 		p.log.Warn("metadataScan trigger failed", "id", grabID, "path", stashSidePath, "err", err)
 	} else {
 		p.log.Info("metadataScan triggered", "id", grabID, "path", stashSidePath, "job_id", jobID)
+		// Record it so the throttled re-scan (scanInFlight) won't stack a
+		// duplicate while this one is still queued behind a busy Stash.
+		p.rememberScanJob(grabID, jobID)
 	}
 }
 
