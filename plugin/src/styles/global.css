@@ -6720,29 +6720,32 @@ code.grab-fact-v,
   .watch-title {
     white-space: normal;
   }
-  /* Release lane on a phone: the desktop fixed 46px res-badge column just
-     wastes space (amateur scenes carry no resolution badge, so the title got
-     shoved right behind an empty gap), and the meta + score pill auto-placed
-     onto ragged separate lines. Rebuild as two tidy rows — a first line of
-     [dot · badge · filename · score-pill] and a quiet meta line aligned under
-     the filename. The badge track is `auto` so it collapses when empty. */
+  /* Release lane on a phone: rebuild as two tidy rows. The desktop res-badge
+     column is dropped entirely here — it's empty for the amateur scenes that
+     dominate this list, and even an `auto` track left a dead ~14px indent
+     (gap on both sides) shoving the filename right. Now it's just
+     [dot · filename · score-pill] with the filename flush after the dot, over
+     a quiet meta line (size · indexer · seeders) aligned underneath it. */
   .watch-rel-row {
-    grid-template-columns: 14px auto minmax(0, 1fr) auto;
-    column-gap: 7px;
+    grid-template-columns: 12px minmax(0, 1fr) auto;
+    column-gap: 6px;
     row-gap: 2px;
     align-items: center;
   }
+  .watch-rel-q {
+    display: none;
+  }
   .watch-rel-file {
-    grid-column: 3;
+    grid-column: 2;
     grid-row: 1;
   }
   .watch-rel-why {
-    grid-column: 4;
+    grid-column: 3;
     grid-row: 1;
     justify-self: end;
   }
   .watch-rel-meta {
-    grid-column: 3 / -1;
+    grid-column: 2 / -1;
     grid-row: 2;
     text-align: left;
   }
