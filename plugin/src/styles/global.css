@@ -6734,36 +6734,50 @@ code.grab-fact-v,
     white-space: normal;
   }
   /* The release lane always drops below the thumbnail to span the full
-     width — that's where the "grab details" get the whole card. */
+     width — that's where the "grab details" get the whole card. The
+     margin-top restores the gap above its divider that the desktop flex
+     `gap` gave (lost when watch-body became a block here), so the action
+     buttons don't sit right on the divider line. */
   .watch-rel {
     clear: left;
+    margin-top: 12px;
   }
-  /* Release lane on a phone: rebuild as two tidy rows. The desktop res-badge
-     column is dropped entirely here — it's empty for the amateur scenes that
-     dominate this list, and even an `auto` track left a dead ~14px indent
-     (gap on both sides) shoving the filename right. Now it's just
-     [dot · filename · score-pill] with the filename flush after the dot, over
-     a quiet meta line (size · indexer · seeders) aligned underneath it. */
+  /* Release lane on a phone: two tidy rows — [dot · badge · filename ·
+     score-pill] over a quiet meta line (size · indexer · seeders) aligned
+     under the filename. Columns are all `auto`/`1fr` with column-gap:0 and
+     spacing via margins, so the resolution badge shows inline when present
+     but collapses to nothing (no dead gap) when the release has no
+     resolution token — which is what made the old fixed badge column waste
+     space. */
   .watch-rel-row {
-    grid-template-columns: 12px minmax(0, 1fr) auto;
-    column-gap: 6px;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    column-gap: 0;
     row-gap: 2px;
     align-items: center;
   }
-  .watch-rel-q {
-    display: none;
+  .watch-rel-dot,
+  .watch-rel-row input[type="radio"] {
+    margin-right: 6px;
   }
-  .watch-rel-file {
+  .watch-rel-q {
     grid-column: 2;
     grid-row: 1;
   }
-  .watch-rel-why {
+  .watch-rel-q:not(:empty) {
+    margin-right: 6px;
+  }
+  .watch-rel-file {
     grid-column: 3;
     grid-row: 1;
+  }
+  .watch-rel-why {
+    grid-column: 4;
+    grid-row: 1;
     justify-self: end;
+    margin-left: 6px;
   }
   .watch-rel-meta {
-    grid-column: 2 / -1;
+    grid-column: 3 / -1;
     grid-row: 2;
     text-align: left;
   }
