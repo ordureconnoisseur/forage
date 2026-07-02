@@ -6720,12 +6720,30 @@ code.grab-fact-v,
   .watch-title {
     white-space: normal;
   }
+  /* Release lane on a phone: the desktop fixed 46px res-badge column just
+     wastes space (amateur scenes carry no resolution badge, so the title got
+     shoved right behind an empty gap), and the meta + score pill auto-placed
+     onto ragged separate lines. Rebuild as two tidy rows — a first line of
+     [dot · badge · filename · score-pill] and a quiet meta line aligned under
+     the filename. The badge track is `auto` so it collapses when empty. */
   .watch-rel-row {
-    grid-template-columns: 14px 46px minmax(0, 1fr) auto;
-    row-gap: 1px;
+    grid-template-columns: 14px auto minmax(0, 1fr) auto;
+    column-gap: 7px;
+    row-gap: 2px;
+    align-items: center;
+  }
+  .watch-rel-file {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .watch-rel-why {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
   }
   .watch-rel-meta {
-    grid-column: 2 / -1;
+    grid-column: 3 / -1;
+    grid-row: 2;
     text-align: left;
   }
   .watch-rel-why-panel {
