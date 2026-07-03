@@ -646,12 +646,18 @@ func bestDateProximity(sceneDate string, releaseDates []string) (float64, string
 
 // dateVetoDays is the distance, in days, past which a confidently-parsed
 // release date is treated as proof the release is a DIFFERENT scene — used by
-// Verify to refuse the coincidental-signal verification paths. Set well beyond
-// any legitimate repost/indexing lag or studio-vs-StashDB date discrepancy
-// (those are days to a few weeks), so it only ever fires on genuine
-// wrong-scene matches (the reported failure was ~1,470 days off). Tuned with
-// matcher-bench --verify.
-const dateVetoDays = 90
+// Verify to refuse the coincidental-signal verification paths.
+//
+// Set to two years, deliberately conservative. The 806-entry corpus bench
+// showed date distance can't cleanly separate correct from wrong at moderate
+// ranges: a CORRECT match was 364 days off (a studio naming a 2025 scene
+// "…24.03.28") while a WRONG match was only 335 days off — so any threshold
+// under a year trades one error for another (measured: −1 recall / −1 false
+// verify at 90 days). Above two years there are no such collisions in the
+// corpus (raising to this value is fully recall- and precision-neutral), and a
+// scene dated 2+ years off its release is a near-certain wrong match — which is
+// the failure this guards (the reported case was ~1,470 days / 4 years off).
+const dateVetoDays = 730
 
 // releaseDateConfidentlyFarOff reports whether the release carries a parseable
 // date whose CLOSEST plausible reading is at least dateVetoDays from the
