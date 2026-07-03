@@ -52,6 +52,11 @@ type Server struct {
 	// is ready to use.
 	torrentGate fetchGate
 
+	// sabGate does the same for usenet adds (addUsenetAsync): SAB fetches the
+	// NZB from the indexer during addurl, so a bulk grab bursts the indexer
+	// exactly like torrent fetches do. Zero value is ready to use.
+	sabGate fetchGate
+
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex

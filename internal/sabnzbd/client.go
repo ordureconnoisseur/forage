@@ -23,6 +23,14 @@ type Client struct {
 	baseURL string
 	apiKey  string
 	http    *http.Client
+	// httpAdd is used only by AddURL. An addurl call makes SAB fetch the NZB
+	// from the indexer (via Prowlarr) before it replies, which under indexer
+	// slowness/rate-limiting routinely runs past the 30s status-call budget —
+	// and the failure is misleading, because SAB usually completes the fetch
+	// and queues the download anyway, it just answered too late. A longer
+	// budget lets forage capture the nzo_id and track the grab instead of
+	// false-failing it. Status polls stay on the tight 30s client.
+	httpAdd *http.Client
 }
 
 func New(baseURL, apiKey string) *Client {
@@ -30,6 +38,7 @@ func New(baseURL, apiKey string) *Client {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		http:    &http.Client{Timeout: 30 * time.Second},
+		httpAdd: &http.Client{Timeout: 120 * time.Second},
 	}
 }
 
@@ -84,7 +93,9 @@ func (c *Client) AddURL(ctx context.Context, nzbURL, category string) (string, e
 	if category != "" {
 		q.Set("cat", category)
 	}
-	body, err := c.get(ctx, q)
+	// Use the longer-timeout client — SAB fetches the NZB from the indexer
+	// before replying, which routinely outlasts the 30s status budget.
+	body, err := c.doGet(ctx, c.httpAdd, q)
 	if err != nil {
 		return "", err
 	}
@@ -315,6 +326,10 @@ func (c *Client) Categories(ctx context.Context) ([]Category, error) {
 }
 
 func (c *Client) get(ctx context.Context, q url.Values) ([]byte, error) {
+	return c.doGet(ctx, c.http, q)
+}
+
+func (c *Client) doGet(ctx context.Context, hc *http.Client, q url.Values) ([]byte, error) {
 	if c.baseURL == "" {
 		return nil, fmt.Errorf("sab base URL not configured")
 	}
@@ -325,7 +340,7 @@ func (c *Client) get(ctx context.Context, q url.Values) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, clienterr.Transport("sab "+q.Get("mode"), err)
 	}
