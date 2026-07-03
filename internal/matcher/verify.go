@@ -260,6 +260,7 @@ func castStrippedTitleTokens(c Candidate) []string {
 // scene's title (for containment).
 func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
 	var conf, overlap float64
+	var targetDateFarOff bool
 	found := false
 	var relTokens map[string]bool // lazily built for rival overlap
 	var rivalMaxOverlap float64   // highest CAST-STRIPPED title overlap among OTHER candidates
@@ -267,6 +268,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		if cands[i].Scene.ID == sceneID {
 			conf = cands[i].Confidence
 			overlap = cands[i].TitleOverlap
+			targetDateFarOff = cands[i].DateFarOff
 			found = true
 			continue
 		}
@@ -344,11 +346,23 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		// trusting the title by itself.
 		strongTitle := overlap >= verifyStrongTitleOverlap &&
 			distinctiveTitleHits(sceneTitle, releaseName) >= 1
+		// Date veto: a confidently-far release date (>= dateVetoDays off the
+		// scene under every plausible reading) vetoes ONLY the two title/
+		// coincidence paths below. A same-studio daily episode years off the
+		// target clears the title-overlap floor purely because the studio name
+		// leaks into title overlap (conf ~0.30) — a far date proves it's a
+		// different scene. The strong-match and date-anchored paths are NOT
+		// vetoed: strong-match needs conf >= verifyStrongMatchConf (performer +
+		// studio + cast at identity level), which legitimately tolerates a
+		// StashDB-vs-release date discrepancy (corpus-measured: blanket-vetoing
+		// it dropped a real 6-performer match with a divergent date and removed
+		// zero false verifies).
+		dateOK := !targetDateFarOff
 		switch {
-		case overlap >= verifyRankMinTitleOverlap &&
+		case dateOK && overlap >= verifyRankMinTitleOverlap &&
 			(conf >= verifyTitleMinConf || strongTitle):
 			return VerifyResult{Verified: true, Confidence: conf}
-		case shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
+		case dateOK && shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
 			return VerifyResult{Verified: true, Confidence: conf}
 		case conf >= verifyStrongMatchConf && !rivalOwnsTitle &&
 			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:

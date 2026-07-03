@@ -46,6 +46,67 @@ func TestVerifyPerformerCoincidenceRejected(t *testing.T) {
 	}
 }
 
+// TestVerifyDateVeto guards the date-mismatch veto: a same-studio release whose
+// date is confidently far off the scene (DateFarOff) must NOT verify via the
+// TITLE-OVERLAP path — the reported bug where a daily episode ~1,470 days off
+// verified as a compilation because the studio name inflated title overlap
+// (conf ~0.30). It must NOT fire without the flag, must NOT touch the
+// strong-match path (a high-conf identity match tolerates a date discrepancy),
+// and the explicit title-containment path must still override it.
+func TestVerifyDateVeto(t *testing.T) {
+	sceneID := "compilation"
+	title := "Poolside Confessions Midnight Rendezvous"
+
+	// A #1 candidate that WOULD verify via the title-overlap path (overlap 0.50,
+	// conf 0.50 — above verifyTitleMinConf but below the strong-match floor) —
+	// but its release date is confidently far off.
+	farOff := []Candidate{{
+		Scene:        stashdb.Scene{ID: sceneID, Title: title},
+		Confidence:   0.50,
+		TitleOverlap: 0.50,
+		DateFarOff:   true,
+	}}
+	// Release shares no title tokens with the scene (studio-name coincidence
+	// only), so only the title-overlap path could have verified it.
+	wrongDated := "GangbangCreampie 26 03 27 XXX 1080p SiteRip"
+	if Verify(farOff, sceneID, title, wrongDated).Verified {
+		t.Errorf("a confidently-far date must veto the title-overlap path, but it verified")
+	}
+
+	// Same candidate WITHOUT the far-date flag verifies — proving the veto is
+	// what blocked it above, not some other gate.
+	near := []Candidate{{
+		Scene:        stashdb.Scene{ID: sceneID, Title: title},
+		Confidence:   0.50,
+		TitleOverlap: 0.50,
+		DateFarOff:   false,
+	}}
+	if !Verify(near, sceneID, title, wrongDated).Verified {
+		t.Errorf("without DateFarOff the same candidate should verify via title overlap")
+	}
+
+	// The strong-match path is NOT vetoed: an identity-level match (conf 0.78,
+	// no title overlap — the studio+cast corroborate) must still verify even
+	// with a far date, because that's a legit StashDB-vs-release date
+	// discrepancy, not a wrong scene (corpus regression AccidentalGangbang).
+	strong := []Candidate{{
+		Scene:        stashdb.Scene{ID: sceneID, Title: title},
+		Confidence:   0.78,
+		TitleOverlap: 0.05,
+		DateFarOff:   true,
+	}}
+	if !Verify(strong, sceneID, title, "SomeStudio 24 05 03 Six Performer Names XXX 2160p").Verified {
+		t.Errorf("a strong-match identity (conf 0.78) must survive the date veto, but was blocked")
+	}
+
+	// Escape hatch: a far-dated release that LITERALLY names the scene still
+	// verifies via containment (a legitimate re-post outranks a date gap).
+	named := "Poolside Confessions Midnight Rendezvous [2026 Repost] 1080p SiteRip"
+	if !Verify(farOff, sceneID, title, named).Verified {
+		t.Errorf("containment (release spells out the title) must override the date veto")
+	}
+}
+
 // TestVerifyStrongMatchBlockedByTitleRival guards the multi-scene-rip
 // case: the same cast+date maps to several StashDB scenes (an episode vs
 // its BTS vs a TS-on-TS cut), so a same-cast release scores conf >= 0.70
