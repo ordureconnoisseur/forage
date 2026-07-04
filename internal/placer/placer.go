@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -315,6 +316,85 @@ func copyFile(src, dest string) error {
 	return nil
 }
 
+// videoExts is the set of extensions Stash treats as scenes. Sample
+// detection only applies to these — a "sample" in a non-video name (a
+// proof image, a .nfo) never becomes a scene, so it's harmless clutter we
+// don't bother filtering.
+var videoExts = map[string]bool{
+	".mp4": true, ".mkv": true, ".avi": true, ".wmv": true, ".m4v": true,
+	".mov": true, ".mpg": true, ".mpeg": true, ".ts": true, ".flv": true,
+	".webm": true, ".m2ts": true,
+}
+
+func isVideoFile(name string) bool {
+	return videoExts[strings.ToLower(filepath.Ext(name))]
+}
+
+// sampleNameRe matches a "sample" token in a filename — bounded by
+// non-letters so it fires on "release-sample.mp4" / "sample_01.mkv" but not
+// on a performer/word that merely contains the letters (e.g. "…example…").
+var sampleNameRe = regexp.MustCompile(`(?i)(^|[^a-z])sample([^a-z]|$)`)
+
+func isSampleDirName(name string) bool {
+	n := strings.ToLower(name)
+	return n == "sample" || n == "samples"
+}
+
+// isSampleVideo reports whether rel (a path relative to the release root) is
+// a preview sample clip that should not be placed as a library scene. Two
+// signals, tuned for precision so a legitimate video is never dropped:
+//   - it lives under a "sample"/"samples" directory (scene-group releases put
+//     the preview there); or
+//   - its name carries a "sample" token AND it's under half the size of the
+//     release's main video — a real preview is always a small fraction, while
+//     a legit standalone clip that merely has "sample" in its name (some
+//     OnlyFans titles do) is the largest video and so is kept.
+//
+// The size guard needs largest > 0 (a main video exists); a sample-only
+// release has no larger sibling to compare against and is left to the grab
+// layer to reject, not silently dropped here.
+func isSampleVideo(rel string, size, largest int64) bool {
+	if !isVideoFile(rel) {
+		return false
+	}
+	segs := strings.Split(filepath.ToSlash(rel), "/")
+	for _, seg := range segs[:len(segs)-1] {
+		if isSampleDirName(seg) {
+			return true
+		}
+	}
+	if sampleNameRe.MatchString(filepath.Base(rel)) && largest > 0 && size*2 < largest {
+		return true
+	}
+	return false
+}
+
+// largestVideoSize returns the size of the biggest video under root, ignoring
+// anything in a sample directory (so a sample can't set the bar it's compared
+// against). Used to give isSampleVideo a main-video baseline.
+func largestVideoSize(root string) int64 {
+	var max int64
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if isSampleDirName(d.Name()) {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if !isVideoFile(d.Name()) {
+			return nil
+		}
+		if info, e := d.Info(); e == nil && info.Size() > max {
+			max = info.Size()
+		}
+		return nil
+	})
+	return max
+}
+
 // mirrorTree walks src and hardlinks every file into the matching dest
 // path. On any cross-device fallback the overall mode flips to "copy".
 // Returns the count of files it actually placed this pass — files that
@@ -323,9 +403,16 @@ func copyFile(src, dest string) error {
 // link error) is finished by the next call rather than being treated as
 // already-done with a half-populated directory. placed==0 means the tree
 // was already fully present.
+//
+// Sample preview clips are skipped (see isSampleVideo): a scene-group
+// release folder carries the full video plus a short sample, and mirroring
+// both makes Stash create a junk, un-identifiable second scene from the
+// sample. Skipping them here — not after the fact — keeps the library clean
+// without a downstream sweep.
 func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 	mode := "hardlink"
 	placed := 0
+	largest := largestVideoSize(src)
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -336,7 +423,18 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 		}
 		destPath := filepath.Join(dest, rel)
 		if d.IsDir() {
+			// Don't recreate a sample directory or descend into it.
+			if isSampleDirName(d.Name()) {
+				return fs.SkipDir
+			}
 			return os.MkdirAll(destPath, 0o755)
+		}
+		// Skip preview sample clips so they never become a scene.
+		if info, e := d.Info(); e == nil && isSampleVideo(rel, info.Size(), largest) {
+			if p.log != nil {
+				p.log.Info("placer skipped sample clip", "path", path, "size", info.Size())
+			}
+			return nil
 		}
 		// Already linked/copied by a prior pass — skip so an interrupted
 		// mirror resumes instead of erroring on the existing file.

@@ -72,6 +72,82 @@ func TestPlaceDirResumesPartialMirror(t *testing.T) {
 	}
 }
 
+// TestPlaceDirSkipsSamples guards the sample-clip filter: a scene-group
+// release folder ships the full video plus a short preview (as a sibling
+// "-sample" file and inside a Sample/ subdir), and mirroring those made
+// Stash create junk, un-identifiable scenes. The full video must place; the
+// samples must not. A large video that merely has "sample" in its name (no
+// bigger sibling) must be kept — the precision guard.
+func TestPlaceDirSkipsSamples(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "Studio.24.01.05.Perf.XXX.1080p-GRP")
+
+	big := make([]byte, 4000)   // the real scene
+	small := make([]byte, 100)  // a preview sample (<50% of big)
+	write := func(rel string, b []byte) {
+		full := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("studio.24.01.05.perf.mp4", big)                     // keep: the scene
+	write("studio.24.01.05.perf-sample.mp4", small)            // skip: sibling sample
+	write(filepath.Join("Sample", "preview.mp4"), small)       // skip: in Sample/ dir
+	write("studio.24.01.05.perf.nfo", small)                   // keep: not a video
+	write("proof-sample.jpg", small)                           // keep: not a video
+
+	p := New(lib, discardLogger())
+	dest := filepath.Join(lib, "Perf", "Studio.24.01.05.Perf.XXX.1080p-GRP")
+	if _, err := p.Place(src, "Perf"); err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+
+	keep := []string{"studio.24.01.05.perf.mp4", "studio.24.01.05.perf.nfo", "proof-sample.jpg"}
+	for _, n := range keep {
+		if _, err := os.Stat(filepath.Join(dest, n)); err != nil {
+			t.Errorf("expected %s to be placed: %v", n, err)
+		}
+	}
+	skip := []string{"studio.24.01.05.perf-sample.mp4", filepath.Join("Sample", "preview.mp4")}
+	for _, n := range skip {
+		if _, err := os.Stat(filepath.Join(dest, n)); err == nil {
+			t.Errorf("sample %s should NOT have been placed", n)
+		}
+	}
+	// The Sample/ directory itself should not be recreated in the library.
+	if _, err := os.Stat(filepath.Join(dest, "Sample")); err == nil {
+		t.Errorf("Sample/ dir should not have been mirrored")
+	}
+}
+
+// TestPlaceSampleNamedMainKept is the false-positive guard: when the only /
+// largest video has "sample" in its name (some OnlyFans titles do), it's the
+// scene, not a preview, and must be kept.
+func TestPlaceSampleNamedMainKept(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "Selti-gym-workout-sample")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := "Selti-naked-gym-workout-sample-GovBRLDI.mp4"
+	if err := os.WriteFile(filepath.Join(src, main), make([]byte, 3000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+	dest := filepath.Join(lib, "Selti", "Selti-gym-workout-sample")
+	if _, err := p.Place(src, "Selti"); err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, main)); err != nil {
+		t.Errorf("standalone 'sample'-named video should be kept: %v", err)
+	}
+}
+
 // TestPlaceDirFresh covers the clean path: an empty library mirrors the
 // whole tree and reports the placement mode.
 func TestPlaceDirFresh(t *testing.T) {
