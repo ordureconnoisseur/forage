@@ -38,13 +38,14 @@ type configField struct {
 }
 
 var sensitiveFields = map[string]bool{
-	"stashApiKey":    true,
-	"stashdbApiKey":  true,
-	"prowlarrApiKey": true,
-	"qbitPassword":   true,
-	"sabApiKey":      true,
-	"adminToken":     true,
-	"passwordHash":   true,
+	"stashApiKey":      true,
+	"stashdbApiKey":    true,
+	"prowlarrApiKey":   true,
+	"qbitPassword":     true,
+	"sabApiKey":        true,
+	"adminToken":       true,
+	"passwordHash":     true,
+	"telegramBotToken": true,
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -82,7 +83,10 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		// hasSecret flag (to show "password is set"), and writes a
 		// plaintext `password` field that the daemon hashes — the hash
 		// itself never round-trips to the client.
-		"passwordHash": secretField(cfg.PasswordHash, sources["passwordHash"]),
+		"passwordHash":     secretField(cfg.PasswordHash, sources["passwordHash"]),
+		"telegramBotToken": secretField(cfg.TelegramBotToken, sources["telegramBotToken"]),
+		"telegramChatId":   {Value: cfg.TelegramChatID, Source: sources["telegramChatId"]},
+		"notifyWebhookUrl": {Value: cfg.NotifyWebhookURL, Source: sources["notifyWebhookUrl"]},
 	}
 	writeJSON(w, http.StatusOK, configFieldsResponse{
 		Fields: fields,
@@ -400,6 +404,15 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.PasswordHash != nil {
 		merged.PasswordHash = patch.PasswordHash
+	}
+	if patch.TelegramBotToken != nil {
+		merged.TelegramBotToken = patch.TelegramBotToken
+	}
+	if patch.TelegramChatID != nil {
+		merged.TelegramChatID = patch.TelegramChatID
+	}
+	if patch.NotifyWebhookURL != nil {
+		merged.NotifyWebhookURL = patch.NotifyWebhookURL
 	}
 	cfg, _ := config.Compose(s.bootstrap, merged)
 	return cfg

@@ -110,6 +110,16 @@ type Config struct {
 	// the plaintext). Empty = no password login. UI-managed via
 	// config.json, or FORAGER_PASSWORD_HASH for headless setups.
 	PasswordHash string
+	// TelegramBotToken + TelegramChatID configure the Telegram
+	// notification sink (both required for it to activate): the notify
+	// loop pushes actionable events — a watch that found a release, grabs
+	// that failed — via the bot's sendMessage. Empty = Telegram off.
+	TelegramBotToken string
+	TelegramChatID   string
+	// NotifyWebhookURL is the generic notification sink: each event batch
+	// is POSTed there as {"event","message","ts"} JSON (ntfy, Home
+	// Assistant, a Discord shim, ...). Empty = webhook off.
+	NotifyWebhookURL string
 }
 
 // BootstrapConfig is the env-loaded layer. Same fields as Config —
@@ -175,6 +185,9 @@ func LoadBootstrap() BootstrapConfig {
 	b.AdminToken = os.Getenv("FORAGER_ADMIN_TOKEN")
 	b.Username = b.envOr("FORAGER_USERNAME", "", "username")
 	b.PasswordHash = b.envOr("FORAGER_PASSWORD_HASH", "", "passwordHash")
+	b.TelegramBotToken = b.envOr("FORAGER_TELEGRAM_BOT_TOKEN", "", "telegramBotToken")
+	b.TelegramChatID = b.envOr("FORAGER_TELEGRAM_CHAT_ID", "", "telegramChatId")
+	b.NotifyWebhookURL = b.envOr("FORAGER_NOTIFY_WEBHOOK_URL", "", "notifyWebhookUrl")
 	return b
 }
 
@@ -276,6 +289,9 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.AdminToken = str("adminToken", stored.AdminToken, b.AdminToken, "")
 	out.Username = str("username", stored.Username, b.Username, "")
 	out.PasswordHash = str("passwordHash", stored.PasswordHash, b.PasswordHash, "")
+	out.TelegramBotToken = str("telegramBotToken", stored.TelegramBotToken, b.TelegramBotToken, "")
+	out.TelegramChatID = str("telegramChatId", stored.TelegramChatID, b.TelegramChatID, "")
+	out.NotifyWebhookURL = str("notifyWebhookUrl", stored.NotifyWebhookURL, b.NotifyWebhookURL, "")
 	return out, src
 }
 

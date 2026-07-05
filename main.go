@@ -128,6 +128,11 @@ func main() {
 	// searching). Never grabs.
 	launch(func() { server.RunRSSLoop(ctx) })
 
+	// Notify loop — pushes actionable transitions (watch available, grabs
+	// failed) to the configured Telegram/webhook sinks. No-op when neither
+	// sink is configured.
+	launch(func() { server.RunNotifyLoop(ctx) })
+
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,
 		Handler:           server.Router(),

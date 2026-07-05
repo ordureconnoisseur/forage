@@ -52,6 +52,7 @@ type SectionKey =
   | "library"
   | "releases"
   | "filtering"
+  | "notifications"
   | "security"
   | "advanced";
 
@@ -62,6 +63,7 @@ const sensitiveFields = new Set([
   "qbitPassword",
   "sabApiKey",
   "adminToken",
+  "telegramBotToken",
 ]);
 
 // randomToken makes a 32-byte (64 hex char) secret with the browser's
@@ -115,6 +117,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
     library: false,
     releases: false,
     filtering: false,
+    notifications: false,
     security: false,
     advanced: false,
   });
@@ -828,6 +831,68 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             analysis or skew your completion stats. Use the suggested chips (or
             "Add all") for the common noise tags. Matched case-insensitively;
             names must match StashDB's tag names exactly.
+          </p>
+        </Section>
+
+        <Section
+          title="Notifications"
+          isOpen={open.notifications}
+          onToggle={() =>
+            setOpen((o) => ({ ...o, notifications: !o.notifications }))
+          }
+        >
+          <h4 className="settings-subhead">Telegram</h4>
+          <Field label="Bot token">
+            <SecretInput
+              value={displayValue(
+                "telegramBotToken",
+                data?.fields["telegramBotToken"],
+              )}
+              onChange={(v) => setField("telegramBotToken", v)}
+              placeholder={
+                hasSecretPlaceholder(
+                  "telegramBotToken",
+                  data?.fields["telegramBotToken"],
+                )
+                  ? "••••••••  (set; leave blank to keep)"
+                  : "123456:ABC-DEF…  (from @BotFather)"
+              }
+            />
+            <SourceBadge field={data?.fields["telegramBotToken"]} />
+          </Field>
+          <Field label="Chat ID">
+            <input
+              type="text"
+              value={displayValue(
+                "telegramChatId",
+                data?.fields["telegramChatId"],
+              )}
+              onChange={(e) => setField("telegramChatId", e.target.value)}
+              placeholder="your numeric chat id"
+              spellCheck={false}
+            />
+            <SourceBadge field={data?.fields["telegramChatId"]} />
+          </Field>
+          <h4 className="settings-subhead">Webhook</h4>
+          <Field label="Webhook URL">
+            <input
+              type="url"
+              value={displayValue(
+                "notifyWebhookUrl",
+                data?.fields["notifyWebhookUrl"],
+              )}
+              onChange={(e) => setField("notifyWebhookUrl", e.target.value)}
+              placeholder="https://…  (receives event JSON)"
+              spellCheck={false}
+            />
+            <SourceBadge field={data?.fields["notifyWebhookUrl"]} />
+          </Field>
+          <p className="settings-tip">
+            Pushes actionable events without opening the UI: a watched scene
+            whose release is ready to grab, and grabs that failed. Telegram
+            needs both the bot token and your chat id; the webhook receives a
+            small JSON POST per event batch. Leave everything blank to keep
+            notifications off (the in-app bell still works).
           </p>
         </Section>
 

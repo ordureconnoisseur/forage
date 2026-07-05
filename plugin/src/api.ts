@@ -1104,6 +1104,13 @@ export interface ConfigPatch {
   // never round-trips back. Empty string clears it (turns password login
   // off). Omit to leave unchanged.
   password?: string;
+  // Telegram notification sink: bot token (secret, masked like API keys)
+  // + chat id. Both required for Telegram pushes to activate.
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  // Generic notification webhook: receives {"event","message","ts"} JSON
+  // per event batch. Empty = off.
+  notifyWebhookUrl?: string;
 }
 
 export interface ProbeResult {

@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/notify"
 	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
@@ -37,6 +38,7 @@ type Pool struct {
 	qbit     atomic.Pointer[qbit.Client]
 	sab      atomic.Pointer[sabnzbd.Client]
 	placer   atomic.Pointer[placer.Placer]
+	notifier atomic.Pointer[notify.Notifier]
 
 	// placerLog is the logger every constructed placer carries, wired
 	// once at boot via SetPlacerLogger and reused by each Reload's
@@ -128,6 +130,10 @@ func (p *Pool) Reload(cfg config.Config) {
 	// despite SetPlacer's documented contract.
 	p.placer.Store(placer.New(cfg.LibraryRoot, p.placerLog.Load()))
 
+	// notify.New returns nil when neither sink is configured — the same
+	// nil-means-off contract as the other clients.
+	p.notifier.Store(notify.New(cfg.TelegramBotToken, cfg.TelegramChatID, cfg.NotifyWebhookURL))
+
 	p.settings.Store(&Settings{
 		QbitCategory:        cfg.QbitCategory,
 		SabCategory:         cfg.SabCategory,
@@ -166,6 +172,10 @@ func (p *Pool) Sab() *sabnzbd.Client { return p.sab.Load() }
 
 // Placer returns the current Placer. Always non-nil; check Configured().
 func (p *Pool) Placer() *placer.Placer { return p.placer.Load() }
+
+// Notifier returns the current external-notification sink, or nil when
+// notifications are unconfigured (notify.Notifier methods are nil-safe).
+func (p *Pool) Notifier() *notify.Notifier { return p.notifier.Load() }
 
 // Settings returns a snapshot of the non-client config knobs. Always
 // non-nil after the first Reload().

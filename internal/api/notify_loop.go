@@ -1,0 +1,181 @@
+package api
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/watches"
+)
+
+// The notify loop pushes actionable transitions to the external sinks
+// (Telegram / webhook — see internal/notify): a watch that found a release
+// (a grab is one click away) and grabs that failed. It is deliberately
+// poll-based rather than hooked into every transition site: the poller and
+// api flip statuses in a dozen places, and a watermark sweep over the two
+// tables catches them all, survives restarts, and can't slow a grab down.
+//
+// Watermarks live in the meta table (notify_watch_found_at /
+// notify_grab_failed_at). A missing watermark initializes to NOW — turning
+// notifications on must not replay history. A failed send leaves the
+// watermark so the next tick retries (a partial failure across two sinks
+// can re-send to the sink that succeeded; a rare duplicate beats a silent
+// drop). Events are batched into one message per category per tick, so a
+// bulk retry-all that fails 50 grabs is one message, not fifty.
+
+const notifyInterval = 2 * time.Minute
+
+const (
+	metaNotifyWatchFoundAt = "notify_watch_found_at"
+	metaNotifyGrabFailedAt = "notify_grab_failed_at"
+)
+
+// notifyDigestMax bounds how many per-item lines one message carries; the
+// remainder collapses into a count.
+const notifyDigestMax = 6
+
+// RunNotifyLoop ticks until ctx is cancelled. Started from main like the
+// watch/RSS loops.
+func (s *Server) RunNotifyLoop(ctx context.Context) {
+	t := time.NewTicker(notifyInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			func() {
+				defer s.recoverPanic("notify loop")
+				s.tickNotify(ctx)
+			}()
+		}
+	}
+}
+
+func (s *Server) tickNotify(ctx context.Context) {
+	n := s.pool.Notifier()
+	if n == nil {
+		return // notifications unconfigured
+	}
+	now := time.Now().Unix()
+	s.notifyAvailableWatches(ctx, now)
+	s.notifyFailedGrabs(ctx, now)
+}
+
+func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
+	wm, ok := s.notifyWatermark(ctx, metaNotifyWatchFoundAt, now)
+	if !ok {
+		return
+	}
+	list, err := s.watches.List(ctx)
+	if err != nil {
+		return
+	}
+	var lines []string
+	maxAt := wm
+	for _, wt := range list {
+		if wt.Status != watches.StatusAvailable || wt.FoundAt <= wm {
+			continue
+		}
+		name := wt.Title
+		if name == "" {
+			name = wt.StashDBID
+		}
+		if wt.PerformerName != "" {
+			name = wt.PerformerName + " — " + name
+		}
+		lines = append(lines, "• "+name)
+		if wt.FoundAt > maxAt {
+			maxAt = wt.FoundAt
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	text := notifyDigest(fmt.Sprintf("🎬 forage: %d watched scene(s) have a release ready to grab", len(lines)), lines)
+	if err := s.pool.Notifier().Send(ctx, "watch_available", text); err != nil {
+		s.log.Warn("notify send failed; will retry", "event", "watch_available", "err", err)
+		return // keep the watermark — retry next tick
+	}
+	s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, maxAt)
+}
+
+func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
+	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabFailedAt, now)
+	if !ok {
+		return
+	}
+	failed, err := s.grabs.List(ctx, "failed", "", 200, 0)
+	if err != nil {
+		return
+	}
+	var lines []string
+	maxAt := wm
+	for _, g := range failed {
+		if g.UpdatedAt <= wm {
+			continue
+		}
+		line := "• " + g.ReleaseTitle
+		if g.Reason != "" {
+			line += " — " + g.Reason
+		}
+		lines = append(lines, line)
+		if g.UpdatedAt > maxAt {
+			maxAt = g.UpdatedAt
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	text := notifyDigest(fmt.Sprintf("❌ forage: %d grab(s) failed", len(lines)), lines)
+	if err := s.pool.Notifier().Send(ctx, "grabs_failed", text); err != nil {
+		s.log.Warn("notify send failed; will retry", "event", "grabs_failed", "err", err)
+		return
+	}
+	s.setNotifyWatermark(ctx, metaNotifyGrabFailedAt, maxAt)
+}
+
+// notifyDigest joins a headline with up to notifyDigestMax item lines,
+// collapsing the tail into a count.
+func notifyDigest(headline string, lines []string) string {
+	if len(lines) > notifyDigestMax {
+		rest := len(lines) - notifyDigestMax
+		lines = append(lines[:notifyDigestMax], fmt.Sprintf("…and %d more", rest))
+	}
+	return headline + "\n" + strings.Join(lines, "\n")
+}
+
+// notifyWatermark reads a watermark from the meta table. A missing row is
+// initialized to `now` and reported not-ready: notifications turning on (or
+// the very first run after this feature ships) must not replay the entire
+// backlog of past events.
+func (s *Server) notifyWatermark(ctx context.Context, key string, now int64) (int64, bool) {
+	var stored string
+	err := s.db.QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`, key).Scan(&stored)
+	if errors.Is(err, sql.ErrNoRows) {
+		s.setNotifyWatermark(ctx, key, now)
+		return 0, false
+	}
+	if err != nil {
+		return 0, false // transient read failure — skip this tick, don't reset
+	}
+	v, perr := strconv.ParseInt(stored, 10, 64)
+	if perr != nil {
+		s.setNotifyWatermark(ctx, key, now)
+		return 0, false
+	}
+	return v, true
+}
+
+func (s *Server) setNotifyWatermark(ctx context.Context, key string, v int64) {
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value
+	`, key, strconv.FormatInt(v, 10)); err != nil {
+		s.log.Warn("notify watermark write", "key", key, "err", err)
+	}
+}
