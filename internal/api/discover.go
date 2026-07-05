@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -146,7 +147,7 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// cached `owned` flag covers externally-owned scenes but lags a fresh
 	// grab until the next scene-cache refresh; this drops a just-confirmed
 	// (or actively-downloading) scene from Discover immediately.
-	if grabbed := s.grabbedSceneSet(r.Context()); len(grabbed) > 0 {
+	if grabbed, err := s.grabbedSceneSet(r.Context()); err == nil && len(grabbed) > 0 {
 		scenes = dropGrabbed(scenes, grabbed)
 		trending = dropGrabbed(trending, grabbed)
 	}
@@ -211,13 +212,15 @@ func collectPerformerIDs(idsJSON string, into map[string]struct{}) {
 // you're already getting or own. failed/orphaned/mismatched are excluded
 // (you don't own those). Keyed by the grab's actual cross-id when known,
 // else the predicted one, so a confirmed grab maps to the scene it landed.
-func (s *Server) grabbedSceneSet(ctx context.Context) map[string]bool {
+// The error return distinguishes "no live grabs" (a meaningful empty set —
+// reconcileWatches reverts on it) from a lookup failure (act on nothing).
+func (s *Server) grabbedSceneSet(ctx context.Context) (map[string]bool, error) {
 	if s.grabs == nil {
-		return nil
+		return nil, errors.New("grabs unavailable")
 	}
 	byScene, err := s.grabs.StatusByStashDBID(ctx)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	out := make(map[string]bool, len(byScene))
 	for sid, st := range byScene {
@@ -226,7 +229,7 @@ func (s *Server) grabbedSceneSet(ctx context.Context) map[string]bool {
 			out[sid] = true
 		}
 	}
-	return out
+	return out, nil
 }
 
 // dropGrabbed removes scenes the user is already getting/owns. Filters in

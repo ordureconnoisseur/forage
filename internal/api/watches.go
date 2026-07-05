@@ -123,7 +123,15 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 // scene", and once a grab exists that job is done. It flips rather than
 // deletes so the watch lingers in its batch and the batch's progress reads
 // correctly; the user clears it (or the whole batch) when done. Preserves any
-// found_* release fields already on the watch. Best-effort: logs and moves on.
+// found_* release fields already on the watch.
+//
+// It also runs the reverse: a 'grabbed' watch whose scene has NO live grab
+// and NO owned copy flips back to 'watching'. MarkGrabbed fires as soon as
+// the queued grab row exists, so an async add that later fails would
+// otherwise leave the watch terminal while the scene silently never arrives
+// (batch progress reads complete, nothing re-searches). The owned check
+// keeps a watch resolved when the scene landed anyway — a deleted grab row
+// after a confirm, or a pack that covered it. Best-effort: logs and moves on.
 func (s *Server) reconcileWatches(ctx context.Context) {
 	// Self-heal invalid "available but no grab link" rows back to watching, so
 	// a release that slipped through before the no-URL selection guard (or any
@@ -135,17 +143,23 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 		s.log.Info("watch reset ungrabbable available → watching", "count", n)
 	}
 
-	grabbed := s.grabbedSceneSet(ctx)
-	if len(grabbed) == 0 {
+	// A failed lookup means we can't tell live from dead — reconcile nothing.
+	// An EMPTY set is meaningful (every grabbed watch is a revert candidate).
+	grabbed, err := s.grabbedSceneSet(ctx)
+	if err != nil {
 		return
 	}
 	list, err := s.watches.List(ctx)
 	if err != nil {
 		return
 	}
+	var stranded []string // grabbed watches with no live grab covering the scene
 	for _, wt := range list {
 		if wt.Status == watches.StatusGrabbed {
-			continue // already terminal
+			if !grabbed[wt.StashDBID] {
+				stranded = append(stranded, wt.StashDBID)
+			}
+			continue
 		}
 		if grabbed[wt.StashDBID] {
 			if err := s.watches.MarkGrabbed(ctx, wt.StashDBID,
@@ -155,6 +169,27 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 			}
 			s.log.Info("watch resolved — scene already grabbed", "scene", wt.StashDBID)
 		}
+	}
+	if len(stranded) == 0 {
+		return
+	}
+	// The owned sweep is the expensive part (memoised, but still a full
+	// library fetch on a cold memo) — only pay for it when there's an actual
+	// revert candidate, which is rare. On error, revert nothing: we can't
+	// prove the scene didn't land.
+	owned, oerr := s.ownedSceneCopies(ctx)
+	if oerr != nil {
+		return
+	}
+	for _, sid := range stranded {
+		if len(owned[sid]) > 0 {
+			continue // scene landed anyway; the watch's job really is done
+		}
+		if err := s.watches.RevertGrabbed(ctx, sid); err != nil {
+			s.log.Warn("watch revert grabbed", "scene", sid, "err", err)
+			continue
+		}
+		s.log.Info("watch reverted — grab died without the scene landing; watching again", "scene", sid)
 	}
 }
 

@@ -338,6 +338,23 @@ func (r *Repo) MarkGrabbed(ctx context.Context, stashDBID, title, url, indexer, 
 	return err
 }
 
+// RevertGrabbed flips a 'grabbed' watch back to 'watching' — the recovery
+// for a watch whose grab later died (an async add that failed after
+// MarkGrabbed) without the scene ever landing. Clears the found_* fields
+// (that release's grab attempt is spent; the next search re-picks) and
+// resets last_checked=0 so the watch loop re-checks it first. Status-guarded
+// so a concurrent grab/dismiss isn't clobbered; batch/label, performers, and
+// the ignored set stay intact.
+func (r *Repo) RevertGrabbed(ctx context.Context, stashDBID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  status = 'watching', last_checked = 0, grabbed_at = 0,
+		  found_title = '', found_url = '', found_indexer = '',
+		  found_protocol = '', found_size = 0, found_at = 0, candidates = '[]'
+		WHERE stashdb_id = ? AND status = 'grabbed'`, stashDBID)
+	return err
+}
+
 // DeleteBatch removes every watch in a batch (the Watching tab's per-batch
 // "Clear"). Refuses an empty batchID — that would match every ungrouped
 // single track and wipe them all.

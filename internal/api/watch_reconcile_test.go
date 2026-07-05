@@ -5,11 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -71,6 +73,75 @@ func TestReconcileWatches(t *testing.T) {
 	}
 	if status["still-waiting"] != watches.StatusWatching {
 		t.Errorf("watch for an un-grabbed scene = %q, want watching", status["still-waiting"])
+	}
+}
+
+// TestReconcileWatchesRevertsStranded verifies the reverse reconcile: a
+// 'grabbed' watch whose grab died (failed async add, deleted row) without
+// the scene landing flips back to 'watching', while grabbed watches with a
+// live grab or an owned copy stay terminal. MarkGrabbed fires as soon as the
+// queued row exists, so this is the only recovery when the add fails later.
+func TestReconcileWatchesRevertsStranded(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/f3.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	grabsRepo := grabs.NewRepo(dbh)
+	watchesRepo := watches.NewRepo(dbh)
+	s := &Server{
+		db:      dbh,
+		grabs:   grabsRepo,
+		watches: watchesRepo,
+		log:     slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		// Pre-warm the owned memo so the revert path needs no Stash client:
+		// "owned-scene" landed in the library, the others didn't.
+		ownedCopies:        map[string][]stash.SceneRef{"owned-scene": {{SceneID: "1"}}},
+		ownedCopiesFetched: time.Now(),
+	}
+
+	for _, id := range []string{"stranded-scene", "owned-scene", "live-scene"} {
+		if err := watchesRepo.Add(ctx, watches.Watch{StashDBID: id, Title: id, Target: watches.TargetAny}); err != nil {
+			t.Fatal(err)
+		}
+		if err := watchesRepo.MarkGrabbed(ctx, id, "Rel", "http://dl/"+id, "idx", "torrent", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// live-scene still has an in-flight grab; stranded-scene's grab FAILED
+	// (excluded from the live set); owned-scene has no grab row at all but
+	// its copy is in the library.
+	if _, err := grabsRepo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Live.Release.1080p", PredictedStashDBID: "live-scene", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grabsRepo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Dead.Release.1080p", PredictedStashDBID: "stranded-scene", Status: "failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileWatches(ctx)
+
+	list, err := watchesRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, w := range list {
+		status[w.StashDBID] = w.Status
+	}
+	if status["stranded-scene"] != watches.StatusWatching {
+		t.Errorf("stranded watch = %q, want watching (grab died, scene never landed)", status["stranded-scene"])
+	}
+	if status["owned-scene"] != watches.StatusGrabbed {
+		t.Errorf("owned watch = %q, want grabbed (scene landed anyway)", status["owned-scene"])
+	}
+	if status["live-scene"] != watches.StatusGrabbed {
+		t.Errorf("live watch = %q, want grabbed (grab still in flight)", status["live-scene"])
 	}
 }
 
