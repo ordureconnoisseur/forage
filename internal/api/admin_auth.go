@@ -6,9 +6,9 @@
 //     success the daemon issues a random server-side session id and sets
 //     it as the forage_token cookie; the cookie carries the session id,
 //     never the password.
-//   - Admin token ("the API key") → for programmatic clients, sent as
-//     `Authorization: Bearer <token>`. It also backs the legacy
-//     token→cookie handshake (POST /session) for key-only clients whose
+//   - Admin token ("the API key") or the Stash API key → for programmatic
+//     clients, sent as `Authorization: Bearer <token>`. Either also backs
+//     the token→cookie handshake (POST /session) for key-only clients whose
 //     <img> loads can't attach an Authorization header.
 //
 // When neither a password nor a token is set the middleware is a no-op
@@ -339,12 +339,15 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 // postSession is the API-key→cookie handshake for clients that
 // authenticate by Bearer token rather than password: it validates the
 // posted token, then issues a session id and sets the forage_token cookie
-// so the client's same-origin <img> requests pass the gate. Public route:
-// when no admin token is configured it's a 200 no-op (open mode, or a
-// password-only daemon where the cookie comes from /login instead).
+// so the client's same-origin <img> requests pass the gate. It accepts the
+// same two key credentials as requestAuthorized — the admin token and the
+// Stash API key — because a Stash-key client (binge) whose API calls pass
+// the gate still needs the cookie for <img> loads, which can't carry a
+// Bearer header; on a password-gated daemon with no admin token the Stash
+// key is the ONLY way such a client can mint one. Public route: when auth
+// isn't enforced it's a 200 no-op (open mode; nothing gates images).
 func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
-	token := s.effectiveAdminToken()
-	if token == "" {
+	if !s.authRequired() {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": false})
 		return
 	}
@@ -355,7 +358,14 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad json")
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(body.Token), []byte(token)) != 1 {
+	// Run both compares unconditionally so the timing doesn't leak which
+	// credential (if either) matched — same discipline as postLogin.
+	token, stashKey := s.effectiveAdminToken(), s.effectiveStashAPIKey()
+	tokenOK := token != "" &&
+		subtle.ConstantTimeCompare([]byte(body.Token), []byte(token)) == 1
+	keyOK := stashKey != "" &&
+		subtle.ConstantTimeCompare([]byte(body.Token), []byte(stashKey)) == 1
+	if !tokenOK && !keyOK {
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
