@@ -62,11 +62,7 @@ func (p *Placer) FreeSpace() (uint64, error) {
 	if !p.Configured() {
 		return 0, errors.New("placer not configured")
 	}
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(p.libraryRoot, &st); err != nil {
-		return 0, fmt.Errorf("statfs %s: %w", p.libraryRoot, err)
-	}
-	return uint64(st.Bavail) * uint64(st.Bsize), nil
+	return freeSpace(p.libraryRoot)
 }
 
 // HardlinkResult reports whether placement from a given download dir into

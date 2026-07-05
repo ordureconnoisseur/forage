@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -397,6 +398,9 @@ func TestPlaceSingleFileCollisionStillSuffixes(t *testing.T) {
 // CreateTemp's 0600, which made library copies unreadable to a Stash
 // running as a different uid.
 func TestCopyFileWorldReadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits are not honoured on windows")
+	}
 	root := t.TempDir()
 	src := filepath.Join(root, "src.mkv")
 	dest := filepath.Join(root, "dest.mkv")
