@@ -338,19 +338,60 @@ func (c *Client) doGet(ctx context.Context, hc *http.Client, q url.Values) ([]by
 	u := c.baseURL + "/api?" + q.Encode()
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
-		return nil, err
+		return nil, c.redactKey(err)
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return nil, clienterr.Transport("sab "+q.Get("mode"), err)
+		return nil, clienterr.Transport("sab "+q.Get("mode"), c.redactKey(err))
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, clienterr.Transport("sab "+q.Get("mode")+" read", err)
+		return nil, clienterr.Transport("sab "+q.Get("mode")+" read", c.redactKey(err))
 	}
 	if resp.StatusCode != 200 {
 		return nil, clienterr.Status("sab "+q.Get("mode"), resp.StatusCode, body)
 	}
+	// SAB reports API-level failures (bad/limited API key, disabled API) as
+	// HTTP 200 with an error envelope. Without this check those bodies decode
+	// as an empty queue/history and the poller reads absence as "SAB lost the
+	// download", falsely failing every active grab in one tick.
+	var env struct {
+		Status *bool  `json:"status"`
+		ErrMsg string `json:"error"`
+	}
+	if json.Unmarshal(body, &env) == nil && env.Status != nil && !*env.Status {
+		msg := env.ErrMsg
+		if msg == "" {
+			msg = "unspecified error"
+		}
+		return nil, fmt.Errorf("sab %s refused: %s (%w)", q.Get("mode"), msg, clienterr.ErrRejected)
+	}
 	return body, nil
 }
+
+// redactKey scrubs the API key from an error message. Request/transport
+// errors (url.Error) embed the full request URL including the apikey query
+// param, and those strings get persisted as grab failure reasons and logged.
+// The original error stays in the chain so errors.Is classification holds.
+func (c *Client) redactKey(err error) error {
+	if err == nil || c.apiKey == "" {
+		return err
+	}
+	msg := strings.ReplaceAll(err.Error(), c.apiKey, "REDACTED")
+	if escaped := url.QueryEscape(c.apiKey); escaped != c.apiKey {
+		msg = strings.ReplaceAll(msg, escaped, "REDACTED")
+	}
+	if msg == err.Error() {
+		return err
+	}
+	return &redactedError{msg: msg, err: err}
+}
+
+type redactedError struct {
+	msg string
+	err error
+}
+
+func (e *redactedError) Error() string { return e.msg }
+func (e *redactedError) Unwrap() error { return e.err }
