@@ -1013,20 +1013,25 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		}
 	}
 	cache := map[string][]stash.SceneRef{}
-	copiesOf := func(stashID string) []stash.SceneRef {
+	copiesOf := func(stashID string) ([]stash.SceneRef, error) {
 		if sweep != nil {
-			return sweep[stashID]
+			return sweep[stashID], nil
 		}
 		if refs, ok := cache[stashID]; ok {
-			return refs
+			return refs, nil
 		}
 		refs, err := sc.FindSceneRefsByStashID(ctx, endpoint, stashID)
 		if err != nil {
-			p.log.Warn("pack dedup lookup", "id", g.ID, "stashdb", stashID, "err", err)
-			refs = nil
+			// Propagated, not swallowed: a transient Stash error here must
+			// not read as "unique to this pack" — that would confirm the
+			// pack with this scene's dedup silently skipped, permanently
+			// (confirmed grabs leave Active()). The caller defers the
+			// confirm and retries next tick, same as a review-write
+			// failure. [C10][C11]
+			return nil, fmt.Errorf("copies of %s: %w", stashID, err)
 		}
 		cache[stashID] = refs
-		return refs
+		return refs, nil
 	}
 
 	deduped := 0
@@ -1048,7 +1053,10 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		if ps.StashDBID == "" {
 			continue
 		}
-		refs := copiesOf(ps.StashDBID)
+		refs, err := copiesOf(ps.StashDBID)
+		if err != nil {
+			return deduped, recorded, err
+		}
 		var externalIDs []string
 		for _, ref := range refs {
 			if !packIDs[ref.SceneID] {
