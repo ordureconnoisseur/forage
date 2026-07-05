@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/base32"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 type grabRequest struct {
@@ -649,38 +648,10 @@ func humanBytes(n int64) string {
 	}
 }
 
-// magnetInfoHash extracts the v1 info_hash from a magnet URI, normalised
-// to the lowercase 40-char hex that qBit keys torrents by. Handles both
-// hex (btih:<40 hex>) and base32 (btih:<32 base32>) encodings. Returns ""
-// for non-magnets, v2-only magnets (btmh), or anything malformed — callers
-// then fall back to poller-side linking.
+// magnetInfoHash extracts the v1 info_hash from a magnet URI — moved to
+// torrentmeta so the qbit client can share it for duplicate-add recovery.
 func magnetInfoHash(downloadURL string) string {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(downloadURL)), "magnet:") {
-		return ""
-	}
-	u, err := url.Parse(downloadURL)
-	if err != nil {
-		return ""
-	}
-	const prefix = "urn:btih:"
-	for _, xt := range u.Query()["xt"] {
-		if !strings.HasPrefix(xt, prefix) {
-			continue
-		}
-		h := strings.TrimSpace(xt[len(prefix):])
-		switch len(h) {
-		case 40:
-			if _, err := hex.DecodeString(h); err == nil {
-				return strings.ToLower(h)
-			}
-		case 32:
-			b, err := base32.StdEncoding.DecodeString(strings.ToUpper(h))
-			if err == nil && len(b) == 20 {
-				return hex.EncodeToString(b)
-			}
-		}
-	}
-	return ""
+	return torrentmeta.MagnetInfoHash(downloadURL)
 }
 
 // failGrab transitions a grab to failed with a reason. Best-effort.
