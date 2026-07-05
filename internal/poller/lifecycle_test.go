@@ -347,7 +347,7 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 	pool.Reload(cfg)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour)
+	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour, nil)
 
 	return &rig{poller: p, repo: repo, qbit: fq, sab: fsab, stash: fs, libRoot: libRoot, stage: stage, cfg: cfg}
 }
@@ -959,6 +959,55 @@ func TestQueuedGrabSurvivesHashNotYetInQbit(t *testing.T) {
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "failed" {
 		t.Fatalf("past grace: status=%q (reason=%q), want failed", g.Status, g.Reason)
+	}
+}
+
+// TestQueuedSabGrabWithoutNzoTimesOut pins the SAB mirror of the qBit link
+// timeout: a queued SAB grab with no nzo_id (the daemon died between the row
+// insert and AddURL returning) must fail once past the link window — it can
+// never be found in SAB's queue/history, and retryGrab only accepts failed
+// grabs, so without the timeout it polls forever as an undeletable zombie.
+// While the async add is still pending in-process (fetch-gate queue), the
+// timeout must NOT fire.
+func TestQueuedSabGrabWithoutNzoTimesOut(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Hazel Moore - Release", Client: "sabnzbd",
+		ClientID: "", Category: "forager",
+		Status: "queued", Kind: "single", GrabbedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Fresh grab, no nzo yet — inside the link window, stays queued.
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "queued" {
+		t.Fatalf("inside window: status=%q (reason=%q), want queued", g.Status, g.Reason)
+	}
+
+	// Age it past the window while an add is pending in-process — a bulk
+	// batch tail waiting on the fetch gate must not be failed.
+	g := r.get(t, id)
+	g.GrabbedAt = time.Now().Add(-qbitLinkTimeout - time.Minute).Unix()
+	if err := r.repo.Update(ctx, *g); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	r.poller.pending = grabs.NewPendingAdds()
+	r.poller.pending.Start(id)
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "queued" {
+		t.Fatalf("pending add: status=%q (reason=%q), want queued", g.Status, g.Reason)
+	}
+
+	// Add chain terminated (or daemon restarted: registry empty) — now the
+	// missing nzo means the add really died.
+	r.poller.pending.Done(id)
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "failed" {
+		t.Fatalf("past window: status=%q (reason=%q), want failed", g.Status, g.Reason)
 	}
 }
 

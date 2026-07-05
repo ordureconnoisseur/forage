@@ -286,10 +286,20 @@ func addBackoff(attempt int) time.Duration {
 // (the grab stays queued); a permanent error fails the grab so the row
 // doesn't sit "queued" forever.
 func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	s.pendingAdds.Start(grabID)
 	s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, 1)
 }
 
 func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
+	// The grab stays marked pending across backoff re-attempts (the AfterFunc
+	// chain re-enters this function); only a terminal exit — success, hard
+	// fail, bail — clears it, releasing the poller's link timeout.
+	retryScheduled := false
+	defer func() {
+		if !retryScheduled {
+			s.pendingAdds.Done(grabID)
+		}
+	}()
 	qb := s.pool.Qbit()
 	if qb == nil {
 		s.failGrab(context.Background(), grabID, "qbit not configured")
@@ -326,6 +336,7 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 					}
 				})
 			}
+			retryScheduled = true
 			time.AfterFunc(d, func() {
 				s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, attempt+1)
 			})
@@ -371,10 +382,19 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 // the calls and the longer SAB add-timeout waits out a slow-but-succeeding
 // fetch so the grab captures its nzo_id instead of false-failing.
 func (s *Server) addUsenetAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	s.pendingAdds.Start(grabID)
 	s.addUsenetAttempt(downloadURL, category, releaseTitle, grabID, 1)
 }
 
 func (s *Server) addUsenetAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
+	// Pending across backoff re-attempts, cleared on terminal exit — see
+	// addTorrentAttempt.
+	retryScheduled := false
+	defer func() {
+		if !retryScheduled {
+			s.pendingAdds.Done(grabID)
+		}
+	}()
 	sb := s.pool.Sab()
 	if sb == nil {
 		s.failGrab(context.Background(), grabID, "sab not configured")
@@ -409,6 +429,7 @@ func (s *Server) addUsenetAttempt(downloadURL, category, releaseTitle string, gr
 					}
 				})
 			}
+			retryScheduled = true
 			time.AfterFunc(d, func() {
 				s.addUsenetAttempt(downloadURL, category, releaseTitle, grabID, attempt+1)
 			})

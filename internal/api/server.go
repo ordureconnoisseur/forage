@@ -57,6 +57,12 @@ type Server struct {
 	// exactly like torrent fetches do. Zero value is ready to use.
 	sabGate fetchGate
 
+	// pendingAdds marks grabs whose async add chain (gate wait, request,
+	// backoff retries) is still in flight, so the poller's link timeout
+	// won't fail a bulk batch tail that is legitimately still queued behind
+	// the fetch gate. Shared with the poller via main. Nil-safe.
+	pendingAdds *grabs.PendingAdds
+
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex
@@ -136,21 +142,25 @@ type Options struct {
 	// Backs the Grabs "scan for new downloads" button. Returns the count
 	// adopted and the count skipped only for being too fresh.
 	AdoptNow func(context.Context) (int, int)
+	// PendingAdds is the in-flight async-add registry shared with the
+	// poller (see Server.pendingAdds). May be nil (tests).
+	PendingAdds *grabs.PendingAdds
 }
 
 func New(opts Options) *Server {
 	return &Server{
-		db:         opts.DB,
-		pool:       opts.Pool,
-		bootstrap:  opts.Bootstrap,
-		store:      opts.Store,
-		grabs:      opts.Grabs,
-		watches:    opts.Watches,
-		rss:        rss.NewRepo(opts.DB),
-		log:        opts.Log,
-		version:    opts.Version,
-		adoptNow:   opts.AdoptNow,
-		sessionKey: loadOrCreateSessionKey(opts.DB, opts.Log),
+		db:          opts.DB,
+		pool:        opts.Pool,
+		bootstrap:   opts.Bootstrap,
+		store:       opts.Store,
+		grabs:       opts.Grabs,
+		watches:     opts.Watches,
+		rss:         rss.NewRepo(opts.DB),
+		log:         opts.Log,
+		version:     opts.Version,
+		adoptNow:    opts.AdoptNow,
+		pendingAdds: opts.PendingAdds,
+		sessionKey:  loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 }
 

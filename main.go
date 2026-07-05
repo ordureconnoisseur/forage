@@ -92,24 +92,29 @@ func main() {
 	launch(func() { runTrendingTicker(ctx, pool, database, log.With("component", "trending")) })
 
 	grabsRepo := grabs.NewRepo(database)
+	// pendingAdds bridges the api layer's async add chains and the poller's
+	// link timeouts: the poller won't fail a queued grab whose add is still
+	// queued behind a fetch gate in this process.
+	pendingAdds := grabs.NewPendingAdds()
 	// Phase B grabs poller — always start; the poller itself short-circuits
 	// when no download clients are configured (pool.Qbit() / Sab() = nil).
 	p := poller.New(grabsRepo, database, pool, log.With("component", "poller"),
-		cfg.PollInterval, cfg.OrphanAfter)
+		cfg.PollInterval, cfg.OrphanAfter, pendingAdds)
 	launch(func() { p.Run(ctx) })
 
 	watchesRepo := watches.NewRepo(database)
 
 	server := api.New(api.Options{
-		DB:        database,
-		Pool:      pool,
-		Bootstrap: bootstrap,
-		Store:     store,
-		Grabs:     grabsRepo,
-		Watches:   watchesRepo,
-		Log:       log.With("component", "api"),
-		Version:   Version,
-		AdoptNow:  p.AdoptNow,
+		DB:          database,
+		Pool:        pool,
+		Bootstrap:   bootstrap,
+		Store:       store,
+		Grabs:       grabsRepo,
+		Watches:     watchesRepo,
+		Log:         log.With("component", "api"),
+		Version:     Version,
+		AdoptNow:    p.AdoptNow,
+		PendingAdds: pendingAdds,
 	})
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-

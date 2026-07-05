@@ -43,6 +43,13 @@ type Poller struct {
 	interval time.Duration
 	orphan   time.Duration
 
+	// pending is the api layer's in-flight async-add registry. The link
+	// timeout must not fail a still-unlinked queued grab whose add is
+	// legitimately queued behind the fetch gate (a bulk batch tail waits
+	// far longer than any fixed window). Nil-safe; empty after a restart,
+	// which is when the timeout SHOULD fire.
+	pending *grabs.PendingAdds
+
 	// stashBoxEndpoint caches the user's StashDB endpoint as
 	// configured in Stash. Identify needs it to match exactly;
 	// fetched lazily on the first scanned-state transition and
@@ -164,7 +171,7 @@ const packIdentifyGrace = 20 * time.Minute
 // StashDB doesn't have settles in minutes, not hours.
 const singleIdentifyGrace = 30 * time.Minute
 
-func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
+func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration, pending *grabs.PendingAdds) *Poller {
 	if interval <= 0 {
 		interval = 60 * time.Second
 	}
@@ -178,6 +185,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		log:         log,
 		interval:    interval,
 		orphan:      orphanAfter,
+		pending:     pending,
 		lastScan:    map[int64]time.Time{},
 		packScan:    map[int64]packScanState{},
 		grace:       map[int64]time.Time{},
@@ -1313,9 +1321,15 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		// Never got linked to a qBit torrent. With .torrent grabs now
 		// pinned to their info-hash at add time (and magnets to their
 		// btih), an unlinked grab past this window means the add itself
-		// never landed — don't leave it queued forever.
+		// never landed — don't leave it queued forever. EXCEPT while the
+		// add is still pending in-process (fetch-gate queue, rate-limit
+		// backoff): a bulk batch tail legitimately waits past any fixed
+		// window, and failing it here races the in-flight add (the
+		// post-gate status check then bails without adding, so a retried
+		// batch re-fails its tail forever).
 		if g.Status == "queued" && g.GrabbedAt > 0 &&
-			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout {
+			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout &&
+			!p.pending.Has(g.ID) {
 			g.Status = "failed"
 			g.Reason = "never linked to a qBit torrent (add likely failed)"
 			return true, ""
@@ -1334,7 +1348,8 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		// "queued" was tracked by qBit before, so a missing hash there
 		// really does mean the torrent was removed.
 		if g.Status == "queued" && g.GrabbedAt > 0 &&
-			time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout {
+			(time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout ||
+				p.pending.Has(g.ID)) {
 			return dirty, ""
 		}
 		// The torrent vanishing does NOT undo what already happened on disk.
@@ -1922,7 +1937,19 @@ func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash stri
 func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool, string, error) {
 	dirty := false
 	if g.ClientID == "" {
-		// No nzo_id to look up — shouldn't normally happen. Skip.
+		// No nzo_id to look up: the async addurl never linked — the daemon
+		// died between the row insert and AddURL returning, or the nzo-link
+		// write failed. Nothing in SAB matches this row and retryGrab only
+		// accepts failed grabs, so without a timeout it polls forever as an
+		// undeletable zombie. Mirror the qBit link timeout, skipping while
+		// the add is still pending in-process (fetch-gate queue / backoff).
+		if g.Status == "queued" && g.GrabbedAt > 0 &&
+			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout &&
+			!p.pending.Has(g.ID) {
+			g.Status = "failed"
+			g.Reason = "never linked to a SAB nzo (add likely failed)"
+			return true, "", nil
+		}
 		return false, "", nil
 	}
 	if item := findByNzo(queue, g.ClientID); item != nil {
