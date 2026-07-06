@@ -1782,6 +1782,8 @@ button {
   --status-scanned-bg: rgba(59, 130, 246, 0.18);
   --status-tagging: #14b8a6;
   --status-tagging-bg: rgba(20, 184, 166, 0.18);
+  --status-distributing: #a78bfa;
+  --status-distributing-bg: rgba(167, 139, 250, 0.18);
   --status-confirmed: var(--accent-bright);
   --status-confirmed-bg: rgba(var(--accent-rgb), 0.22);
   --status-mismatched: #f59e0b;
@@ -2143,6 +2145,7 @@ button {
 .grab-row.status-placed::before     { background: var(--status-placed); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.55); }
 .grab-row.status-scanned::before    { background: var(--status-scanned); box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); }
 .grab-row.status-tagging::before    { background: var(--status-tagging); box-shadow: 0 0 10px rgba(20, 184, 166, 0.4); }
+.grab-row.status-distributing::before { background: var(--status-distributing); box-shadow: 0 0 10px rgba(167, 139, 250, 0.4); }
 .grab-row.status-confirmed::before  { background: linear-gradient(180deg, var(--accent-bright), var(--accent)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); }
 .grab-row.status-mismatched::before { background: var(--status-mismatched); }
 .grab-row.status-orphaned::before   { background: var(--status-orphaned); }
@@ -2190,6 +2193,7 @@ button {
 .grab-status-badge.chip-placed     { background: var(--status-placed-bg);    color: var(--status-placed); }
 .grab-status-badge.chip-scanned    { background: var(--status-scanned-bg);   color: var(--status-scanned); }
 .grab-status-badge.chip-tagging    { background: var(--status-tagging-bg);   color: var(--status-tagging); }
+.grab-status-badge.chip-distributing { background: var(--status-distributing-bg); color: var(--status-distributing); }
 .grab-status-badge.chip-confirmed  { background: var(--status-confirmed-bg); color: var(--status-confirmed); }
 .grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }

@@ -53,6 +53,49 @@ func TestTranslate(t *testing.T) {
 	}
 }
 
+func TestReverse(t *testing.T) {
+	cases := []struct {
+		name    string
+		path    string
+		mapping string
+		want    string
+	}{
+		{"unset mapping", `Z:\Media\Hazel\x.mp4`, "", ""},
+		{"empty path", "", `/data/media:Z:\Media`, ""},
+		{"windows to unix", `Z:\Media\Hazel Moore\scene.mp4`,
+			`/data/media/Media:Z:\Media`, "/data/media/Media/Hazel Moore/scene.mp4"},
+		{"unix to unix", "/mnt/library/Hazel/x.mp4",
+			"/data/media/Media:/mnt/library", "/data/media/Media/Hazel/x.mp4"},
+		{"path outside stash prefix", `D:\Other\x.mp4`,
+			`/data/media:Z:\Media`, ""},
+		// Boundary: a sibling stash mount sharing the string prefix isn't inside.
+		{"sibling stash dir sharing prefix", `Z:\Media2\Hazel\x.mp4`,
+			`/data/media:Z:\Media`, ""},
+		{"path equals stash prefix", `Z:\Media`,
+			`/data/media:Z:\Media`, "/data/media"},
+		{"trailing backslash on stash side", `Z:\Media\Hazel\x.mp4`,
+			`/data/media:Z:\Media\`, "/data/media/Hazel/x.mp4"},
+		{"round-trips Translate", "", "", ""}, // placeholder; real round-trip below
+		{"malformed mapping no colon", `Z:\Media\x.mp4`, "/data/media", ""},
+	}
+	for _, tc := range cases {
+		if tc.name == "round-trips Translate" {
+			continue
+		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Reverse(tc.path, tc.mapping); got != tc.want {
+				t.Errorf("Reverse(%q, %q) = %q, want %q", tc.path, tc.mapping, got, tc.want)
+			}
+		})
+	}
+	// Reverse must invert Translate for an in-mount path.
+	mapping := `/data/porn/Media:Z:\Media`
+	forager := "/data/porn/Media/Unsorted/pack/x.mp4"
+	if got := Reverse(Translate(forager, mapping), mapping); got != forager {
+		t.Errorf("Reverse∘Translate = %q, want %q", got, forager)
+	}
+}
+
 func TestBase(t *testing.T) {
 	cases := map[string]string{
 		"/data/media/Hazel/x.mp4": "x.mp4",

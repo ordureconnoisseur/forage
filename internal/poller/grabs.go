@@ -420,8 +420,14 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 	// re-filed into the performer folder; there's no download work left. We only
 	// wait for Stash to re-index the new path, then apply the pack's performer to
 	// every scene. Handle it in isolation from the main place/confirm pipeline.
-	if g.Kind == "pack" && g.Status == "tagging" {
-		changed, err := p.advancePackTag(ctx, g)
+	if g.Kind == "pack" && (g.Status == "tagging" || g.Status == "distributing") {
+		var changed bool
+		var err error
+		if g.Status == "tagging" {
+			changed, err = p.advancePackTag(ctx, g)
+		} else {
+			changed, err = p.advancePackDistribute(ctx, g)
+		}
 		if err != nil {
 			return err
 		}
@@ -845,6 +851,68 @@ func (p *Poller) advancePackTag(ctx context.Context, g *grabs.Grab) (bool, error
 	return true, nil
 }
 
+// advancePackDistribute sorts a studio/mixed pack (no performer set) into the
+// library: each identified scene under the pack dir is hardlinked into ONE
+// performer folder — the scene's most-collected performer (highest library-wide
+// scene_count). The original stays in the pack folder under Unsorted, so the
+// pack is never gutted, and unidentified scenes just remain pooled there (no
+// per-scene performer to sort them by). Best-effort per scene (Place is
+// idempotent, so a partial run is safe to re-enter), then confirms. Returns
+// whether it mutated g.
+func (p *Poller) advancePackDistribute(ctx context.Context, g *grabs.Grab) (bool, error) {
+	sc := p.pool.Stash()
+	if sc == nil {
+		return false, nil // no Stash this tick — retry later
+	}
+	pl := p.pool.Placer()
+	if !pl.Configured() {
+		g.Status = "confirmed"
+		g.Reason = "pack placed (no library root, so scenes not distributed)"
+		return true, nil
+	}
+	needle := p.packNeedle(g)
+	if needle == "" {
+		g.Status = "confirmed"
+		g.Reason = "pack placed, but no path to distribute its scenes by"
+		return true, nil
+	}
+	scenes, err := sc.FindScenesWithPerformersUnderPath(ctx, needle)
+	if err != nil {
+		return false, nil // transient Stash error — retry next tick
+	}
+	mapping := p.pool.Settings().StashPathMapping
+	distributed, pooled := 0, 0
+	for _, s := range scenes {
+		if len(s.Performers) == 0 {
+			pooled++ // unidentified / no performer — stays in the pack folder
+			continue
+		}
+		top := s.Performers[0]
+		for _, pf := range s.Performers[1:] {
+			if pf.SceneCount > top.SceneCount {
+				top = pf
+			}
+		}
+		forageFile := pathmap.Reverse(s.FilePath, mapping)
+		if forageFile == "" {
+			p.log.Warn("pack distribute: can't map scene path to forager view", "id", g.ID, "scene", s.ID, "path", s.FilePath)
+			pooled++
+			continue
+		}
+		if _, perr := pl.Place(forageFile, top.Name); perr != nil {
+			p.log.Warn("pack distribute: place failed", "id", g.ID, "scene", s.ID, "performer", top.Name, "err", perr)
+			pooled++
+			continue
+		}
+		distributed++
+	}
+	g.Status = "confirmed"
+	g.ConfirmedAt = time.Now().Unix()
+	g.Reason = fmt.Sprintf("distributed %d scenes to performer folders, %d pooled in Unsorted", distributed, pooled)
+	p.log.Info("pack distributed by performer", "id", g.ID, "distributed", distributed, "pooled", pooled, "total", len(scenes))
+	return true, nil
+}
+
 // advancePackConfirm drives a pack grab from placed → confirmed. Unlike
 // a single grab (one file → one scene), a pack is a directory of many
 // of a performer's scenes, so confirmation means: enumerate every scene
@@ -1066,6 +1134,12 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			g.PackFiles = found
 		}
 		g.Status = "confirmed"
+		// Studio/mixed pack (no performer set): sort its identified scenes into
+		// their most-collected performer's folder (advancePackDistribute) before
+		// confirming. Unidentified scenes stay pooled in the pack folder.
+		if g.PerformerName == "" {
+			g.Status = "distributing"
+		}
 		g.ConfirmedAt = time.Now().Unix()
 		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified, %d dup removed", identified, found, g.PackDeduped)
 		if pendingReview > 0 {

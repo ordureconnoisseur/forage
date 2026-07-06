@@ -647,6 +647,88 @@ func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]Scen
 	return out, nil
 }
 
+// ScenePerformer is a performer credited on a scene, with the performer's
+// LOCAL Stash id and total scene count — the count drives the pick when a
+// scene has several performers (distribute to the one you collect most of).
+type ScenePerformer struct {
+	ID         string
+	Name       string
+	SceneCount int
+}
+
+// DistScene is a scene under a pack dir plus the data needed to distribute it
+// into a performer folder: its file path (Stash's view — Reverse-map to
+// forager's), whether it's identified, and its performers.
+type DistScene struct {
+	ID         string
+	FilePath   string
+	StashDBID  string
+	Performers []ScenePerformer
+}
+
+const findScenesWithPerformersUnderPathQuery = `
+query ForagerScenesWithPerformers($value: String!, $page: Int!, $perPage: Int!) {
+  findScenes(
+    scene_filter: { path: { value: $value, modifier: MATCHES_REGEX } }
+    filter: { page: $page, per_page: $perPage, sort: "path", direction: ASC }
+  ) {
+    count
+    scenes {
+      id
+      stash_ids { endpoint stash_id }
+      files { path }
+      performers { id name scene_count }
+    }
+  }
+}`
+
+// FindScenesWithPerformersUnderPath returns every scene under the needle path,
+// each with its performers (+ per-performer scene counts). Used by the pack
+// distribute step to hardlink each identified scene into the folder of its
+// most-collected performer. Same directory-boundary anchoring as
+// FindScenesUnderPath.
+func (c *Client) FindScenesWithPerformersUnderPath(ctx context.Context, needle string) ([]DistScene, error) {
+	if needle == "" {
+		return nil, nil
+	}
+	pattern := regexp.QuoteMeta(strings.TrimRight(needle, `/\`)) + `[\\/]`
+	type resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				ID       string    `json:"id"`
+				StashIDs []StashID `json:"stash_ids"`
+				Files    []struct {
+					Path string `json:"path"`
+				} `json:"files"`
+				Performers []struct {
+					ID         string `json:"id"`
+					Name       string `json:"name"`
+					SceneCount int    `json:"scene_count"`
+				} `json:"performers"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
+	var out []DistScene
+	err := pagedQuery(ctx, c, "findScenes with performers under path", findScenesWithPerformersUnderPathQuery,
+		map[string]any{"value": pattern}, 1000, func(r resp) (int, bool) {
+			for _, s := range r.FindScenes.Scenes {
+				d := DistScene{ID: s.ID, StashDBID: PickStashDBID(s.StashIDs)}
+				if len(s.Files) > 0 {
+					d.FilePath = s.Files[0].Path
+				}
+				for _, p := range s.Performers {
+					d.Performers = append(d.Performers, ScenePerformer{ID: p.ID, Name: p.Name, SceneCount: p.SceneCount})
+				}
+				out = append(out, d)
+			}
+			return len(r.FindScenes.Scenes), false
+		})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MetadataScan asks Stash to scan + generate phashes for new files.
 // Used by the poller right after a successful placement: shortens
 // the placed → confirmed transition from "whenever Stash's scheduled

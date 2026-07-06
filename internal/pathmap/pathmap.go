@@ -66,6 +66,42 @@ func Translate(foragerPath, mapping string) string {
 	return stashPrefix + suffix
 }
 
+// Reverse rewrites a Stash-side path back into forager's view — the inverse of
+// Translate. Used when forager must act on a file it only knows by Stash's path
+// (e.g. distributing a pack's identified scenes into performer folders: Stash
+// reports "Z:\Media\Unsorted\pack\x.mp4", forager must hardlink
+// "/data/porn/Media/Unsorted/pack/x.mp4"). Empty when the mapping is unset or
+// the Stash prefix doesn't match. Flips '\' back to '/' when the forager side is
+// POSIX.
+func Reverse(stashPath, mapping string) string {
+	if mapping == "" || stashPath == "" {
+		return ""
+	}
+	idx := strings.Index(mapping, ":")
+	if idx <= 0 || idx == len(mapping)-1 {
+		return ""
+	}
+	foragerPrefix := strings.TrimRight(mapping[:idx], "/")
+	stashPrefix := strings.TrimRight(mapping[idx+1:], `/\`)
+	if foragerPrefix == "" || stashPrefix == "" {
+		return ""
+	}
+	if !strings.HasPrefix(stashPath, stashPrefix) {
+		return ""
+	}
+	suffix := stashPath[len(stashPrefix):]
+	// The match must end on a path boundary so a sibling ("Z:\Media2\...")
+	// doesn't reverse into a plausible-but-wrong forager path.
+	if suffix != "" && suffix[0] != '\\' && suffix[0] != '/' {
+		return ""
+	}
+	// forager side is POSIX when its prefix uses '/'; flip Stash's backslashes.
+	if strings.ContainsRune(foragerPrefix, '/') {
+		suffix = strings.ReplaceAll(suffix, `\`, "/")
+	}
+	return foragerPrefix + suffix
+}
+
 // Base returns the last path segment of p, handling both '/' and '\'
 // separators (forager sees '/', Stash on Windows reports '\').
 func Base(path string) string {

@@ -684,6 +684,7 @@ export type GrabStatus =
   | "placed"
   | "scanned"
   | "tagging"
+  | "distributing"
   | "confirmed"
   | "mismatched"
   | "orphaned"
@@ -974,6 +975,7 @@ export const ACTIVE_STATUSES: GrabStatus[] = [
   "placed",
   "scanned",
   "tagging",
+  "distributing",
 ];
 
 export function isActiveStatus(s: GrabStatus): boolean {
