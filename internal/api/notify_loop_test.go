@@ -163,3 +163,70 @@ func TestNotifyLoopSendsSceneImage(t *testing.T) {
 		t.Errorf("caption missing details: %q", msg)
 	}
 }
+
+// TestNotifyFailedGrabsGroupedAndTruncated pins the failure-digest shape:
+// paragraph-length release titles truncate, and a batch failing for one
+// cause states the reason ONCE in the headline instead of per line.
+func TestNotifyFailedGrabsGroupedAndTruncated(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/nf.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	var mu sync.Mutex
+	var messages []map[string]any
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		messages = append(messages, m)
+		mu.Unlock()
+	}))
+	defer hook.Close()
+
+	pool := clientpool.New()
+	pool.Reload(config.Config{NotifyWebhookURL: hook.URL})
+	s := &Server{
+		db:      dbh,
+		pool:    pool,
+		grabs:   grabs.NewRepo(dbh),
+		watches: watches.NewRepo(dbh),
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	s.tickNotify(ctx) // initialize watermarks
+
+	time.Sleep(1100 * time.Millisecond)
+	longTitle := "Hookup Hotshot: Be A Slut, Do Whatever U Want (Bryan Gozzling, Evil Angel) [2016, Gonzo, 1080p, WEB-DL] (Split Scenes) (Zoey Laine, Carmen Callaway, Chloe Coutoure, Lily Rader) RD: 20.06.2016."
+	for _, title := range []string{longTitle, "Short.Release.2160p", "[MV] Natasha Nixx"} {
+		if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: title, Status: "failed", Reason: "qbit state=error"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.tickNotify(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 digest message, got %d", len(messages))
+	}
+	msg, _ := messages[0]["message"].(string)
+	if !strings.Contains(msg, "3 grabs failed — qbit state=error") {
+		t.Errorf("headline should carry the shared reason once: %q", msg)
+	}
+	if strings.Count(msg, "qbit state=error") != 1 {
+		t.Errorf("reason repeated per line: %q", msg)
+	}
+	if strings.Contains(msg, "Lily Rader") {
+		t.Errorf("long title not truncated: %q", msg)
+	}
+	if !strings.Contains(msg, "…") {
+		t.Errorf("expected ellipsis on the truncated title: %q", msg)
+	}
+	for _, line := range strings.Split(msg, "\n") {
+		if n := len([]rune(line)); n > 100 {
+			t.Errorf("line too long (%d runes): %q", n, line)
+		}
+	}
+}

@@ -97,7 +97,7 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 		maxAt := wm
 		var lines []string
 		for _, wt := range fresh {
-			lines = append(lines, "• "+watchLabel(wt))
+			lines = append(lines, "• "+truncateLine(watchLabel(wt), notifyTitleMax))
 			if wt.FoundAt > maxAt {
 				maxAt = wt.FoundAt
 			}
@@ -123,7 +123,7 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 	for _, wt := range fresh {
 		caption := "🎬 Release ready: " + watchLabel(wt)
 		if wt.FoundTitle != "" {
-			caption += "\n" + wt.FoundTitle
+			caption += "\n" + truncateLine(wt.FoundTitle, notifyTitleMax)
 		}
 		if err := s.pool.Notifier().SendPhoto(ctx, "watch_available", wt.ImageURL, caption); err != nil {
 			s.log.Warn("notify send failed; will retry", "event", "watch_available", "scene", wt.StashDBID, "err", err)
@@ -160,6 +160,15 @@ func watchLabel(wt watches.Watch) string {
 	return name
 }
 
+// notifyTitleMax / notifyReasonMax bound one release title / failure reason
+// in a message line. Scene-release names (RuTracker performer rosters, JAV
+// titles) run to whole paragraphs; a notification is a headline, not the
+// record — the Grabs UI has the full strings.
+const (
+	notifyTitleMax  = 60
+	notifyReasonMax = 90
+)
+
 func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabFailedAt, now)
 	if !ok {
@@ -169,30 +178,69 @@ func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 	if err != nil {
 		return
 	}
-	var lines []string
+	// Group by reason: a batch usually fails for ONE cause (a tracker
+	// outage, qBit erroring), and repeating it on every line is what turned
+	// the digest into a wall of text.
+	var reasons []string // first-seen order
+	titles := map[string][]string{}
 	maxAt := wm
 	for _, g := range failed {
 		if g.UpdatedAt <= wm {
 			continue
 		}
-		line := "• " + g.ReleaseTitle
-		if g.Reason != "" {
-			line += " — " + g.Reason
+		r := truncateLine(g.Reason, notifyReasonMax)
+		if _, seen := titles[r]; !seen {
+			reasons = append(reasons, r)
 		}
-		lines = append(lines, line)
+		titles[r] = append(titles[r], "• "+truncateLine(g.ReleaseTitle, notifyTitleMax))
 		if g.UpdatedAt > maxAt {
 			maxAt = g.UpdatedAt
 		}
 	}
-	if len(lines) == 0 {
+	if len(reasons) == 0 {
 		return
 	}
-	text := notifyDigest(fmt.Sprintf("❌ forage: %d grab(s) failed", len(lines)), lines)
+	var text string
+	total := 0
+	for _, r := range reasons {
+		total += len(titles[r])
+	}
+	if len(reasons) == 1 {
+		headline := fmt.Sprintf("❌ forage: %s failed — %s", plural(total, "grab"), reasons[0])
+		text = notifyDigest(headline, titles[reasons[0]])
+	} else {
+		// Mixed causes: reason as a sub-heading per group, lines capped
+		// across the whole message.
+		var lines []string
+		for _, r := range reasons {
+			lines = append(lines, r+":")
+			lines = append(lines, titles[r]...)
+		}
+		text = notifyDigest(fmt.Sprintf("❌ forage: %s failed", plural(total, "grab")), lines)
+	}
 	if err := s.pool.Notifier().Send(ctx, "grabs_failed", text); err != nil {
 		s.log.Warn("notify send failed; will retry", "event", "grabs_failed", "err", err)
 		return
 	}
 	s.setNotifyWatermark(ctx, metaNotifyGrabFailedAt, maxAt)
+}
+
+// truncateLine caps a string at max runes with an ellipsis, and flattens
+// newlines so one item can't break the digest's line-per-item shape.
+func truncateLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max-1]) + "…"
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // notifyDigest joins a headline with up to notifyDigestMax item lines,
