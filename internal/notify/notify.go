@@ -70,7 +70,37 @@ func (n *Notifier) Send(ctx context.Context, event, text string) error {
 		}
 	}
 	if n.webhookURL != "" {
-		if err := n.sendWebhook(ctx, event, text); err != nil {
+		if err := n.sendWebhook(ctx, event, text, ""); err != nil {
+			errs = append(errs, fmt.Errorf("webhook: %w", err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// SendPhoto pushes a photo (by public URL) with a caption to every
+// configured sink. Telegram fetches the URL server-side (sendPhoto), so
+// the daemon never downloads the image; if Telegram can't take the photo
+// (dead URL, unsupported type, over its 5MB URL limit) the caption
+// degrades to a plain text message so the notification is never lost. The
+// webhook receives the URL as an extra "image" field. An empty photoURL
+// is just Send.
+func (n *Notifier) SendPhoto(ctx context.Context, event, photoURL, caption string) error {
+	if n == nil || caption == "" {
+		return nil
+	}
+	if photoURL == "" {
+		return n.Send(ctx, event, caption)
+	}
+	var errs []error
+	if n.telegramToken != "" {
+		if perr := n.sendTelegramPhoto(ctx, photoURL, caption); perr != nil {
+			if terr := n.sendTelegram(ctx, caption); terr != nil {
+				errs = append(errs, fmt.Errorf("telegram: %w", terr))
+			}
+		}
+	}
+	if n.webhookURL != "" {
+		if err := n.sendWebhook(ctx, event, caption, photoURL); err != nil {
 			errs = append(errs, fmt.Errorf("webhook: %w", err))
 		}
 	}
@@ -102,13 +132,42 @@ func (n *Notifier) sendTelegram(ctx context.Context, text string) error {
 	return nil
 }
 
-// sendWebhook posts {"event", "message", "ts"} as JSON.
-func (n *Notifier) sendWebhook(ctx context.Context, event, text string) error {
+// sendTelegramPhoto posts sendPhoto with a URL Telegram fetches itself.
+// Caption limit is 1024 chars (ours are short). Same no-parse_mode and
+// token-redaction reasoning as sendTelegram.
+func (n *Notifier) sendTelegramPhoto(ctx context.Context, photoURL, caption string) error {
 	payload, _ := json.Marshal(map[string]any{
+		"chat_id": n.telegramChatID,
+		"photo":   photoURL,
+		"caption": caption,
+	})
+	u := telegramAPIBase + "/bot" + n.telegramToken + "/sendPhoto"
+	body, err := n.post(ctx, u, payload)
+	if err != nil {
+		return errors.New(strings.ReplaceAll(err.Error(), n.telegramToken, "REDACTED"))
+	}
+	var resp struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr == nil && !resp.OK {
+		return fmt.Errorf("sendPhoto refused: %s", resp.Description)
+	}
+	return nil
+}
+
+// sendWebhook posts {"event", "message", "ts"} as JSON, plus "image"
+// (a public URL) when the event carries one.
+func (n *Notifier) sendWebhook(ctx context.Context, event, text, imageURL string) error {
+	body := map[string]any{
 		"event":   event,
 		"message": text,
 		"ts":      time.Now().Unix(),
-	})
+	}
+	if imageURL != "" {
+		body["image"] = imageURL
+	}
+	payload, _ := json.Marshal(body)
 	_, err := n.post(ctx, n.webhookURL, payload)
 	return err
 }

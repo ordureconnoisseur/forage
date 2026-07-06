@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -99,5 +100,66 @@ func TestNotifyLoopWatermarks(t *testing.T) {
 	defer mu.Unlock()
 	if len(messages) != 2 {
 		t.Errorf("idle tick re-sent: %d messages total", len(messages))
+	}
+}
+
+// TestNotifyLoopSendsSceneImage: an available watch carrying a StashDB
+// cover URL notifies per-scene with the image attached (webhook "image"
+// field; Telegram side is covered in internal/notify).
+func TestNotifyLoopSendsSceneImage(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/ni.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	var mu sync.Mutex
+	var messages []map[string]any
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		messages = append(messages, m)
+		mu.Unlock()
+	}))
+	defer hook.Close()
+
+	pool := clientpool.New()
+	pool.Reload(config.Config{NotifyWebhookURL: hook.URL})
+	s := &Server{
+		db:      dbh,
+		pool:    pool,
+		grabs:   grabs.NewRepo(dbh),
+		watches: watches.NewRepo(dbh),
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	s.tickNotify(ctx) // initialize watermarks
+
+	time.Sleep(1100 * time.Millisecond)
+	if err := s.watches.Add(ctx, watches.Watch{StashDBID: "img-scene", Title: "Covered Scene", Target: watches.TargetAny}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.watches.BackfillMeta(ctx, "img-scene", "Covered Scene", "2026-07-05", "Tushy Raw", "https://stashdb.org/images/abc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.watches.MarkAvailable(ctx, "img-scene", "Covered.Release.2160p", "http://dl/x", "idx", "torrent", 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(messages) != 1 {
+		t.Fatalf("expected 1 message, got %d", len(messages))
+	}
+	m := messages[0]
+	if m["image"] != "https://stashdb.org/images/abc" {
+		t.Errorf("image = %v, want the stashdb cover URL", m["image"])
+	}
+	msg, _ := m["message"].(string)
+	if !strings.Contains(msg, "Covered Scene") || !strings.Contains(msg, "Tushy Raw") || !strings.Contains(msg, "Covered.Release.2160p") {
+		t.Errorf("caption missing details: %q", msg)
 	}
 }

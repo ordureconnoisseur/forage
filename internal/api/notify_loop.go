@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -66,6 +67,12 @@ func (s *Server) tickNotify(ctx context.Context) {
 	s.notifyFailedGrabs(ctx, now)
 }
 
+// notifyPhotoMax is the most per-scene photo messages one tick sends. Past
+// it (a "watch all missing" batch coming available together) everything
+// collapses into the single text digest instead — an album of 50 covers is
+// spam, not signal.
+const notifyPhotoMax = 4
+
 func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 	wm, ok := s.notifyWatermark(ctx, metaNotifyWatchFoundAt, now)
 	if !ok {
@@ -75,33 +82,82 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 	if err != nil {
 		return
 	}
-	var lines []string
-	maxAt := wm
+	var fresh []watches.Watch
 	for _, wt := range list {
-		if wt.Status != watches.StatusAvailable || wt.FoundAt <= wm {
-			continue
-		}
-		name := wt.Title
-		if name == "" {
-			name = wt.StashDBID
-		}
-		if wt.PerformerName != "" {
-			name = wt.PerformerName + " — " + name
-		}
-		lines = append(lines, "• "+name)
-		if wt.FoundAt > maxAt {
-			maxAt = wt.FoundAt
+		if wt.Status == watches.StatusAvailable && wt.FoundAt > wm {
+			fresh = append(fresh, wt)
 		}
 	}
-	if len(lines) == 0 {
+	if len(fresh) == 0 {
 		return
 	}
-	text := notifyDigest(fmt.Sprintf("🎬 forage: %d watched scene(s) have a release ready to grab", len(lines)), lines)
-	if err := s.pool.Notifier().Send(ctx, "watch_available", text); err != nil {
-		s.log.Warn("notify send failed; will retry", "event", "watch_available", "err", err)
-		return // keep the watermark — retry next tick
+
+	// Bulk case: one text digest, all-or-nothing watermark advance.
+	if len(fresh) > notifyPhotoMax {
+		maxAt := wm
+		var lines []string
+		for _, wt := range fresh {
+			lines = append(lines, "• "+watchLabel(wt))
+			if wt.FoundAt > maxAt {
+				maxAt = wt.FoundAt
+			}
+		}
+		text := notifyDigest(fmt.Sprintf("🎬 forage: %d watched scenes have a release ready to grab", len(lines)), lines)
+		if err := s.pool.Notifier().Send(ctx, "watch_available", text); err != nil {
+			s.log.Warn("notify send failed; will retry", "event", "watch_available", "err", err)
+			return // keep the watermark — retry next tick
+		}
+		s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, maxAt)
+		return
 	}
-	s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, maxAt)
+
+	// Few scenes: one message each, with the StashDB cover when the watch
+	// carries one (SendPhoto degrades to text if Telegram can't fetch it).
+	// Process in found_at order and advance the watermark past each success
+	// so a mid-batch failure retries only the remainder — except when the
+	// failed item shares its timestamp with a success, where advancing
+	// would skip it: there we keep the old watermark and accept a duplicate
+	// resend over a dropped notification.
+	sort.Slice(fresh, func(i, j int) bool { return fresh[i].FoundAt < fresh[j].FoundAt })
+	lastOK := wm
+	for _, wt := range fresh {
+		caption := "🎬 Release ready: " + watchLabel(wt)
+		if wt.FoundTitle != "" {
+			caption += "\n" + wt.FoundTitle
+		}
+		if err := s.pool.Notifier().SendPhoto(ctx, "watch_available", wt.ImageURL, caption); err != nil {
+			s.log.Warn("notify send failed; will retry", "event", "watch_available", "scene", wt.StashDBID, "err", err)
+			if lastOK > wm && lastOK < wt.FoundAt {
+				s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, lastOK)
+			}
+			return
+		}
+		lastOK = wt.FoundAt
+	}
+	s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, lastOK)
+}
+
+// watchLabel renders a watch as "Performer — Title (Studio · date)",
+// dropping whichever parts are missing.
+func watchLabel(wt watches.Watch) string {
+	name := wt.Title
+	if name == "" {
+		name = wt.StashDBID
+	}
+	if wt.PerformerName != "" {
+		name = wt.PerformerName + " — " + name
+	}
+	var meta []string
+	if wt.StudioName != "" {
+		meta = append(meta, wt.StudioName)
+	}
+	if wt.Date != "" {
+		meta = append(meta, wt.Date)
+	}
+	if len(meta) > 0 {
+		name += " (" + strings.Join(meta, " · ") + ")"
+	}
+	return name
 }
 
 func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
