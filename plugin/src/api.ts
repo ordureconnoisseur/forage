@@ -683,6 +683,7 @@ export type GrabStatus =
   | "completed"
   | "placed"
   | "scanned"
+  | "tagging"
   | "confirmed"
   | "mismatched"
   | "orphaned"
@@ -972,6 +973,7 @@ export const ACTIVE_STATUSES: GrabStatus[] = [
   "completed",
   "placed",
   "scanned",
+  "tagging",
 ];
 
 export function isActiveStatus(s: GrabStatus): boolean {

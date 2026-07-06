@@ -742,6 +742,9 @@ function Pipeline({ g }: { g: Grab }) {
     case "scanned":
       terminal = { label: "Identifying", at: 0, done: false, active: true };
       break;
+    case "tagging":
+      terminal = { label: "Re-indexing", at: 0, done: false, active: true };
+      break;
     default:
       terminal = { label: "Confirmed", at: 0, done: false, active: g.status === "placed" };
   }
