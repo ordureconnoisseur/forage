@@ -200,10 +200,12 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 //     window. Stays in Active so a later scan/identify (manual or
 //     scheduled) can promote it back to scanned/confirmed instead of
 //     leaving the user with a permanent false orphan label.
+//   - tagging: a re-filed pack waiting for its rescan to land so the
+//     poller can apply the pack performer to its scenes (advancePackTag).
 func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 	return r.query(ctx, `
 		SELECT * FROM grabs
-		WHERE status IN ('queued', 'downloading', 'completed', 'placed', 'scanned', 'orphaned')
+		WHERE status IN ('queued', 'downloading', 'completed', 'placed', 'scanned', 'orphaned', 'tagging')
 		ORDER BY grabbed_at ASC`)
 }
 
