@@ -392,6 +392,27 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 }
 
 func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit.Torrent, qbitByHash map[string]*qbit.Torrent, qbitListOK bool, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item, sabListsOK bool) error {
+	// A pack parked in "tagging" by the set-performer endpoint has already been
+	// re-filed into the performer folder; there's no download work left. We only
+	// wait for Stash to re-index the new path, then apply the pack's performer to
+	// every scene. Handle it in isolation from the main place/confirm pipeline.
+	if g.Kind == "pack" && g.Status == "tagging" {
+		changed, err := p.advancePackTag(ctx, g)
+		if err != nil {
+			return err
+		}
+		if changed {
+			if uerr := p.repo.Update(ctx, *g); uerr != nil {
+				if errors.Is(uerr, grabs.ErrStaleUpdate) {
+					p.log.Info("grab changed under tick; skipping stale write", "id", g.ID)
+					return nil
+				}
+				return uerr
+			}
+		}
+		return nil
+	}
+
 	dirty := false
 	// srcPath is the live full filesystem path the client reports for
 	// this grab — qBit's ContentPath, SAB's history Path. Used by the
@@ -703,6 +724,101 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		}
 	}
 	return confirmErr
+}
+
+// packTagTimeout bounds how long a re-filed pack waits for its rescan to
+// surface the moved files before we give up auto-tagging and settle it
+// confirmed. The folder is organised regardless; the user can still tag from
+// the grab card. Generous, because the rescan sits behind Stash's serial job
+// queue, which can be minutes deep.
+const packTagTimeout = 30 * time.Minute
+
+// packNeedle derives the Stash-side path substring that scopes a pack's scenes:
+// the path-mapped placed dir, its basename, or the client save-name. Mirrors
+// advancePackConfirm's derivation and the api layer's packNeedle.
+func (p *Poller) packNeedle(g *grabs.Grab) string {
+	if g.PlacedPath != "" {
+		if n := pathmap.Translate(g.PlacedPath, p.pool.Settings().StashPathMapping); n != "" {
+			return n
+		}
+		return pathmap.Base(g.PlacedPath)
+	}
+	return g.ClientName
+}
+
+// localPerformerID maps a performer display name to its LOCAL Stash id via
+// performer_cache. Empty when the performer isn't in the library (so nothing to
+// tag with). Mirrors the api layer's localPerformerIDByName.
+func (p *Poller) localPerformerID(ctx context.Context, name string) string {
+	if name == "" || p.db == nil {
+		return ""
+	}
+	var id string
+	_ = p.db.QueryRowContext(ctx,
+		`SELECT stash_id FROM performer_cache WHERE name = ? COLLATE NOCASE AND stash_id != '' LIMIT 1`,
+		name).Scan(&id)
+	return id
+}
+
+// advancePackTag applies a re-filed pack's performer to every scene Stash has
+// under the new placed dir, once the rescan has surfaced them. Returns whether
+// it mutated g (a status change worth persisting). The set-performer endpoint
+// parks a pack in "tagging" after re-filing + queuing a rescan; this waits for
+// the scenes to appear at the new path (re-triggering the scan if it stalled),
+// then ADDs the performer to all of them and confirms. ADD mode is additive, so
+// identified scenes keep their performers. Bounded by packTagTimeout so a scan
+// that never lands doesn't strand the grab in "tagging" forever.
+func (p *Poller) advancePackTag(ctx context.Context, g *grabs.Grab) (bool, error) {
+	sc := p.pool.Stash()
+	if sc == nil {
+		return false, nil // no Stash configured this tick — try again later
+	}
+	localID := p.localPerformerID(ctx, g.PerformerName)
+	if localID == "" {
+		// Performer left the library (renamed/removed) since it was set. Can't
+		// tag, but the folder is organised — settle it.
+		g.Status = "confirmed"
+		g.Reason = "re-filed under " + g.PerformerName + " (not in library, so not auto-tagged)"
+		p.graceClear(g.ID)
+		return true, nil
+	}
+	needle := p.packNeedle(g)
+	if needle == "" {
+		g.Status = "confirmed"
+		g.Reason = "re-filed, but no path to tag its scenes by"
+		p.graceClear(g.ID)
+		return true, nil
+	}
+	scenes, err := sc.FindScenesUnderPath(ctx, needle)
+	if err != nil {
+		return false, nil // transient Stash error — retry next tick without churning state
+	}
+	if len(scenes) == 0 {
+		// The rescan hasn't surfaced the moved files yet. Re-trigger it
+		// (throttled) and keep waiting until the timeout.
+		if p.scanThrottleElapsed(g.ID) && !p.scanInFlight(ctx, sc, g.ID) {
+			p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
+		}
+		if p.graceElapsed(g.ID, packTagTimeout) {
+			g.Status = "confirmed"
+			g.Reason = "re-filed; re-index timed out, tag from the grab card"
+			p.graceClear(g.ID)
+			return true, nil
+		}
+		return false, nil // still "tagging"
+	}
+	ids := make([]string, 0, len(scenes))
+	for _, m := range scenes {
+		ids = append(ids, m.ID)
+	}
+	if _, err := sc.AddScenePerformer(ctx, ids, localID); err != nil {
+		return false, nil // Stash write failed — retry next tick
+	}
+	g.Status = "confirmed"
+	g.Reason = fmt.Sprintf("re-filed under %s + tagged %d scenes", g.PerformerName, len(ids))
+	p.graceClear(g.ID)
+	p.log.Info("pack auto-tagged after re-file", "id", g.ID, "performer", g.PerformerName, "scenes", len(ids))
+	return true, nil
 }
 
 // advancePackConfirm drives a pack grab from placed → confirmed. Unlike

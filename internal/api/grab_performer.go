@@ -133,12 +133,22 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 	// CAS write would have its placed_path erased (the file sits in the old
 	// folder with no record, unfindable by confirm/heal/purge).
 	finalPlaced := g.PlacedPath
+	// A re-filed pack whose performer resolves to a library id is parked in
+	// "tagging": the poller waits for the rescan to relink the moved files, then
+	// ADDs the performer to every pack scene (advancePackTag). Singles, and packs
+	// whose performer isn't in the library, just take the name — nothing to
+	// auto-tag. Resolve BEFORE the CAS so the poller's next tick sees the state.
+	tagPack := alreadyPlaced && g.Kind == "pack" && s.localPerformerIDByName(r.Context(), performer) != ""
 	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
 		fresh.PerformerName = performer
 		fresh.PlaceError = ""
 		fresh.Reason = "performer set manually"
 		if alreadyPlaced {
 			fresh.PlacedPath = finalPlaced
+		}
+		if tagPack {
+			fresh.Status = "tagging"
+			fresh.Reason = "re-indexing to tag pack scenes"
 		}
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
