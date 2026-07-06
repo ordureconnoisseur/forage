@@ -10,9 +10,9 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
-// packScene is one taggable scene in a pack: a placed file Stash scanned but
-// could NOT cross-id against StashDB (amateur content). The reviewer shows these
-// with their cover so the user can deselect a stray before applying.
+// packScene is one taggable scene in a pack: a file Stash scanned under the
+// pack dir. The reviewer shows these with their cover so the user can deselect
+// a stray before applying the pack's performer to the rest.
 type packScene struct {
 	SceneID  string `json:"scene_id"` // LOCAL Stash scene id
 	Title    string `json:"title,omitempty"`
@@ -40,10 +40,12 @@ func packNeedle(g *grabs.Grab, mapping string) string {
 	return g.ClientName
 }
 
-// packUnidentifiedScenes returns the pack's scenes that have no StashDB cross-id
-// — the only ones the performer tag applies to. Identified scenes are excluded
-// (Stash's determination stands).
-func (s *Server) packUnidentifiedScenes(ctx context.Context, g *grabs.Grab) ([]stash.SceneMatch, error) {
+// packScenes returns EVERY scene Stash has under the pack's placed dir. A
+// performer pack is, by definition, one performer's content, so the tag applies
+// to all of its videos — not just the unidentified ones. AddScenePerformer uses
+// ADD mode, so an already-identified scene keeps its existing performers and
+// simply gains the pack performer; nothing is clobbered.
+func (s *Server) packScenes(ctx context.Context, g *grabs.Grab) ([]stash.SceneMatch, error) {
 	sc := s.pool.Stash()
 	if sc == nil {
 		return nil, nil
@@ -52,17 +54,7 @@ func (s *Server) packUnidentifiedScenes(ctx context.Context, g *grabs.Grab) ([]s
 	if needle == "" {
 		return nil, nil
 	}
-	all, err := sc.FindScenesUnderPath(ctx, needle)
-	if err != nil {
-		return nil, err
-	}
-	out := make([]stash.SceneMatch, 0, len(all))
-	for _, m := range all {
-		if m.StashDBID == "" { // unidentified — no StashDB cross-id
-			out = append(out, m)
-		}
-	}
-	return out, nil
+	return sc.FindScenesUnderPath(ctx, needle)
 }
 
 // localPerformerIDByName maps a performer's display name (the grab's folder) to
@@ -79,7 +71,7 @@ func (s *Server) localPerformerIDByName(ctx context.Context, name string) string
 	return id
 }
 
-// getPackScenes lists a pack grab's unidentified scenes (with covers) plus the
+// getPackScenes lists all of a pack grab's scenes (with covers) plus the
 // performer the pack is filed under, for the grab-card "tag scenes" reviewer.
 //
 //	GET /grabs/{id}/pack-scenes
@@ -92,7 +84,7 @@ func (s *Server) getPackScenes(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "not a pack grab")
 		return
 	}
-	scenes, err := s.packUnidentifiedScenes(r.Context(), g)
+	scenes, err := s.packScenes(r.Context(), g)
 	if err != nil {
 		s.log.Warn("pack scenes enumerate", "grab_id", g.ID, "err", err)
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
@@ -116,9 +108,8 @@ func (s *Server) getPackScenes(w http.ResponseWriter, r *http.Request) {
 }
 
 // postApplyPerformer adds the pack's performer to the selected scenes, additively.
-// It re-enumerates the pack's unidentified scenes and only tags ids in that set,
-// so a stale or forged request can never touch identified scenes or anything
-// outside this pack.
+// It re-enumerates the pack's scenes and only tags ids in that set, so a stale or
+// forged request can never touch anything outside this pack.
 //
 //	POST /grabs/{id}/apply-performer  {"scene_ids": [...]}
 func (s *Server) postApplyPerformer(w http.ResponseWriter, r *http.Request) {
@@ -148,9 +139,8 @@ func (s *Server) postApplyPerformer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Re-validate against the live pack: only tag ids that are genuinely this
-	// pack's UNIDENTIFIED scenes. Anything else (identified now, or not part of
-	// the pack) is dropped.
-	scenes, err := s.packUnidentifiedScenes(r.Context(), g)
+	// pack's scenes. Anything not part of the pack is dropped.
+	scenes, err := s.packScenes(r.Context(), g)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
 		return
