@@ -53,12 +53,19 @@ type fakeQbit struct {
 	mu       sync.Mutex
 	torrents []qbit.Torrent
 	files    map[string][]qbit.TorrentFile // info_hash → file list
+	resumed  []string                      // hashes sent to /torrents/start|resume, in order
 }
 
 func (f *fakeQbit) set(ts []qbit.Torrent) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.torrents = ts
+}
+
+func (f *fakeQbit) resumedHashes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.resumed...)
 }
 
 func (f *fakeQbit) handler() http.Handler {
@@ -80,6 +87,15 @@ func (f *fakeQbit) handler() http.Handler {
 		f.mu.Unlock()
 		writeJSON(w, fl)
 	})
+	recordResume := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.resumed = append(f.resumed, r.Form.Get("hashes"))
+		f.mu.Unlock()
+		io.WriteString(w, "")
+	}
+	mux.HandleFunc("/api/v2/torrents/start", recordResume)
+	mux.HandleFunc("/api/v2/torrents/resume", recordResume)
 	return mux
 }
 
@@ -1366,10 +1382,25 @@ func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
 		State: "error", Progress: 0.5,
 	}})
 
-	// First sighting only starts the grace clock — the grab must NOT fail.
+	// First sighting only starts the grace clock — the grab must NOT fail,
+	// and the tick must kick exactly one resume (qBit never auto-resumes an
+	// errored torrent, so a transient write failure otherwise strands it).
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "downloading" {
 		t.Fatalf("transient error within grace: status=%q (reason %q), want downloading", g.Status, g.Reason)
+	}
+	if got := r.qbit.resumedHashes(); len(got) != 1 || got[0] != hash {
+		t.Fatalf("first error sighting should kick one resume for %s, got %v", hash, got)
+	}
+
+	// A second error tick within the grace is NOT a new sighting — no
+	// second kick, and still no fail.
+	r.tick(t)
+	if got := r.qbit.resumedHashes(); len(got) != 1 {
+		t.Fatalf("repeat error tick must not re-kick, got %v", got)
+	}
+	if g := r.get(t, id); g.Status != "downloading" {
+		t.Fatalf("still within grace: status=%q, want downloading", g.Status)
 	}
 
 	// Backdate the grace clock past qbitErrorGrace; the persisting error is now
@@ -1380,6 +1411,41 @@ func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "failed" {
 		t.Fatalf("error persisted past grace: status=%q, want failed", g.Status)
+	}
+}
+
+// TestQbitMissingFilesNotResumed pins the resume-kick exclusion: a
+// missingFiles torrent must NOT be auto-resumed — pack dedup deletes
+// duplicate files out from under seeding torrents, and a resume there
+// would re-download content the user chose to remove. The grace window
+// still fails it as before.
+func TestQbitMissingFilesNotResumed(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	const hash = "missingfileshash00"
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Deduped Husk",
+		Client:       "qbit",
+		ClientID:     hash,
+		Category:     "forager",
+		Status:       "downloading",
+		GrabbedAt:    time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: "Deduped Husk", Category: "forager",
+		State: "missingFiles", Progress: 1,
+	}})
+
+	r.tick(t)
+	if got := r.qbit.resumedHashes(); len(got) != 0 {
+		t.Fatalf("missingFiles must not be auto-resumed, got %v", got)
+	}
+	if g := r.get(t, id); g.Status != "downloading" {
+		t.Fatalf("within grace: status=%q, want downloading", g.Status)
 	}
 }
 
