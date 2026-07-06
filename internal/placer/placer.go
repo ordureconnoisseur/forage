@@ -142,7 +142,10 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 	}
 	p.sweepStalePartials(destDir)
 
-	destPath := filepath.Join(destDir, filepath.Base(srcPath))
+	// Un-hide the leaf name so a dot-hidden single file becomes a scannable
+	// scene (a pack folder name is un-hidden too, harmlessly — pack dirs aren't
+	// dot-prefixed in practice).
+	destPath := filepath.Join(destDir, unhideBase(filepath.Base(srcPath)))
 
 	if info.IsDir() {
 		// Multi-file release (a torrent that unpacked into a containing
@@ -202,6 +205,19 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		return Result{}, err
 	}
 	return Result{Path: destPath, Mode: mode}, nil
+}
+
+// unhideBase strips leading dots from a filename so a dot-hidden source file
+// (e.g. balbums.st names its clips ".y0hw..._source.mp4") lands VISIBLE in the
+// library. Stash's scanner skips hidden files, so a hidden video never becomes
+// a scene — the whole point of placement. Only the leading dots go; an all-dots
+// name is returned unchanged so it can't collapse to "".
+func unhideBase(name string) string {
+	t := strings.TrimLeft(name, ".")
+	if t == "" {
+		return name
+	}
+	return t
 }
 
 // sanitise strips characters that break filesystems on common
@@ -417,14 +433,16 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 		if err != nil {
 			return err
 		}
-		destPath := filepath.Join(dest, rel)
 		if d.IsDir() {
 			// Don't recreate a sample directory or descend into it.
 			if isSampleDirName(d.Name()) {
 				return fs.SkipDir
 			}
-			return os.MkdirAll(destPath, 0o755)
+			return os.MkdirAll(filepath.Join(dest, rel), 0o755)
 		}
+		// Un-hide the leaf so dot-hidden clips become scannable scenes; keep the
+		// directory structure as-is (dirMirrors reverses the leaf un-hide).
+		destPath := filepath.Join(dest, filepath.Dir(rel), unhideBase(filepath.Base(rel)))
 		// Skip preview sample clips so they never become a scene.
 		if info, e := d.Info(); e == nil && isSampleVideo(rel, info.Size(), largest) {
 			if p.log != nil {
@@ -536,6 +554,13 @@ func dirMirrors(dest, src string) (bool, error) {
 			return err
 		}
 		si, err := os.Stat(filepath.Join(src, rel))
+		if err != nil {
+			// The dest leaf may be an un-hidden name (leading dots stripped on
+			// place) whose source is still dot-hidden; try the re-hidden basename
+			// before concluding the file is foreign. Covers the single-leading-dot
+			// case (the real one); deeper dot nesting falls through as a conflict.
+			si, err = os.Stat(filepath.Join(src, filepath.Dir(rel), "."+filepath.Base(rel)))
+		}
 		if err != nil {
 			// dest holds a file the source tree doesn't have.
 			return errDirConflict

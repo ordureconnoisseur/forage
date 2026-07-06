@@ -149,6 +149,75 @@ func TestPlaceSampleNamedMainKept(t *testing.T) {
 	}
 }
 
+// TestPlaceUnhidesHiddenFiles guards the dot-strip: dot-hidden source files
+// (balbums.st names clips ".y0hw..._source.mp4") must land VISIBLE in the
+// library, or Stash's scanner skips them and they never become scenes. Covers
+// both the single-file and the pack-folder paths, and the idempotent re-run
+// (the un-hidden dest must be recognised as ours, not re-placed as a hidden
+// duplicate).
+func TestPlaceUnhidesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+
+	// Single hidden file.
+	sf := filepath.Join(root, "dl", ".y0hw_source.mp4")
+	if err := os.MkdirAll(filepath.Dir(sf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sf, []byte("scene"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+	res, err := p.Place(sf, "Bubblexgun")
+	if err != nil {
+		t.Fatalf("Place single hidden: %v", err)
+	}
+	if base := filepath.Base(res.Path); base != "y0hw_source.mp4" {
+		t.Errorf("single file placed as %q, want un-hidden y0hw_source.mp4", base)
+	}
+
+	// Pack with a mix of hidden and visible files.
+	src := filepath.Join(root, "dl", "balbums - pack")
+	for _, n := range []string{".y0hw1_source.mp4", ".y0hw2_source.mp4", "visible.mp4"} {
+		if err := os.WriteFile(filepath.Join(src, n), []byte(n), 0o644); err != nil {
+			if os.MkdirAll(src, 0o755) == nil {
+				_ = os.WriteFile(filepath.Join(src, n), []byte(n), 0o644)
+			}
+		}
+	}
+	dest := filepath.Join(lib, "Bubblexgun", "balbums - pack")
+	if _, err := p.Place(src, "Bubblexgun"); err != nil {
+		t.Fatalf("Place pack: %v", err)
+	}
+	for _, want := range []string{"y0hw1_source.mp4", "y0hw2_source.mp4", "visible.mp4"} {
+		if _, err := os.Stat(filepath.Join(dest, want)); err != nil {
+			t.Errorf("expected un-hidden %s in library: %v", want, err)
+		}
+	}
+	for _, notWant := range []string{".y0hw1_source.mp4", ".y0hw2_source.mp4"} {
+		if _, err := os.Stat(filepath.Join(dest, notWant)); err == nil {
+			t.Errorf("hidden %s should not exist in library", notWant)
+		}
+	}
+	// Re-run must be a no-op: the un-hidden dest is recognised as ours (not
+	// re-placed as hidden duplicates).
+	res2, err := p.Place(src, "Bubblexgun")
+	if err != nil {
+		t.Fatalf("Place pack (idempotent): %v", err)
+	}
+	if res2.Mode != "" {
+		t.Errorf("re-run placed files (Mode %q); un-hide broke idempotency", res2.Mode)
+	}
+	ents, _ := os.ReadDir(dest)
+	if len(ents) != 3 {
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Errorf("dest has %d entries after re-run, want 3: %v", len(ents), names)
+	}
+}
+
 // TestPlaceDirFresh covers the clean path: an empty library mirrors the
 // whole tree and reports the placement mode.
 func TestPlaceDirFresh(t *testing.T) {
