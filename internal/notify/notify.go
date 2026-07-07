@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -107,7 +108,7 @@ func (n *Notifier) Send(ctx context.Context, event, text string) error {
 		}
 	}
 	if n.webhookURL != "" {
-		if err := n.sendWebhook(ctx, event, text, ""); err != nil {
+		if err := n.sendWebhook(ctx, event, stripHTML(text), ""); err != nil {
 			errs = append(errs, fmt.Errorf("webhook: %w", err))
 		}
 	}
@@ -138,26 +139,52 @@ func (n *Notifier) SendPhoto(ctx context.Context, event, photoURL, caption strin
 		}
 	}
 	if n.webhookURL != "" {
-		if err := n.sendWebhook(ctx, event, caption, photoURL); err != nil {
+		if err := n.sendWebhook(ctx, event, stripHTML(caption), photoURL); err != nil {
 			errs = append(errs, fmt.Errorf("webhook: %w", err))
 		}
 	}
 	return errors.Join(errs...)
 }
 
-// sendTelegram posts a plain-text sendMessage. No parse_mode: release
-// titles are full of characters MarkdownV2 would demand escaping for, and
-// a failed parse drops the whole message.
+// Message text contract: Send/SendPhoto text is Telegram-HTML restricted
+// to <b> tags. Callers MUST run every dynamic value (titles, reasons,
+// names) through Escape; the webhook sink receives the same text with the
+// tags stripped and entities unescaped. HTML over MarkdownV2 because
+// escaping is three entities instead of eighteen punctuation characters —
+// and a parse failure still degrades to a plain-text resend rather than a
+// dropped notification.
+
+// Escape makes a dynamic string safe to embed in Send/SendPhoto text.
+func Escape(s string) string { return html.EscapeString(s) }
+
+// stripHTML converts the Telegram-HTML text to plain text for the webhook
+// sink: drops the <b> tags we emit and unescapes entities.
+func stripHTML(s string) string {
+	s = strings.ReplaceAll(s, "<b>", "")
+	s = strings.ReplaceAll(s, "</b>", "")
+	return html.UnescapeString(s)
+}
+
+// sendTelegram posts a sendMessage in HTML parse mode, retrying once as
+// plain text if Telegram rejects the entities — a malformed message must
+// degrade, never drop.
 func (n *Notifier) sendTelegram(ctx context.Context, text string, buttons []Button) error {
 	body := map[string]any{
 		"chat_id":                  n.telegramChatID,
 		"text":                     text,
+		"parse_mode":               "HTML",
 		"disable_web_page_preview": true,
 	}
 	if kb := inlineKeyboard(buttons); kb != nil {
 		body["reply_markup"] = kb
 	}
-	return n.telegramCall(ctx, "sendMessage", body)
+	err := n.telegramCall(ctx, "sendMessage", body)
+	if err != nil && strings.Contains(err.Error(), "parse entities") {
+		delete(body, "parse_mode")
+		body["text"] = stripHTML(text)
+		err = n.telegramCall(ctx, "sendMessage", body)
+	}
+	return err
 }
 
 // inlineKeyboard renders buttons as one keyboard row; nil for none.
@@ -201,14 +228,21 @@ func (n *Notifier) telegramCallBody(ctx context.Context, method string, body map
 // token-redaction reasoning as sendTelegram.
 func (n *Notifier) sendTelegramPhoto(ctx context.Context, photoURL, caption string, buttons []Button) error {
 	body := map[string]any{
-		"chat_id": n.telegramChatID,
-		"photo":   photoURL,
-		"caption": caption,
+		"chat_id":    n.telegramChatID,
+		"photo":      photoURL,
+		"caption":    caption,
+		"parse_mode": "HTML",
 	}
 	if kb := inlineKeyboard(buttons); kb != nil {
 		body["reply_markup"] = kb
 	}
-	return n.telegramCall(ctx, "sendPhoto", body)
+	err := n.telegramCall(ctx, "sendPhoto", body)
+	if err != nil && strings.Contains(err.Error(), "parse entities") {
+		delete(body, "parse_mode")
+		body["caption"] = stripHTML(caption)
+		err = n.telegramCall(ctx, "sendPhoto", body)
+	}
+	return err
 }
 
 // ── Callback plumbing (getUpdates long-poll) ────────────────────────

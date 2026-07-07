@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/notify"
+	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -98,12 +99,12 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 		maxAt := wm
 		var lines []string
 		for _, wt := range fresh {
-			lines = append(lines, "• "+truncateLine(watchLabel(wt), notifyTitleMax))
+			lines = append(lines, "• "+notify.Escape(truncateLine(watchLabel(wt), notifyTitleMax)))
 			if wt.FoundAt > maxAt {
 				maxAt = wt.FoundAt
 			}
 		}
-		text := notifyDigest(fmt.Sprintf("🎬 forage: %d watched scenes have a release ready to grab", len(lines)), lines)
+		text := notifyDigest(fmt.Sprintf("🎬 <b>forage: %d watched scenes have a release ready to grab</b>", len(lines)), lines)
 		if err := s.pool.Notifier().Send(ctx, "watch_available", text); err != nil {
 			s.log.Warn("notify send failed; will retry", "event", "watch_available", "err", err)
 			return // keep the watermark — retry next tick
@@ -122,10 +123,7 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 	sort.Slice(fresh, func(i, j int) bool { return fresh[i].FoundAt < fresh[j].FoundAt })
 	lastOK := wm
 	for _, wt := range fresh {
-		caption := "🎬 Release ready: " + watchLabel(wt)
-		if wt.FoundTitle != "" {
-			caption += "\n" + truncateLine(wt.FoundTitle, notifyTitleMax)
-		}
+		caption := buildWatchCaption(wt)
 		// Inline actions, handled by the Telegram callback loop: Grab runs
 		// the same code as the Watching tab's grab button; Dismiss ignores
 		// this release and resumes watching.
@@ -146,7 +144,8 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 }
 
 // watchLabel renders a watch as "Performer — Title (Studio · date)",
-// dropping whichever parts are missing.
+// dropping whichever parts are missing. Plain text — the bulk digest's
+// per-line form; escape before embedding.
 func watchLabel(wt watches.Watch) string {
 	name := wt.Title
 	if name == "" {
@@ -166,6 +165,59 @@ func watchLabel(wt watches.Watch) string {
 		name += " (" + strings.Join(meta, " · ") + ")"
 	}
 	return name
+}
+
+// buildWatchCaption renders the per-scene notification as cleanly
+// separated, labeled lines (Telegram-HTML; every dynamic value escaped):
+//
+//	🎬 <scene title, bold>
+//	👤 <performer>
+//	🏛 <studio · date>
+//
+//	Release: <release name, truncated>
+//	Quality: <1080p · torrent>
+//	Size:    <1.9GB>
+//	Indexer: <PornoLab>
+func buildWatchCaption(wt watches.Watch) string {
+	title := wt.Title
+	if title == "" {
+		title = wt.StashDBID
+	}
+	lines := []string{"🎬 <b>" + notify.Escape(truncateLine(title, 80)) + "</b>"}
+	if wt.PerformerName != "" {
+		lines = append(lines, "👤 "+notify.Escape(wt.PerformerName))
+	}
+	var meta []string
+	if wt.StudioName != "" {
+		meta = append(meta, wt.StudioName)
+	}
+	if wt.Date != "" {
+		meta = append(meta, wt.Date)
+	}
+	if len(meta) > 0 {
+		lines = append(lines, "🏛 "+notify.Escape(strings.Join(meta, " · ")))
+	}
+	lines = append(lines, "")
+	if wt.FoundTitle != "" {
+		lines = append(lines, "<b>Release:</b> "+notify.Escape(truncateLine(wt.FoundTitle, notifyTitleMax)))
+	}
+	var quality []string
+	if res := scoring.Resolution(wt.FoundTitle); res != "" {
+		quality = append(quality, res)
+	}
+	if wt.FoundProtocol != "" {
+		quality = append(quality, wt.FoundProtocol)
+	}
+	if len(quality) > 0 {
+		lines = append(lines, "<b>Quality:</b> "+notify.Escape(strings.Join(quality, " · ")))
+	}
+	if wt.FoundSize > 0 {
+		lines = append(lines, "<b>Size:</b> "+humanBytes(wt.FoundSize))
+	}
+	if wt.FoundIndexer != "" {
+		lines = append(lines, "<b>Indexer:</b> "+notify.Escape(wt.FoundIndexer))
+	}
+	return strings.Join(lines, "\n")
 }
 
 // notifyTitleMax / notifyReasonMax bound one release title / failure reason
@@ -200,7 +252,7 @@ func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 		if _, seen := titles[r]; !seen {
 			reasons = append(reasons, r)
 		}
-		titles[r] = append(titles[r], "• "+truncateLine(g.ReleaseTitle, notifyTitleMax))
+		titles[r] = append(titles[r], "• "+notify.Escape(truncateLine(g.ReleaseTitle, notifyTitleMax)))
 		if g.UpdatedAt > maxAt {
 			maxAt = g.UpdatedAt
 		}
@@ -214,17 +266,17 @@ func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 		total += len(titles[r])
 	}
 	if len(reasons) == 1 {
-		headline := fmt.Sprintf("❌ forage: %s failed — %s", plural(total, "grab"), reasons[0])
+		headline := fmt.Sprintf("❌ <b>forage: %s failed</b> — %s", plural(total, "grab"), notify.Escape(reasons[0]))
 		text = notifyDigest(headline, titles[reasons[0]])
 	} else {
 		// Mixed causes: reason as a sub-heading per group, lines capped
 		// across the whole message.
 		var lines []string
 		for _, r := range reasons {
-			lines = append(lines, r+":")
+			lines = append(lines, "<b>"+notify.Escape(r)+":</b>")
 			lines = append(lines, titles[r]...)
 		}
-		text = notifyDigest(fmt.Sprintf("❌ forage: %s failed", plural(total, "grab")), lines)
+		text = notifyDigest(fmt.Sprintf("❌ <b>forage: %s failed</b>", plural(total, "grab")), lines)
 	}
 	if err := s.pool.Notifier().Send(ctx, "grabs_failed", text); err != nil {
 		s.log.Warn("notify send failed; will retry", "event", "grabs_failed", "err", err)

@@ -297,3 +297,42 @@ func TestUpdatesAndAnswer(t *testing.T) {
 		t.Errorf("answer payload = %v", answered)
 	}
 }
+
+// TestSendFallsBackToPlainOnParseError: a bad HTML entity must degrade to
+// a plain-text resend (tags stripped), never a dropped notification.
+func TestSendFallsBackToPlainOnParseError(t *testing.T) {
+	var mu sync.Mutex
+	var bodies []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		if _, html := b["parse_mode"]; html {
+			_, _ = w.Write([]byte(`{"ok": false, "description": "Bad Request: can't parse entities: unclosed tag"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"ok": true}`))
+	}))
+	defer srv.Close()
+	old := telegramAPIBase
+	telegramAPIBase = srv.URL
+	defer func() { telegramAPIBase = old }()
+
+	n := New("tok", "42", "")
+	if err := n.Send(context.Background(), "e", "<b>broken &amp; bold"); err != nil {
+		t.Fatalf("Send with parse fallback: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(bodies) != 2 {
+		t.Fatalf("expected HTML attempt + plain retry, got %d calls", len(bodies))
+	}
+	if bodies[1]["text"] != "broken & bold" {
+		t.Errorf("plain retry text = %q, want tags stripped + entities unescaped", bodies[1]["text"])
+	}
+	if _, has := bodies[1]["parse_mode"]; has {
+		t.Errorf("plain retry must not set parse_mode")
+	}
+}

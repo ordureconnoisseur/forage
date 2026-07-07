@@ -230,3 +230,38 @@ func TestNotifyFailedGrabsGroupedAndTruncated(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildWatchCaption pins the structured caption: labeled lines with
+// bold HTML labels, resolution parsed from the release name, human size,
+// indexer, and escaped dynamic content.
+func TestBuildWatchCaption(t *testing.T) {
+	wt := watches.Watch{
+		StashDBID:     "sid",
+		Title:         "Oil Massage <Deluxe> & More",
+		PerformerName: "Kenzie Reeves",
+		StudioName:    "ATK Girlfriends",
+		Date:          "2018-05-24",
+		FoundTitle:    "ATKGirlfriends.18.05.24.Kenzie.Reeves.XXX.1080p.MP4-KTR",
+		FoundProtocol: "torrent",
+		FoundIndexer:  "PornoLab",
+		FoundSize:     2 << 30, // 2GB
+	}
+	got := buildWatchCaption(wt)
+	for _, want := range []string{
+		"🎬 <b>Oil Massage &lt;Deluxe&gt; &amp; More</b>",
+		"👤 Kenzie Reeves",
+		"🏛 ATK Girlfriends · 2018-05-24",
+		"<b>Release:</b> ATKGirlfriends.18.05.24.Kenzie.Reeves.XXX.1080p.MP4-KTR",
+		"<b>Quality:</b> 1080p · torrent",
+		"<b>Size:</b> 2.0GB",
+		"<b>Indexer:</b> PornoLab",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("caption missing %q:\n%s", want, got)
+		}
+	}
+	// Field order: header block, blank separator, release facts.
+	if !strings.Contains(got, "2018-05-24\n\n<b>Release:</b>") {
+		t.Errorf("expected blank line between header and release facts:\n%s", got)
+	}
+}
