@@ -132,3 +132,45 @@ func TestTelegramCallbackHandling(t *testing.T) {
 		t.Errorf("grab-unavailable toast = %q", bot.lastAnswerText())
 	}
 }
+
+// TestDropAlreadyGrabbed pins the repeat-offer guard: a candidate whose
+// download URL already has a non-failed grab is filtered out of watch
+// selection (the Maddie Wren incident: a completed grab identified as a
+// different scene, and the watch re-offered the exact release the user
+// already had). A FAILED prior grab keeps the candidate — re-offering is a
+// legitimate fresh attempt.
+func TestDropAlreadyGrabbed(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/dag.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+	s := &Server{
+		db:    dbh,
+		grabs: grabs.NewRepo(dbh),
+		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Grabbed.Release", DownloadURL: "http://dl/grabbed", Status: "mismatched"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Failed.Release", DownloadURL: "http://dl/failed", Status: "failed"}); err != nil {
+		t.Fatal(err)
+	}
+
+	cands := []sceneRelease{
+		{Title: "already grabbed", DownloadURL: "http://dl/grabbed"},
+		{Title: "previously failed", DownloadURL: "http://dl/failed"},
+		{Title: "never seen", DownloadURL: "http://dl/fresh"},
+	}
+	got := s.dropAlreadyGrabbed(ctx, cands)
+	var titles []string
+	for _, c := range got {
+		titles = append(titles, c.Title)
+	}
+	want := []string{"previously failed", "never seen"}
+	if len(got) != 2 || titles[0] != want[0] || titles[1] != want[1] {
+		t.Fatalf("kept %v, want %v", titles, want)
+	}
+}

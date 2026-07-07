@@ -143,8 +143,11 @@ func (s *Server) handleTelegramCallback(ctx context.Context, n *notify.Notifier,
 		if err := n.FinalizeMessage(ctx, cb, outcome); err != nil {
 			s.log.Warn("telegram finalize message", "err", err)
 		}
-		s.log.Info("telegram button action", "action", action, "scene", sceneID)
 	}
+	// Log every tap, not just successes — a failed grab tap otherwise
+	// leaves no trace anywhere but a toast the user may have missed.
+	s.log.Info("telegram button action",
+		"action", action, "scene", sceneID, "ok", outcome != "", "result", toast)
 }
 
 // sleepCtx sleeps d or until ctx is cancelled, whichever comes first.

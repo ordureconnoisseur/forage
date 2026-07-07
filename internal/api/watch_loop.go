@@ -197,6 +197,13 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 		return
 	}
 	cands := s.verifyReleases(ctx, m, w.StashDBID, scene.Title, releases)
+	// Never offer a release that's already been grabbed: a completed grab
+	// that identified as a DIFFERENT scene (mismatched) leaves this watch
+	// hunting, the re-check re-finds the exact release the user already
+	// has on disk, and the notification asks them to grab it again. Same
+	// non-failed rule doGrab's dedup applies — a failed grab is a
+	// legitimate fresh offer.
+	cands = s.dropAlreadyGrabbed(ctx, cands)
 
 	// The best release to surface — top of the user's preference ranking,
 	// whatever its resolution (no quality target; the stored candidate list
@@ -258,6 +265,28 @@ func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 // release whatever its quality, and the stored candidate list lets the user
 // pick a different one. Quality FLOORS are release reject rules (Settings),
 // which the scorer already enforces via Rejected.
+// dropAlreadyGrabbed filters out candidates whose download URL already has
+// a non-failed grab — the user is already getting (or has) that exact
+// release, so surfacing it as a fresh find is noise at best and a repeat
+// notification at worst. Point lookups per candidate against the local
+// grabs table; candidate lists are small (≤ dozens per scene).
+func (s *Server) dropAlreadyGrabbed(ctx context.Context, cands []sceneRelease) []sceneRelease {
+	if s.grabs == nil {
+		return cands
+	}
+	kept := cands[:0]
+	for _, c := range cands {
+		if c.DownloadURL != "" {
+			if g, err := s.grabs.ByDownloadURL(ctx, c.DownloadURL); err == nil &&
+				g != nil && g.Status != "failed" {
+				continue
+			}
+		}
+		kept = append(kept, c)
+	}
+	return kept
+}
+
 func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRelease {
 	ignoredSet := make(map[string]bool, len(ignored))
 	for _, u := range ignored {
