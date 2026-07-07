@@ -120,8 +120,16 @@ func (s *Server) handleTelegramCallback(ctx context.Context, n *notify.Notifier,
 			if err := s.watches.Dismiss(ctx, sceneID, wt.FoundURL); err != nil {
 				toast = "Dismiss failed: " + err.Error()
 			} else {
-				toast = "Dismissed — will keep searching"
-				outcome = "🙈 Dismissed; watching for another release"
+				toast = "Dismissed — searching for another"
+				outcome = "🙈 Dismissed; searching for another release"
+				// The web UI's "Not this one" follows its dismiss with an
+				// immediate re-search of just this scene; do the same so
+				// the button is a true twin. Best-effort: busy (another
+				// search running) or unconfigured just means the
+				// background loop picks it up on its normal cadence.
+				if _, serr := s.startWatchSearch(ctx, []string{sceneID}, ""); serr != nil && !errors.Is(serr, errSearchBusy) {
+					s.log.Warn("telegram dismiss re-search", "scene", sceneID, "err", serr)
+				}
 			}
 		}
 	default:

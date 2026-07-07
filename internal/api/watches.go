@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -516,26 +517,47 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req) // body optional (nothing = all watching)
 
-	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
-		writeErr(w, http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)")
-		return
-	}
-	// One search-now at a time.
-	if !s.searchNowMu.TryLock() {
-		writeErr(w, http.StatusConflict, "a search is already running")
-		return
-	}
-	list, err := s.watches.List(r.Context())
+	n, err := s.startWatchSearch(r.Context(), req.IDs, req.BatchID)
 	if err != nil {
-		s.searchNowMu.Unlock()
+		if errors.Is(err, errSearchBusy) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		var ge grabError
+		if errors.As(err, &ge) {
+			writeErr(w, ge.status, ge.msg)
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
-	// Scope, most specific first: an explicit id set (a UI group's exact
-	// watching rows — unambiguous for both batches and ungrouped singles),
-	// else a batch, else every watching row.
-	idSet := make(map[string]bool, len(req.IDs))
-	for _, id := range req.IDs {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": n})
+}
+
+// errSearchBusy: another search-now run holds the lock. Callers treat it
+// as "already being handled", not a failure.
+var errSearchBusy = errors.New("a search is already running")
+
+// startWatchSearch kicks an immediate background re-search of the scoped
+// watching rows and returns how many it started. Scope, most specific
+// first: an explicit id set, else a batch, else every watching row. Shared
+// by the search-now endpoint and the Telegram Dismiss button (whose web
+// twin, "Not this one", follows its dismiss with exactly this kick).
+func (s *Server) startWatchSearch(ctx context.Context, watchIDs []string, batchID string) (int, error) {
+	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
+		return 0, grabError{http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)"}
+	}
+	// One search-now at a time.
+	if !s.searchNowMu.TryLock() {
+		return 0, errSearchBusy
+	}
+	list, err := s.watches.List(ctx)
+	if err != nil {
+		s.searchNowMu.Unlock()
+		return 0, err
+	}
+	idSet := make(map[string]bool, len(watchIDs))
+	for _, id := range watchIDs {
 		idSet[id] = true
 	}
 	var targets []watches.Watch
@@ -547,15 +569,14 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 			if !idSet[wt.StashDBID] {
 				continue
 			}
-		} else if req.BatchID != "" && wt.BatchID != req.BatchID {
+		} else if batchID != "" && wt.BatchID != batchID {
 			continue
 		}
 		targets = append(targets, wt)
 	}
 	if len(targets) == 0 {
 		s.searchNowMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": 0})
-		return
+		return 0, nil
 	}
 	ids := make([]string, len(targets))
 	for i, t := range targets {
@@ -592,10 +613,10 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 		}
 		close(jobs)
 		wg.Wait()
-		s.log.Info("watch search-now done", "batch", req.BatchID, "count", len(targets))
+		s.log.Info("watch search-now done", "batch", batchID, "count", len(targets))
 	}()
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": len(targets)})
+	return len(targets), nil
 }
 
 // normalizeTarget validates the quality target, defaulting unknown values
