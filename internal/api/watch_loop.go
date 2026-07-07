@@ -125,6 +125,21 @@ func (s *Server) watchBatchSize(total int) int {
 // available (best release by preference). last_checked was already stamped by
 // ClaimBatch.
 func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
+	// Hold: a scene whose grab is pending resolution (mismatched in the
+	// review queue, orphaned in limbo) or already live must not be
+	// re-searched — the machine's mismatch verdict is a question FOR THE
+	// USER, and re-searching while it's unanswered re-offers releases for
+	// a scene whose acquisition is in flight. Flip the watch to 'grabbed'
+	// (the quiet state); resolving the mismatch (redo/delete) removes the
+	// coverage and the reconcile reverse pass resumes the hunt.
+	if _, covered, cerr := s.grabbedSceneSet(ctx); cerr == nil && covered[w.StashDBID] {
+		if err := s.watches.MarkGrabbed(ctx, w.StashDBID,
+			w.FoundTitle, w.FoundURL, w.FoundIndexer, w.FoundProtocol, w.FoundSize); err == nil {
+			s.log.Info("watch held — a grab for this scene is live or pending mismatch review",
+				"scene", w.StashDBID, "title", w.Title)
+		}
+		return
+	}
 	m, err := s.Matcher(ctx)
 	if err != nil {
 		return

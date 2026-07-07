@@ -146,7 +146,7 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 
 	// A failed lookup means we can't tell live from dead — reconcile nothing.
 	// An EMPTY set is meaningful (every grabbed watch is a revert candidate).
-	grabbed, err := s.grabbedSceneSet(ctx)
+	live, covered, err := s.grabbedSceneSet(ctx)
 	if err != nil {
 		return
 	}
@@ -154,15 +154,22 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	if err != nil {
 		return
 	}
-	var stranded []string // grabbed watches with no live grab covering the scene
+	// Reverting requires the scene to be fully UNcovered: no live grab AND
+	// nothing pending resolution. A mismatched grab in the review queue
+	// holds its watch quiet — the user's verdict decides whether the hunt
+	// resumes (redo/delete removes the coverage), not the machine's.
+	var stranded []string
 	for _, wt := range list {
 		if wt.Status == watches.StatusGrabbed {
-			if !grabbed[wt.StashDBID] {
+			if !covered[wt.StashDBID] {
 				stranded = append(stranded, wt.StashDBID)
 			}
 			continue
 		}
-		if grabbed[wt.StashDBID] {
+		// Forward flip stays LIVE-only: a pending mismatch must not retract
+		// an already-surfaced 'available' offer (the user may still want to
+		// grab it), it only stops new searching.
+		if live[wt.StashDBID] {
 			if err := s.watches.MarkGrabbed(ctx, wt.StashDBID,
 				wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
 				s.log.Warn("watch reconcile mark grabbed", "scene", wt.StashDBID, "err", err)

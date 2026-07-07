@@ -219,7 +219,8 @@ func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 // grab isn't masked by a later failed retry of the same scene).
 func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) AS sid, status
+		SELECT COALESCE(NULLIF(predicted_stashdb_id, ''), ''),
+		       COALESCE(NULLIF(actual_stashdb_id, ''), ''), status
 		FROM grabs
 		WHERE COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) IS NOT NULL
 		  AND COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) != ''`)
@@ -228,13 +229,35 @@ func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error)
 	}
 	defer rows.Close()
 	out := map[string]string{}
-	for rows.Next() {
-		var sid, status string
-		if rows.Scan(&sid, &status) != nil {
-			continue
+	record := func(sid, status string) {
+		if sid == "" {
+			return
 		}
 		if cur, ok := out[sid]; !ok || statusRank(status) > statusRank(cur) {
 			out[sid] = status
+		}
+	}
+	for rows.Next() {
+		var predicted, actual, status string
+		if rows.Scan(&predicted, &actual, &status) != nil {
+			continue
+		}
+		// Actual-else-predicted: the scene this grab's file IS (or, until
+		// identified, is expected to be).
+		if actual != "" {
+			record(actual, status)
+		} else {
+			record(predicted, status)
+		}
+		// A mismatched grab ALSO stamps its PREDICTED scene: the download
+		// was made FOR that scene and now sits pending human review. The
+		// watch/discover layers use this to hold the scene quiet until the
+		// user resolves the mismatch (redo/delete resumes the hunt), rather
+		// than re-offering releases for a scene whose acquisition is in
+		// limbo. statusRank(mismatched)=0, so any live grab for the same
+		// scene still wins the entry.
+		if status == "mismatched" && actual != "" {
+			record(predicted, status)
 		}
 	}
 	return out, rows.Err()
@@ -246,18 +269,22 @@ func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error)
 func statusRank(s string) int {
 	switch s {
 	case "confirmed":
-		return 6
+		return 8
 	case "scanned":
-		return 5
+		return 7
 	case "placed":
-		return 4
+		return 6
 	case "completed":
-		return 3
+		return 5
 	case "downloading":
-		return 2
+		return 4
 	case "queued":
-		return 1
-	default: // failed, orphaned, mismatched, unknown
+		return 3
+	case "orphaned":
+		return 2 // in limbo, revivable — outranks failed, below live
+	case "mismatched":
+		return 1 // pending human review — outranks failed, below live
+	default: // failed, unknown
 		return 0
 	}
 }
