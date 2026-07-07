@@ -152,25 +152,37 @@ func TestDropAlreadyGrabbed(t *testing.T) {
 		log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 
-	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Grabbed.Release", DownloadURL: "http://dl/grabbed", Status: "mismatched"}); err != nil {
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Grabbed.Release", ReleaseIndexer: "NZBgeek", DownloadURL: "http://dl/grabbed?link=AAAA", Status: "mismatched"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Failed.Release", DownloadURL: "http://dl/failed", Status: "failed"}); err != nil {
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Failed.Release", ReleaseIndexer: "NZBgeek", DownloadURL: "http://dl/failed", Status: "failed"}); err != nil {
 		t.Fatal(err)
 	}
 
 	cands := []sceneRelease{
-		{Title: "already grabbed", DownloadURL: "http://dl/grabbed"},
-		{Title: "previously failed", DownloadURL: "http://dl/failed"},
-		{Title: "never seen", DownloadURL: "http://dl/fresh"},
+		// Same URL: dropped.
+		{Title: "anything", Indexer: "Other", DownloadURL: "http://dl/grabbed?link=AAAA"},
+		// Same release, ROTATED URL (Prowlarr's link param changes every
+		// search — the Art Imitating Life repeat): dropped by title+indexer.
+		{Title: "Grabbed.Release", Indexer: "NZBgeek", DownloadURL: "http://dl/grabbed?link=BBBB"},
+		// Same title from a DIFFERENT indexer: a distinct release, kept.
+		{Title: "Grabbed.Release", Indexer: "PornoLab", DownloadURL: "http://dl/other"},
+		// Prior grab FAILED: re-offering is a legitimate fresh attempt.
+		{Title: "Failed.Release", Indexer: "NZBgeek", DownloadURL: "http://dl/failed?link=CCCC"},
+		{Title: "never seen", Indexer: "NZBgeek", DownloadURL: "http://dl/fresh"},
 	}
 	got := s.dropAlreadyGrabbed(ctx, cands)
-	var titles []string
+	var kept []string
 	for _, c := range got {
-		titles = append(titles, c.Title)
+		kept = append(kept, c.Title+"/"+c.Indexer)
 	}
-	want := []string{"previously failed", "never seen"}
-	if len(got) != 2 || titles[0] != want[0] || titles[1] != want[1] {
-		t.Fatalf("kept %v, want %v", titles, want)
+	want := []string{"Grabbed.Release/PornoLab", "Failed.Release/NZBgeek", "never seen/NZBgeek"}
+	if len(kept) != len(want) {
+		t.Fatalf("kept %v, want %v", kept, want)
+	}
+	for i := range want {
+		if kept[i] != want[i] {
+			t.Fatalf("kept %v, want %v", kept, want)
+		}
 	}
 }

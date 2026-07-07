@@ -265,22 +265,22 @@ func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 // release whatever its quality, and the stored candidate list lets the user
 // pick a different one. Quality FLOORS are release reject rules (Settings),
 // which the scorer already enforces via Rejected.
-// dropAlreadyGrabbed filters out candidates whose download URL already has
-// a non-failed grab — the user is already getting (or has) that exact
-// release, so surfacing it as a fresh find is noise at best and a repeat
-// notification at worst. Point lookups per candidate against the local
-// grabs table; candidate lists are small (≤ dozens per scene).
+// dropAlreadyGrabbed filters out candidates that already have a non-failed
+// grab — the user is already getting (or has) that exact release, so
+// surfacing it as a fresh find is noise at best and a repeat notification
+// at worst. Matched by URL AND by (title, indexer): Prowlarr's download
+// URLs carry a rotating encrypted link parameter, so the same release
+// returns a different URL on every search and URL equality alone re-offers
+// it forever. Point lookups per candidate against the local grabs table;
+// candidate lists are small (≤ dozens per scene).
 func (s *Server) dropAlreadyGrabbed(ctx context.Context, cands []sceneRelease) []sceneRelease {
 	if s.grabs == nil {
 		return cands
 	}
 	kept := cands[:0]
 	for _, c := range cands {
-		if c.DownloadURL != "" {
-			if g, err := s.grabs.ByDownloadURL(ctx, c.DownloadURL); err == nil &&
-				g != nil && g.Status != "failed" {
-				continue
-			}
+		if g, err := s.grabs.LiveByRelease(ctx, c.DownloadURL, c.Title, c.Indexer); err == nil && g != nil {
+			continue
 		}
 		kept = append(kept, c)
 	}
@@ -299,8 +299,10 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 		// can't actually download must never be the "found" one — it'd flip
 		// the watch to available but fail silently on grab), and releases the
 		// user dismissed for this watch (a dead/over-compressed find must not
-		// re-surface).
-		if !c.Verified || c.Rejected || c.DownloadURL == "" || ignoredSet[c.DownloadURL] {
+		// re-surface). The ignored set holds both URLs and titles: Prowlarr
+		// URLs rotate between searches, so the title is the durable half.
+		if !c.Verified || c.Rejected || c.DownloadURL == "" ||
+			ignoredSet[c.DownloadURL] || ignoredSet[c.Title] {
 			continue
 		}
 		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {

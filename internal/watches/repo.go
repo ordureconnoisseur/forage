@@ -366,12 +366,15 @@ func (r *Repo) DeleteBatch(ctx context.Context, batchID string) error {
 	return err
 }
 
-// Dismiss rejects the watch's current found release: adds its URL to the
-// ignored set (so the loop never re-surfaces it) and flips the watch back
-// to watching, clearing the found_* fields so the next qualifying release
-// can take their place. No-op-safe when the URL is empty or already
-// ignored. Returns the watch's new ignored URL count for logging.
-func (r *Repo) Dismiss(ctx context.Context, stashDBID, url string) error {
+// Dismiss rejects the watch's current found release: adds its URL AND its
+// title to the ignored set (so the loop never re-surfaces it) and flips
+// the watch back to watching, clearing the found_* fields so the next
+// qualifying release can take their place. The title is recorded because
+// Prowlarr download URLs carry a rotating encrypted link parameter — the
+// same release comes back with a fresh URL on every search, so a
+// URL-only ignore is bypassed on the next re-check. No-op-safe when both
+// are empty or already ignored.
+func (r *Repo) Dismiss(ctx context.Context, stashDBID, url, title string) error {
 	// Read the current ignored set, append, re-marshal — small list, simple.
 	var ignoredJSON string
 	err := r.db.QueryRowContext(ctx,
@@ -384,16 +387,19 @@ func (r *Repo) Dismiss(ctx context.Context, stashDBID, url string) error {
 	if ignoredJSON != "" {
 		_ = json.Unmarshal([]byte(ignoredJSON), &ignored)
 	}
-	if url != "" {
+	for _, add := range []string{url, title} {
+		if add == "" {
+			continue
+		}
 		seen := false
 		for _, u := range ignored {
-			if u == url {
+			if u == add {
 				seen = true
 				break
 			}
 		}
 		if !seen {
-			ignored = append(ignored, url)
+			ignored = append(ignored, add)
 		}
 	}
 	b, _ := json.Marshal(ignored)

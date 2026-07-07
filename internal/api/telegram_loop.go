@@ -117,7 +117,7 @@ func (s *Server) handleTelegramCallback(ctx context.Context, n *notify.Notifier,
 		case wt.FoundURL == "":
 			toast = "nothing to dismiss"
 		default:
-			if err := s.watches.Dismiss(ctx, sceneID, wt.FoundURL); err != nil {
+			if err := s.watches.Dismiss(ctx, sceneID, wt.FoundURL, wt.FoundTitle); err != nil {
 				toast = "Couldn't skip that release: " + err.Error()
 			} else {
 				toast = "Skipping that release — searching for another"

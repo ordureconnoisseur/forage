@@ -421,7 +421,7 @@ func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "watch has no found release to dismiss")
 		return
 	}
-	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL, wt.FoundTitle); err != nil {
 		s.log.Error("watch dismiss", "scene", id, "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
@@ -467,7 +467,7 @@ func (s *Server) postWatchRedo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ignore this exact release going forward + flip back to watching.
-	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL, wt.FoundTitle); err != nil {
 		s.log.Error("watch redo dismiss", "scene", id, "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return

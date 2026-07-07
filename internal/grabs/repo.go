@@ -377,6 +377,28 @@ func (r *Repo) ByDownloadURL(ctx context.Context, url string) (*Grab, error) {
 	return &g, nil
 }
 
+// LiveByRelease finds a non-failed grab for the same release, matching by
+// exact download URL OR by (release title + indexer). Prowlarr download
+// URLs embed a rotating encrypted `link` parameter, so the same release
+// gets a fresh URL on every search — URL equality alone misses re-offers.
+// The (title, indexer) pair is the stable identity an indexer gives a
+// release. Returns (nil, nil) when nothing live matches.
+func (r *Repo) LiveByRelease(ctx context.Context, url, title, indexer string) (*Grab, error) {
+	if url == "" && (title == "" || indexer == "") {
+		return nil, nil
+	}
+	grabs, err := r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status != 'failed'
+		  AND (download_url = ? OR (release_title = ? AND release_indexer = ? AND ? != ''))
+		ORDER BY grabbed_at DESC LIMIT 1`, url, title, indexer, title)
+	if err != nil || len(grabs) == 0 {
+		return nil, err
+	}
+	g := grabs[0]
+	return &g, nil
+}
+
 // Get returns a single grab by id, or (nil, nil) when not found.
 func (r *Repo) Get(ctx context.Context, id int64) (*Grab, error) {
 	grabs, err := r.query(ctx, `SELECT * FROM grabs WHERE id = ? LIMIT 1`, id)
