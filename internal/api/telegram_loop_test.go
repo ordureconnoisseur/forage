@@ -104,13 +104,15 @@ func TestTelegramCallbackHandling(t *testing.T) {
 		t.Fatalf("unauthorized tap mutated the watch: %q", wt.Status)
 	}
 
-	// Authorized dismiss: release ignored, back to watching, message edited.
+	// Authorized "Not this one": release ignored, back to watching (and a
+	// best-effort re-search kick, a no-op here with no Prowlarr), message
+	// edited with the outcome.
 	s.handleTelegramCallback(ctx, n, cb(42, "dismiss:scene-1"))
 	wt := s.findWatch(ctx, "scene-1")
 	if wt.Status != watches.StatusWatching {
 		t.Fatalf("after dismiss: status=%q, want watching", wt.Status)
 	}
-	if !strings.Contains(bot.lastAnswerText(), "Dismissed") {
+	if !strings.Contains(bot.lastAnswerText(), "Skipping that release") {
 		t.Errorf("dismiss toast = %q", bot.lastAnswerText())
 	}
 	bot.mu.Lock()
@@ -120,7 +122,7 @@ func TestTelegramCallbackHandling(t *testing.T) {
 		editedCaption, _ = bot.edits[len(bot.edits)-1]["caption"].(string)
 	}
 	bot.mu.Unlock()
-	if edits != 1 || !strings.Contains(editedCaption, "Dismissed") {
+	if edits != 1 || !strings.Contains(editedCaption, "Not this one") {
 		t.Errorf("expected one caption edit with the outcome, got %d (%q)", edits, editedCaption)
 	}
 

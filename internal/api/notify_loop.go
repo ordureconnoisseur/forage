@@ -124,12 +124,14 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 	lastOK := wm
 	for _, wt := range fresh {
 		caption := buildWatchCaption(wt)
-		// Inline actions, handled by the Telegram callback loop: Grab runs
-		// the same code as the Watching tab's grab button; Dismiss ignores
-		// this release and resumes watching.
+		// Inline actions, handled by the Telegram callback loop, labeled to
+		// match the Watching tab: Grab runs the same code as its grab
+		// button; "Not this one" ignores this release and immediately
+		// re-searches for a different one (callback data keeps the
+		// internal "dismiss" verb so older messages' buttons stay valid).
 		buttons := []notify.Button{
 			{Text: "⬇ Grab", Data: "grab:" + wt.StashDBID},
-			{Text: "✖ Dismiss", Data: "dismiss:" + wt.StashDBID},
+			{Text: "✖ Not this one", Data: "dismiss:" + wt.StashDBID},
 		}
 		if err := s.pool.Notifier().SendPhoto(ctx, "watch_available", wt.ImageURL, caption, buttons...); err != nil {
 			s.log.Warn("notify send failed; will retry", "event", "watch_available", "scene", wt.StashDBID, "err", err)

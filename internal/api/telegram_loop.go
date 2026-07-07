@@ -118,10 +118,10 @@ func (s *Server) handleTelegramCallback(ctx context.Context, n *notify.Notifier,
 			toast = "nothing to dismiss"
 		default:
 			if err := s.watches.Dismiss(ctx, sceneID, wt.FoundURL); err != nil {
-				toast = "Dismiss failed: " + err.Error()
+				toast = "Couldn't skip that release: " + err.Error()
 			} else {
-				toast = "Dismissed — searching for another"
-				outcome = "🙈 Dismissed; searching for another release"
+				toast = "Skipping that release — searching for another"
+				outcome = "✖ Not this one — searching for another release"
 				// The web UI's "Not this one" follows its dismiss with an
 				// immediate re-search of just this scene; do the same so
 				// the button is a true twin. Best-effort: busy (another
