@@ -1632,9 +1632,10 @@ func TestPackDefersConfirmWhenEndpointLookupFails(t *testing.T) {
 	newPack := func(id int64) *grabs.Grab {
 		g := &grabs.Grab{
 			ID: id, Kind: "pack", Status: "scanned",
-			PlacedPath:  "/lib/P/Pack",
-			CompletedAt: time.Now().Add(-1 * time.Minute).Unix(),
-			PackFiles:   2,
+			PerformerName: "Pack Performer", // performer set → confirm path (not distribute)
+			PlacedPath:    "/lib/P/Pack",
+			CompletedAt:   time.Now().Add(-1 * time.Minute).Unix(),
+			PackFiles:     2,
 		}
 		r.poller.packMu.Lock()
 		r.poller.packScan[id] = packScanState{count: 2, since: time.Now().Add(-10 * time.Minute)}

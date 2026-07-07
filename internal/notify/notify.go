@@ -29,11 +29,32 @@ import (
 // telegramAPIBase is a var so tests can point the client at a fake server.
 var telegramAPIBase = "https://api.telegram.org"
 
+// SetTelegramAPIBaseForTest points every Notifier at a fake Bot API server
+// and returns a restore func. For tests in other packages (the api
+// callback loop); production code must never call it.
+func SetTelegramAPIBaseForTest(u string) (restore func()) {
+	old := telegramAPIBase
+	telegramAPIBase = u
+	return func() { telegramAPIBase = old }
+}
+
 type Notifier struct {
 	telegramToken  string
 	telegramChatID string
 	webhookURL     string
 	http           *http.Client
+	// pollHTTP serves getUpdates long-polls (see Updates) — needs a budget
+	// past the long-poll window, unlike the tight send client.
+	pollHTTP *http.Client
+}
+
+// Button is one inline-keyboard button on a Telegram message. Data is the
+// callback payload (Telegram caps it at 64 bytes) delivered back via
+// Updates when the user taps it. Buttons only render on the Telegram sink;
+// the webhook payload is unaffected.
+type Button struct {
+	Text string
+	Data string
 }
 
 // New builds a Notifier from whichever sink credentials are set. Returns
@@ -47,11 +68,27 @@ func New(telegramToken, telegramChatID, webhookURL string) *Notifier {
 	n := &Notifier{
 		webhookURL: webhookURL,
 		http:       &http.Client{Timeout: 15 * time.Second},
+		pollHTTP:   &http.Client{Timeout: updatesLongPoll + 15*time.Second},
 	}
 	if telegramOK {
 		n.telegramToken, n.telegramChatID = telegramToken, telegramChatID
 	}
 	return n
+}
+
+// TelegramEnabled reports whether the Telegram sink is configured — the
+// callback loop only runs (and getUpdates is only polled) when it is.
+func (n *Notifier) TelegramEnabled() bool {
+	return n != nil && n.telegramToken != ""
+}
+
+// ChatID exposes the configured Telegram chat id so the callback loop can
+// authorize incoming taps against it.
+func (n *Notifier) ChatID() string {
+	if n == nil {
+		return ""
+	}
+	return n.telegramChatID
 }
 
 // Send pushes one message to every configured sink. event is a stable
@@ -65,7 +102,7 @@ func (n *Notifier) Send(ctx context.Context, event, text string) error {
 	}
 	var errs []error
 	if n.telegramToken != "" {
-		if err := n.sendTelegram(ctx, text); err != nil {
+		if err := n.sendTelegram(ctx, text, nil); err != nil {
 			errs = append(errs, fmt.Errorf("telegram: %w", err))
 		}
 	}
@@ -84,17 +121,18 @@ func (n *Notifier) Send(ctx context.Context, event, text string) error {
 // degrades to a plain text message so the notification is never lost. The
 // webhook receives the URL as an extra "image" field. An empty photoURL
 // is just Send.
-func (n *Notifier) SendPhoto(ctx context.Context, event, photoURL, caption string) error {
+func (n *Notifier) SendPhoto(ctx context.Context, event, photoURL, caption string, buttons ...Button) error {
 	if n == nil || caption == "" {
 		return nil
 	}
-	if photoURL == "" {
-		return n.Send(ctx, event, caption)
-	}
 	var errs []error
 	if n.telegramToken != "" {
-		if perr := n.sendTelegramPhoto(ctx, photoURL, caption); perr != nil {
-			if terr := n.sendTelegram(ctx, caption); terr != nil {
+		perr := errors.New("no photo")
+		if photoURL != "" {
+			perr = n.sendTelegramPhoto(ctx, photoURL, caption, buttons)
+		}
+		if perr != nil {
+			if terr := n.sendTelegram(ctx, caption, buttons); terr != nil {
 				errs = append(errs, fmt.Errorf("telegram: %w", terr))
 			}
 		}
@@ -110,50 +148,160 @@ func (n *Notifier) SendPhoto(ctx context.Context, event, photoURL, caption strin
 // sendTelegram posts a plain-text sendMessage. No parse_mode: release
 // titles are full of characters MarkdownV2 would demand escaping for, and
 // a failed parse drops the whole message.
-func (n *Notifier) sendTelegram(ctx context.Context, text string) error {
-	payload, _ := json.Marshal(map[string]any{
+func (n *Notifier) sendTelegram(ctx context.Context, text string, buttons []Button) error {
+	body := map[string]any{
 		"chat_id":                  n.telegramChatID,
 		"text":                     text,
 		"disable_web_page_preview": true,
-	})
-	u := telegramAPIBase + "/bot" + n.telegramToken + "/sendMessage"
-	body, err := n.post(ctx, u, payload)
+	}
+	if kb := inlineKeyboard(buttons); kb != nil {
+		body["reply_markup"] = kb
+	}
+	return n.telegramCall(ctx, "sendMessage", body)
+}
+
+// inlineKeyboard renders buttons as one keyboard row; nil for none.
+func inlineKeyboard(buttons []Button) map[string]any {
+	if len(buttons) == 0 {
+		return nil
+	}
+	row := make([]map[string]any, 0, len(buttons))
+	for _, b := range buttons {
+		row = append(row, map[string]any{"text": b.Text, "callback_data": b.Data})
+	}
+	return map[string]any{"inline_keyboard": [][]map[string]any{row}}
+}
+
+// telegramCall posts one Bot API method, decoding the ok/description
+// envelope and never leaking the bot token (it lives in the URL path).
+func (n *Notifier) telegramCall(ctx context.Context, method string, body map[string]any) error {
+	_, err := n.telegramCallBody(ctx, method, body, n.http)
+	return err
+}
+
+func (n *Notifier) telegramCallBody(ctx context.Context, method string, body map[string]any, hc *http.Client) ([]byte, error) {
+	payload, _ := json.Marshal(body)
+	u := telegramAPIBase + "/bot" + n.telegramToken + "/" + method
+	respBody, err := n.postWith(ctx, hc, u, payload)
 	if err != nil {
-		// Never leak the bot token (it's in the URL path).
-		return errors.New(strings.ReplaceAll(err.Error(), n.telegramToken, "REDACTED"))
+		return nil, errors.New(strings.ReplaceAll(err.Error(), n.telegramToken, "REDACTED"))
 	}
 	var resp struct {
 		OK          bool   `json:"ok"`
 		Description string `json:"description"`
 	}
-	if jerr := json.Unmarshal(body, &resp); jerr == nil && !resp.OK {
-		return fmt.Errorf("sendMessage refused: %s", resp.Description)
+	if jerr := json.Unmarshal(respBody, &resp); jerr == nil && !resp.OK {
+		return respBody, fmt.Errorf("%s refused: %s", method, resp.Description)
 	}
-	return nil
+	return respBody, nil
 }
 
 // sendTelegramPhoto posts sendPhoto with a URL Telegram fetches itself.
 // Caption limit is 1024 chars (ours are short). Same no-parse_mode and
 // token-redaction reasoning as sendTelegram.
-func (n *Notifier) sendTelegramPhoto(ctx context.Context, photoURL, caption string) error {
-	payload, _ := json.Marshal(map[string]any{
+func (n *Notifier) sendTelegramPhoto(ctx context.Context, photoURL, caption string, buttons []Button) error {
+	body := map[string]any{
 		"chat_id": n.telegramChatID,
 		"photo":   photoURL,
 		"caption": caption,
-	})
-	u := telegramAPIBase + "/bot" + n.telegramToken + "/sendPhoto"
-	body, err := n.post(ctx, u, payload)
+	}
+	if kb := inlineKeyboard(buttons); kb != nil {
+		body["reply_markup"] = kb
+	}
+	return n.telegramCall(ctx, "sendPhoto", body)
+}
+
+// ── Callback plumbing (getUpdates long-poll) ────────────────────────
+//
+// The notify loop's messages can carry inline buttons; taps arrive as
+// callback_query updates that SOMETHING must poll for. forager's bot token
+// is dedicated to forager (Telegram allows exactly one getUpdates
+// consumer per token), so the daemon long-polls it via Updates. The api
+// layer owns the loop, the offset watermark, and what the buttons DO —
+// this package just speaks the Bot API.
+
+// updatesLongPoll is the getUpdates server-side hold. Telegram answers
+// early when an update arrives; a full window costs one idle round trip.
+const updatesLongPoll = 25 * time.Second
+
+// Update is one getUpdates entry, projected to what the callback loop
+// needs. Non-callback updates (someone texting the bot) decode with a nil
+// Callback and are skipped by the consumer — but still advance the offset.
+type Update struct {
+	ID       int64     `json:"update_id"`
+	Callback *Callback `json:"callback_query"`
+}
+
+// Callback is a button tap: who tapped (From.ID, for authorization),
+// which button (Data), and the message it lives on (for the outcome edit).
+type Callback struct {
+	ID   string `json:"id"`
+	From struct {
+		ID int64 `json:"id"`
+	} `json:"from"`
+	Data    string `json:"data"`
+	Message struct {
+		MessageID int64 `json:"message_id"`
+		Chat      struct {
+			ID int64 `json:"id"`
+		} `json:"chat"`
+		Caption string `json:"caption"` // set on photo messages
+		Text    string `json:"text"`    // set on plain-text messages
+	} `json:"message"`
+}
+
+// Updates long-polls getUpdates from offset, returning whatever arrived
+// within the window (possibly nothing). Only callback_query updates are
+// requested — the bot has no conversational surface.
+func (n *Notifier) Updates(ctx context.Context, offset int64) ([]Update, error) {
+	body, err := n.telegramCallBody(ctx, "getUpdates", map[string]any{
+		"offset":          offset,
+		"timeout":         int(updatesLongPoll / time.Second),
+		"allowed_updates": []string{"callback_query"},
+	}, n.pollHTTP)
 	if err != nil {
-		return errors.New(strings.ReplaceAll(err.Error(), n.telegramToken, "REDACTED"))
+		return nil, err
 	}
 	var resp struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
+		Result []Update `json:"result"`
 	}
-	if jerr := json.Unmarshal(body, &resp); jerr == nil && !resp.OK {
-		return fmt.Errorf("sendPhoto refused: %s", resp.Description)
+	if jerr := json.Unmarshal(body, &resp); jerr != nil {
+		return nil, fmt.Errorf("decode getUpdates: %w", jerr)
 	}
-	return nil
+	return resp.Result, nil
+}
+
+// AnswerCallback acknowledges a button tap (stops the client's spinner)
+// with an optional toast. Must be called for EVERY callback, even ones we
+// refuse to act on.
+func (n *Notifier) AnswerCallback(ctx context.Context, callbackID, toast string) error {
+	body := map[string]any{"callback_query_id": callbackID}
+	if toast != "" {
+		body["text"] = toast
+	}
+	return n.telegramCall(ctx, "answerCallbackQuery", body)
+}
+
+// FinalizeMessage appends an outcome line to the message a callback came
+// from and strips its buttons (an edit without reply_markup removes the
+// keyboard), leaving a permanent record of what the tap did. Handles both
+// photo messages (caption edit) and plain-text ones.
+func (n *Notifier) FinalizeMessage(ctx context.Context, cb *Callback, outcome string) error {
+	if cb == nil || cb.Message.MessageID == 0 {
+		return nil
+	}
+	if cb.Message.Caption != "" {
+		return n.telegramCall(ctx, "editMessageCaption", map[string]any{
+			"chat_id":    cb.Message.Chat.ID,
+			"message_id": cb.Message.MessageID,
+			"caption":    cb.Message.Caption + "\n" + outcome,
+		})
+	}
+	return n.telegramCall(ctx, "editMessageText", map[string]any{
+		"chat_id":    cb.Message.Chat.ID,
+		"message_id": cb.Message.MessageID,
+		"text":       cb.Message.Text + "\n" + outcome,
+	})
 }
 
 // sendWebhook posts {"event", "message", "ts"} as JSON, plus "image"
@@ -173,17 +321,24 @@ func (n *Notifier) sendWebhook(ctx context.Context, event, text, imageURL string
 }
 
 func (n *Notifier) post(ctx context.Context, url string, payload []byte) ([]byte, error) {
+	return n.postWith(ctx, n.http, url, payload)
+}
+
+func (n *Notifier) postWith(ctx context.Context, hc *http.Client, url string, payload []byte) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := n.http.Do(req)
+	resp, err := hc.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// 1MB bound: a getUpdates batch carries full message objects and can
+	// far exceed an error page's size; truncating it would corrupt the
+	// JSON. Still bounded so a hostile webhook endpoint can't balloon us.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, err
 	}

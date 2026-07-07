@@ -224,17 +224,27 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 // watch goes available. To grab a DIFFERENT release than the best, see
 // postWatchGrabCandidate.
 func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	wt := s.findWatch(r.Context(), id)
-	if wt == nil {
-		writeErr(w, http.StatusNotFound, "watch not found")
+	if err := s.grabAvailableWatch(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// grabAvailableWatch grabs a watch's auto-picked (best) release and flips it
+// to 'grabbed' — the logic behind the Watching tab's grab button, shared
+// with the Telegram callback path so a notification button and the UI do
+// exactly the same thing. Typed grabErrors carry HTTP statuses for the
+// HTTP caller; the Telegram caller just uses the message.
+func (s *Server) grabAvailableWatch(ctx context.Context, id string) error {
+	wt := s.findWatch(ctx, id)
+	if wt == nil {
+		return grabError{http.StatusNotFound, "watch not found"}
 	}
 	if wt.Status != watches.StatusAvailable || wt.FoundURL == "" {
-		writeErr(w, http.StatusUnprocessableEntity, "watch has no available release yet")
-		return
+		return grabError{http.StatusUnprocessableEntity, "watch has no available release yet"}
 	}
-	if _, err := s.doGrab(r.Context(), grabRequest{
+	if _, err := s.doGrab(ctx, grabRequest{
 		DownloadURL:    wt.FoundURL,
 		ReleaseTitle:   wt.FoundTitle,
 		ReleaseSize:    wt.FoundSize,
@@ -243,14 +253,13 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 		SceneID:        wt.StashDBID,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {
-		writeMappedErr(w, err, http.StatusBadGateway)
-		return
+		return err
 	}
-	if err := s.watches.MarkGrabbed(r.Context(), id,
+	if err := s.watches.MarkGrabbed(ctx, id,
 		wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
 		s.log.Warn("watch mark grabbed", "scene", id, "err", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
 }
 
 // postWatchGrabCandidate grabs a SPECIFIC release from a watch's stored

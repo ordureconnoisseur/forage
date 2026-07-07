@@ -133,6 +133,12 @@ func main() {
 	// sink is configured.
 	launch(func() { server.RunNotifyLoop(ctx) })
 
+	// Telegram callback loop — long-polls the bot for taps on the inline
+	// Grab/Dismiss buttons the notify loop attaches, and executes them
+	// through the same code paths as the web UI. No-op when the Telegram
+	// sink isn't configured.
+	launch(func() { server.RunTelegramLoop(ctx) })
+
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,
 		Handler:           server.Router(),

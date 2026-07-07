@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/notify"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -125,7 +126,14 @@ func (s *Server) notifyAvailableWatches(ctx context.Context, now int64) {
 		if wt.FoundTitle != "" {
 			caption += "\n" + truncateLine(wt.FoundTitle, notifyTitleMax)
 		}
-		if err := s.pool.Notifier().SendPhoto(ctx, "watch_available", wt.ImageURL, caption); err != nil {
+		// Inline actions, handled by the Telegram callback loop: Grab runs
+		// the same code as the Watching tab's grab button; Dismiss ignores
+		// this release and resumes watching.
+		buttons := []notify.Button{
+			{Text: "⬇ Grab", Data: "grab:" + wt.StashDBID},
+			{Text: "✖ Dismiss", Data: "dismiss:" + wt.StashDBID},
+		}
+		if err := s.pool.Notifier().SendPhoto(ctx, "watch_available", wt.ImageURL, caption, buttons...); err != nil {
 			s.log.Warn("notify send failed; will retry", "event", "watch_available", "scene", wt.StashDBID, "err", err)
 			if lastOK > wm && lastOK < wt.FoundAt {
 				s.setNotifyWatermark(ctx, metaNotifyWatchFoundAt, lastOK)

@@ -198,3 +198,102 @@ func TestSendPhotoNoURL(t *testing.T) {
 		t.Error("expected a sendMessage")
 	}
 }
+
+// TestSendPhotoButtons verifies inline buttons render as a one-row
+// inline_keyboard on the Telegram payload and stay off the webhook's.
+func TestSendPhotoButtons(t *testing.T) {
+	var mu sync.Mutex
+	var photoBody, webhookBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/sendPhoto"):
+			_ = json.NewDecoder(r.Body).Decode(&photoBody)
+			_, _ = w.Write([]byte(`{"ok": true}`))
+		case r.URL.Path == "/hook":
+			_ = json.NewDecoder(r.Body).Decode(&webhookBody)
+		}
+	}))
+	defer srv.Close()
+	old := telegramAPIBase
+	telegramAPIBase = srv.URL
+	defer func() { telegramAPIBase = old }()
+
+	n := New("tok", "42", srv.URL+"/hook")
+	err := n.SendPhoto(context.Background(), "watch_available", "https://img/x.jpg", "cap",
+		Button{Text: "Grab", Data: "grab:abc"}, Button{Text: "Dismiss", Data: "dismiss:abc"})
+	if err != nil {
+		t.Fatalf("SendPhoto: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	kb, _ := photoBody["reply_markup"].(map[string]any)
+	rows, _ := kb["inline_keyboard"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 keyboard row, got %v", photoBody["reply_markup"])
+	}
+	row := rows[0].([]any)
+	if len(row) != 2 || row[0].(map[string]any)["callback_data"] != "grab:abc" {
+		t.Errorf("keyboard row = %v", row)
+	}
+	if _, has := webhookBody["reply_markup"]; has {
+		t.Errorf("webhook payload must not carry telegram keyboards: %v", webhookBody)
+	}
+}
+
+// TestUpdatesAndAnswer exercises the callback plumbing: getUpdates decodes
+// callback_query entries; AnswerCallback posts the id + toast.
+func TestUpdatesAndAnswer(t *testing.T) {
+	var mu sync.Mutex
+	var gotOffset float64
+	var answered map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/getUpdates"):
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			gotOffset, _ = b["offset"].(float64)
+			_, _ = w.Write([]byte(`{"ok":true,"result":[{"update_id":7,"callback_query":{
+				"id":"cbid1","from":{"id":42},"data":"grab:scene-1",
+				"message":{"message_id":9,"chat":{"id":42},"caption":"the caption"}}}]}`))
+		case strings.HasSuffix(r.URL.Path, "/answerCallbackQuery"):
+			_ = json.NewDecoder(r.Body).Decode(&answered)
+			_, _ = w.Write([]byte(`{"ok":true}`))
+		}
+	}))
+	defer srv.Close()
+	old := telegramAPIBase
+	telegramAPIBase = srv.URL
+	defer func() { telegramAPIBase = old }()
+
+	n := New("tok", "42", "")
+	ups, err := n.Updates(context.Background(), 5)
+	if err != nil {
+		t.Fatalf("Updates: %v", err)
+	}
+	mu.Lock()
+	if gotOffset != 5 {
+		t.Errorf("offset sent = %v, want 5", gotOffset)
+	}
+	mu.Unlock()
+	if len(ups) != 1 || ups[0].ID != 7 || ups[0].Callback == nil {
+		t.Fatalf("updates = %+v", ups)
+	}
+	cb := ups[0].Callback
+	if cb.Data != "grab:scene-1" || cb.From.ID != 42 || cb.Message.Caption != "the caption" {
+		t.Errorf("callback = %+v", cb)
+	}
+	if err := n.AnswerCallback(context.Background(), cb.ID, "done"); err != nil {
+		t.Fatalf("AnswerCallback: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if answered["callback_query_id"] != "cbid1" || answered["text"] != "done" {
+		t.Errorf("answer payload = %v", answered)
+	}
+}
