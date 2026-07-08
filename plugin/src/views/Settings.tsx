@@ -887,12 +887,29 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             />
             <SourceBadge field={data?.fields["notifyWebhookUrl"]} />
           </Field>
+          <h4 className="settings-subhead">Links</h4>
+          <Field label="Stash public URL">
+            <input
+              type="url"
+              value={displayValue(
+                "stashPublicUrl",
+                data?.fields["stashPublicUrl"],
+              )}
+              onChange={(e) => setField("stashPublicUrl", e.target.value)}
+              placeholder="https://…  (Stash as YOUR devices reach it)"
+              spellCheck={false}
+            />
+            <SourceBadge field={data?.fields["stashPublicUrl"]} />
+          </Field>
           <p className="settings-tip">
             Pushes actionable events without opening the UI: a watched scene
-            whose release is ready to grab, and grabs that failed. Telegram
-            needs both the bot token and your chat id; the webhook receives a
-            small JSON POST per event batch. Leave everything blank to keep
-            notifications off (the in-app bell still works).
+            whose release is ready to grab, grabs that failed, and scenes that
+            landed in Stash (with a Watch link). Telegram needs both the bot
+            token and your chat id; the webhook receives a small JSON POST per
+            event batch. The Stash public URL is what the Watch links point at
+            — set it when the daemon reaches Stash on an address your phone
+            can't (it falls back to the Stash URL). Leave everything blank to
+            keep notifications off (the in-app bell still works).
           </p>
         </Section>
 

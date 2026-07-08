@@ -10,7 +10,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/notify"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -35,6 +37,7 @@ const notifyInterval = 2 * time.Minute
 const (
 	metaNotifyWatchFoundAt = "notify_watch_found_at"
 	metaNotifyGrabFailedAt = "notify_grab_failed_at"
+	metaNotifyGrabLandedAt = "notify_grab_landed_at"
 )
 
 // notifyDigestMax bounds how many per-item lines one message carries; the
@@ -67,6 +70,7 @@ func (s *Server) tickNotify(ctx context.Context) {
 	now := time.Now().Unix()
 	s.notifyAvailableWatches(ctx, now)
 	s.notifyFailedGrabs(ctx, now)
+	s.notifyLandedGrabs(ctx, now)
 }
 
 // notifyPhotoMax is the most per-scene photo messages one tick sends. Past
@@ -285,6 +289,131 @@ func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 		return
 	}
 	s.setNotifyWatermark(ctx, metaNotifyGrabFailedAt, maxAt)
+}
+
+// notifyLandedGrabs announces single-scene grabs that finished the whole
+// pipeline — downloaded, placed, scanned into Stash, identify settled
+// ('confirmed') — with a link straight to the scene so the notification is
+// a "go watch it" tap. Same watermark/photo-vs-digest mechanics as
+// notifyAvailableWatches; packs are excluded (their many-scene landing has
+// its own UI).
+func (s *Server) notifyLandedGrabs(ctx context.Context, now int64) {
+	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabLandedAt, now)
+	if !ok {
+		return
+	}
+	landed, err := s.grabs.ConfirmedSince(ctx, wm)
+	if err != nil || len(landed) == 0 {
+		return
+	}
+
+	// Bulk case: one text digest, all-or-nothing watermark advance.
+	if len(landed) > notifyPhotoMax {
+		maxAt := wm
+		var lines []string
+		for _, g := range landed {
+			title, _, _, _ := s.landedSceneMeta(ctx, g)
+			label := title
+			if g.PerformerName != "" {
+				label = g.PerformerName + " — " + label
+			}
+			lines = append(lines, "• "+notify.Escape(truncateLine(label, notifyTitleMax)))
+			if g.ConfirmedAt > maxAt {
+				maxAt = g.ConfirmedAt
+			}
+		}
+		text := notifyDigest(fmt.Sprintf("✅ <b>forage: %s landed in Stash</b>", plural(len(lines), "scene")), lines)
+		if err := s.pool.Notifier().Send(ctx, "grab_landed", text); err != nil {
+			s.log.Warn("notify send failed; will retry", "event", "grab_landed", "err", err)
+			return
+		}
+		s.setNotifyWatermark(ctx, metaNotifyGrabLandedAt, maxAt)
+		return
+	}
+
+	// Few scenes: one message each — cover photo, labeled caption, and a
+	// Watch button linking into Stash when the scene resolves.
+	lastOK := wm
+	for _, g := range landed {
+		title, studio, date, imageURL := s.landedSceneMeta(ctx, g)
+		lines := []string{"✅ <b>" + notify.Escape(truncateLine(title, 80)) + "</b> — in your library"}
+		if g.PerformerName != "" {
+			lines = append(lines, "👤 "+notify.Escape(g.PerformerName))
+		}
+		var meta []string
+		if studio != "" {
+			meta = append(meta, studio)
+		}
+		if date != "" {
+			meta = append(meta, date)
+		}
+		if len(meta) > 0 {
+			lines = append(lines, "🏛 "+notify.Escape(strings.Join(meta, " · ")))
+		}
+		lines = append(lines, "", "<b>Release:</b> "+notify.Escape(truncateLine(g.ReleaseTitle, notifyTitleMax)))
+		var buttons []notify.Button
+		if link := s.stashSceneLink(ctx, g); link != "" {
+			buttons = append(buttons, notify.Button{Text: "▶ Watch in Stash", URL: link})
+		}
+		if err := s.pool.Notifier().SendPhoto(ctx, "grab_landed", imageURL, strings.Join(lines, "\n"), buttons...); err != nil {
+			s.log.Warn("notify send failed; will retry", "event", "grab_landed", "grab", g.ID, "err", err)
+			if lastOK > wm && lastOK < g.ConfirmedAt {
+				s.setNotifyWatermark(ctx, metaNotifyGrabLandedAt, lastOK)
+			}
+			return
+		}
+		lastOK = g.ConfirmedAt
+	}
+	s.setNotifyWatermark(ctx, metaNotifyGrabLandedAt, lastOK)
+}
+
+// landedSceneMeta resolves display metadata for a landed grab from the
+// persistent StashDB scene cache (title, studio, date, cover). Falls back
+// to the release's own strings when the grab never got a cross-id ("in
+// library (scanned)" settles) or the cache hasn't seen the scene.
+func (s *Server) landedSceneMeta(ctx context.Context, g grabs.Grab) (title, studio, date, imageURL string) {
+	if g.ActualStashDBID != "" {
+		_ = s.db.QueryRowContext(ctx, `
+			SELECT COALESCE(title,''), COALESCE(studio_name,''), COALESCE(release_date,''), COALESCE(image_url,'')
+			FROM stashdb_scene WHERE stashdb_id = ?`, g.ActualStashDBID).
+			Scan(&title, &studio, &date, &imageURL)
+	}
+	if title == "" {
+		if title = pathmap.Base(g.PlacedPath); title == "" {
+			title = g.ReleaseTitle
+		}
+	}
+	return title, studio, date, imageURL
+}
+
+// stashSceneLink builds the user-facing "watch it" URL for a landed grab:
+// the placed file's scene looked up live in Stash (fresh — the scene was
+// created moments ago, ahead of any cache), joined onto StashPublicURL
+// (the address the user's devices can reach) or StashURL as fallback.
+// Empty when anything along the way is missing — the notification then
+// just goes out without a button.
+func (s *Server) stashSceneLink(ctx context.Context, g grabs.Grab) string {
+	cfg := s.bootstrap.Config // env-only fallback (store absent in tests)
+	if s.store != nil {
+		cfg = s.composedConfig()
+	}
+	base := cfg.StashPublicURL
+	if base == "" {
+		base = cfg.StashURL
+	}
+	stashC := s.pool.Stash()
+	if base == "" || stashC == nil {
+		return ""
+	}
+	needle := pathmap.Base(g.PlacedPath)
+	if needle == "" {
+		needle = g.ClientName
+	}
+	scene, err := stashC.FindSceneByPathContains(ctx, needle)
+	if err != nil || scene == nil || scene.ID == "" {
+		return ""
+	}
+	return base + "/scenes/" + scene.ID
 }
 
 // truncateLine caps a string at max runes with an ellipsis, and flattens

@@ -310,6 +310,17 @@ func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, e
 	return n > 0, err
 }
 
+// ConfirmedSince returns single-scene grabs that reached 'confirmed' after
+// the given unix time, oldest first — the notify loop's "scene landed in
+// Stash" sweep. Packs are excluded: their many-scene landing has its own
+// UI and doesn't reduce to one watch link.
+func (r *Repo) ConfirmedSince(ctx context.Context, since int64) ([]Grab, error) {
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'confirmed' AND kind = 'single' AND confirmed_at > ?
+		ORDER BY confirmed_at ASC LIMIT 50`, since)
+}
+
 // List returns the most recent grabs first, narrowed by status (unless ""
 // or "any") and by a free-text query q that matches release_title,
 // performer_name, release_indexer, or client_name (case-insensitive

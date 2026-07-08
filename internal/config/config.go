@@ -120,6 +120,11 @@ type Config struct {
 	// is POSTed there as {"event","message","ts"} JSON (ntfy, Home
 	// Assistant, a Discord shim, ...). Empty = webhook off.
 	NotifyWebhookURL string
+	// StashPublicURL is the Stash base URL notifications LINK to — the
+	// address the user's devices can reach (a public/tunneled hostname),
+	// as opposed to StashURL, which is what the daemon itself calls.
+	// Empty = links fall back to StashURL.
+	StashPublicURL string
 }
 
 // BootstrapConfig is the env-loaded layer. Same fields as Config —
@@ -188,6 +193,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.TelegramBotToken = b.envOr("FORAGER_TELEGRAM_BOT_TOKEN", "", "telegramBotToken")
 	b.TelegramChatID = b.envOr("FORAGER_TELEGRAM_CHAT_ID", "", "telegramChatId")
 	b.NotifyWebhookURL = b.envOr("FORAGER_NOTIFY_WEBHOOK_URL", "", "notifyWebhookUrl")
+	b.StashPublicURL = strings.TrimRight(b.envOr("FORAGER_STASH_PUBLIC_URL", "", "stashPublicUrl"), "/")
 	return b
 }
 
@@ -292,6 +298,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.TelegramBotToken = str("telegramBotToken", stored.TelegramBotToken, b.TelegramBotToken, "")
 	out.TelegramChatID = str("telegramChatId", stored.TelegramChatID, b.TelegramChatID, "")
 	out.NotifyWebhookURL = str("notifyWebhookUrl", stored.NotifyWebhookURL, b.NotifyWebhookURL, "")
+	out.StashPublicURL = strings.TrimRight(str("stashPublicUrl", stored.StashPublicURL, b.StashPublicURL, ""), "/")
 	return out, src
 }
 

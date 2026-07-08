@@ -87,6 +87,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"telegramBotToken": secretField(cfg.TelegramBotToken, sources["telegramBotToken"]),
 		"telegramChatId":   {Value: cfg.TelegramChatID, Source: sources["telegramChatId"]},
 		"notifyWebhookUrl": {Value: cfg.NotifyWebhookURL, Source: sources["notifyWebhookUrl"]},
+		"stashPublicUrl":   {Value: cfg.StashPublicURL, Source: sources["stashPublicUrl"]},
 	}
 	writeJSON(w, http.StatusOK, configFieldsResponse{
 		Fields: fields,
@@ -413,6 +414,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.NotifyWebhookURL != nil {
 		merged.NotifyWebhookURL = patch.NotifyWebhookURL
+	}
+	if patch.StashPublicURL != nil {
+		merged.StashPublicURL = patch.StashPublicURL
 	}
 	cfg, _ := config.Compose(s.bootstrap, merged)
 	return cfg

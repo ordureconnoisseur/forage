@@ -1115,6 +1115,9 @@ export interface ConfigPatch {
   // Generic notification webhook: receives {"event","message","ts"} JSON
   // per event batch. Empty = off.
   notifyWebhookUrl?: string;
+  // Stash base URL notification links point at (the address the user's
+  // devices can reach). Empty = links fall back to stashUrl.
+  stashPublicUrl?: string;
 }
 
 export interface ProbeResult {

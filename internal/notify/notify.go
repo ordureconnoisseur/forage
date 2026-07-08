@@ -51,11 +51,14 @@ type Notifier struct {
 
 // Button is one inline-keyboard button on a Telegram message. Data is the
 // callback payload (Telegram caps it at 64 bytes) delivered back via
-// Updates when the user taps it. Buttons only render on the Telegram sink;
-// the webhook payload is unaffected.
+// Updates when the user taps it; URL instead makes the button a plain
+// link the client opens directly (no callback round-trip). Set exactly
+// one of the two. Buttons only render on the Telegram sink; the webhook
+// payload is unaffected.
 type Button struct {
 	Text string
 	Data string
+	URL  string
 }
 
 // New builds a Notifier from whichever sink credentials are set. Returns
@@ -194,6 +197,10 @@ func inlineKeyboard(buttons []Button) map[string]any {
 	}
 	row := make([]map[string]any, 0, len(buttons))
 	for _, b := range buttons {
+		if b.URL != "" {
+			row = append(row, map[string]any{"text": b.Text, "url": b.URL})
+			continue
+		}
 		row = append(row, map[string]any{"text": b.Text, "callback_data": b.Data})
 	}
 	return map[string]any{"inline_keyboard": [][]map[string]any{row}}

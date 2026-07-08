@@ -336,3 +336,43 @@ func TestSendFallsBackToPlainOnParseError(t *testing.T) {
 		t.Errorf("plain retry must not set parse_mode")
 	}
 }
+
+// TestURLButton: a Button with URL set marshals as a link button (no
+// callback_data) — the "Watch in Stash" affordance on landed-grab messages.
+func TestURLButton(t *testing.T) {
+	var mu sync.Mutex
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if strings.HasSuffix(r.URL.Path, "/sendMessage") {
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			_, _ = w.Write([]byte(`{"ok": true}`))
+		}
+	}))
+	defer srv.Close()
+	old := telegramAPIBase
+	telegramAPIBase = srv.URL
+	defer func() { telegramAPIBase = old }()
+
+	n := New("tok", "42", "")
+	err := n.sendTelegram(context.Background(), "landed",
+		[]Button{{Text: "Watch", URL: "https://stash/scenes/9"}})
+	if err != nil {
+		t.Fatalf("sendTelegram: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	kb, _ := body["reply_markup"].(map[string]any)
+	rows, _ := kb["inline_keyboard"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 keyboard row, got %v", body["reply_markup"])
+	}
+	btn := rows[0].([]any)[0].(map[string]any)
+	if btn["url"] != "https://stash/scenes/9" {
+		t.Errorf("url button = %v", btn)
+	}
+	if _, has := btn["callback_data"]; has {
+		t.Errorf("url button must not carry callback_data: %v", btn)
+	}
+}

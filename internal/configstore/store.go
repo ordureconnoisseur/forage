@@ -104,6 +104,9 @@ type StoredConfig struct {
 	// NotifyWebhookURL receives {"event","message","ts"} JSON per event
 	// batch — the generic notification sink.
 	NotifyWebhookURL *string `json:"notifyWebhookUrl,omitempty"`
+	// StashPublicURL is the user-reachable Stash base URL that
+	// notification links point at (falls back to StashURL when empty).
+	StashPublicURL *string `json:"stashPublicUrl,omitempty"`
 }
 
 // Patch is the wire shape POSTed to /config. Identical to StoredConfig
@@ -366,6 +369,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.NotifyWebhookURL != nil {
 		base.NotifyWebhookURL = patch.NotifyWebhookURL
+	}
+	if patch.StashPublicURL != nil {
+		base.StashPublicURL = patch.StashPublicURL
 	}
 }
 

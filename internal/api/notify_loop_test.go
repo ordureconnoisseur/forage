@@ -265,3 +265,105 @@ func TestBuildWatchCaption(t *testing.T) {
 		t.Errorf("expected blank line between header and release facts:\n%s", got)
 	}
 }
+
+// TestNotifyLandedGrabs pins the "scene landed in Stash" sweep: a grab
+// confirmed before the watermark initializes silently; one confirmed after
+// it notifies once (with scene metadata resolved from the StashDB scene
+// cache); packs and mismatches never notify; an idle tick re-sends nothing.
+func TestNotifyLandedGrabs(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/nl.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	var mu sync.Mutex
+	var messages []map[string]any
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		messages = append(messages, m)
+		mu.Unlock()
+	}))
+	defer hook.Close()
+
+	pool := clientpool.New()
+	pool.Reload(config.Config{NotifyWebhookURL: hook.URL})
+	s := &Server{
+		db:      dbh,
+		pool:    pool,
+		grabs:   grabs.NewRepo(dbh),
+		watches: watches.NewRepo(dbh),
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	// Scene metadata in the cache so the message carries the real title.
+	if _, err := dbh.ExecContext(ctx, `
+		INSERT INTO stashdb_scene (stashdb_id, title, studio_name, release_date, image_url)
+		VALUES ('scene-1', 'Happy Accident', 'Mom Comes First', '2025-12-20', 'https://img/cover.jpg')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Confirmed BEFORE the first tick: swallowed by watermark init.
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Old.Release", Status: "confirmed",
+		ActualStashDBID: "scene-old", ConfirmedAt: time.Now().Unix(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
+	mu.Lock()
+	if len(messages) != 0 {
+		t.Fatalf("first tick must initialize watermark silently, sent %d", len(messages))
+	}
+	mu.Unlock()
+
+	time.Sleep(1100 * time.Millisecond) // confirmed_at is unix seconds; step past the watermark
+	now := time.Now().Unix()
+	// The landing that must notify — plus a pack and a mismatch that must not.
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "MomComesFirst.Danielle.Renae.Happy.Accident.1080p", Status: "confirmed",
+		ActualStashDBID: "scene-1", PerformerName: "Danielle Renae",
+		PlacedPath: "/data/porn/Media/Danielle Renae/happy.mp4", ConfirmedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Some.Pack", Status: "confirmed", Kind: "pack", ConfirmedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.grabs.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Wrong.Scene", Status: "mismatched", ConfirmedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
+
+	mu.Lock()
+	if len(messages) != 1 {
+		t.Fatalf("expected exactly 1 landed message, got %d: %v", len(messages), messages)
+	}
+	m := messages[0]
+	if m["event"] != "grab_landed" {
+		t.Errorf("event = %v, want grab_landed", m["event"])
+	}
+	text, _ := m["message"].(string)
+	if !strings.Contains(text, "Happy Accident") || !strings.Contains(text, "Danielle Renae") {
+		t.Errorf("message missing scene metadata: %q", text)
+	}
+	if img, _ := m["image"].(string); img != "https://img/cover.jpg" {
+		t.Errorf("image = %q, want the cached cover", img)
+	}
+	mu.Unlock()
+
+	// Idle tick: nothing new.
+	s.tickNotify(ctx)
+	mu.Lock()
+	defer mu.Unlock()
+	if len(messages) != 1 {
+		t.Errorf("idle tick re-sent: %d messages total", len(messages))
+	}
+}
