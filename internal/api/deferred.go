@@ -9,6 +9,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/qbit"
 )
 
 // Deferred-retry flow: a grab whose add failed TRANSIENTLY (download
@@ -102,6 +103,17 @@ func (s *Server) deferOrFailGrab(ctx context.Context, grabID int64, reason strin
 		g.Status = "deferred"
 		g.Reason = reason
 		g.NextRetryAt = time.Now().Add(deferBackoff(g.Attempts)).Unix()
+		// Record which stage failed so the retry loop knows whether an
+		// indexer failover is worth attempting: a failed .torrent fetch
+		// means the INDEXER couldn't serve the release (another indexer's
+		// copy of the same scene may work right now), while a client-side
+		// failure means the release is fine and the retry should re-drive
+		// it unchanged.
+		if errors.Is(err, qbit.ErrIndexerFetch) {
+			g.FailKind = "indexer"
+		} else {
+			g.FailKind = "client"
+		}
 	}
 	if uerr := s.grabs.Update(ctx, *g); uerr != nil && !errors.Is(uerr, grabs.ErrStaleUpdate) {
 		s.log.Warn("defer grab", "grab_id", grabID, "err", uerr)
@@ -179,12 +191,65 @@ func (s *Server) tickDeferredRetries(ctx context.Context) {
 		if s.clientRetryBlocked(&g) {
 			continue // hold the grab, attempt budget untouched
 		}
+		// Indexer-side failure: the fetch through Prowlarr failed, so the
+		// same release will likely fail again. Try switching the grab to
+		// the scene's best verified release on a different, non-benched
+		// indexer before re-driving (see failover.go). The row mutates in
+		// place, keeping the scene linkage; on no alternative the original
+		// release retries unchanged, exactly as before.
+		failedOver := ""
+		if g.FailKind == "indexer" && s.resolveFailover != nil {
+			if alt := s.resolveFailover(ctx, failoverGrab{
+				ID:                 g.ID,
+				Client:             g.Client,
+				Kind:               g.Kind,
+				PredictedStashDBID: g.PredictedStashDBID,
+				PerformerName:      g.PerformerName,
+				ReleaseIndexer:     g.ReleaseIndexer,
+				DownloadURL:        g.DownloadURL,
+			}); alt != nil {
+				if uerr := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
+					if fresh.Status != "deferred" {
+						return // user retried/deleted meanwhile; leave it
+					}
+					fresh.DownloadURL = alt.DownloadURL
+					fresh.ReleaseTitle = alt.Title
+					fresh.ReleaseIndexer = alt.Indexer
+					fresh.ReleaseSize = alt.Size
+					// The old release's pinned hash (if any) describes a
+					// torrent that never landed; the new release re-pins
+					// via retryGrab's magnet path or the fetched bytes.
+					fresh.ClientID = ""
+					fresh.ClientName = ""
+				}); uerr != nil {
+					s.log.Warn("failover: switch release", "grab_id", g.ID, "err", uerr)
+				} else {
+					failedOver = alt.Indexer
+					s.log.Info("failover: switching release",
+						"grab_id", g.ID, "from", g.ReleaseIndexer, "to", alt.Indexer,
+						"release", alt.Title)
+					if fresh, gerr := s.grabs.Get(ctx, g.ID); gerr == nil && fresh != nil {
+						g = *fresh // retryGrab must see the switched row
+					}
+				}
+			}
+		}
 		if rerr := s.retryGrab(ctx, &g, false); rerr != nil {
 			s.log.Warn("deferred retry", "grab_id", g.ID, "err", rerr)
 			continue
 		}
+		if failedOver != "" {
+			// Stamp the visible story: the generic "auto-retrying" reason
+			// retryGrab set doesn't say the release changed. Best-effort.
+			_ = s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
+				if fresh.Status == "queued" {
+					fresh.Reason = fmt.Sprintf("failed over to %s (attempt %d/%d)",
+						failedOver, fresh.Attempts+1, deferMaxAttempts)
+				}
+			})
+		}
 		s.log.Info("deferred grab retrying",
 			"grab_id", g.ID, "attempt", g.Attempts+1, "max", deferMaxAttempts,
-			"release", g.ReleaseTitle)
+			"release", g.ReleaseTitle, "failover", failedOver != "")
 	}
 }

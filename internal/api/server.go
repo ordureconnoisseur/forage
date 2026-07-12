@@ -63,6 +63,15 @@ type Server struct {
 	// the fetch gate. Shared with the poller via main. Nil-safe.
 	pendingAdds *grabs.PendingAdds
 
+	// indexerDisabled caches Prowlarr's failure-backoff list for the
+	// deferred-retry failover picker (see failover.go). Zero value ready.
+	indexerDisabled disabledIndexerCache
+
+	// resolveFailover finds the release a deferred indexer-failure grab
+	// should switch to. Defaults to resolveFailoverRelease in New();
+	// a field so tests can stub the heavy scene-resolution path.
+	resolveFailover func(context.Context, failoverGrab) *sceneRelease
+
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex
@@ -148,7 +157,7 @@ type Options struct {
 }
 
 func New(opts Options) *Server {
-	return &Server{
+	s := &Server{
 		db:          opts.DB,
 		pool:        opts.Pool,
 		bootstrap:   opts.Bootstrap,
@@ -162,6 +171,8 @@ func New(opts Options) *Server {
 		pendingAdds: opts.PendingAdds,
 		sessionKey:  loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
+	s.resolveFailover = s.resolveFailoverRelease
+	return s
 }
 
 func (s *Server) Router() http.Handler {
