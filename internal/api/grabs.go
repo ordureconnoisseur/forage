@@ -71,9 +71,11 @@ type grabOut struct {
 	PlaceFailing bool   `json:"place_failing,omitempty"`
 	Reason       string `json:"reason,omitempty"`
 	// Deferred-retry state (status "deferred"): failed add attempts so
-	// far and when the retry loop will re-drive the add.
+	// far, when the retry loop will re-drive the add, and the total
+	// attempt budget (so the UI never hardcodes the daemon's constant).
 	Attempts      int           `json:"attempts,omitempty"`
 	NextRetryAt   int64         `json:"next_retry_at,omitempty"`
+	MaxAttempts   int           `json:"max_attempts,omitempty"`
 	PerformerName string        `json:"performer_name,omitempty"`
 	PlacedPath    string        `json:"placed_path,omitempty"`
 	PlaceError    string        `json:"place_error,omitempty"`
@@ -198,6 +200,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			Stalled:             isStalled(g),
 			Attempts:            g.Attempts,
 			NextRetryAt:         g.NextRetryAt,
+			MaxAttempts:         deferMaxAttempts,
 			Adopted:             g.DownloadURL == "" && g.ClientID != "",
 			PlaceFailing:        isPlaceFailing(g),
 			Reason:              g.Reason,

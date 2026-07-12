@@ -79,6 +79,10 @@ const IN_FLIGHT: GrabStatus[] = [
 function retryEta(at?: number): string {
   if (!at) return "";
   const secs = at - Math.floor(Date.now() / 1000);
+  // A slot more than a couple of minutes past due means the daemon is
+  // deliberately holding the retry (download client outage; see the red
+  // banner) rather than about to run it: promise nothing.
+  if (secs <= -120) return "· waiting to retry";
   if (secs <= 30) return "· retrying shortly";
   if (secs < 90) return "· retries in ~1m";
   if (secs < 3600) return `· retries in ~${Math.round(secs / 60)}m`;
@@ -415,7 +419,7 @@ export default function GrabsList({
           <h2>Grabs</h2>
           <span className="grab-toolbar-stats">
             {anyTotal} total ·{" "}
-            {(ACTIVE_STATUSES as GrabStatus[]).reduce(
+            {([...ACTIVE_STATUSES, "deferred"] as GrabStatus[]).reduce(
               (s, k) => s + (totals[k] || 0),
               0,
             )}{" "}
@@ -1315,7 +1319,8 @@ function attemptTally(grabs: Grab[]): { live: number; done: number; dead: number
   let dead = 0;
   for (const g of grabs) {
     if (g.status === "confirmed") done++;
-    else if (isActiveStatus(g.status)) live++;
+    else if (isActiveStatus(g.status) || g.status === "deferred") live++;
+    // deferred is live: parked for automatic retry, not an outcome.
     else dead++; // mismatched / orphaned / failed
   }
   return { live, done, dead };
@@ -2203,7 +2208,8 @@ function GrabRow({
               {g.reason && <div className="grab-reason">{g.reason}</div>}
               {g.status === "deferred" && (
                 <div className="grab-reason">
-                  attempt {(g.attempts ?? 0) + 1}/5 {retryEta(g.next_retry_at)}
+                  attempt {(g.attempts ?? 0) + 1}/{g.max_attempts ?? 5}{" "}
+                  {retryEta(g.next_retry_at)}
                 </div>
               )}
 

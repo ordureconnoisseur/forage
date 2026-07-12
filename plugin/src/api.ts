@@ -723,6 +723,7 @@ export interface Grab {
   // and the unix time the daemon will automatically re-drive the add.
   attempts?: number;
   next_retry_at?: number;
+  max_attempts?: number;
   performer_name?: string;
   placed_path?: string;
   place_error?: string;

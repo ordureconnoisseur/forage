@@ -70,7 +70,7 @@ type Server struct {
 	// resolveFailover finds the release a deferred indexer-failure grab
 	// should switch to. Defaults to resolveFailoverRelease in New();
 	// a field so tests can stub the heavy scene-resolution path.
-	resolveFailover func(context.Context, failoverGrab) *sceneRelease
+	resolveFailover func(context.Context, *grabs.Grab) *sceneRelease
 
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
