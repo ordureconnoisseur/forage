@@ -63,6 +63,13 @@ type Server struct {
 	// the fetch gate. Shared with the poller via main. Nil-safe.
 	pendingAdds *grabs.PendingAdds
 
+	// qbitHealth / sabHealth cache an active reachability probe of each
+	// download client so /healthz reports real reachability (not just config
+	// presence) without blocking the unauthenticated, UI-polled endpoint on a
+	// network call. Zero value ready; see clienthealth.go.
+	qbitHealth clientHealth
+	sabHealth  clientHealth
+
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex
@@ -369,6 +376,41 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM studio_cache`).Scan(&studCount)
 	settings := s.pool.Settings()
 	cfg := s.composedConfig()
+
+	// Active reachability of the configured download clients. Non-blocking:
+	// snapshot returns the last cached probe result and refreshes in the
+	// background when stale. Optimistic until the first probe lands (probed
+	// == false) so a fresh daemon never flashes an "unreachable" banner. Only
+	// a probe that has actually confirmed a failure sets reachable=false and
+	// appends a human-readable line to clientErrors — the loud signal the UI
+	// keys its "download client unavailable" banner off.
+	qbitReachable, sabReachable := true, true
+	clientErrors := []string{}
+	if qb := s.pool.Qbit(); qb != nil {
+		if probed, ok, msg := s.qbitHealth.snapshot(func(ctx context.Context) error {
+			_, err := qb.Version(ctx)
+			return err
+		}); probed && !ok {
+			qbitReachable = false
+			if msg == "" {
+				msg = "unreachable"
+			}
+			clientErrors = append(clientErrors, "qbit: "+msg)
+		}
+	}
+	if sb := s.pool.Sab(); sb != nil {
+		if probed, ok, msg := s.sabHealth.snapshot(func(ctx context.Context) error {
+			_, err := sb.Version(ctx)
+			return err
+		}); probed && !ok {
+			sabReachable = false
+			if msg == "" {
+				msg = "unreachable"
+			}
+			clientErrors = append(clientErrors, "sab: "+msg)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                   true,
 		"version":              s.version,
@@ -381,8 +423,15 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"prowlarrConfigured":   s.pool.Prowlarr() != nil,
 		"qbitConfigured":       s.pool.Qbit() != nil,
 		"qbitCategory":         settings.QbitCategory,
+		"qbitReachable":        qbitReachable,
 		"sabConfigured":        s.pool.Sab() != nil,
 		"sabCategory":          settings.SabCategory,
+		"sabReachable":         sabReachable,
+		// clientErrors lists configured-but-unreachable download clients,
+		// human-readable (e.g. "qbit: dial tcp 127.0.0.1:8083: connection
+		// refused"). Empty array when every configured client is reachable
+		// (or none is configured / none has been probed yet).
+		"clientErrors": clientErrors,
 		// No libraryRoot here: /healthz is deliberately unauthenticated (the
 		// UI probes it pre-login) and a host filesystem path is more than an
 		// anonymous caller should learn. The UI never read it from here; the
