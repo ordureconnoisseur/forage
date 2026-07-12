@@ -331,6 +331,44 @@ func (c *Client) Indexers(ctx context.Context) ([]Indexer, error) {
 	return out, nil
 }
 
+// IndexerStatus is one entry from GET /api/v1/indexerstatus: Prowlarr's
+// failure-backoff record for an indexer. DisabledTill is non-zero while
+// Prowlarr has the indexer benched after consecutive failures; a zero
+// time means the record exists but the backoff has been cleared.
+type IndexerStatus struct {
+	IndexerID    int       `json:"indexerId"`
+	DisabledTill time.Time `json:"disabledTill"`
+}
+
+// IndexerStatuses returns Prowlarr's failure-backoff records
+// (GET /api/v1/indexerstatus). Only indexers that have failed recently
+// appear at all; healthy indexers have no entry. Callers use this to
+// skip grabbing from an indexer Prowlarr itself won't query.
+func (c *Client) IndexerStatuses(ctx context.Context) ([]IndexerStatus, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("prowlarr base URL not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/indexerstatus", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, clienterr.Transport("prowlarr indexerstatus", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, clienterr.Status("prowlarr indexerstatus", resp.StatusCode, body)
+	}
+	var out []IndexerStatus
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("decode indexerstatus: %w", err)
+	}
+	return out, nil
+}
+
 // Status hits /api/v1/system/status as a lightweight reachability +
 // auth probe. Returns Prowlarr's version string on success.
 func (c *Client) Status(ctx context.Context) (string, error) {

@@ -251,3 +251,47 @@ func TestAddTorrentMagnetGenuineParseFailure(t *testing.T) {
 		t.Fatalf("non-duplicate Fails. should stay ErrRejected, got: %v", err)
 	}
 }
+
+// TestAddTorrentIndexerFetchSentinel verifies a failed .torrent fetch is
+// classifiable as BOTH an indexer-side failure (ErrIndexerFetch, so the
+// deferred-retry loop knows a failover to another indexer may rescue the
+// grab) and the clienterr class the status code implies.
+func TestAddTorrentIndexerFetchSentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests) // indexer rate-limited
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
+	_, err := c.AddTorrent(context.Background(), srv.URL+"/download/123.torrent", "forage")
+	if err == nil {
+		t.Fatal("expected the 429 fetch to fail the add")
+	}
+	if !errors.Is(err, ErrIndexerFetch) {
+		t.Fatalf("err = %v, want ErrIndexerFetch in the chain", err)
+	}
+	if !errors.Is(err, clienterr.ErrTransient) {
+		t.Fatalf("err = %v, want ErrTransient (429) in the chain", err)
+	}
+}
+
+// The non-torrent-response guard (download cap / lapsed session) is also
+// indexer-side, but NOT transient: it must not enter the deferred flow.
+func TestAddTorrentNonTorrentBodySentinel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("<html>download limit reached</html>"))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
+	_, err := c.AddTorrent(context.Background(), srv.URL+"/download/123.torrent", "forage")
+	if err == nil {
+		t.Fatal("expected the HTML body to fail the add")
+	}
+	if !errors.Is(err, ErrIndexerFetch) {
+		t.Fatalf("err = %v, want ErrIndexerFetch", err)
+	}
+	if errors.Is(err, clienterr.ErrTransient) {
+		t.Fatalf("err = %v: a download-cap page must NOT classify transient", err)
+	}
+}
