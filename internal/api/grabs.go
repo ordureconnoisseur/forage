@@ -68,8 +68,12 @@ type grabOut struct {
 	// PlaceFailing flags a downloaded grab whose placement keeps failing
 	// (status completed + place_error, past placeFailingAfter) — the file
 	// is downloaded but can't get into the library.
-	PlaceFailing  bool          `json:"place_failing,omitempty"`
-	Reason        string        `json:"reason,omitempty"`
+	PlaceFailing bool   `json:"place_failing,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	// Deferred-retry state (status "deferred"): failed add attempts so
+	// far and when the retry loop will re-drive the add.
+	Attempts      int           `json:"attempts,omitempty"`
+	NextRetryAt   int64         `json:"next_retry_at,omitempty"`
 	PerformerName string        `json:"performer_name,omitempty"`
 	PlacedPath    string        `json:"placed_path,omitempty"`
 	PlaceError    string        `json:"place_error,omitempty"`
@@ -192,6 +196,8 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			Category:            g.Category,
 			Status:              g.Status,
 			Stalled:             isStalled(g),
+			Attempts:            g.Attempts,
+			NextRetryAt:         g.NextRetryAt,
 			Adopted:             g.DownloadURL == "" && g.ClientID != "",
 			PlaceFailing:        isPlaceFailing(g),
 			Reason:              g.Reason,
