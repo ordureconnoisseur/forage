@@ -118,8 +118,8 @@ type fakeStash struct {
 	generated int        // metadataGenerate calls served (proves deferred preview/sprite generation fired)
 	scanned   int        // metadataScan calls served (proves a (re-)scan fired)
 	scanPaths [][]string // paths sent to each metadataScan, in order (proves scan scoping)
-	boxErr    bool // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
-	jobErr    bool // when true, findJob queries 500 (simulates a JobStatus query failure)
+	boxErr    bool       // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
+	jobErr    bool       // when true, findJob queries 500 (simulates a JobStatus query failure)
 	jobStatus string
 }
 

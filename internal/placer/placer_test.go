@@ -84,8 +84,8 @@ func TestPlaceDirSkipsSamples(t *testing.T) {
 	lib := filepath.Join(root, "library")
 	src := filepath.Join(root, "dl", "Studio.24.01.05.Perf.XXX.1080p-GRP")
 
-	big := make([]byte, 4000)   // the real scene
-	small := make([]byte, 100)  // a preview sample (<50% of big)
+	big := make([]byte, 4000)  // the real scene
+	small := make([]byte, 100) // a preview sample (<50% of big)
 	write := func(rel string, b []byte) {
 		full := filepath.Join(src, rel)
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -95,11 +95,11 @@ func TestPlaceDirSkipsSamples(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("studio.24.01.05.perf.mp4", big)                     // keep: the scene
-	write("studio.24.01.05.perf-sample.mp4", small)            // skip: sibling sample
-	write(filepath.Join("Sample", "preview.mp4"), small)       // skip: in Sample/ dir
-	write("studio.24.01.05.perf.nfo", small)                   // keep: not a video
-	write("proof-sample.jpg", small)                           // keep: not a video
+	write("studio.24.01.05.perf.mp4", big)               // keep: the scene
+	write("studio.24.01.05.perf-sample.mp4", small)      // skip: sibling sample
+	write(filepath.Join("Sample", "preview.mp4"), small) // skip: in Sample/ dir
+	write("studio.24.01.05.perf.nfo", small)             // keep: not a video
+	write("proof-sample.jpg", small)                     // keep: not a video
 
 	p := New(lib, discardLogger())
 	dest := filepath.Join(lib, "Perf", "Studio.24.01.05.Perf.XXX.1080p-GRP")
