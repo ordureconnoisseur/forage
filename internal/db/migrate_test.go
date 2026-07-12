@@ -261,7 +261,7 @@ func TestGrabsRetryMigration(t *testing.T) {
 	}
 	defer d2.Close()
 
-	for _, col := range []string{"attempts", "next_retry_at"} {
+	for _, col := range []string{"attempts", "next_retry_at", "fail_kind"} {
 		var n int
 		if err := d2.QueryRow(
 			`SELECT COUNT(*) FROM pragma_table_info('grabs') WHERE name = ?`, col,

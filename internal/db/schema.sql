@@ -167,6 +167,12 @@ CREATE TABLE IF NOT EXISTS grabs (
   -- grabs that never deferred.
   attempts              INTEGER NOT NULL DEFAULT 0,
   next_retry_at         INTEGER,
+  -- which stage the deferred failure happened in: 'indexer' (the
+  -- .torrent fetch through Prowlarr failed; worth failing over to the
+  -- same scene's release on a different indexer) or 'client' (the
+  -- download client couldn't take it; retry the same release). Empty
+  -- for grabs that never deferred.
+  fail_kind             TEXT,
   -- optimistic-lock version: bumped on every Update; the WHERE clause
   -- matches on it so a stale writer (poller tick vs concurrent API edit)
   -- loses instead of clobbering. (Physical column order no longer

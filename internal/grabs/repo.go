@@ -80,6 +80,11 @@ type Grab struct {
 	// may re-drive the add. Both zero for grabs that never deferred.
 	Attempts    int
 	NextRetryAt int64
+	// FailKind is which stage the deferred failure happened in:
+	// "indexer" (the .torrent fetch failed; a failover to another
+	// indexer's release may rescue it) or "client" (the download client
+	// couldn't take it; retry the same release). Empty when not deferred.
+	FailKind string
 	// Rev is the optimistic-lock version, bumped by Update. Carry the value
 	// you loaded back into Update; if the row's rev advanced meanwhile (a
 	// concurrent write), Update returns ErrStaleUpdate rather than clobber.
@@ -146,6 +151,10 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 // is in the SET list because retry re-arms it (the SAB register grace,
 // qBit link timeout, and pickRecent window are all keyed on it); every
 // caller round-trips a loaded row, so otherwise it writes back unchanged.
+// The release identity columns (title/size/indexer/download_url) are in
+// the SET list because the deferred-retry failover switches a grab to a
+// different release of the same scene; the round-trip argument makes
+// them no-ops for every other caller.
 // The lifecycle timestamps follow the struct like every other column —
 // they used to be COALESCE-guarded (zero meant "keep"), which made them
 // impossible to CLEAR: a retry couldn't reset completed_at, so the new
@@ -162,6 +171,8 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 	now := time.Now().Unix()
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE grabs SET
+		  release_title = ?, release_size = ?, release_indexer = ?,
+		  download_url = ?,
 		  client_id = ?, client_name = ?, status = ?,
 		  actual_stashdb_id = ?, reason = ?,
 		  performer_name = ?, placed_path = ?, place_error = ?,
@@ -172,9 +183,11 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  confirmed_at = ?,
 		  pack_files = ?, pack_identified = ?, pack_deduped = ?,
 		  progress = ?, progress_at = ?,
-		  attempts = ?, next_retry_at = ?,
+		  attempts = ?, next_retry_at = ?, fail_kind = ?,
 		  rev = rev + 1
 		WHERE id = ? AND rev = ?`,
+		g.ReleaseTitle, nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer),
+		nullString(g.DownloadURL),
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
@@ -183,7 +196,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.PackFiles, g.PackIdentified, g.PackDeduped,
 		g.Progress, g.ProgressAt,
-		g.Attempts, nullInt(g.NextRetryAt),
+		g.Attempts, nullInt(g.NextRetryAt), nullString(g.FailKind),
 		g.ID, g.Rev,
 	)
 	if err != nil {
@@ -538,7 +551,7 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		kind, pack_files, pack_identified, pack_deduped,
-		progress, progress_at, attempts, next_retry_at, rev`
+		progress, progress_at, attempts, next_retry_at, fail_kind, rev`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -564,7 +577,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		performerName, placedPath, placeError                                                      sql.NullString
 		predictedConfidence                                                                        sql.NullFloat64
 		releaseSize, completedAt, placedAt, confirmedAt, nextRetryAt                               sql.NullInt64
-		kind                                                                                       sql.NullString
+		kind, failKind                                                                             sql.NullString
 	)
 	err := rows.Scan(&g.ID,
 		&predictedID, &predictedConfidence, &g.ReleaseTitle,
@@ -573,11 +586,12 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
 		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
-		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &g.Rev)
+		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &failKind, &g.Rev)
 	if err != nil {
 		return g, err
 	}
 	g.NextRetryAt = nextRetryAt.Int64
+	g.FailKind = failKind.String
 	g.Kind = kind.String
 	if g.Kind == "" {
 		g.Kind = "single"

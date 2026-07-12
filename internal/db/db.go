@@ -202,6 +202,10 @@ func migrateGrabsColumns(db *sql.DB) error {
 	retryCols := []struct{ col, decl string }{
 		{"attempts", `ALTER TABLE grabs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`},
 		{"next_retry_at", `ALTER TABLE grabs ADD COLUMN next_retry_at INTEGER`},
+		// fail_kind ('indexer' | 'client') records which stage the deferred
+		// failure happened in, so the retry loop knows whether an indexer
+		// failover is worth attempting.
+		{"fail_kind", `ALTER TABLE grabs ADD COLUMN fail_kind TEXT`},
 	}
 	for _, c := range retryCols {
 		exists, err := has(c.col)
