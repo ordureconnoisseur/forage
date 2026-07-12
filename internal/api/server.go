@@ -63,13 +63,6 @@ type Server struct {
 	// the fetch gate. Shared with the poller via main. Nil-safe.
 	pendingAdds *grabs.PendingAdds
 
-	// qbitHealth / sabHealth cache an active reachability probe of each
-	// download client so /healthz reports real reachability (not just config
-	// presence) without blocking the unauthenticated, UI-polled endpoint on a
-	// network call. Zero value ready; see clienthealth.go.
-	qbitHealth clientHealth
-	sabHealth  clientHealth
-
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex
@@ -377,37 +370,28 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	settings := s.pool.Settings()
 	cfg := s.composedConfig()
 
-	// Active reachability of the configured download clients. Non-blocking:
-	// snapshot returns the last cached probe result and refreshes in the
-	// background when stale. Optimistic until the first probe lands (probed
-	// == false) so a fresh daemon never flashes an "unreachable" banner. Only
-	// a probe that has actually confirmed a failure sets reachable=false and
-	// appends a human-readable line to clientErrors — the loud signal the UI
-	// keys its "download client unavailable" banner off.
+	// Reachability of the configured download clients, read from the
+	// Pool's background prober (see clientpool/health.go): probed every
+	// 30s and immediately after a config save, never on the request
+	// path, so this handler stays passive. Optimistic until the prober
+	// has confirmed a verdict (Probed=false), so a fresh daemon or a
+	// just-saved config never flashes a false "unreachable". A confirmed
+	// failure sets reachable=false and appends a human-readable line to
+	// clientErrors, the signal the UI banner keys off.
 	qbitReachable, sabReachable := true, true
 	clientErrors := []string{}
-	if qb := s.pool.Qbit(); qb != nil {
-		if probed, ok, msg := s.qbitHealth.snapshot(func(ctx context.Context) error {
-			_, err := qb.Version(ctx)
-			return err
-		}); probed && !ok {
-			qbitReachable = false
-			if msg == "" {
-				msg = "unreachable"
-			}
-			clientErrors = append(clientErrors, "qbit: "+msg)
-		}
-	}
-	if sb := s.pool.Sab(); sb != nil {
-		if probed, ok, msg := s.sabHealth.snapshot(func(ctx context.Context) error {
-			_, err := sb.Version(ctx)
-			return err
-		}); probed && !ok {
-			sabReachable = false
-			if msg == "" {
-				msg = "unreachable"
-			}
-			clientErrors = append(clientErrors, "sab: "+msg)
+	for _, c := range []struct {
+		name       string
+		configured bool
+		health     clientpool.ClientHealth
+		reachable  *bool
+	}{
+		{"qbit", s.pool.Qbit() != nil, s.pool.QbitHealth(), &qbitReachable},
+		{"sab", s.pool.Sab() != nil, s.pool.SabHealth(), &sabReachable},
+	} {
+		if c.configured && c.health.Probed && !c.health.OK {
+			*c.reachable = false
+			clientErrors = append(clientErrors, c.name+": "+c.health.Err)
 		}
 	}
 

@@ -45,6 +45,17 @@ type Pool struct {
 	// reconstruction.
 	placerLog atomic.Pointer[slog.Logger]
 
+	// qbitHealth / sabHealth accumulate the background reachability
+	// probes for the download clients (see health.go). They live here,
+	// next to the client pointers they describe, so Reload can reset
+	// them when it swaps the clients: a verdict about the old client is
+	// never attributed to the new one. healthKick (buffered, size 1)
+	// wakes RunHealthProbes right after a Reload so a config fix is
+	// re-verified within seconds instead of one full probe interval.
+	qbitHealth probeState
+	sabHealth  probeState
+	healthKick chan struct{}
+
 	// snapshot of the categories + library root the clients were
 	// built from. Cheap to copy under reads; held atomically alongside
 	// the clients so callers see a consistent view of "what client and
@@ -83,7 +94,7 @@ type Settings struct {
 
 // New returns an empty Pool. Reload it before using.
 func New() *Pool {
-	p := &Pool{}
+	p := &Pool{healthKick: make(chan struct{}, 1)}
 	p.settings.Store(&Settings{})
 	return p
 }
@@ -145,6 +156,19 @@ func (p *Pool) Reload(cfg config.Config) {
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 	})
+
+	// The swapped-in clients invalidate the reachability verdicts, which
+	// were measured against the old ones. Reset to optimistic-unprobed
+	// and wake the prober so the new clients are verified within seconds
+	// (non-blocking send: a pending kick already covers this Reload; the
+	// nil-channel case only arises for a zero-value Pool in tests, where
+	// the default branch makes it a no-op).
+	p.qbitHealth.reset()
+	p.sabHealth.reset()
+	select {
+	case p.healthKick <- struct{}{}:
+	default:
+	}
 }
 
 // SetPlacerLogger wires the logger every constructed placer carries —

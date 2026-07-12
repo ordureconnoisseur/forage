@@ -90,6 +90,12 @@ func main() {
 	// Trending refreshes on its own 1h cadence — StashDB's trending
 	// list changes faster than the 12h performer-filtered cache.
 	launch(func() { runTrendingTicker(ctx, pool, database, log.With("component", "trending")) })
+	// Download-client reachability prober: feeds the qbitReachable /
+	// sabReachable / clientErrors fields /healthz reports and the UI's
+	// "download client unavailable" banner. Probes on a 30s ticker and
+	// immediately after every config Reload; a client that is dead at
+	// boot is confirmed within about a minute of startup.
+	launch(func() { pool.RunHealthProbes(ctx) })
 
 	grabsRepo := grabs.NewRepo(database)
 	// pendingAdds bridges the api layer's async add chains and the poller's
