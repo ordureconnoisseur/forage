@@ -35,9 +35,10 @@ import (
 const notifyInterval = 2 * time.Minute
 
 const (
-	metaNotifyWatchFoundAt = "notify_watch_found_at"
-	metaNotifyGrabFailedAt = "notify_grab_failed_at"
-	metaNotifyGrabLandedAt = "notify_grab_landed_at"
+	metaNotifyWatchFoundAt   = "notify_watch_found_at"
+	metaNotifyGrabFailedAt   = "notify_grab_failed_at"
+	metaNotifyGrabLandedAt   = "notify_grab_landed_at"
+	metaNotifyGrabDeferredAt = "notify_grab_deferred_at"
 )
 
 // notifyDigestMax bounds how many per-item lines one message carries; the
@@ -70,6 +71,7 @@ func (s *Server) tickNotify(ctx context.Context) {
 	now := time.Now().Unix()
 	s.notifyAvailableWatches(ctx, now)
 	s.notifyFailedGrabs(ctx, now)
+	s.notifyDeferredGrabs(ctx, now)
 	s.notifyLandedGrabs(ctx, now)
 }
 
@@ -234,6 +236,69 @@ const (
 	notifyTitleMax  = 60
 	notifyReasonMax = 90
 )
+
+// notifyDeferredGrabs digests grabs that just entered the deferred-retry
+// flow, so a Telegram-first user learns about an indexer or client
+// problem when it STARTS, not ~81 minutes later when budgets exhaust
+// into the failed digest (and never at all for grabs that eventually
+// land, or for client outages the UI banner only shows in the browser).
+// Fires once per grab, on its FIRST deferral (Attempts == 1): re-defers
+// bump updated_at but carry higher attempt counts, and the story's
+// ending arrives via the landed or failed digests. Same watermark
+// mechanics as notifyFailedGrabs; grouped by reason because a deferral
+// burst usually has ONE cause.
+func (s *Server) notifyDeferredGrabs(ctx context.Context, now int64) {
+	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabDeferredAt, now)
+	if !ok {
+		return
+	}
+	deferred, err := s.grabs.List(ctx, "deferred", "", 200, 0)
+	if err != nil {
+		return
+	}
+	var reasons []string // first-seen order
+	titles := map[string][]string{}
+	maxAt := wm
+	for _, g := range deferred {
+		if g.UpdatedAt <= wm || g.Attempts != 1 {
+			continue
+		}
+		r := truncateLine(g.Reason, notifyReasonMax)
+		if _, seen := titles[r]; !seen {
+			reasons = append(reasons, r)
+		}
+		titles[r] = append(titles[r], "• "+notify.Escape(truncateLine(g.ReleaseTitle, notifyTitleMax)))
+		if g.UpdatedAt > maxAt {
+			maxAt = g.UpdatedAt
+		}
+	}
+	if len(reasons) == 0 {
+		return
+	}
+	total := 0
+	for _, r := range reasons {
+		total += len(titles[r])
+	}
+	var text string
+	if len(reasons) == 1 {
+		headline := fmt.Sprintf("⏳ <b>forage: %s deferred, retrying automatically</b>: %s",
+			plural(total, "grab"), notify.Escape(reasons[0]))
+		text = notifyDigest(headline, titles[reasons[0]])
+	} else {
+		var lines []string
+		for _, r := range reasons {
+			lines = append(lines, "<b>"+notify.Escape(r)+":</b>")
+			lines = append(lines, titles[r]...)
+		}
+		text = notifyDigest(fmt.Sprintf("⏳ <b>forage: %s deferred, retrying automatically</b>",
+			plural(total, "grab")), lines)
+	}
+	if err := s.pool.Notifier().Send(ctx, "grabs_deferred", text); err != nil {
+		s.log.Warn("notify send failed; will retry", "event", "grabs_deferred", "err", err)
+		return
+	}
+	s.setNotifyWatermark(ctx, metaNotifyGrabDeferredAt, maxAt)
+}
 
 func (s *Server) notifyFailedGrabs(ctx context.Context, now int64) {
 	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabFailedAt, now)
