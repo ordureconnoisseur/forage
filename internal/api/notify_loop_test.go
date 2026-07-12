@@ -367,3 +367,76 @@ func TestNotifyLandedGrabs(t *testing.T) {
 		t.Errorf("idle tick re-sent: %d messages total", len(messages))
 	}
 }
+
+// The deferred digest fires once per grab, on its FIRST deferral only:
+// re-defers (higher attempt counts) stay silent, and the ending arrives
+// via the landed/failed digests instead.
+func TestNotifyDeferredGrabsFirstDeferralOnly(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/nd.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	var mu sync.Mutex
+	var messages []map[string]any
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var m map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&m)
+		mu.Lock()
+		messages = append(messages, m)
+		mu.Unlock()
+	}))
+	defer hook.Close()
+
+	pool := clientpool.New()
+	pool.Reload(config.Config{NotifyWebhookURL: hook.URL})
+	s := &Server{
+		db:      dbh,
+		pool:    pool,
+		grabs:   grabs.NewRepo(dbh),
+		watches: watches.NewRepo(dbh),
+		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+
+	s.tickNotify(ctx) // initialize watermarks
+	time.Sleep(1100 * time.Millisecond)
+
+	// First deferral: attempts=1 -> one digest.
+	id, err := s.grabs.Insert(ctx, grabs.Grab{ReleaseTitle: "Blipped.Release", Status: "queued"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, _ := s.grabs.Get(ctx, id)
+	g.Status = "deferred"
+	g.Attempts = 1
+	g.Reason = "torrent add: fetch torrent 429"
+	g.NextRetryAt = time.Now().Add(time.Minute).Unix()
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
+
+	mu.Lock()
+	if len(messages) != 1 || messages[0]["event"] != "grabs_deferred" {
+		t.Fatalf("want 1 grabs_deferred message, got %d (%v)", len(messages), messages)
+	}
+	mu.Unlock()
+
+	// Re-deferral (attempts=2) bumps updated_at but must stay silent.
+	time.Sleep(1100 * time.Millisecond)
+	g, _ = s.grabs.Get(ctx, id)
+	g.Attempts = 2
+	g.NextRetryAt = time.Now().Add(5 * time.Minute).Unix()
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(messages) != 1 {
+		t.Fatalf("re-deferral must not re-notify: got %d messages", len(messages))
+	}
+}
