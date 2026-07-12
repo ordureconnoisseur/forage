@@ -342,7 +342,10 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 			return
 		}
 		s.log.Error("async torrent add", "release", releaseTitle, "grab_id", grabID, "attempt", attempt, "err", err)
-		s.failGrab(context.Background(), grabID, "torrent add: "+err.Error())
+		// Transient (client unreachable, indexer 5xx): park for an automatic
+		// retry instead of failing, so grabs made during an outage land on
+		// their own once it clears. Permanent errors still fail here.
+		s.deferOrFailGrab(context.Background(), grabID, "torrent add: "+err.Error(), err)
 		return
 	}
 	// Link the grab to its qBit torrent by info-hash when we have it, only if
@@ -435,7 +438,10 @@ func (s *Server) addUsenetAttempt(downloadURL, category, releaseTitle string, gr
 			return
 		}
 		s.log.Error("async usenet add", "release", releaseTitle, "grab_id", grabID, "attempt", attempt, "err", err)
-		s.failGrab(context.Background(), grabID, "sabnzbd: "+err.Error())
+		// Defer on connection-level transients (never reached SAB, safe to
+		// re-add); timeouts and permanent errors fail as before, since a
+		// slow addurl may have enqueued the NZB anyway (see shouldDeferAdd).
+		s.deferOrFailGrab(context.Background(), grabID, "sabnzbd: "+err.Error(), err)
 		return
 	}
 	// Link the grab to its SAB job by nzo_id, only if the poller hasn't already
@@ -465,20 +471,31 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := s.retryGrab(r.Context(), g); err != nil {
+	if err := s.retryGrab(r.Context(), g, true); err != nil {
 		writeMappedErr(w, err, http.StatusInternalServerError)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// retryGrab re-queues one failed grab: clears the prior failure + client
-// link and re-adds to the download client (async for qBit, sync for SAB).
-// Returns a grabError carrying an HTTP status for the typed failures.
-// Shared by the single-retry endpoint and the bulk retry-all-failed.
-func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
-	if g.Status != "failed" {
-		return grabError{http.StatusUnprocessableEntity, "only failed grabs can be retried"}
+// retryGrab re-queues one failed or deferred grab: clears the prior
+// failure + client link and re-adds to the download client (async for
+// qBit, sync for SAB). Returns a grabError carrying an HTTP status for
+// the typed failures. Shared by the single-retry endpoint, the bulk
+// retry-all-failed, and the deferred-retry loop.
+//
+// manual distinguishes a user-initiated retry from the deferred loop's
+// automatic one: a manual retry expresses fresh intent, so it accepts
+// failed grabs too and resets the attempt budget; the automatic path
+// only re-drives grabs the defer flow parked and keeps their attempt
+// count so the budget is honoured across retries.
+func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) error {
+	if manual {
+		if g.Status != "failed" && g.Status != "deferred" {
+			return grabError{http.StatusUnprocessableEntity, "only failed or deferred grabs can be retried"}
+		}
+	} else if g.Status != "deferred" {
+		return grabError{http.StatusUnprocessableEntity, "auto-retry only re-drives deferred grabs"}
 	}
 	if g.DownloadURL == "" {
 		return grabError{http.StatusUnprocessableEntity, "grab has no download URL to retry"}
@@ -518,7 +535,6 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 	// placed path regardless of the new attempt's clock.
 	applyReset := func(fresh *grabs.Grab) {
 		fresh.Status = "queued"
-		fresh.Reason = "retry requested"
 		fresh.PlaceError = ""
 		now := time.Now().Unix()
 		fresh.GrabbedAt = now
@@ -528,6 +544,17 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 			fresh.CompletedAt = 0
 			fresh.PlacedAt = 0
 			fresh.ConfirmedAt = 0
+		}
+		// Either path clears the retry schedule (the grab is live again);
+		// a manual retry also resets the attempt budget, an automatic one
+		// keeps the count so deferOrFailGrab can settle the grab to failed
+		// once the budget is spent.
+		fresh.NextRetryAt = 0
+		if manual {
+			fresh.Reason = "retry requested"
+			fresh.Attempts = 0
+		} else {
+			fresh.Reason = fmt.Sprintf("auto-retrying (attempt %d/%d)", fresh.Attempts+1, deferMaxAttempts)
 		}
 	}
 
@@ -565,7 +592,9 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab) error {
 		// row and would enqueue the download twice.
 		clientID, aerr := sb.AddURL(ctx, g.DownloadURL, cat)
 		if aerr != nil {
-			s.failGrab(ctx, g.ID, "retry add: "+aerr.Error())
+			// Transient failure re-defers (consuming an attempt) so the
+			// loop tries again later; permanent failure settles to failed.
+			s.deferOrFailGrab(ctx, g.ID, "retry add: "+aerr.Error(), aerr)
 			return grabError{http.StatusBadGateway, "sabnzbd: " + aerr.Error()}
 		}
 		if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
@@ -599,7 +628,7 @@ func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 	retried, skipped := 0, 0
 	for i := range failed {
 		g := failed[i]
-		if rerr := s.retryGrab(r.Context(), &g); rerr != nil {
+		if rerr := s.retryGrab(r.Context(), &g, true); rerr != nil {
 			skipped++
 			continue
 		}

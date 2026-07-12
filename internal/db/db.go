@@ -195,6 +195,26 @@ func migrateGrabsColumns(db *sql.DB) error {
 		}
 	}
 
+	// 2026-07-12 deferred-retry migration: grabs whose add failed
+	// transiently (client unreachable, indexer 5xx) park in
+	// status='deferred' and are re-driven with exponential backoff;
+	// attempts counts failed adds, next_retry_at gates the retry loop.
+	retryCols := []struct{ col, decl string }{
+		{"attempts", `ALTER TABLE grabs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0`},
+		{"next_retry_at", `ALTER TABLE grabs ADD COLUMN next_retry_at INTEGER`},
+	}
+	for _, c := range retryCols {
+		exists, err := has(c.col)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			if _, err := db.Exec(c.decl); err != nil {
+				return fmt.Errorf("add %s column: %w", c.col, err)
+			}
+		}
+	}
+
 	// 2026-05-26 discover migration: per-performer aggregates that
 	// power /performers sort=last_release|missing_count. The new
 	// recent_scene_cache table is created by schema.sql itself

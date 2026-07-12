@@ -73,10 +73,23 @@ const IN_FLIGHT: GrabStatus[] = [
   "placed",
   "scanned",
 ];
+// retryEta renders when a deferred grab's next automatic attempt fires,
+// from the daemon-provided unix time. Coarse on purpose: backoffs are
+// minutes to an hour and the row isn't fast-polled while deferred.
+function retryEta(at?: number): string {
+  if (!at) return "";
+  const secs = at - Math.floor(Date.now() / 1000);
+  if (secs <= 30) return "· retrying shortly";
+  if (secs < 90) return "· retries in ~1m";
+  if (secs < 3600) return `· retries in ~${Math.round(secs / 60)}m`;
+  return `· retries in ~${Math.round(secs / 3600)}h`;
+}
+
 const OUTCOME: GrabStatus[] = [
   "confirmed",
   "mismatched",
   "orphaned",
+  "deferred",
   "failed",
 ];
 
@@ -738,6 +751,9 @@ function Pipeline({ g }: { g: Grab }) {
       break;
     case "failed":
       terminal = { label: "Failed", at: 0, done: true, tone: "failed" };
+      break;
+    case "deferred":
+      terminal = { label: "Retry scheduled", at: 0, done: false, active: true };
       break;
     case "scanned":
       terminal = { label: "Identifying", at: 0, done: false, active: true };
@@ -2185,6 +2201,11 @@ function GrabRow({
                 </div>
               )}
               {g.reason && <div className="grab-reason">{g.reason}</div>}
+              {g.status === "deferred" && (
+                <div className="grab-reason">
+                  attempt {(g.attempts ?? 0) + 1}/5 {retryEta(g.next_retry_at)}
+                </div>
+              )}
 
               <Pipeline g={g} />
             </div>
@@ -2457,24 +2478,36 @@ function GrabRow({
           <div className="grab-actions">
             {/* Retry a failed grab from its stored download URL — for
                 transient failures (a tracker download cap will just fail
-                again; Pick another release is the fix there). */}
-            {g.status === "failed" && (
+                again; Pick another release is the fix there). A deferred
+                grab retries itself on its backoff schedule; the button
+                skips the wait and also resets the attempt budget. */}
+            {(g.status === "failed" || g.status === "deferred") && (
               <button
                 className="grab-action retry"
                 onClick={handleRetry}
                 disabled={retrying}
-                title="Re-attempt this release"
+                title={
+                  g.status === "deferred"
+                    ? "Retry immediately instead of waiting for the scheduled attempt"
+                    : "Re-attempt this release"
+                }
               >
-                {retrying ? "Retrying…" : "Retry ↻"}
+                {retrying
+                  ? "Retrying…"
+                  : g.status === "deferred"
+                    ? "Retry now ↻"
+                    : "Retry ↻"}
               </button>
             )}
             {retryErr && <span className="grab-delete-err">{retryErr}</span>}
-            {/* When a grab stalled or didn't land cleanly, jump back to the
-                scene's releases to pick a different one — forage never
-                auto-retries. */}
+            {/* When a grab stalled or didn't land cleanly, jump back to
+                the scene's releases to pick a different one. (Deferred
+                grabs auto-retry the SAME release on a backoff schedule;
+                this is the escape hatch to a different release.) */}
             {g.predicted_stashdb_id &&
               (g.stalled ||
                 g.status === "failed" ||
+                g.status === "deferred" ||
                 g.status === "mismatched" ||
                 g.status === "orphaned") && (
                 <button

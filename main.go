@@ -139,6 +139,12 @@ func main() {
 	// sink is configured.
 	launch(func() { server.RunNotifyLoop(ctx) })
 
+	// Deferred-retry loop: re-drives grabs whose add failed transiently
+	// (client unreachable, indexer 5xx) with exponential backoff, holding
+	// retries while the Pool's health prober says the client is down so
+	// the attempt budget survives a long outage.
+	launch(func() { server.RunDeferredRetryLoop(ctx) })
+
 	// Telegram callback loop — long-polls the bot for taps on the inline
 	// Grab/Dismiss buttons the notify loop attaches, and executes them
 	// through the same code paths as the web UI. No-op when the Telegram

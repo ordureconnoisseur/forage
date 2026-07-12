@@ -1802,6 +1802,10 @@ button {
   --status-orphaned-bg: rgba(212, 161, 74, 0.18);
   --status-failed: #ef4444;
   --status-failed-bg: rgba(239, 68, 68, 0.18);
+  /* deferred: parked for automatic retry; warm amber, deliberately
+     distinct from failed's red (it is NOT dead) */
+  --status-deferred: #fb923c;
+  --status-deferred-bg: rgba(251, 146, 60, 0.18);
 }
 
 /* Filter strip laid out as the state machine: a leading "all" toggle,
@@ -2064,6 +2068,7 @@ button {
 .chip-mismatched .chip-dot { background: var(--status-mismatched); }
 .chip-orphaned .chip-dot   { background: var(--status-orphaned); }
 .chip-failed .chip-dot     { background: var(--status-failed); }
+.chip-deferred .chip-dot   { background: var(--status-deferred); }
 
 .grab-chip {
   display: inline-flex;
@@ -2113,6 +2118,7 @@ button {
 .grab-chip.chip-mismatched.active { border-color: var(--status-mismatched); background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-chip.chip-orphaned.active   { border-color: var(--status-orphaned);   background: var(--status-orphaned-bg);   color: var(--status-orphaned); }
 .grab-chip.chip-failed.active     { border-color: var(--status-failed);     background: var(--status-failed-bg);     color: var(--status-failed); }
+.grab-chip.chip-deferred.active   { border-color: var(--status-deferred);   background: var(--status-deferred-bg);   color: var(--status-deferred); }
 
 .grab-list {
   list-style: none;
@@ -2160,6 +2166,7 @@ button {
 .grab-row.status-mismatched::before { background: var(--status-mismatched); }
 .grab-row.status-orphaned::before   { background: var(--status-orphaned); }
 .grab-row.status-failed::before     { background: var(--status-failed); }
+.grab-row.status-deferred::before   { background: var(--status-deferred); }
 
 .grab-row-head {
   width: 100%;
@@ -2208,6 +2215,7 @@ button {
 .grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }
 .grab-status-badge.chip-failed     { background: var(--status-failed-bg);    color: var(--status-failed); }
+.grab-status-badge.chip-deferred   { background: var(--status-deferred-bg);  color: var(--status-deferred); }
 
 .grab-row-body {
   min-width: 0;

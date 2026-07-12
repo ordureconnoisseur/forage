@@ -679,6 +679,7 @@ export async function inspectTorrentFile(file: File): Promise<TorrentInspect> {
 
 export type GrabStatus =
   | "queued"
+  | "deferred"
   | "downloading"
   | "completed"
   | "placed"
@@ -718,6 +719,10 @@ export interface Grab {
   // failing (permission / mount / path issue).
   place_failing?: boolean;
   reason?: string;
+  // Deferred-retry state (status "deferred"): failed add attempts so far
+  // and the unix time the daemon will automatically re-drive the add.
+  attempts?: number;
+  next_retry_at?: number;
   performer_name?: string;
   placed_path?: string;
   place_error?: string;
