@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -252,19 +253,45 @@ func (s *Server) grabAvailableWatch(ctx context.Context, id string) error {
 	if wt.Status != watches.StatusAvailable || wt.FoundURL == "" {
 		return grabError{http.StatusUnprocessableEntity, "watch has no available release yet"}
 	}
+	// The auto-pick was recorded when the watch went AVAILABLE, possibly
+	// hours before this grab. If its indexer is now in Prowlarr's failure
+	// backoff, the fetch would just defer and fail over later; grabbing
+	// the best stored candidate on a healthy indexer instead lands the
+	// scene on the first try. Same safety rules as the deferred failover
+	// (verified, grabbable, different + non-benched indexer); any
+	// protocol qualifies because no download client is committed yet.
+	// Only the AUTO choice is adjusted; an explicit candidate re-pick
+	// (postWatchGrabCandidate) is never second-guessed.
+	pickURL, pickTitle, pickIndexer := wt.FoundURL, wt.FoundTitle, wt.FoundIndexer
+	pickProtocol, pickSize := wt.FoundProtocol, wt.FoundSize
+	pickConfidence := 0.0
+	if disabled := s.disabledIndexers(ctx); disabled[strings.ToLower(wt.FoundIndexer)] {
+		var cands []sceneRelease
+		if len(wt.Candidates) > 0 {
+			_ = json.Unmarshal(wt.Candidates, &cands)
+		}
+		if alt := chooseFailover(cands, wt.FoundIndexer, wt.FoundURL, "", disabled); alt != nil {
+			s.log.Info("watch grab: auto-pick indexer is benched; using next candidate",
+				"scene", id, "from", wt.FoundIndexer, "to", alt.Indexer, "release", alt.Title)
+			pickURL, pickTitle, pickIndexer = alt.DownloadURL, alt.Title, alt.Indexer
+			pickProtocol, pickSize = alt.Protocol, alt.Size
+			pickConfidence = alt.Confidence
+		}
+	}
 	if _, err := s.doGrab(ctx, grabRequest{
-		DownloadURL:    wt.FoundURL,
-		ReleaseTitle:   wt.FoundTitle,
-		ReleaseSize:    wt.FoundSize,
-		ReleaseIndexer: wt.FoundIndexer,
-		Protocol:       wt.FoundProtocol,
+		DownloadURL:    pickURL,
+		ReleaseTitle:   pickTitle,
+		ReleaseSize:    pickSize,
+		ReleaseIndexer: pickIndexer,
+		Protocol:       pickProtocol,
 		SceneID:        wt.StashDBID,
+		Confidence:     pickConfidence,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {
 		return err
 	}
 	if err := s.watches.MarkGrabbed(ctx, id,
-		wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
+		pickTitle, pickURL, pickIndexer, pickProtocol, pickSize); err != nil {
 		s.log.Warn("watch mark grabbed", "scene", id, "err", err)
 	}
 	return nil

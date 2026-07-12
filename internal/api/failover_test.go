@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
 func TestChooseFailover(t *testing.T) {
@@ -34,7 +36,7 @@ func TestChooseFailover(t *testing.T) {
 	}
 	disabled := map[string]bool{"benchedidx": true}
 
-	got := chooseFailover(ranked, "FailedIdx", "http://p/dl/1", disabled)
+	got := chooseFailover(ranked, "FailedIdx", "http://p/dl/1", "torrent", disabled)
 	if got == nil || got.Indexer != "GoodAlt" {
 		t.Fatalf("chooseFailover = %+v, want GoodAlt (first verified grabbable torrent on a healthy other indexer)", got)
 	}
@@ -42,13 +44,13 @@ func TestChooseFailover(t *testing.T) {
 	// Same indexer under a different URL is still skipped (case-insensitive).
 	got = chooseFailover([]sceneRelease{
 		mk("failedidx", "http://p/dl/9", true, false, 10, "torrent"),
-	}, "FailedIdx", "http://p/dl/1", nil)
+	}, "FailedIdx", "http://p/dl/1", "torrent", nil)
 	if got != nil {
 		t.Fatalf("release from the failed indexer must be skipped, got %+v", got)
 	}
 
 	// No qualifying alternative: nil.
-	if got := chooseFailover(nil, "X", "", nil); got != nil {
+	if got := chooseFailover(nil, "X", "", "torrent", nil); got != nil {
 		t.Fatalf("empty list must return nil, got %+v", got)
 	}
 }
@@ -231,5 +233,78 @@ func TestDisabledIndexersCache(t *testing.T) {
 	_ = s.disabledIndexers(context.Background())
 	if statusHits != 1 {
 		t.Fatalf("indexerstatus fetched %d times within TTL, want 1", statusHits)
+	}
+}
+
+// The watch auto-pick consults Prowlarr's bench list: when the recorded
+// best release's indexer is benched, the grab switches to the best
+// healthy stored candidate instead of burning a defer cycle. An
+// explicit candidate re-pick is never adjusted (not tested here; that
+// path takes the user's URL verbatim).
+func TestGrabAvailableWatchSkipsBenchedIndexer(t *testing.T) {
+	added := make(chan string, 1)
+	qbitSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/torrents/add") {
+			_ = r.ParseMultipartForm(1 << 20)
+			select {
+			case added <- r.FormValue("urls"):
+			default:
+			}
+			_, _ = w.Write([]byte("Ok."))
+			return
+		}
+		_, _ = w.Write([]byte("v5.1.4"))
+	}))
+	defer qbitSrv.Close()
+	prowlarrSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/indexerstatus":
+			_, _ = w.Write([]byte(`[{"indexerId": 9, "disabledTill": "2099-01-01T00:00:00Z"}]`))
+		case "/api/v1/indexer":
+			_, _ = w.Write([]byte(`[{"id": 9, "name": "BenchedIdx", "protocol": "torrent", "enable": true}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer prowlarrSrv.Close()
+
+	s := newDeferTestServer(t)
+	s.pool.Reload(config.Config{
+		QbitURL:        qbitSrv.URL,
+		ProwlarrURL:    prowlarrSrv.URL,
+		ProwlarrAPIKey: "k",
+	})
+	ctx := context.Background()
+
+	cands, _ := json.Marshal([]sceneRelease{
+		{Title: "Benched Best", Indexer: "BenchedIdx", Protocol: "torrent", Seeders: 90,
+			Verified: true, DownloadURL: "magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+		{Title: "Healthy Alt", Indexer: "GoodIdx", Protocol: "torrent", Seeders: 40,
+			Verified: true, DownloadURL: "magnet:?xt=urn:btih:cccccccccccccccccccccccccccccccccccccccc"},
+	})
+	if err := s.watches.Add(ctx, watches.Watch{StashDBID: "sc1", Title: "Scene", Target: watches.TargetAny}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.watches.MarkAvailable(ctx, "sc1", "Benched Best",
+		"magnet:?xt=urn:btih:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "BenchedIdx", "torrent", 1, cands); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.grabAvailableWatch(ctx, "sc1"); err != nil {
+		t.Fatalf("grab: %v", err)
+	}
+
+	select {
+	case urls := <-added:
+		if !strings.Contains(urls, "btih:cccc") {
+			t.Fatalf("grab used the benched pick, want the healthy alternative: %q", urls)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("add never reached qbit")
+	}
+	// The watch records the release actually grabbed.
+	wt := s.findWatch(ctx, "sc1")
+	if wt == nil || wt.FoundIndexer != "GoodIdx" {
+		t.Fatalf("watch found_* not updated to the grabbed release: %+v", wt)
 	}
 }

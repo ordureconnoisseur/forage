@@ -111,19 +111,21 @@ func (s *Server) fetchDisabledIndexers(ctx context.Context) (map[string]bool, er
 	return names, nil
 }
 
-// chooseFailover picks the first release from the ranked list that a
-// grab can safely switch to: matcher-verified (an automatic switch must
-// not risk grabbing the wrong scene), not reject-ruled, actually
-// grabbable, same protocol (the grab's download client doesn't change),
-// and from a different, non-benched indexer than the one that failed.
-// Returns nil when no alternative qualifies.
-func chooseFailover(ranked []sceneRelease, failedIndexer, failedURL string, disabled map[string]bool) *sceneRelease {
+// chooseFailover picks the first release from the ranked list that an
+// automatic flow can safely switch to: matcher-verified (an automatic
+// switch must not risk grabbing the wrong scene), not reject-ruled,
+// actually grabbable, and from a different, non-benched indexer than
+// the one that failed. protocol restricts the pick ("torrent" for the
+// deferred failover, whose grab is already bound to qBit; "" for the
+// watch auto-pick, where no client is committed yet). Returns nil when
+// no alternative qualifies.
+func chooseFailover(ranked []sceneRelease, failedIndexer, failedURL, protocol string, disabled map[string]bool) *sceneRelease {
 	for i := range ranked {
 		r := &ranked[i]
 		if !r.Verified || r.Rejected || !grabbable(*r) {
 			continue
 		}
-		if r.Protocol != "torrent" || r.DownloadURL == "" {
+		if (protocol != "" && r.Protocol != protocol) || r.DownloadURL == "" {
 			continue
 		}
 		if strings.EqualFold(r.Indexer, failedIndexer) || r.DownloadURL == failedURL {
@@ -181,5 +183,5 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sce
 	// user would see at the top of the interactive list, minus the
 	// failed/benched indexers.
 	rankReleases(out)
-	return chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, s.disabledIndexers(ctx))
+	return chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, "torrent", s.disabledIndexers(ctx))
 }
