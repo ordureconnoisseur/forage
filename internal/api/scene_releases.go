@@ -193,15 +193,7 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// comparator (resolution by score, then match confidence within a tier, then
 	// availability/size, indexer/protocol nudge last). Sharing betterRelease
 	// keeps this list's leading release identical to the watcher's auto-pick.
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Verified != out[j].Verified {
-			return out[i].Verified
-		}
-		if out[i].Rejected != out[j].Rejected {
-			return !out[i].Rejected // non-rejected first
-		}
-		return betterRelease(out[i], out[j])
-	})
+	rankReleases(out)
 
 	resp := sceneReleasesResponse{Releases: out}
 	resp.Scene.StashDBID = scene.ID
@@ -414,6 +406,23 @@ func seedTier(r sceneRelease) int {
 	default:
 		return 0
 	}
+}
+
+// rankReleases sorts a verified release list into the canonical order
+// every consumer shows and picks from: verified first, then non-rejected,
+// then the betterRelease comparator. ONE definition on purpose, so the
+// interactive Grab view, the watcher's auto-pick, and the deferred-retry
+// failover can never silently disagree about which release is "best".
+func rankReleases(out []sceneRelease) {
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].Verified != out[j].Verified {
+			return out[i].Verified
+		}
+		if out[i].Rejected != out[j].Rejected {
+			return !out[i].Rejected // non-rejected first
+		}
+		return betterRelease(out[i], out[j])
+	})
 }
 
 // verifyReleases runs the matcher over a set of Prowlarr releases and

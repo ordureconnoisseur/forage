@@ -172,7 +172,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 	res, err := r.db.ExecContext(ctx, `
 		UPDATE grabs SET
 		  release_title = ?, release_size = ?, release_indexer = ?,
-		  download_url = ?,
+		  download_url = ?, predicted_confidence = ?,
 		  client_id = ?, client_name = ?, status = ?,
 		  actual_stashdb_id = ?, reason = ?,
 		  performer_name = ?, placed_path = ?, place_error = ?,
@@ -187,7 +187,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  rev = rev + 1
 		WHERE id = ? AND rev = ?`,
 		g.ReleaseTitle, nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer),
-		nullString(g.DownloadURL),
+		nullString(g.DownloadURL), nullFloat(g.PredictedConfidence),
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
 		nullString(g.ActualStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
@@ -342,14 +342,31 @@ func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, e
 // soonest first, capped at limit: the deferred-retry loop's work list.
 // The cap bounds one tick's worth of re-adds (a SAB re-add is a
 // synchronous call); anything past it is picked up next tick.
-func (r *Repo) DeferredDue(ctx context.Context, now int64, limit int) ([]Grab, error) {
+//
+// excludeClients drops whole client kinds from the batch: grabs held by
+// a client outage keep the OLDEST next_retry_at values, so without the
+// exclusion they would fill the LIMIT window on every tick and starve
+// due grabs on the healthy client for the outage's duration.
+//
+// A NULL next_retry_at counts as due, deliberately: no current writer
+// produces a deferred row without a schedule, but if one ever slips
+// through, "retry it now" recovers the grab, whereas filtering it out
+// would strand a zombie invisible to both this loop and the poller.
+func (r *Repo) DeferredDue(ctx context.Context, now int64, limit int, excludeClients []string) ([]Grab, error) {
 	if limit <= 0 {
 		limit = 10
 	}
+	where := `status = 'deferred' AND (next_retry_at IS NULL OR next_retry_at <= ?)`
+	args := []any{now}
+	for _, c := range excludeClients {
+		where += ` AND client != ?`
+		args = append(args, c)
+	}
+	args = append(args, limit)
 	return r.query(ctx, `
 		SELECT * FROM grabs
-		WHERE status = 'deferred' AND next_retry_at IS NOT NULL AND next_retry_at <= ?
-		ORDER BY next_retry_at ASC LIMIT ?`, now, limit)
+		WHERE `+where+`
+		ORDER BY next_retry_at ASC LIMIT ?`, args...)
 }
 
 // ConfirmedSince returns single-scene grabs that reached 'confirmed' after

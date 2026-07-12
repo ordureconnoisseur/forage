@@ -238,7 +238,13 @@ func (s *Server) grabbedSceneSet(ctx context.Context) (live, covered map[string]
 	covered = make(map[string]bool, len(byScene))
 	for sid, st := range byScene {
 		switch st {
-		case "queued", "downloading", "completed", "placed", "scanned", "confirmed":
+		// 'deferred' is live: the add hasn't landed but the retry loop
+		// will re-drive it. Omitting it here made the watch reconcile
+		// treat the scene as uncovered, revert the watch to watching, and
+		// auto-offer a DIFFERENT release of the same scene while the
+		// deferred grab's own retry was minutes away: a duplicate
+		// download of a scene the user was already getting.
+		case "queued", "deferred", "downloading", "completed", "placed", "scanned", "confirmed":
 			live[sid] = true
 			covered[sid] = true
 		case "mismatched", "orphaned":

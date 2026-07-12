@@ -107,9 +107,9 @@ func TestTickDeferredRetriesFailsOver(t *testing.T) {
 		Verified:    true,
 		DownloadURL: "magnet:?xt=urn:btih:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 	}
-	var sawGrab failoverGrab
-	s.resolveFailover = func(_ context.Context, g failoverGrab) *sceneRelease {
-		sawGrab = g
+	var sawGrab grabs.Grab
+	s.resolveFailover = func(_ context.Context, g *grabs.Grab) *sceneRelease {
+		sawGrab = *g
 		return &alt
 	}
 
@@ -127,7 +127,7 @@ func TestTickDeferredRetriesFailsOver(t *testing.T) {
 	}
 	g, _ := s.grabs.Get(ctx, id)
 	g.Status = "deferred"
-	g.Attempts = 1
+	g.Attempts = 2 // failover is single-shot, firing exactly on the retry after the second failure
 	g.FailKind = "indexer"
 	g.NextRetryAt = time.Now().Add(-time.Minute).Unix()
 	if err := s.grabs.Update(ctx, *g); err != nil {
@@ -150,7 +150,7 @@ func TestTickDeferredRetriesFailsOver(t *testing.T) {
 	if g.PredictedStashDBID != "scene-123" {
 		t.Fatal("scene linkage lost on failover")
 	}
-	if !strings.Contains(g.Reason, "failed over to HealthyIdx") {
+	if !strings.Contains(g.Reason, "failed over to HealthyIdx (attempt 3/5)") {
 		t.Fatalf("reason = %q, want the failover story", g.Reason)
 	}
 	// The re-driven add carried the NEW release's magnet.
@@ -177,7 +177,7 @@ func TestTickDeferredRetriesFailoverFallsBackToOriginal(t *testing.T) {
 
 	s := newDeferTestServer(t)
 	s.pool.Reload(config.Config{QbitURL: qbitSrv.URL})
-	s.resolveFailover = func(context.Context, failoverGrab) *sceneRelease { return nil }
+	s.resolveFailover = func(context.Context, *grabs.Grab) *sceneRelease { return nil }
 
 	ctx := context.Background()
 	id := insertQueuedGrab(t, s, "qbit")

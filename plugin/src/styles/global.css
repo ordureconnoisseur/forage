@@ -2433,6 +2433,10 @@ button {
 .grab-poster-badge.chip-orphaned {
   color: var(--status-orphaned);
 }
+.grab-poster-badge.chip-deferred {
+  background: var(--status-deferred-bg);
+  color: var(--status-deferred);
+}
 .grab-poster-badge.chip-failed {
   color: var(--status-failed);
 }

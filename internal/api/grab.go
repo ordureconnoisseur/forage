@@ -224,6 +224,13 @@ func (s *Server) insertGrab(ctx context.Context, req grabRequest, client, client
 // fails. minFetchInterval spaces fetches so the burst doesn't 429 to begin
 // with.
 const (
+	// NOTE: this is the IN-PROCESS retry system (seconds-scale AfterFunc
+	// backoff for indexer rate limits within one add attempt). It is
+	// distinct from, and multiplies with, the PERSISTENT deferred-retry
+	// system in deferred.go (deferMaxAttempts, minutes-to-hours, DB-backed):
+	// each deferred re-drive re-enters this loop, so a 429ing indexer can
+	// see up to addMaxAttempts x deferMaxAttempts fetches before the grab
+	// settles. Tune with that product in mind.
 	addMaxAttempts   = 5
 	addBackoffBase   = 20 * time.Second
 	addBackoffCap    = 3 * time.Minute
@@ -490,6 +497,14 @@ func (s *Server) postGrabRetry(w http.ResponseWriter, r *http.Request) {
 // only re-drives grabs the defer flow parked and keeps their attempt
 // count so the budget is honoured across retries.
 func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) error {
+	return s.retryGrabWithReason(ctx, g, manual, "")
+}
+
+// retryGrabWithReason is retryGrab with an optional reason override for
+// the re-queued row (the deferred-retry loop passes the failover story;
+// empty gets the mode's default). Split so the exported-ish surface for
+// handlers stays two-argument.
+func (s *Server) retryGrabWithReason(ctx context.Context, g *grabs.Grab, manual bool, reasonOverride string) error {
 	if manual {
 		if g.Status != "failed" && g.Status != "deferred" {
 			return grabError{http.StatusUnprocessableEntity, "only failed or deferred grabs can be retried"}
@@ -545,17 +560,69 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) erro
 			fresh.PlacedAt = 0
 			fresh.ConfirmedAt = 0
 		}
-		// Either path clears the retry schedule (the grab is live again);
-		// a manual retry also resets the attempt budget, an automatic one
-		// keeps the count so deferOrFailGrab can settle the grab to failed
-		// once the budget is spent.
+		// Either path clears the retry schedule and failure kind (the grab
+		// is live again; a future defer re-stamps both); a manual retry
+		// also resets the attempt budget, an automatic one keeps the count
+		// so deferOrFailGrab can settle the grab once the budget is spent.
 		fresh.NextRetryAt = 0
-		if manual {
+		fresh.FailKind = ""
+		switch {
+		case manual:
 			fresh.Reason = "retry requested"
 			fresh.Attempts = 0
-		} else {
+		case reasonOverride != "":
+			fresh.Reason = reasonOverride
+		default:
 			fresh.Reason = fmt.Sprintf("auto-retrying (attempt %d/%d)", fresh.Attempts+1, deferMaxAttempts)
 		}
+	}
+
+	// CLAIM the grab before any client side effect: one CAS write that
+	// re-checks the FRESH row is still in a retryable state and, only
+	// then, resets it to queued. This closes the race where two retry
+	// drivers (the deferred loop and a user's "Retry now", or a retry
+	// racing a poller advance) both act on stale snapshots: the loser
+	// finds the row no longer failed/deferred, claims nothing, and fires
+	// no add. The add is then driven from the CLAIMED row's values, not
+	// the caller's snapshot, so a failover that switched the release
+	// between the caller's read and this claim drives the new release.
+	var (
+		claimed    bool
+		driveURL   string
+		driveTitle string
+		driveCat   string
+	)
+	if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
+		// Re-evaluated on every CAS re-run; the last run is the applied one.
+		claimed = fresh.Status == "deferred" || (manual && fresh.Status == "failed")
+		if !claimed {
+			return // leave the row untouched (the write is a content no-op)
+		}
+		applyReset(fresh)
+		if fresh.Category == "" {
+			if fresh.Client == "sabnzbd" {
+				fresh.Category = settings.SabCategory
+			} else {
+				fresh.Category = settings.QbitCategory
+			}
+		}
+		if fresh.Client == "qbit" && fresh.ClientID == "" {
+			fresh.ClientID = magnetInfoHash(fresh.DownloadURL) // pin magnet hash when we have none
+		}
+		// A SAB retry is a NEW job with a new nzo_id: drop the previous
+		// attempt's id at claim time so the queued window never points at
+		// a dead job (the fresh GrabbedAt re-arms the register grace, so
+		// the poller tolerates the unlinked window). qBit keeps its link:
+		// the info-hash is stable across re-adds.
+		if fresh.Client == "sabnzbd" {
+			fresh.ClientID = ""
+		}
+		driveURL, driveTitle, driveCat = fresh.DownloadURL, fresh.ReleaseTitle, fresh.Category
+	}); err != nil {
+		return err
+	}
+	if !claimed {
+		return grabError{http.StatusConflict, "grab changed state; retry skipped"}
 	}
 
 	switch g.Client {
@@ -563,34 +630,19 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) erro
 		if s.pool.Qbit() == nil {
 			return grabError{http.StatusServiceUnavailable, "qbit not configured"}
 		}
-		cat := g.Category
-		if cat == "" {
-			cat = settings.QbitCategory
-		}
-		if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
-			applyReset(fresh)
-			fresh.Category = cat
-			if fresh.ClientID == "" {
-				fresh.ClientID = magnetInfoHash(fresh.DownloadURL) // pin magnet hash when we have none
-			}
-		}); err != nil {
-			return err
-		}
-		go s.addTorrentAsync(g.DownloadURL, cat, g.ReleaseTitle, g.ID)
+		go s.addTorrentAsync(driveURL, driveCat, driveTitle, g.ID)
 	case "sabnzbd":
 		sb := s.pool.Sab()
 		if sb == nil {
 			return grabError{http.StatusServiceUnavailable, "sab not configured"}
 		}
-		cat := g.Category
-		if cat == "" {
-			cat = settings.SabCategory
-		}
-		// AddURL is a real side effect (it enqueues the NZB) and returns the
-		// nzo_id we must persist, so it runs ONCE here, before the CAS write —
-		// not inside the applyGrabUpdate closure, which can re-run on a stale
-		// row and would enqueue the download twice.
-		clientID, aerr := sb.AddURL(ctx, g.DownloadURL, cat)
+		// AddURL is a real side effect (it enqueues the NZB) and returns
+		// the nzo_id to persist, so it runs ONCE, after the claim (which
+		// serialises concurrent retry drivers) and outside the CAS closure
+		// (which can re-run). The row is 'queued' now, so a failure here
+		// flows through deferOrFailGrab with correct budget accounting,
+		// and a manual retry's budget reset has already been persisted.
+		clientID, aerr := sb.AddURL(ctx, driveURL, driveCat)
 		if aerr != nil {
 			// Transient failure re-defers (consuming an attempt) so the
 			// loop tries again later; permanent failure settles to failed.
@@ -598,8 +650,8 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) erro
 			return grabError{http.StatusBadGateway, "sabnzbd: " + aerr.Error()}
 		}
 		if err := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
-			applyReset(fresh)
-			fresh.Category = cat
+			// Unconditional: this add's nzo_id is authoritative (each SAB
+			// add creates a new job; the claim cleared the old link).
 			fresh.ClientID = clientID
 		}); err != nil {
 			return err
@@ -607,7 +659,7 @@ func (s *Server) retryGrab(ctx context.Context, g *grabs.Grab, manual bool) erro
 	default:
 		return grabError{http.StatusUnprocessableEntity, "unknown client; can't retry"}
 	}
-	s.log.Info("grab retry", "id", g.ID, "client", g.Client, "release", g.ReleaseTitle)
+	s.log.Info("grab retry", "id", g.ID, "client", g.Client, "release", driveTitle, "manual", manual)
 	return nil
 }
 
@@ -692,18 +744,27 @@ func (s *Server) failGrab(ctx context.Context, grabID int64, reason string) {
 	if err != nil || g == nil {
 		return
 	}
-	// Only fail a grab still sitting in 'queued'. If the poller has already
-	// advanced it (downloading/placed/…), the add "failure" was a false alarm
-	// — the client accepted the torrent but our add-response read tripped —
-	// and regressing a live download to failed would be wrong. (The CAS in
-	// Update covers a poller write that lands AFTER our Get; this covers the
-	// case where we loaded the already-advanced row.)
-	if g.Status != "queued" {
-		s.log.Info("skip fail: grab already advanced past queued", "grab_id", grabID, "status", g.Status)
+	// Only fail a grab still sitting in 'queued' or parked 'deferred'. If
+	// the poller has already advanced it (downloading/placed/…), the add
+	// "failure" was a false alarm (the client accepted the torrent but our
+	// add-response read tripped) and regressing a live download to failed
+	// would be wrong. (The CAS in Update covers a poller write that lands
+	// AFTER our Get; this covers the case where we loaded the already-
+	// advanced row.) 'deferred' must be failable: a PERMANENT error from
+	// retryGrab's synchronous SAB re-add arrives while the row is still
+	// deferred (the reset only lands after AddURL succeeds), and refusing
+	// it would leave an immortal deferred row the retry loop re-drives
+	// every tick forever.
+	if g.Status != "queued" && g.Status != "deferred" {
+		s.log.Info("skip fail: grab already advanced", "grab_id", grabID, "status", g.Status)
 		return
 	}
 	g.Status = "failed"
 	g.Reason = reason
+	// A deferred row carries a retry schedule + failure kind; failing it
+	// retires both so the row reads as a settled outcome, not a parked one.
+	g.NextRetryAt = 0
+	g.FailKind = ""
 	if err := s.grabs.Update(ctx, *g); err != nil && !errors.Is(err, grabs.ErrStaleUpdate) {
 		s.log.Warn("mark grab failed", "grab_id", grabID, "err", err)
 	}

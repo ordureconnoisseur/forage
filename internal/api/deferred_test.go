@@ -261,7 +261,7 @@ func TestDeferredDueRespectsSchedule(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	due, err := s.grabs.DeferredDue(ctx, time.Now().Unix(), 10)
+	due, err := s.grabs.DeferredDue(ctx, time.Now().Unix(), 10, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,5 +307,140 @@ func TestRetryGrabManualVsAuto(t *testing.T) {
 	var ge grabError
 	if err := s.retryGrab(ctx, failed, false); !errors.As(err, &ge) {
 		t.Fatalf("auto retry of failed grab: err = %v, want grabError", err)
+	}
+}
+
+// Regression: a PERMANENT error arriving while the row is still
+// 'deferred' (retryGrab's synchronous SAB path fails before the reset
+// lands... or in the new claim shape, any deferred-window failure) must
+// settle the grab to failed, not skip and leave an immortal deferred row
+// the loop re-drives every tick forever.
+func TestDeferredPermanentErrorSettlesToFailed(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	id := insertQueuedGrab(t, s, "sabnzbd")
+	g, _ := s.grabs.Get(ctx, id)
+	g.Status = "deferred"
+	g.Attempts = 2
+	g.NextRetryAt = time.Now().Add(-time.Minute).Unix()
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+
+	rejected := fmt.Errorf("sab rejected the nzb (%w)", clienterr.ErrRejected)
+	s.deferOrFailGrab(ctx, id, "retry add: rejected", rejected)
+
+	g, _ = s.grabs.Get(ctx, id)
+	if g.Status != "failed" {
+		t.Fatalf("status = %s, want failed (immortal-deferred zombie)", g.Status)
+	}
+	if g.NextRetryAt != 0 || g.FailKind != "" {
+		t.Fatalf("failed row must retire its retry schedule, got next=%d kind=%q", g.NextRetryAt, g.FailKind)
+	}
+}
+
+// Regression: the retry CLAIM must re-check the FRESH row. An auto retry
+// holding a stale 'deferred' snapshot while the row has already advanced
+// (concurrent manual retry whose add landed) must not stomp the live row
+// back to queued or fire a second add.
+func TestRetryGrabClaimRefusesAdvancedRow(t *testing.T) {
+	s := newDeferTestServer(t)
+	s.pool.Reload(config.Config{QbitURL: "http://127.0.0.1:1"})
+	ctx := context.Background()
+	id := insertQueuedGrab(t, s, "qbit")
+
+	// Build a STALE deferred snapshot, then advance the real row.
+	g, _ := s.grabs.Get(ctx, id)
+	g.Status = "deferred"
+	g.Attempts = 1
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := s.grabs.Get(ctx, id)
+	fresh, _ := s.grabs.Get(ctx, id)
+	fresh.Status = "downloading"
+	if err := s.grabs.Update(ctx, *fresh); err != nil {
+		t.Fatal(err)
+	}
+
+	err := s.retryGrab(ctx, stale, false)
+	if err == nil {
+		t.Fatal("retry with a stale snapshot of an advanced row must be refused")
+	}
+	g, _ = s.grabs.Get(ctx, id)
+	if g.Status != "downloading" {
+		t.Fatalf("claim stomped the advanced row: status = %s", g.Status)
+	}
+}
+
+// Regression: blocked clients are excluded from the due batch so their
+// held grabs (oldest next_retry_at) can't monopolise the LIMIT window
+// and starve the healthy client's due grabs.
+func TestDeferredDueExcludesBlockedClients(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		id := insertQueuedGrab(t, s, "qbit")
+		g, _ := s.grabs.Get(ctx, id)
+		g.Status = "deferred"
+		g.NextRetryAt = time.Now().Add(-time.Hour).Unix() // oldest: would win the sort
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sabID := insertQueuedGrab(t, s, "sabnzbd")
+	g, _ := s.grabs.Get(ctx, sabID)
+	g.Status = "deferred"
+	g.NextRetryAt = time.Now().Add(-time.Minute).Unix()
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := s.grabs.DeferredDue(ctx, time.Now().Unix(), 2, []string{"qbit"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || due[0].ID != sabID {
+		t.Fatalf("exclusion failed: got %d grabs (want just the sab one)", len(due))
+	}
+}
+
+// Failover is single-shot: it fires only on the retry after the second
+// consecutive indexer failure, so the first retry re-drives the original
+// release and two struggling indexers can't ping-pong the budget away.
+func TestFailoverSingleShotGating(t *testing.T) {
+	s := newDeferTestServer(t)
+	calls := 0
+	s.resolveFailover = func(context.Context, *grabs.Grab) *sceneRelease {
+		calls++
+		return nil
+	}
+	ctx := context.Background()
+
+	mk := func(attempts int, kind, indexer string) *grabs.Grab {
+		id := insertQueuedGrab(t, s, "qbit")
+		g, _ := s.grabs.Get(ctx, id)
+		g.Status = "deferred"
+		g.Attempts = attempts
+		g.FailKind = kind
+		g.ReleaseIndexer = indexer
+		return g
+	}
+
+	if r := s.maybeFailOverRelease(ctx, mk(1, "indexer", "Idx")); r != "" || calls != 0 {
+		t.Fatalf("attempt 1 must retry the original release (calls=%d)", calls)
+	}
+	if r := s.maybeFailOverRelease(ctx, mk(3, "indexer", "Idx")); r != "" || calls != 0 {
+		t.Fatalf("attempt 3+ must not fail over again (calls=%d)", calls)
+	}
+	if r := s.maybeFailOverRelease(ctx, mk(2, "client", "Idx")); r != "" || calls != 0 {
+		t.Fatalf("client-side failures never fail over (calls=%d)", calls)
+	}
+	if r := s.maybeFailOverRelease(ctx, mk(2, "indexer", "")); r != "" || calls != 0 {
+		t.Fatalf("empty failed-indexer must not fail over (calls=%d)", calls)
+	}
+	_ = s.maybeFailOverRelease(ctx, mk(2, "indexer", "Idx"))
+	if calls != 1 {
+		t.Fatalf("attempts==2 indexer failure must consult the resolver once, got %d", calls)
 	}
 }

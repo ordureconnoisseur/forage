@@ -2,10 +2,11 @@ package api
 
 import (
 	"context"
-	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
 // Indexer failover: when a deferred grab's failure was INDEXER-side (the
@@ -19,7 +20,12 @@ import (
 // confirmation flow are untouched. Client-side failures never fail over:
 // the release is fine, the client wasn't, and the original pick was the
 // ranked best.
-const indexerStatusTTL = 60 * time.Second
+const (
+	indexerStatusTTL = 60 * time.Second
+	// failoverResolveTimeout bounds one grab's scene re-resolution
+	// (StashDB fetch + Prowlarr searches + matcher verify).
+	failoverResolveTimeout = 45 * time.Second
+)
 
 // disabledIndexerCache is a short-TTL snapshot of Prowlarr's
 // failure-backoff list, keyed by lowercase indexer name. Fetching it
@@ -33,28 +39,55 @@ type disabledIndexerCache struct {
 
 // disabledIndexers returns the lowercase names of indexers Prowlarr
 // currently has benched (an active disabledTill in /api/v1/indexerstatus).
-// Best-effort: any error returns an empty set (failover then only avoids
-// the indexer that just failed), never blocks the retry.
+// Best-effort and never blocking: the mutex guards only the cached
+// snapshot, never the Prowlarr round-trips, and a fetch FAILURE keeps
+// serving the previous (stale) set rather than an empty one. Stale beats
+// blind: a Prowlarr blip is exactly when its bench list is most likely
+// populated, and forgetting it would let failover burn attempts on
+// benched indexers the check exists to avoid. Failed fetches re-try
+// after a short hold-off instead of the full TTL.
 func (s *Server) disabledIndexers(ctx context.Context) map[string]bool {
 	s.indexerDisabled.mu.Lock()
-	defer s.indexerDisabled.mu.Unlock()
 	if time.Since(s.indexerDisabled.fetchedAt) < indexerStatusTTL && s.indexerDisabled.names != nil {
-		return s.indexerDisabled.names
+		cached := s.indexerDisabled.names
+		s.indexerDisabled.mu.Unlock()
+		return cached
 	}
-	names := map[string]bool{}
-	// Stamp before fetching so a failing Prowlarr isn't hammered once per
-	// failover candidate; the empty set is cached for the TTL too.
+	// Stamp before fetching so concurrent callers (and a failing
+	// Prowlarr) don't stack fetches; adjusted down on failure below.
 	s.indexerDisabled.fetchedAt = time.Now()
-	s.indexerDisabled.names = names
+	prev := s.indexerDisabled.names
+	s.indexerDisabled.mu.Unlock()
 
+	names, err := s.fetchDisabledIndexers(ctx)
+
+	s.indexerDisabled.mu.Lock()
+	defer s.indexerDisabled.mu.Unlock()
+	if err != nil {
+		s.log.Warn("failover: disabled-indexer fetch", "err", err)
+		// Keep the stale set and allow a re-try well before the TTL.
+		s.indexerDisabled.fetchedAt = time.Now().Add(15*time.Second - indexerStatusTTL)
+		if prev == nil {
+			prev = map[string]bool{}
+			s.indexerDisabled.names = prev
+		}
+		return prev
+	}
+	s.indexerDisabled.names = names
+	return names
+}
+
+// fetchDisabledIndexers does the two Prowlarr round-trips (benched ids,
+// then the id-to-name mapping) with no cache lock held.
+func (s *Server) fetchDisabledIndexers(ctx context.Context) (map[string]bool, error) {
+	names := map[string]bool{}
 	pc := s.pool.Prowlarr()
 	if pc == nil {
-		return names
+		return names, nil
 	}
 	statuses, err := pc.IndexerStatuses(ctx)
 	if err != nil {
-		s.log.Warn("failover: indexerstatus fetch", "err", err)
-		return names
+		return nil, err
 	}
 	now := time.Now()
 	benched := map[int]bool{}
@@ -64,19 +97,18 @@ func (s *Server) disabledIndexers(ctx context.Context) map[string]bool {
 		}
 	}
 	if len(benched) == 0 {
-		return names
+		return names, nil
 	}
 	indexers, err := pc.Indexers(ctx)
 	if err != nil {
-		s.log.Warn("failover: indexer list fetch", "err", err)
-		return names
+		return nil, err
 	}
 	for _, ix := range indexers {
 		if benched[ix.ID] {
 			names[strings.ToLower(ix.Name)] = true
 		}
 	}
-	return names
+	return names, nil
 }
 
 // chooseFailover picks the first release from the ranked list that a
@@ -111,7 +143,7 @@ func chooseFailover(ranked []sceneRelease, failedIndexer, failedURL string, disa
 // failure, or no qualifying alternative). Only single qbit grabs with a
 // predicted scene are eligible: packs aren't scene-resolved, and SAB
 // fetch failures aren't distinguishable client-side.
-func (s *Server) resolveFailoverRelease(ctx context.Context, g failoverGrab) *sceneRelease {
+func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sceneRelease {
 	if g.Client != "qbit" || g.Kind != "single" || g.PredictedStashDBID == "" {
 		return nil
 	}
@@ -120,6 +152,12 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g failoverGrab) *sc
 	if prowlarrC == nil || stashDBC == nil {
 		return nil
 	}
+	// Bound the whole resolution: it runs synchronously inside the retry
+	// tick, and a degraded Prowlarr (exactly when indexer failures
+	// cluster) must not stretch one grab's failover into minutes that
+	// starve the rest of the batch.
+	ctx, cancel := context.WithTimeout(ctx, failoverResolveTimeout)
+	defer cancel()
 	scene, err := stashDBC.FindScene(ctx, g.PredictedStashDBID)
 	if err != nil || scene == nil || scene.Title == "" {
 		return nil
@@ -139,29 +177,9 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g failoverGrab) *sc
 		return nil
 	}
 	out := s.verifyReleases(ctx, m, g.PredictedStashDBID, scene.Title, releases)
-	// Same ordering the interactive Grab view and the watcher use, so the
-	// failover pick is exactly what the user would see at the top of the
-	// list (minus the failed/benched indexers).
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Verified != out[j].Verified {
-			return out[i].Verified
-		}
-		if out[i].Rejected != out[j].Rejected {
-			return !out[i].Rejected
-		}
-		return betterRelease(out[i], out[j])
-	})
+	// Shared ranking (rankReleases): the failover pick is exactly what the
+	// user would see at the top of the interactive list, minus the
+	// failed/benched indexers.
+	rankReleases(out)
 	return chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, s.disabledIndexers(ctx))
-}
-
-// failoverGrab is the slice of a grab the failover resolution needs;
-// a plain value so tests can stub resolveFailover without a repo row.
-type failoverGrab struct {
-	ID                 int64
-	Client             string
-	Kind               string
-	PredictedStashDBID string
-	PerformerName      string
-	ReleaseIndexer     string
-	DownloadURL        string
 }
