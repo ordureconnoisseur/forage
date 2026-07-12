@@ -392,7 +392,15 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// that to qBit just yields an opaque "could not parse" — detect it
 	// here and fail with an actionable reason instead.
 	if !looksLikeTorrent(body) {
-		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page): likely the tracker's download cap or an expired session, not a bad torrent (%w)", ErrIndexerFetch)
+		// Classified TRANSIENT deliberately: a download cap or lapsed
+		// session is per-indexer and time-bound (caps reset daily), and
+		// with the deferred-retry flow "transient" means "a retry can
+		// help": the deferral's indexer failover switches the grab to
+		// another indexer's copy of the scene at the single-shot slot,
+		// which is exactly the remedy for a capped tracker. The in-process
+		// seconds-scale retry does NOT re-fire on this (its trigger is
+		// 429/503 strings), so the cap isn't hammered within the attempt.
+		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page): likely the tracker's download cap or an expired session, not a bad torrent (%w) (%w)", ErrIndexerFetch, clienterr.ErrTransient)
 	}
 
 	// The info-hash (a) lets the grab link to its torrent without the

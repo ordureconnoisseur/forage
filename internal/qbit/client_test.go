@@ -275,8 +275,10 @@ func TestAddTorrentIndexerFetchSentinel(t *testing.T) {
 	}
 }
 
-// The non-torrent-response guard (download cap / lapsed session) is also
-// indexer-side, but NOT transient: it must not enter the deferred flow.
+// The non-torrent-response guard (download cap / lapsed session) is
+// indexer-side AND transient: caps are per-indexer and time-bound, so
+// the deferred flow's failover can rescue the grab from another indexer
+// (and the backoff ladder gives the cap a chance to reset).
 func TestAddTorrentNonTorrentBodySentinel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("<html>download limit reached</html>"))
@@ -291,7 +293,7 @@ func TestAddTorrentNonTorrentBodySentinel(t *testing.T) {
 	if !errors.Is(err, ErrIndexerFetch) {
 		t.Fatalf("err = %v, want ErrIndexerFetch", err)
 	}
-	if errors.Is(err, clienterr.ErrTransient) {
-		t.Fatalf("err = %v: a download-cap page must NOT classify transient", err)
+	if !errors.Is(err, clienterr.ErrTransient) {
+		t.Fatalf("err = %v: a download-cap page must classify transient so the deferred failover can rescue it", err)
 	}
 }
