@@ -994,8 +994,18 @@ export interface Health {
   prowlarrConfigured: boolean;
   qbitConfigured: boolean;
   qbitCategory: string;
+  // True when a configured qBit answered its last reachability probe.
+  // Optimistically true until the first probe lands and whenever qBit
+  // isn't configured, so it only reads false on a confirmed outage.
+  qbitReachable: boolean;
   sabConfigured: boolean;
   sabCategory: string;
+  // SAB's equivalent of qbitReachable.
+  sabReachable: boolean;
+  // Human-readable reachability failures for configured-but-unreachable
+  // download clients, e.g. "qbit: dial tcp 127.0.0.1:8083: connection
+  // refused". Empty when every configured client is reachable.
+  clientErrors: string[];
   placerConfigured: boolean;
   unconfigured: boolean;
   // True when a credential is configured (password OR API key) and the UI

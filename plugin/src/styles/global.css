@@ -1413,6 +1413,16 @@ button {
   background: rgba(212, 161, 74, 0.12);
   color: var(--amber);
 }
+.banner-error {
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--red);
+  font-weight: 500;
+}
+.banner-error code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 400;
+  opacity: 0.9;
+}
 .banner-setup {
   background: rgba(var(--accent-rgb), 0.10);
   color: var(--accent-bright);

@@ -235,6 +235,30 @@ export default function App() {
     };
   }, [ready, healthNonce, route]);
 
+  // Re-poll /healthz while the app is running so the download-client
+  // reachability banner reflects an outage that starts mid-session (a VPN
+  // blip taking qBit offline). Deliberately conservative: it updates health
+  // only on success and never touches healthError/authOk, so a transient
+  // /healthz hiccup can't bounce a working session to the setup wizard the
+  // way the initial probe's failure path does. Gated on `ready`, where the
+  // app-phase fields (unconfigured, adminAuthRequired) are already settled,
+  // so a refreshed payload only ever changes the reachability fields.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    const id = window.setInterval(() => {
+      fetchHealth()
+        .then((h) => {
+          if (!cancelled) setHealth(h);
+        })
+        .catch(() => {});
+    }, 30000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [ready, healthNonce]);
+
   const goPerformers = () => setHash("#/");
   const goStudios = () => setHash("#/studios");
   const goDiscover = () => setHash("#/discover");
@@ -360,6 +384,18 @@ export default function App() {
           ⚠ Mixed content: this page is HTTPS but the forage URL is HTTP. The
           browser will block all API requests. Click the gear to set an HTTPS
           URL, or open Stash via a non-HTTPS URL.
+        </div>
+      )}
+      {health?.clientErrors && health.clientErrors.length > 0 && (
+        <div className="banner banner-error" role="alert">
+          ⚠ Download client unavailable — grabs will fail until it is
+          reachable again.
+          {health.clientErrors.map((e) => (
+            <span key={e}>
+              {" "}
+              <code>{e}</code>
+            </span>
+          ))}
         </div>
       )}
       <main className="app-main">
