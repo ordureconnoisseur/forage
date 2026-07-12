@@ -105,6 +105,15 @@ export default function App() {
   // fresh health probe.
   const apiURL = foragerBase();
 
+  // healthSeq orders /healthz responses across the two writers (the
+  // mount/settings probe and the 30s re-poll): each fetch takes a
+  // ticket, and only the response holding the newest ticket may write
+  // health state. Without it a stalled older response resolving after a
+  // newer one would overwrite fresh data (e.g. re-installing a
+  // resolved-outage banner), which is realistic under exactly the flaky
+  // network conditions the reachability banner exists for.
+  const healthSeq = useRef(0);
+
   useEffect(() => {
     const onHash = () => setRoute(parseRoute(location.hash));
     window.addEventListener("hashchange", onHash);
@@ -127,9 +136,10 @@ export default function App() {
   // URL) we fall through to the setup wizard's connect step.
   useEffect(() => {
     let cancelled = false;
+    const seq = ++healthSeq.current;
     fetchHealth()
       .then(async (h) => {
-        if (cancelled) return;
+        if (cancelled || seq !== healthSeq.current) return;
         setHealth(h);
         setHealthError(null);
         // Resolve the auth phase before flipping healthProbed (below, in
@@ -144,7 +154,7 @@ export default function App() {
         }
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (cancelled || seq !== healthSeq.current) return;
         setHealthError((e as Error).message);
         setHealth(null);
         setAuthOk(null);
@@ -236,20 +246,26 @@ export default function App() {
   }, [ready, healthNonce, route]);
 
   // Re-poll /healthz while the app is running so the download-client
-  // reachability banner reflects an outage that starts mid-session (a VPN
-  // blip taking qBit offline). Deliberately conservative: it updates health
-  // only on success and never touches healthError/authOk, so a transient
-  // /healthz hiccup can't bounce a working session to the setup wizard the
-  // way the initial probe's failure path does. Gated on `ready`, where the
-  // app-phase fields (unconfigured, adminAuthRequired) are already settled,
-  // so a refreshed payload only ever changes the reachability fields.
+  // reachability banner tracks an outage that starts mid-session (a VPN
+  // blip taking qBit offline). Updates only on success and never touches
+  // healthError/authOk, so a transient fetch failure can't bounce a
+  // working session to the setup wizard the way the initial probe's
+  // failure path does. Note a successful payload replaces the WHOLE
+  // health object: if the daemon genuinely becomes unconfigured
+  // mid-session (config store wiped, creds cleared elsewhere), needsSetup
+  // flips and the app routes to Setup within one tick. That is intended
+  // routing, since every data fetch is broken at that point anyway; the
+  // pre-poll app did the same on the next healthNonce bump, just later.
+  // healthSeq keeps a stalled older response from overwriting a newer
+  // one (see its declaration above).
   useEffect(() => {
     if (!ready) return;
     let cancelled = false;
     const id = window.setInterval(() => {
+      const seq = ++healthSeq.current;
       fetchHealth()
         .then((h) => {
-          if (!cancelled) setHealth(h);
+          if (!cancelled && seq === healthSeq.current) setHealth(h);
         })
         .catch(() => {});
     }, 30000);
@@ -388,7 +404,7 @@ export default function App() {
       )}
       {health?.clientErrors && health.clientErrors.length > 0 && (
         <div className="banner banner-error" role="alert">
-          ⚠ Download client unavailable — grabs will fail until it is
+          ⚠ Download client unavailable: grabs will fail until it is
           reachable again.
           {health.clientErrors.map((e) => (
             <span key={e}>
