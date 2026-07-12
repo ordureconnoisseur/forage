@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -361,6 +362,15 @@ func looksLikeTorrent(b []byte) bool {
 	return len(t) > 0 && t[0] == 'd' && bytes.Contains(b, []byte("4:info"))
 }
 
+// ErrIndexerFetch marks a failure in the INDEXER-side stage of a torrent
+// add: fetching the .torrent bytes through the Prowlarr /download proxy.
+// Callers use errors.Is to distinguish "the indexer couldn't serve the
+// release" (worth failing over to the same scene's release on a
+// different indexer) from "qBit couldn't take it" (worth retrying the
+// same release once the client recovers). Composes with the clienterr
+// sentinels: a fetch 429/5xx is both ErrIndexerFetch and ErrTransient.
+var ErrIndexerFetch = errors.New("indexer fetch failed")
+
 func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category string) (string, error) {
 	// 1. Fetch the .torrent file (or in some cases a redirect to a
 	// magnet URI; we handle both). Retries on a transient stall — the
@@ -368,7 +378,7 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// Cloudflare challenge / slow indexer often succeeds on a second try.
 	body, err := c.fetchTorrentBytes(ctx, downloadURL)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("%w (%w)", err, ErrIndexerFetch)
 	}
 
 	// Some indexers reply with a magnet URI in the body rather than a
@@ -382,7 +392,7 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// that to qBit just yields an opaque "could not parse" — detect it
 	// here and fail with an actionable reason instead.
 	if !looksLikeTorrent(body) {
-		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page) — likely the tracker's download cap or an expired session, not a bad torrent")
+		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page): likely the tracker's download cap or an expired session, not a bad torrent (%w)", ErrIndexerFetch)
 	}
 
 	// The info-hash (a) lets the grab link to its torrent without the
