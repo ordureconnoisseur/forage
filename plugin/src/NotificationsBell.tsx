@@ -72,7 +72,7 @@ export default function NotificationsBell({
       >
         <BellIcon />
         {total > 0 && (
-          <span className="notif-badge">{total > 9 ? "9+" : total}</span>
+          <span className="notif-badge">{total > 99 ? "99+" : total}</span>
         )}
       </button>
       {open && (

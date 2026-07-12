@@ -52,6 +52,17 @@ type Server struct {
 	// is ready to use.
 	torrentGate fetchGate
 
+	// sabGate does the same for usenet adds (addUsenetAsync): SAB fetches the
+	// NZB from the indexer during addurl, so a bulk grab bursts the indexer
+	// exactly like torrent fetches do. Zero value is ready to use.
+	sabGate fetchGate
+
+	// pendingAdds marks grabs whose async add chain (gate wait, request,
+	// backoff retries) is still in flight, so the poller's link timeout
+	// won't fail a bulk batch tail that is legitimately still queued behind
+	// the fetch gate. Shared with the poller via main. Nil-safe.
+	pendingAdds *grabs.PendingAdds
+
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
 	sceneSyncMu sync.Mutex
@@ -131,21 +142,25 @@ type Options struct {
 	// Backs the Grabs "scan for new downloads" button. Returns the count
 	// adopted and the count skipped only for being too fresh.
 	AdoptNow func(context.Context) (int, int)
+	// PendingAdds is the in-flight async-add registry shared with the
+	// poller (see Server.pendingAdds). May be nil (tests).
+	PendingAdds *grabs.PendingAdds
 }
 
 func New(opts Options) *Server {
 	return &Server{
-		db:         opts.DB,
-		pool:       opts.Pool,
-		bootstrap:  opts.Bootstrap,
-		store:      opts.Store,
-		grabs:      opts.Grabs,
-		watches:    opts.Watches,
-		rss:        rss.NewRepo(opts.DB),
-		log:        opts.Log,
-		version:    opts.Version,
-		adoptNow:   opts.AdoptNow,
-		sessionKey: loadOrCreateSessionKey(opts.DB, opts.Log),
+		db:          opts.DB,
+		pool:        opts.Pool,
+		bootstrap:   opts.Bootstrap,
+		store:       opts.Store,
+		grabs:       opts.Grabs,
+		watches:     opts.Watches,
+		rss:         rss.NewRepo(opts.DB),
+		log:         opts.Log,
+		version:     opts.Version,
+		adoptNow:    opts.AdoptNow,
+		pendingAdds: opts.PendingAdds,
+		sessionKey:  loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 }
 
@@ -197,6 +212,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/adopt", s.postAdopt)
 		r.Post("/grabs/retry-failed", s.postRetryAllFailed)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
+		r.Get("/grabs/{id}/pack-scenes", s.getPackScenes)
+		r.Post("/grabs/{id}/apply-performer", s.postApplyPerformer)
 		r.Get("/grabs/{id}/match-candidates", s.getGrabMatchCandidates)
 		r.Post("/grabs/{id}/match", s.postGrabMatch)
 		r.Post("/grabs/{id}/performer", s.postGrabPerformer)
@@ -352,6 +369,32 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM studio_cache`).Scan(&studCount)
 	settings := s.pool.Settings()
 	cfg := s.composedConfig()
+
+	// Reachability of the configured download clients, read from the
+	// Pool's background prober (see clientpool/health.go): probed every
+	// 30s and immediately after a config save, never on the request
+	// path, so this handler stays passive. Optimistic until the prober
+	// has confirmed a verdict (Probed=false), so a fresh daemon or a
+	// just-saved config never flashes a false "unreachable". A confirmed
+	// failure sets reachable=false and appends a human-readable line to
+	// clientErrors, the signal the UI banner keys off.
+	qbitReachable, sabReachable := true, true
+	clientErrors := []string{}
+	for _, c := range []struct {
+		name       string
+		configured bool
+		health     clientpool.ClientHealth
+		reachable  *bool
+	}{
+		{"qbit", s.pool.Qbit() != nil, s.pool.QbitHealth(), &qbitReachable},
+		{"sab", s.pool.Sab() != nil, s.pool.SabHealth(), &sabReachable},
+	} {
+		if c.configured && c.health.Probed && !c.health.OK {
+			*c.reachable = false
+			clientErrors = append(clientErrors, c.name+": "+c.health.Err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                   true,
 		"version":              s.version,
@@ -364,8 +407,15 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"prowlarrConfigured":   s.pool.Prowlarr() != nil,
 		"qbitConfigured":       s.pool.Qbit() != nil,
 		"qbitCategory":         settings.QbitCategory,
+		"qbitReachable":        qbitReachable,
 		"sabConfigured":        s.pool.Sab() != nil,
 		"sabCategory":          settings.SabCategory,
+		"sabReachable":         sabReachable,
+		// clientErrors lists configured-but-unreachable download clients,
+		// human-readable (e.g. "qbit: dial tcp 127.0.0.1:8083: connection
+		// refused"). Empty array when every configured client is reachable
+		// (or none is configured / none has been probed yet).
+		"clientErrors": clientErrors,
 		// No libraryRoot here: /healthz is deliberately unauthenticated (the
 		// UI probes it pre-login) and a host filesystem path is more than an
 		// anonymous caller should learn. The UI never read it from here; the

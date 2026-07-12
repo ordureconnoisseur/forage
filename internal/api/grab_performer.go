@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 )
 
 type setPerformerRequest struct {
@@ -99,6 +100,26 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 		g.PlacedPath = res.Path
 		s.log.Info("grab performer reassigned (re-filed)", "id", gid, "performer", performer,
 			"placed", res.Path, "mode", res.Mode)
+		// Re-index the new location. Moving the files strands Stash's scenes at
+		// the old path (they point at a directory that no longer exists); a scan
+		// of the new path relinks them by oshash (or re-creates them there),
+		// which is also what makes the pack's scenes findable under the new
+		// folder for tagging. Best-effort + async (Stash's serial queue), so the
+		// caller returns immediately and the re-index lands when the queue drains.
+		// Needs the path mapped to Stash's filesystem view; skip if it can't map
+		// (Stash falls back to its next scheduled scan).
+		if sc := s.pool.Stash(); sc != nil {
+			if mapped := pathmap.Translate(res.Path, s.pool.Settings().StashPathMapping); mapped != "" {
+				if job, serr := sc.MetadataScan(r.Context(), []string{mapped}); serr != nil {
+					s.log.Warn("set performer: rescan new path", "id", gid, "path", mapped, "err", serr)
+				} else {
+					s.log.Info("set performer: queued rescan of new path", "id", gid, "job", job, "path", mapped)
+				}
+			} else {
+				s.log.Warn("set performer: can't map placed path for rescan (Stash will pick it up on its next scan)",
+					"id", gid, "path", res.Path)
+			}
+		}
 	} else {
 		// Not placed yet: just retarget the folder for when it lands.
 		s.log.Info("grab performer set (not yet placed)", "id", gid, "performer", performer)
@@ -112,12 +133,22 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 	// CAS write would have its placed_path erased (the file sits in the old
 	// folder with no record, unfindable by confirm/heal/purge).
 	finalPlaced := g.PlacedPath
+	// A re-filed pack whose performer resolves to a library id is parked in
+	// "tagging": the poller waits for the rescan to relink the moved files, then
+	// ADDs the performer to every pack scene (advancePackTag). Singles, and packs
+	// whose performer isn't in the library, just take the name — nothing to
+	// auto-tag. Resolve BEFORE the CAS so the poller's next tick sees the state.
+	tagPack := alreadyPlaced && g.Kind == "pack" && s.localPerformerIDByName(r.Context(), performer) != ""
 	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
 		fresh.PerformerName = performer
 		fresh.PlaceError = ""
 		fresh.Reason = "performer set manually"
 		if alreadyPlaced {
 			fresh.PlacedPath = finalPlaced
+		}
+		if tagPack {
+			fresh.Status = "tagging"
+			fresh.Reason = "re-indexing to tag pack scenes"
 		}
 	}); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")

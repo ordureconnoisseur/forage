@@ -65,6 +65,15 @@ type Candidate struct {
 	// confidences within tiebreakerEpsilon — the most-frequent failure
 	// mode the bench surfaced was true ties resolved arbitrarily.
 	TitleOverlap float64
+	// DateFarOff is set when the release carries a parseable date whose
+	// CLOSEST plausible reading is >= dateVetoDays away from this scene's
+	// date. Verify uses it to refuse the confidence/title-overlap paths: a
+	// same-studio release years off the scene shares studio-name tokens and
+	// can clear the title-overlap floor with an entirely wrong date, so a
+	// confidently-far date is a veto on those coincidental-signal paths (the
+	// explicit title-containment path can still override it). Never set when
+	// the date is missing/ambiguous — see releaseDateConfidentlyFarOff.
+	DateFarOff bool
 }
 
 // BatchResult is one match result emitted by MatchStream. Index is the
@@ -485,6 +494,11 @@ func score(c *Candidate, releaseTokens map[string]bool, orderedTokens []string, 
 	tScore, tReason := titleOverlap(c.Scene.Title, releaseTokens)
 	castScore, castReason := castInTitle(c.Scene, orderedTokens)
 
+	// Flag a confidently-far release date so Verify can veto the coincidental-
+	// signal paths (see Candidate.DateFarOff). Kept separate from dScore's soft
+	// 20% weight, which only forfeits points and can't disqualify on its own.
+	c.DateFarOff = releaseDateConfidentlyFarOff(c.Scene.Date, releaseDates)
+
 	total := weightPerformer*pScore + weightStudio*sScore + weightDate*dScore + weightTitle*tScore
 	if len(c.Tracks) >= 2 {
 		total += bothTracksBonus
@@ -628,6 +642,54 @@ func bestDateProximity(sceneDate string, releaseDates []string) (float64, string
 		}
 	}
 	return best, bestReason
+}
+
+// dateVetoDays is the distance, in days, past which a confidently-parsed
+// release date is treated as proof the release is a DIFFERENT scene — used by
+// Verify to refuse the coincidental-signal verification paths.
+//
+// Set to two years, deliberately conservative. The 806-entry corpus bench
+// showed date distance can't cleanly separate correct from wrong at moderate
+// ranges: a CORRECT match was 364 days off (a studio naming a 2025 scene
+// "…24.03.28") while a WRONG match was only 335 days off — so any threshold
+// under a year trades one error for another (measured: −1 recall / −1 false
+// verify at 90 days). Above two years there are no such collisions in the
+// corpus (raising to this value is fully recall- and precision-neutral), and a
+// scene dated 2+ years off its release is a near-certain wrong match — which is
+// the failure this guards (the reported case was ~1,470 days / 4 years off).
+const dateVetoDays = 730
+
+// releaseDateConfidentlyFarOff reports whether the release carries a parseable
+// date whose CLOSEST plausible reading is at least dateVetoDays from the
+// scene's date. Returns false when the scene or release has no parseable date
+// (proximity is unknown then — never a veto). ExtractDates emits every
+// calendar-valid reading (US/EU orderings, both centuries), so taking the
+// minimum delta means this fires only when the date is far off under EVERY
+// interpretation — a year-less or ambiguous date that could plausibly be the
+// scene never triggers it.
+func releaseDateConfidentlyFarOff(sceneDate string, releaseDates []string) bool {
+	if sceneDate == "" || len(releaseDates) == 0 {
+		return false
+	}
+	b, err := time.Parse("2006-01-02", sceneDate)
+	if err != nil {
+		return false
+	}
+	minDelta := -1
+	for _, rd := range releaseDates {
+		a, err := time.Parse("2006-01-02", rd)
+		if err != nil {
+			continue
+		}
+		delta := a.Sub(b).Hours() / 24
+		if delta < 0 {
+			delta = -delta
+		}
+		if d := int(delta + 0.5); minDelta < 0 || d < minDelta {
+			minDelta = d
+		}
+	}
+	return minDelta >= dateVetoDays
 }
 
 func dateProximity(sceneDate, releaseDate string) (float64, string) {

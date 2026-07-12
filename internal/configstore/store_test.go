@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -171,6 +172,9 @@ func TestPatchSemantics(t *testing.T) {
 // TestPermissions ensures persisted files are 0600 — they hold API
 // keys, so other-readable would be a serious leak.
 func TestPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits are not honoured on windows")
+	}
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {

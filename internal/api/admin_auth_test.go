@@ -452,7 +452,10 @@ func TestPostSession(t *testing.T) {
 		}
 	})
 
-	// Token configured: correct → cookie; wrong → 401, no cookie.
+	// Token configured: correct → cookie; wrong → 401, no cookie. The Stash
+	// API key is accepted alongside the admin token (a Stash-key client's
+	// <img> loads can't carry a Bearer header, so it must mint the cookie
+	// with the same credential its API calls use).
 	for _, c := range []struct {
 		name   string
 		body   string
@@ -460,12 +463,16 @@ func TestPostSession(t *testing.T) {
 		cookie bool
 	}{
 		{"correct token sets cookie", `{"token":"secret"}`, http.StatusOK, true},
+		{"stash api key sets cookie", `{"token":"stashkey"}`, http.StatusOK, true},
 		{"wrong token → 401", `{"token":"nope"}`, http.StatusUnauthorized, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := &Server{
-				bootstrap: config.BootstrapConfig{Config: config.Config{AdminToken: "secret"}},
-				store:     store,
+				bootstrap: config.BootstrapConfig{Config: config.Config{
+					AdminToken:  "secret",
+					StashAPIKey: "stashkey",
+				}},
+				store: store,
 			}
 			req := httptest.NewRequest(http.MethodPost, "/session", strings.NewReader(c.body))
 			rec := httptest.NewRecorder()
@@ -478,6 +485,29 @@ func TestPostSession(t *testing.T) {
 			}
 		})
 	}
+
+	// Production shape: password gates the daemon, admin token cleared. A
+	// Stash-key client must still be able to mint the image cookie (this was
+	// a 200 required:false no-op before, leaving <img> loads 401ing).
+	t.Run("password-gated daemon accepts stash key", func(t *testing.T) {
+		hash, err := bcrypt.GenerateFromPassword([]byte("pw"), bcrypt.MinCost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s := &Server{
+			bootstrap: config.BootstrapConfig{Config: config.Config{
+				PasswordHash: string(hash),
+				StashAPIKey:  "stashkey",
+			}},
+			store: store,
+		}
+		req := httptest.NewRequest(http.MethodPost, "/session", strings.NewReader(`{"token":"stashkey"}`))
+		rec := httptest.NewRecorder()
+		s.postSession(rec, req)
+		if rec.Code != http.StatusOK || !hasCookie(rec) {
+			t.Errorf("code=%d cookie=%v, want 200 + cookie", rec.Code, hasCookie(rec))
+		}
+	})
 }
 
 // TestDeleteSession verifies logout clears the cookie: the response carries

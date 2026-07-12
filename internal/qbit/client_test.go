@@ -2,11 +2,14 @@ package qbit
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
 	"testing"
+
+	"github.com/ordureconnoisseur/forager/internal/clienterr"
 )
 
 // TestFetchTorrentBytesRetries proves a transient fetch failure (a 503,
@@ -173,5 +176,78 @@ func TestAuthedDoNoRetryOnSuccess(t *testing.T) {
 	}
 	if listCount != 1 {
 		t.Errorf("expected 1 list attempt, got %d", listCount)
+	}
+}
+
+// TestAddTorrentMagnetDuplicateRecovers pins the magnet analogue of the
+// .torrent duplicate recovery: qBit refuses a duplicate magnet add with the
+// same bare "Fails." it uses for a parse failure, but when the URI's btih is
+// already present the add is a recoverable success — the grab links to the
+// existing torrent instead of being failed.
+func TestAddTorrentMagnetDuplicateRecovers(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	magnet := "magnet:?xt=urn:btih:" + hash + "&dn=Some.Release"
+
+	var mu sync.Mutex
+	var resumed bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "session"})
+			_, _ = io.WriteString(w, "Ok.")
+		case "/api/v2/torrents/add":
+			_, _ = io.WriteString(w, "Fails.") // duplicate refusal
+		case "/api/v2/torrents/info":
+			_, _ = io.WriteString(w, `[{"hash":"`+hash+`","name":"Some.Release","category":"forager","state":"uploading"}]`)
+		case "/api/v2/torrents/start":
+			resumed = true
+			_, _ = io.WriteString(w, "")
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "admin", "pw")
+	got, err := c.AddTorrent(context.Background(), magnet, "forager")
+	if err != nil {
+		t.Fatalf("duplicate magnet add should recover, got error: %v", err)
+	}
+	if got != hash {
+		t.Errorf("recovered hash = %q, want %q", got, hash)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !resumed {
+		t.Errorf("expected the existing same-category torrent to be resumed")
+	}
+}
+
+// TestAddTorrentMagnetGenuineParseFailure confirms a "Fails." whose hash is
+// NOT in qBit still surfaces as the rejection it is.
+func TestAddTorrentMagnetGenuineParseFailure(t *testing.T) {
+	const hash = "0123456789abcdef0123456789abcdef01234567"
+	magnet := "magnet:?xt=urn:btih:" + hash
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "session"})
+			_, _ = io.WriteString(w, "Ok.")
+		case "/api/v2/torrents/add":
+			_, _ = io.WriteString(w, "Fails.")
+		case "/api/v2/torrents/info":
+			_, _ = io.WriteString(w, `[]`) // hash not present — a real refusal
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "admin", "pw")
+	if _, err := c.AddTorrent(context.Background(), magnet, "forager"); !errors.Is(err, clienterr.ErrRejected) {
+		t.Fatalf("non-duplicate Fails. should stay ErrRejected, got: %v", err)
 	}
 }

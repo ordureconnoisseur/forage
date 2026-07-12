@@ -5,11 +5,13 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -71,6 +73,101 @@ func TestReconcileWatches(t *testing.T) {
 	}
 	if status["still-waiting"] != watches.StatusWatching {
 		t.Errorf("watch for an un-grabbed scene = %q, want watching", status["still-waiting"])
+	}
+}
+
+// TestReconcileWatchesRevertsStranded verifies the reverse reconcile: a
+// 'grabbed' watch whose grab died (failed async add, deleted row) without
+// the scene landing flips back to 'watching', while grabbed watches with a
+// live grab or an owned copy stay terminal. MarkGrabbed fires as soon as the
+// queued row exists, so this is the only recovery when the add fails later.
+func TestReconcileWatchesRevertsStranded(t *testing.T) {
+	ctx := context.Background()
+	dbh, err := db.Open(t.TempDir() + "/f3.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbh.Close()
+
+	grabsRepo := grabs.NewRepo(dbh)
+	watchesRepo := watches.NewRepo(dbh)
+	s := &Server{
+		db:      dbh,
+		grabs:   grabsRepo,
+		watches: watchesRepo,
+		log:     slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{})),
+		// Pre-warm the owned memo so the revert path needs no Stash client:
+		// "owned-scene" landed in the library, the others didn't.
+		ownedCopies:        map[string][]stash.SceneRef{"owned-scene": {{SceneID: "1"}}},
+		ownedCopiesFetched: time.Now(),
+	}
+
+	for _, id := range []string{"stranded-scene", "owned-scene", "live-scene", "mismatch-scene"} {
+		if err := watchesRepo.Add(ctx, watches.Watch{StashDBID: id, Title: id, Target: watches.TargetAny}); err != nil {
+			t.Fatal(err)
+		}
+		if err := watchesRepo.MarkGrabbed(ctx, id, "Rel", "http://dl/"+id, "idx", "torrent", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// live-scene still has an in-flight grab; stranded-scene's grab FAILED
+	// (excluded from the live set); owned-scene has no grab row at all but
+	// its copy is in the library; mismatch-scene's grab identified as a
+	// DIFFERENT scene and sits pending in the mismatch review.
+	if _, err := grabsRepo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Live.Release.1080p", PredictedStashDBID: "live-scene", Status: "queued",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grabsRepo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Dead.Release.1080p", PredictedStashDBID: "stranded-scene", Status: "failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := grabsRepo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Dup.Listing.1080p", PredictedStashDBID: "mismatch-scene",
+		ActualStashDBID: "some-other-scene", Status: "mismatched",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	s.reconcileWatches(ctx)
+
+	list, err := watchesRepo.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	status := map[string]string{}
+	for _, w := range list {
+		status[w.StashDBID] = w.Status
+	}
+	if status["stranded-scene"] != watches.StatusWatching {
+		t.Errorf("stranded watch = %q, want watching (grab died, scene never landed)", status["stranded-scene"])
+	}
+	if status["owned-scene"] != watches.StatusGrabbed {
+		t.Errorf("owned watch = %q, want grabbed (scene landed anyway)", status["owned-scene"])
+	}
+	if status["live-scene"] != watches.StatusGrabbed {
+		t.Errorf("live watch = %q, want grabbed (grab still in flight)", status["live-scene"])
+	}
+	// The core of the mismatch-hold contract: a pending, unresolved
+	// mismatch keeps its watch quiet — no revert, no re-hunt, until the
+	// user's verdict (redo/delete) removes the coverage.
+	if status["mismatch-scene"] != watches.StatusGrabbed {
+		t.Errorf("mismatch watch = %q, want grabbed (held pending review)", status["mismatch-scene"])
+	}
+
+	// The user resolves the mismatch by deleting/redoing the grab: coverage
+	// disappears and the next reconcile resumes the hunt automatically.
+	if _, err := dbh.ExecContext(ctx, `DELETE FROM grabs WHERE predicted_stashdb_id = 'mismatch-scene'`); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcileWatches(ctx)
+	list, _ = watchesRepo.List(ctx)
+	for _, w := range list {
+		if w.StashDBID == "mismatch-scene" && w.Status != watches.StatusWatching {
+			t.Errorf("after resolving the mismatch: watch = %q, want watching (hunt resumes)", w.Status)
+		}
 	}
 }
 

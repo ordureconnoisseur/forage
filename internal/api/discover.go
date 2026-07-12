@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -146,9 +147,11 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// cached `owned` flag covers externally-owned scenes but lags a fresh
 	// grab until the next scene-cache refresh; this drops a just-confirmed
 	// (or actively-downloading) scene from Discover immediately.
-	if grabbed := s.grabbedSceneSet(r.Context()); len(grabbed) > 0 {
-		scenes = dropGrabbed(scenes, grabbed)
-		trending = dropGrabbed(trending, grabbed)
+	// Covered (not just live): a scene whose grab sits in the mismatch
+	// review shouldn't be re-suggested while the user hasn't resolved it.
+	if _, covered, err := s.grabbedSceneSet(r.Context()); err == nil && len(covered) > 0 {
+		scenes = dropGrabbed(scenes, covered)
+		trending = dropGrabbed(trending, covered)
 	}
 
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
@@ -206,27 +209,43 @@ func collectPerformerIDs(idsJSON string, into map[string]struct{}) {
 	}
 }
 
-// grabbedSceneSet returns StashDB scene ids forage already has a grab for
-// that's in flight or in the library — so Discover doesn't suggest what
-// you're already getting or own. failed/orphaned/mismatched are excluded
-// (you don't own those). Keyed by the grab's actual cross-id when known,
-// else the predicted one, so a confirmed grab maps to the scene it landed.
-func (s *Server) grabbedSceneSet(ctx context.Context) map[string]bool {
+// grabbedSceneSet returns two scene-id sets built from the grabs table.
+//
+// live: scenes with a grab in flight or in the library (queued →
+// confirmed) — Discover hides these and reconcileWatches flips their
+// watches to 'grabbed'. Keyed by the grab's actual cross-id when known,
+// else the predicted one.
+//
+// covered: live PLUS scenes whose acquisition is pending human resolution
+// — a mismatched grab (the download made FOR this scene identified as a
+// different one; it sits in the mismatch review) or an orphaned one (in
+// limbo, revivable). A covered scene's watch must not re-search, revert,
+// or re-notify: the machine's verdict isn't the final word, the user's
+// is. Resolving the mismatch (redo/delete purges the grab) removes the
+// coverage and the reconcile reverse pass resumes the hunt automatically.
+//
+// The error return distinguishes "no grabs" (a meaningful empty set — the
+// reverse pass reverts on it) from a lookup failure (act on nothing).
+func (s *Server) grabbedSceneSet(ctx context.Context) (live, covered map[string]bool, err error) {
 	if s.grabs == nil {
-		return nil
+		return nil, nil, errors.New("grabs unavailable")
 	}
 	byScene, err := s.grabs.StatusByStashDBID(ctx)
 	if err != nil {
-		return nil
+		return nil, nil, err
 	}
-	out := make(map[string]bool, len(byScene))
+	live = make(map[string]bool, len(byScene))
+	covered = make(map[string]bool, len(byScene))
 	for sid, st := range byScene {
 		switch st {
 		case "queued", "downloading", "completed", "placed", "scanned", "confirmed":
-			out[sid] = true
+			live[sid] = true
+			covered[sid] = true
+		case "mismatched", "orphaned":
+			covered[sid] = true
 		}
 	}
-	return out
+	return live, covered, nil
 }
 
 // dropGrabbed removes scenes the user is already getting/owns. Filters in

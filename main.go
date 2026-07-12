@@ -90,26 +90,37 @@ func main() {
 	// Trending refreshes on its own 1h cadence — StashDB's trending
 	// list changes faster than the 12h performer-filtered cache.
 	launch(func() { runTrendingTicker(ctx, pool, database, log.With("component", "trending")) })
+	// Download-client reachability prober: feeds the qbitReachable /
+	// sabReachable / clientErrors fields /healthz reports and the UI's
+	// "download client unavailable" banner. Probes on a 30s ticker and
+	// immediately after every config Reload; a client that is dead at
+	// boot is confirmed within about a minute of startup.
+	launch(func() { pool.RunHealthProbes(ctx) })
 
 	grabsRepo := grabs.NewRepo(database)
+	// pendingAdds bridges the api layer's async add chains and the poller's
+	// link timeouts: the poller won't fail a queued grab whose add is still
+	// queued behind a fetch gate in this process.
+	pendingAdds := grabs.NewPendingAdds()
 	// Phase B grabs poller — always start; the poller itself short-circuits
 	// when no download clients are configured (pool.Qbit() / Sab() = nil).
 	p := poller.New(grabsRepo, database, pool, log.With("component", "poller"),
-		cfg.PollInterval, cfg.OrphanAfter)
+		cfg.PollInterval, cfg.OrphanAfter, pendingAdds)
 	launch(func() { p.Run(ctx) })
 
 	watchesRepo := watches.NewRepo(database)
 
 	server := api.New(api.Options{
-		DB:        database,
-		Pool:      pool,
-		Bootstrap: bootstrap,
-		Store:     store,
-		Grabs:     grabsRepo,
-		Watches:   watchesRepo,
-		Log:       log.With("component", "api"),
-		Version:   Version,
-		AdoptNow:  p.AdoptNow,
+		DB:          database,
+		Pool:        pool,
+		Bootstrap:   bootstrap,
+		Store:       store,
+		Grabs:       grabsRepo,
+		Watches:     watchesRepo,
+		Log:         log.With("component", "api"),
+		Version:     Version,
+		AdoptNow:    p.AdoptNow,
+		PendingAdds: pendingAdds,
 	})
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-
@@ -122,6 +133,17 @@ func main() {
 	// (so freshly posted releases are caught without speculative per-scene
 	// searching). Never grabs.
 	launch(func() { server.RunRSSLoop(ctx) })
+
+	// Notify loop — pushes actionable transitions (watch available, grabs
+	// failed) to the configured Telegram/webhook sinks. No-op when neither
+	// sink is configured.
+	launch(func() { server.RunNotifyLoop(ctx) })
+
+	// Telegram callback loop — long-polls the bot for taps on the inline
+	// Grab/Dismiss buttons the notify loop attaches, and executes them
+	// through the same code paths as the web UI. No-op when the Telegram
+	// sink isn't configured.
+	launch(func() { server.RunTelegramLoop(ctx) })
 
 	httpServer := &http.Server{
 		Addr:              bootstrap.ListenAddr,

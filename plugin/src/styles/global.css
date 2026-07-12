@@ -1413,6 +1413,16 @@ button {
   background: rgba(212, 161, 74, 0.12);
   color: var(--amber);
 }
+.banner-error {
+  background: rgba(239, 68, 68, 0.14);
+  color: var(--red);
+  font-weight: 500;
+}
+.banner-error code {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-weight: 400;
+  opacity: 0.9;
+}
 .banner-setup {
   background: rgba(var(--accent-rgb), 0.10);
   color: var(--accent-bright);
@@ -1780,6 +1790,10 @@ button {
   --status-placed-bg: rgba(var(--accent-rgb), 0.18);
   --status-scanned: #3b82f6;
   --status-scanned-bg: rgba(59, 130, 246, 0.18);
+  --status-tagging: #14b8a6;
+  --status-tagging-bg: rgba(20, 184, 166, 0.18);
+  --status-distributing: #a78bfa;
+  --status-distributing-bg: rgba(167, 139, 250, 0.18);
   --status-confirmed: var(--accent-bright);
   --status-confirmed-bg: rgba(var(--accent-rgb), 0.22);
   --status-mismatched: #f59e0b;
@@ -2140,6 +2154,8 @@ button {
 .grab-row.status-completed::before  { background: var(--status-completed); }
 .grab-row.status-placed::before     { background: var(--status-placed); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.55); }
 .grab-row.status-scanned::before    { background: var(--status-scanned); box-shadow: 0 0 10px rgba(59, 130, 246, 0.4); }
+.grab-row.status-tagging::before    { background: var(--status-tagging); box-shadow: 0 0 10px rgba(20, 184, 166, 0.4); }
+.grab-row.status-distributing::before { background: var(--status-distributing); box-shadow: 0 0 10px rgba(167, 139, 250, 0.4); }
 .grab-row.status-confirmed::before  { background: linear-gradient(180deg, var(--accent-bright), var(--accent)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); }
 .grab-row.status-mismatched::before { background: var(--status-mismatched); }
 .grab-row.status-orphaned::before   { background: var(--status-orphaned); }
@@ -2186,6 +2202,8 @@ button {
 .grab-status-badge.chip-completed  { background: var(--status-completed-bg);  color: var(--status-completed); }
 .grab-status-badge.chip-placed     { background: var(--status-placed-bg);    color: var(--status-placed); }
 .grab-status-badge.chip-scanned    { background: var(--status-scanned-bg);   color: var(--status-scanned); }
+.grab-status-badge.chip-tagging    { background: var(--status-tagging-bg);   color: var(--status-tagging); }
+.grab-status-badge.chip-distributing { background: var(--status-distributing-bg); color: var(--status-distributing); }
 .grab-status-badge.chip-confirmed  { background: var(--status-confirmed-bg); color: var(--status-confirmed); }
 .grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }
@@ -6295,6 +6313,40 @@ code.grab-fact-v,
   font-weight: 400;
   color: var(--text-muted);
 }
+/* Pack performer-tagging reviewer (the scenes Stash couldn't identify). A
+   positive action, so neutral chrome rather than the amber dups warning. */
+.grab-pack-tag {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.grab-pack-tag-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.grab-pack-tag-sub {
+  font-weight: 400;
+  color: var(--text-muted);
+}
+.grab-pack-tag-done {
+  font-weight: 600;
+  color: #4ec07a;
+}
+.grab-pack-tag-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
 .grab-dup-card {
   padding: 10px 12px;
   border: 1px solid var(--glass-border);
@@ -6597,6 +6649,33 @@ code.grab-fact-v,
   cursor: default;
 }
 
+/* "Load more" pager under the grab list — pulls the next server-side page. */
+.grab-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 8px;
+}
+.grab-loadmore-btn {
+  padding: 8px 20px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.grab-loadmore-btn:hover:not(:disabled) {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+}
+.grab-loadmore-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ── Mobile (phones + small tablets) ─────────────────────────────
    One consolidated responsive layer. The desktop layout is the source
    of truth; these overrides only re-flow what genuinely cannot fit.
@@ -6639,32 +6718,85 @@ code.grab-fact-v,
   /* Watch cards: narrower thumb; on a phone the head stacks the title over
      its actions so neither gets crushed, and the release meta drops under the
      filename instead of fighting it for width. */
+  /* Phone card: float the thumbnail instead of giving it a fixed grid
+     column. In the 2-column grid the whole body was boxed into the narrow
+     right column, leaving dead space under the short thumbnail. Floating it
+     lets the title wrap beside it and the buttons + release lane span the
+     FULL card width once they clear the thumbnail's bottom. flow-root
+     contains the float so a short card can't spill. */
   .watch-card {
-    grid-template-columns: 104px minmax(0, 1fr);
-    gap: 12px;
+    display: flow-root;
+    padding: 12px;
   }
   .watch-thumb {
+    float: left;
     width: 104px;
+    margin: 0 12px 6px 0;
+  }
+  .watch-body {
+    display: block;
   }
   .watch-head {
-    flex-wrap: wrap;
+    display: block;
   }
   .watch-headinfo {
-    flex-basis: 100%;
+    flex-basis: auto;
   }
   .watch-actions {
-    width: 100%;
-    justify-content: flex-end;
+    clear: left;
+    width: auto;
+    justify-content: flex-start;
+    margin-top: 8px;
   }
   .watch-title {
     white-space: normal;
   }
+  /* The release lane always drops below the thumbnail to span the full
+     width — that's where the "grab details" get the whole card. The
+     margin-top restores the gap above its divider that the desktop flex
+     `gap` gave (lost when watch-body became a block here), so the action
+     buttons don't sit right on the divider line. */
+  .watch-rel {
+    clear: left;
+    margin-top: 12px;
+  }
+  /* Release lane on a phone: two tidy rows — [dot · badge · filename ·
+     score-pill] over a quiet meta line (size · indexer · seeders) aligned
+     under the filename. Columns are all `auto`/`1fr` with column-gap:0 and
+     spacing via margins, so the resolution badge shows inline when present
+     but collapses to nothing (no dead gap) when the release has no
+     resolution token — which is what made the old fixed badge column waste
+     space. */
   .watch-rel-row {
-    grid-template-columns: 14px 46px minmax(0, 1fr) auto;
-    row-gap: 1px;
+    grid-template-columns: auto auto minmax(0, 1fr) auto;
+    column-gap: 0;
+    row-gap: 2px;
+    align-items: center;
+  }
+  .watch-rel-dot,
+  .watch-rel-row input[type="radio"] {
+    margin-right: 6px;
+  }
+  .watch-rel-q {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .watch-rel-q:not(:empty) {
+    margin-right: 6px;
+  }
+  .watch-rel-file {
+    grid-column: 3;
+    grid-row: 1;
+  }
+  .watch-rel-why {
+    grid-column: 4;
+    grid-row: 1;
+    justify-self: end;
+    margin-left: 6px;
   }
   .watch-rel-meta {
-    grid-column: 2 / -1;
+    grid-column: 3 / -1;
+    grid-row: 2;
     text-align: left;
   }
   .watch-rel-why-panel {

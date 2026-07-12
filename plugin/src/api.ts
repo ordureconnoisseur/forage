@@ -683,6 +683,8 @@ export type GrabStatus =
   | "completed"
   | "placed"
   | "scanned"
+  | "tagging"
+  | "distributing"
   | "confirmed"
   | "mismatched"
   | "orphaned"
@@ -741,6 +743,11 @@ export interface Grab {
 export interface GrabsResponse {
   grabs: Grab[];
   totals: Partial<Record<GrabStatus, number>>;
+  // How many grabs match the current status+q filter across the WHOLE table
+  // (not just this page). Lets the view show a result count and know when
+  // "load more" has reached the end. Absent on older daemons → treat as
+  // unknown (fall back to page-length heuristics).
+  match_total?: number;
 }
 
 // adoptDownloads force-adopts forage-category downloads the user added to a
@@ -769,11 +776,13 @@ export function retryFailedGrabs(): Promise<{
 
 export function fetchGrabs(opts?: {
   status?: GrabStatus | "any";
+  q?: string;
   limit?: number;
   offset?: number;
 }): Promise<GrabsResponse> {
   const params = new URLSearchParams();
   if (opts?.status && opts.status !== "any") params.set("status", opts.status);
+  if (opts?.q && opts.q.trim()) params.set("q", opts.q.trim());
   if (opts?.limit) params.set("limit", String(opts.limit));
   if (opts?.offset) params.set("offset", String(opts.offset));
   const qs = params.toString();
@@ -906,6 +915,38 @@ export function setGrabPerformer(
   return postJSON(`/grabs/${id}/performer`, { performer_name: performerName });
 }
 
+// One taggable scene in a pack: a placed file Stash scanned but could NOT
+// cross-id against StashDB (amateur content). image_url is the daemon-relative
+// /img/scene/{id}/screenshot (works for unidentified locals).
+export interface PackScene {
+  scene_id: string;
+  title?: string;
+  image_url: string;
+}
+export interface PackScenes {
+  performer_name: string;
+  performer_local_id?: string;
+  performer_resolvable: boolean;
+  scenes: PackScene[];
+}
+
+// fetchPackScenes lists a pack grab's UNIDENTIFIED scenes (with covers) + the
+// performer it's filed under — the "tag amateur scenes with the performer"
+// reviewer on the pack grab card.
+export function fetchPackScenes(grabId: number): Promise<PackScenes> {
+  return get<PackScenes>(`/grabs/${grabId}/pack-scenes`);
+}
+
+// applyPackPerformer adds the pack's performer to the selected scenes, additively
+// (existing performers preserved). The server re-validates each id against the
+// pack's unidentified set, so it can never touch identified or non-pack scenes.
+export function applyPackPerformer(
+  grabId: number,
+  sceneIds: string[],
+): Promise<{ ok: boolean; applied: number }> {
+  return postJSON(`/grabs/${grabId}/apply-performer`, { scene_ids: sceneIds });
+}
+
 export interface DeleteGrabResult {
   ok: boolean;
   removed: string[];
@@ -933,6 +974,8 @@ export const ACTIVE_STATUSES: GrabStatus[] = [
   "completed",
   "placed",
   "scanned",
+  "tagging",
+  "distributing",
 ];
 
 export function isActiveStatus(s: GrabStatus): boolean {
@@ -951,8 +994,18 @@ export interface Health {
   prowlarrConfigured: boolean;
   qbitConfigured: boolean;
   qbitCategory: string;
+  // True when a configured qBit answered its last reachability probe.
+  // Optimistically true until the first probe lands and whenever qBit
+  // isn't configured, so it only reads false on a confirmed outage.
+  qbitReachable: boolean;
   sabConfigured: boolean;
   sabCategory: string;
+  // SAB's equivalent of qbitReachable.
+  sabReachable: boolean;
+  // Human-readable reachability failures for configured-but-unreachable
+  // download clients, e.g. "qbit: dial tcp 127.0.0.1:8083: connection
+  // refused". Empty when every configured client is reachable.
+  clientErrors: string[];
   placerConfigured: boolean;
   unconfigured: boolean;
   // True when a credential is configured (password OR API key) and the UI
@@ -1065,6 +1118,16 @@ export interface ConfigPatch {
   // never round-trips back. Empty string clears it (turns password login
   // off). Omit to leave unchanged.
   password?: string;
+  // Telegram notification sink: bot token (secret, masked like API keys)
+  // + chat id. Both required for Telegram pushes to activate.
+  telegramBotToken?: string;
+  telegramChatId?: string;
+  // Generic notification webhook: receives {"event","message","ts"} JSON
+  // per event batch. Empty = off.
+  notifyWebhookUrl?: string;
+  // Stash base URL notification links point at (the address the user's
+  // devices can reach). Empty = links fall back to stashUrl.
+  stashPublicUrl?: string;
 }
 
 export interface ProbeResult {

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sync"
@@ -123,7 +124,15 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 // scene", and once a grab exists that job is done. It flips rather than
 // deletes so the watch lingers in its batch and the batch's progress reads
 // correctly; the user clears it (or the whole batch) when done. Preserves any
-// found_* release fields already on the watch. Best-effort: logs and moves on.
+// found_* release fields already on the watch.
+//
+// It also runs the reverse: a 'grabbed' watch whose scene has NO live grab
+// and NO owned copy flips back to 'watching'. MarkGrabbed fires as soon as
+// the queued grab row exists, so an async add that later fails would
+// otherwise leave the watch terminal while the scene silently never arrives
+// (batch progress reads complete, nothing re-searches). The owned check
+// keeps a watch resolved when the scene landed anyway — a deleted grab row
+// after a confirm, or a pack that covered it. Best-effort: logs and moves on.
 func (s *Server) reconcileWatches(ctx context.Context) {
 	// Self-heal invalid "available but no grab link" rows back to watching, so
 	// a release that slipped through before the no-URL selection guard (or any
@@ -135,19 +144,32 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 		s.log.Info("watch reset ungrabbable available → watching", "count", n)
 	}
 
-	grabbed := s.grabbedSceneSet(ctx)
-	if len(grabbed) == 0 {
+	// A failed lookup means we can't tell live from dead — reconcile nothing.
+	// An EMPTY set is meaningful (every grabbed watch is a revert candidate).
+	live, covered, err := s.grabbedSceneSet(ctx)
+	if err != nil {
 		return
 	}
 	list, err := s.watches.List(ctx)
 	if err != nil {
 		return
 	}
+	// Reverting requires the scene to be fully UNcovered: no live grab AND
+	// nothing pending resolution. A mismatched grab in the review queue
+	// holds its watch quiet — the user's verdict decides whether the hunt
+	// resumes (redo/delete removes the coverage), not the machine's.
+	var stranded []string
 	for _, wt := range list {
 		if wt.Status == watches.StatusGrabbed {
-			continue // already terminal
+			if !covered[wt.StashDBID] {
+				stranded = append(stranded, wt.StashDBID)
+			}
+			continue
 		}
-		if grabbed[wt.StashDBID] {
+		// Forward flip stays LIVE-only: a pending mismatch must not retract
+		// an already-surfaced 'available' offer (the user may still want to
+		// grab it), it only stops new searching.
+		if live[wt.StashDBID] {
 			if err := s.watches.MarkGrabbed(ctx, wt.StashDBID,
 				wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
 				s.log.Warn("watch reconcile mark grabbed", "scene", wt.StashDBID, "err", err)
@@ -155,6 +177,27 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 			}
 			s.log.Info("watch resolved — scene already grabbed", "scene", wt.StashDBID)
 		}
+	}
+	if len(stranded) == 0 {
+		return
+	}
+	// The owned sweep is the expensive part (memoised, but still a full
+	// library fetch on a cold memo) — only pay for it when there's an actual
+	// revert candidate, which is rare. On error, revert nothing: we can't
+	// prove the scene didn't land.
+	owned, oerr := s.ownedSceneCopies(ctx)
+	if oerr != nil {
+		return
+	}
+	for _, sid := range stranded {
+		if len(owned[sid]) > 0 {
+			continue // scene landed anyway; the watch's job really is done
+		}
+		if err := s.watches.RevertGrabbed(ctx, sid); err != nil {
+			s.log.Warn("watch revert grabbed", "scene", sid, "err", err)
+			continue
+		}
+		s.log.Info("watch reverted — grab died without the scene landing; watching again", "scene", sid)
 	}
 }
 
@@ -189,17 +232,27 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 // watch goes available. To grab a DIFFERENT release than the best, see
 // postWatchGrabCandidate.
 func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	wt := s.findWatch(r.Context(), id)
-	if wt == nil {
-		writeErr(w, http.StatusNotFound, "watch not found")
+	if err := s.grabAvailableWatch(r.Context(), chi.URLParam(r, "id")); err != nil {
+		writeMappedErr(w, err, http.StatusBadGateway)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// grabAvailableWatch grabs a watch's auto-picked (best) release and flips it
+// to 'grabbed' — the logic behind the Watching tab's grab button, shared
+// with the Telegram callback path so a notification button and the UI do
+// exactly the same thing. Typed grabErrors carry HTTP statuses for the
+// HTTP caller; the Telegram caller just uses the message.
+func (s *Server) grabAvailableWatch(ctx context.Context, id string) error {
+	wt := s.findWatch(ctx, id)
+	if wt == nil {
+		return grabError{http.StatusNotFound, "watch not found"}
 	}
 	if wt.Status != watches.StatusAvailable || wt.FoundURL == "" {
-		writeErr(w, http.StatusUnprocessableEntity, "watch has no available release yet")
-		return
+		return grabError{http.StatusUnprocessableEntity, "watch has no available release yet"}
 	}
-	if _, err := s.doGrab(r.Context(), grabRequest{
+	if _, err := s.doGrab(ctx, grabRequest{
 		DownloadURL:    wt.FoundURL,
 		ReleaseTitle:   wt.FoundTitle,
 		ReleaseSize:    wt.FoundSize,
@@ -208,14 +261,13 @@ func (s *Server) postWatchGrab(w http.ResponseWriter, r *http.Request) {
 		SceneID:        wt.StashDBID,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {
-		writeMappedErr(w, err, http.StatusBadGateway)
-		return
+		return err
 	}
-	if err := s.watches.MarkGrabbed(r.Context(), id,
+	if err := s.watches.MarkGrabbed(ctx, id,
 		wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
 		s.log.Warn("watch mark grabbed", "scene", id, "err", err)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	return nil
 }
 
 // postWatchGrabCandidate grabs a SPECIFIC release from a watch's stored
@@ -376,7 +428,7 @@ func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "watch has no found release to dismiss")
 		return
 	}
-	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL, wt.FoundTitle); err != nil {
 		s.log.Error("watch dismiss", "scene", id, "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
@@ -422,7 +474,7 @@ func (s *Server) postWatchRedo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Ignore this exact release going forward + flip back to watching.
-	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL); err != nil {
+	if err := s.watches.Dismiss(r.Context(), id, wt.FoundURL, wt.FoundTitle); err != nil {
 		s.log.Error("watch redo dismiss", "scene", id, "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
@@ -472,26 +524,47 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req) // body optional (nothing = all watching)
 
-	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
-		writeErr(w, http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)")
-		return
-	}
-	// One search-now at a time.
-	if !s.searchNowMu.TryLock() {
-		writeErr(w, http.StatusConflict, "a search is already running")
-		return
-	}
-	list, err := s.watches.List(r.Context())
+	n, err := s.startWatchSearch(r.Context(), req.IDs, req.BatchID)
 	if err != nil {
-		s.searchNowMu.Unlock()
+		if errors.Is(err, errSearchBusy) {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+		var ge grabError
+		if errors.As(err, &ge) {
+			writeErr(w, ge.status, ge.msg)
+			return
+		}
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
-	// Scope, most specific first: an explicit id set (a UI group's exact
-	// watching rows — unambiguous for both batches and ungrouped singles),
-	// else a batch, else every watching row.
-	idSet := make(map[string]bool, len(req.IDs))
-	for _, id := range req.IDs {
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": n})
+}
+
+// errSearchBusy: another search-now run holds the lock. Callers treat it
+// as "already being handled", not a failure.
+var errSearchBusy = errors.New("a search is already running")
+
+// startWatchSearch kicks an immediate background re-search of the scoped
+// watching rows and returns how many it started. Scope, most specific
+// first: an explicit id set, else a batch, else every watching row. Shared
+// by the search-now endpoint and the Telegram Dismiss button (whose web
+// twin, "Not this one", follows its dismiss with exactly this kick).
+func (s *Server) startWatchSearch(ctx context.Context, watchIDs []string, batchID string) (int, error) {
+	if s.pool.Prowlarr() == nil || s.pool.StashDB() == nil {
+		return 0, grabError{http.StatusServiceUnavailable, "prowlarr and stashdb must be configured (see Settings)"}
+	}
+	// One search-now at a time.
+	if !s.searchNowMu.TryLock() {
+		return 0, errSearchBusy
+	}
+	list, err := s.watches.List(ctx)
+	if err != nil {
+		s.searchNowMu.Unlock()
+		return 0, err
+	}
+	idSet := make(map[string]bool, len(watchIDs))
+	for _, id := range watchIDs {
 		idSet[id] = true
 	}
 	var targets []watches.Watch
@@ -503,15 +576,14 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 			if !idSet[wt.StashDBID] {
 				continue
 			}
-		} else if req.BatchID != "" && wt.BatchID != req.BatchID {
+		} else if batchID != "" && wt.BatchID != batchID {
 			continue
 		}
 		targets = append(targets, wt)
 	}
 	if len(targets) == 0 {
 		s.searchNowMu.Unlock()
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": 0})
-		return
+		return 0, nil
 	}
 	ids := make([]string, len(targets))
 	for i, t := range targets {
@@ -548,10 +620,10 @@ func (s *Server) postWatchSearchNow(w http.ResponseWriter, r *http.Request) {
 		}
 		close(jobs)
 		wg.Wait()
-		s.log.Info("watch search-now done", "batch", req.BatchID, "count", len(targets))
+		s.log.Info("watch search-now done", "batch", batchID, "count", len(targets))
 	}()
 
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "searching": len(targets)})
+	return len(targets), nil
 }
 
 // normalizeTarget validates the quality target, defaulting unknown values

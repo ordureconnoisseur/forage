@@ -43,6 +43,13 @@ type Poller struct {
 	interval time.Duration
 	orphan   time.Duration
 
+	// pending is the api layer's in-flight async-add registry. The link
+	// timeout must not fail a still-unlinked queued grab whose add is
+	// legitimately queued behind the fetch gate (a bulk batch tail waits
+	// far longer than any fixed window). Nil-safe; empty after a restart,
+	// which is when the timeout SHOULD fire.
+	pending *grabs.PendingAdds
+
 	// stashBoxEndpoint caches the user's StashDB endpoint as
 	// configured in Stash. Identify needs it to match exactly;
 	// fetched lazily on the first scanned-state transition and
@@ -104,6 +111,27 @@ type Poller struct {
 	// restart, which merely permits one extra re-fire. Pruned in tickOnce.
 	identifyJobMu sync.Mutex
 	identifyJob   map[int64]string
+
+	// resumeKick collects, during one tick's advance loop, the hashes of
+	// torrents just seen ENTERING qBit's "error" state, so the tick can
+	// fire one resume each after the loop. qBit never auto-resumes an
+	// errored torrent, so a transient write failure (a stalled NAS mount)
+	// otherwise strands mid-download torrents until someone hand-resumes
+	// them. Owned by the single-goroutine tick: appended in advanceQbit,
+	// drained in tickOnce, never touched concurrently.
+	resumeKick []string
+
+	// scanJob records the most recent Stash metadataScan job id fired per
+	// grab. Before re-firing a placement scan (the throttled retry that waits
+	// for Stash to index a placed file), we check whether that job is still
+	// queued or running; if so we skip. Without this, a Stash serial queue
+	// backed up behind other work (e.g. slow phash generation while the box is
+	// also transcoding) leaves grabs at "placed" long enough that every 90s
+	// tick re-queues the same scan, piling up thousands of redundant jobs.
+	// In-memory: lost on restart, which merely permits one extra re-fire.
+	// Pruned in tickOnce alongside identifyJob.
+	scanJobMu sync.Mutex
+	scanJob   map[int64]string
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -152,7 +180,7 @@ const packIdentifyGrace = 20 * time.Minute
 // StashDB doesn't have settles in minutes, not hours.
 const singleIdentifyGrace = 30 * time.Minute
 
-func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration) *Poller {
+func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, interval, orphanAfter time.Duration, pending *grabs.PendingAdds) *Poller {
 	if interval <= 0 {
 		interval = 60 * time.Second
 	}
@@ -166,10 +194,12 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		log:         log,
 		interval:    interval,
 		orphan:      orphanAfter,
+		pending:     pending,
 		lastScan:    map[int64]time.Time{},
 		packScan:    map[int64]packScanState{},
 		grace:       map[int64]time.Time{},
 		identifyJob: map[int64]string{},
+		scanJob:     map[int64]string{},
 	}
 }
 
@@ -270,6 +300,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.identifyJobMu.Unlock()
+	p.scanJobMu.Lock()
+	for id := range p.scanJob {
+		if !activeIDs[id] {
+			delete(p.scanJob, id)
+		}
+	}
+	p.scanJobMu.Unlock()
 	if len(active) == 0 {
 		return nil
 	}
@@ -359,11 +396,53 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 
+	// Fire the one-shot resume kicks collected by advanceQbit (torrents
+	// just seen entering the error state). After the loop so the advance
+	// path stays network-free per grab; best-effort — a failed kick just
+	// leaves the torrent for the grace window to fail as before.
+	if len(p.resumeKick) > 0 {
+		if qb := p.pool.Qbit(); qb != nil {
+			for _, h := range p.resumeKick {
+				if err := qb.Resume(ctx, h); err != nil {
+					p.log.Warn("resume kick", "hash", h, "err", err)
+				}
+			}
+		}
+		p.resumeKick = nil
+	}
+
 	p.log.Debug("tick done", "active", len(active), "elapsed", time.Since(t0))
 	return nil
 }
 
 func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit.Torrent, qbitByHash map[string]*qbit.Torrent, qbitListOK bool, claimed map[string]bool, sabQueue, sabHistory []sabnzbd.Item, sabListsOK bool) error {
+	// A pack parked in "tagging" by the set-performer endpoint has already been
+	// re-filed into the performer folder; there's no download work left. We only
+	// wait for Stash to re-index the new path, then apply the pack's performer to
+	// every scene. Handle it in isolation from the main place/confirm pipeline.
+	if g.Kind == "pack" && (g.Status == "tagging" || g.Status == "distributing") {
+		var changed bool
+		var err error
+		if g.Status == "tagging" {
+			changed, err = p.advancePackTag(ctx, g)
+		} else {
+			changed, err = p.advancePackDistribute(ctx, g)
+		}
+		if err != nil {
+			return err
+		}
+		if changed {
+			if uerr := p.repo.Update(ctx, *g); uerr != nil {
+				if errors.Is(uerr, grabs.ErrStaleUpdate) {
+					p.log.Info("grab changed under tick; skipping stale write", "id", g.ID)
+					return nil
+				}
+				return uerr
+			}
+		}
+		return nil
+	}
+
 	dirty := false
 	// srcPath is the live full filesystem path the client reports for
 	// this grab — qBit's ContentPath, SAB's history Path. Used by the
@@ -644,7 +723,8 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 				// throttled, until Stash picks it up. Without this the
 				// grab sits at "placed" until it wrongly orphans, despite
 				// the file being right there on disk.
-				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) {
+				if g.PlacedPath != "" && p.scanThrottleElapsed(g.ID) &&
+					!p.scanInFlight(ctx, stashC, g.ID) {
 					p.triggerPlacementScan(ctx, stashC, g.ID, g.PlacedPath)
 				}
 			}
@@ -674,6 +754,163 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		}
 	}
 	return confirmErr
+}
+
+// packTagTimeout bounds how long a re-filed pack waits for its rescan to
+// surface the moved files before we give up auto-tagging and settle it
+// confirmed. The folder is organised regardless; the user can still tag from
+// the grab card. Generous, because the rescan sits behind Stash's serial job
+// queue, which can be minutes deep.
+const packTagTimeout = 30 * time.Minute
+
+// packNeedle derives the Stash-side path substring that scopes a pack's scenes:
+// the path-mapped placed dir, its basename, or the client save-name. Mirrors
+// advancePackConfirm's derivation and the api layer's packNeedle.
+func (p *Poller) packNeedle(g *grabs.Grab) string {
+	if g.PlacedPath != "" {
+		if n := pathmap.Translate(g.PlacedPath, p.pool.Settings().StashPathMapping); n != "" {
+			return n
+		}
+		return pathmap.Base(g.PlacedPath)
+	}
+	return g.ClientName
+}
+
+// localPerformerID maps a performer display name to its LOCAL Stash id via
+// performer_cache. Empty when the performer isn't in the library (so nothing to
+// tag with). Mirrors the api layer's localPerformerIDByName.
+func (p *Poller) localPerformerID(ctx context.Context, name string) string {
+	if name == "" || p.db == nil {
+		return ""
+	}
+	var id string
+	_ = p.db.QueryRowContext(ctx,
+		`SELECT stash_id FROM performer_cache WHERE name = ? COLLATE NOCASE AND stash_id != '' LIMIT 1`,
+		name).Scan(&id)
+	return id
+}
+
+// advancePackTag applies a re-filed pack's performer to every scene Stash has
+// under the new placed dir, once the rescan has surfaced them. Returns whether
+// it mutated g (a status change worth persisting). The set-performer endpoint
+// parks a pack in "tagging" after re-filing + queuing a rescan; this waits for
+// the scenes to appear at the new path (re-triggering the scan if it stalled),
+// then ADDs the performer to all of them and confirms. ADD mode is additive, so
+// identified scenes keep their performers. Bounded by packTagTimeout so a scan
+// that never lands doesn't strand the grab in "tagging" forever.
+func (p *Poller) advancePackTag(ctx context.Context, g *grabs.Grab) (bool, error) {
+	sc := p.pool.Stash()
+	if sc == nil {
+		return false, nil // no Stash configured this tick — try again later
+	}
+	localID := p.localPerformerID(ctx, g.PerformerName)
+	if localID == "" {
+		// Performer left the library (renamed/removed) since it was set. Can't
+		// tag, but the folder is organised — settle it.
+		g.Status = "confirmed"
+		g.Reason = "re-filed under " + g.PerformerName + " (not in library, so not auto-tagged)"
+		p.graceClear(g.ID)
+		return true, nil
+	}
+	needle := p.packNeedle(g)
+	if needle == "" {
+		g.Status = "confirmed"
+		g.Reason = "re-filed, but no path to tag its scenes by"
+		p.graceClear(g.ID)
+		return true, nil
+	}
+	scenes, err := sc.FindScenesUnderPath(ctx, needle)
+	if err != nil {
+		return false, nil // transient Stash error — retry next tick without churning state
+	}
+	if len(scenes) == 0 {
+		// The rescan hasn't surfaced the moved files yet. Re-trigger it
+		// (throttled) and keep waiting until the timeout.
+		if p.scanThrottleElapsed(g.ID) && !p.scanInFlight(ctx, sc, g.ID) {
+			p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
+		}
+		if p.graceElapsed(g.ID, packTagTimeout) {
+			g.Status = "confirmed"
+			g.Reason = "re-filed; re-index timed out, tag from the grab card"
+			p.graceClear(g.ID)
+			return true, nil
+		}
+		return false, nil // still "tagging"
+	}
+	ids := make([]string, 0, len(scenes))
+	for _, m := range scenes {
+		ids = append(ids, m.ID)
+	}
+	if _, err := sc.AddScenePerformer(ctx, ids, localID); err != nil {
+		return false, nil // Stash write failed — retry next tick
+	}
+	g.Status = "confirmed"
+	g.Reason = fmt.Sprintf("re-filed under %s + tagged %d scenes", g.PerformerName, len(ids))
+	p.graceClear(g.ID)
+	p.log.Info("pack auto-tagged after re-file", "id", g.ID, "performer", g.PerformerName, "scenes", len(ids))
+	return true, nil
+}
+
+// advancePackDistribute sorts a studio/mixed pack (no performer set) into the
+// library: each identified scene under the pack dir is hardlinked into ONE
+// performer folder — the scene's most-collected performer (highest library-wide
+// scene_count). The original stays in the pack folder under Unsorted, so the
+// pack is never gutted, and unidentified scenes just remain pooled there (no
+// per-scene performer to sort them by). Best-effort per scene (Place is
+// idempotent, so a partial run is safe to re-enter), then confirms. Returns
+// whether it mutated g.
+func (p *Poller) advancePackDistribute(ctx context.Context, g *grabs.Grab) (bool, error) {
+	sc := p.pool.Stash()
+	if sc == nil {
+		return false, nil // no Stash this tick — retry later
+	}
+	pl := p.pool.Placer()
+	if !pl.Configured() {
+		g.Status = "confirmed"
+		g.Reason = "pack placed (no library root, so scenes not distributed)"
+		return true, nil
+	}
+	needle := p.packNeedle(g)
+	if needle == "" {
+		g.Status = "confirmed"
+		g.Reason = "pack placed, but no path to distribute its scenes by"
+		return true, nil
+	}
+	scenes, err := sc.FindScenesWithPerformersUnderPath(ctx, needle)
+	if err != nil {
+		return false, nil // transient Stash error — retry next tick
+	}
+	mapping := p.pool.Settings().StashPathMapping
+	distributed, pooled := 0, 0
+	for _, s := range scenes {
+		if len(s.Performers) == 0 {
+			pooled++ // unidentified / no performer — stays in the pack folder
+			continue
+		}
+		top := s.Performers[0]
+		for _, pf := range s.Performers[1:] {
+			if pf.SceneCount > top.SceneCount {
+				top = pf
+			}
+		}
+		forageFile := pathmap.Reverse(s.FilePath, mapping)
+		if forageFile == "" {
+			p.log.Warn("pack distribute: can't map scene path to forager view", "id", g.ID, "scene", s.ID, "path", s.FilePath)
+			pooled++
+			continue
+		}
+		if _, perr := pl.Place(forageFile, top.Name); perr != nil {
+			p.log.Warn("pack distribute: place failed", "id", g.ID, "scene", s.ID, "performer", top.Name, "err", perr)
+			pooled++
+			continue
+		}
+		distributed++
+	}
+	g.Status = "confirmed"
+	g.ConfirmedAt = time.Now().Unix()
+	g.Reason = fmt.Sprintf("distributed %d scenes to performer folders, %d pooled in Unsorted", distributed, pooled)
+	p.log.Info("pack distributed by performer", "id", g.ID, "distributed", distributed, "pooled", pooled, "total", len(scenes))
+	return true, nil
 }
 
 // advancePackConfirm drives a pack grab from placed → confirmed. Unlike
@@ -756,7 +993,8 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			}
 			return dirty, nil
 		}
-		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) {
+		if (g.Status == "placed" || g.Status == "completed") && p.scanThrottleElapsed(g.ID) &&
+			!p.scanInFlight(ctx, sc, g.ID) {
 			// Surface a persistent miss: if this keeps logging after the pack
 			// has landed + Stash scanned, `needle` doesn't match how Stash
 			// indexed the files (a path-mapping issue) — and identify never
@@ -799,7 +1037,8 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 	// Shares the scan throttle with identify: getting the rest of the files
 	// in takes priority while coverage is incomplete; identify resumes once
 	// the scan grows again (settled flips false) or coverage is reached. [C7]
-	if settled && !coverageOK && downloadDone && sinceDone <= p.orphan && p.scanThrottleElapsed(g.ID) {
+	if settled && !coverageOK && downloadDone && sinceDone <= p.orphan &&
+		p.scanThrottleElapsed(g.ID) && !p.scanInFlight(ctx, sc, g.ID) {
 		p.log.Info("pack: scan settled below expected count, re-scanning",
 			"id", g.ID, "found", found, "packFiles", g.PackFiles, "placed", g.PlacedPath)
 		p.triggerPlacementScan(ctx, sc, g.ID, g.PlacedPath)
@@ -895,6 +1134,12 @@ func (p *Poller) advancePackConfirm(ctx context.Context, g *grabs.Grab, sc *stas
 			g.PackFiles = found
 		}
 		g.Status = "confirmed"
+		// Studio/mixed pack (no performer set): sort its identified scenes into
+		// their most-collected performer's folder (advancePackDistribute) before
+		// confirming. Unidentified scenes stay pooled in the pack folder.
+		if g.PerformerName == "" {
+			g.Status = "distributing"
+		}
 		g.ConfirmedAt = time.Now().Unix()
 		g.Reason = fmt.Sprintf("pack: %d/%d scenes identified, %d dup removed", identified, found, g.PackDeduped)
 		if pendingReview > 0 {
@@ -982,20 +1227,25 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		}
 	}
 	cache := map[string][]stash.SceneRef{}
-	copiesOf := func(stashID string) []stash.SceneRef {
+	copiesOf := func(stashID string) ([]stash.SceneRef, error) {
 		if sweep != nil {
-			return sweep[stashID]
+			return sweep[stashID], nil
 		}
 		if refs, ok := cache[stashID]; ok {
-			return refs
+			return refs, nil
 		}
 		refs, err := sc.FindSceneRefsByStashID(ctx, endpoint, stashID)
 		if err != nil {
-			p.log.Warn("pack dedup lookup", "id", g.ID, "stashdb", stashID, "err", err)
-			refs = nil
+			// Propagated, not swallowed: a transient Stash error here must
+			// not read as "unique to this pack" — that would confirm the
+			// pack with this scene's dedup silently skipped, permanently
+			// (confirmed grabs leave Active()). The caller defers the
+			// confirm and retries next tick, same as a review-write
+			// failure. [C10][C11]
+			return nil, fmt.Errorf("copies of %s: %w", stashID, err)
 		}
 		cache[stashID] = refs
-		return refs
+		return refs, nil
 	}
 
 	deduped := 0
@@ -1017,7 +1267,10 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		if ps.StashDBID == "" {
 			continue
 		}
-		refs := copiesOf(ps.StashDBID)
+		refs, err := copiesOf(ps.StashDBID)
+		if err != nil {
+			return deduped, recorded, err
+		}
 		var externalIDs []string
 		for _, ref := range refs {
 			if !packIDs[ref.SceneID] {
@@ -1176,6 +1429,47 @@ func (p *Poller) rememberIdentifyJob(grabID int64, jobID string) {
 	p.identifyJobMu.Unlock()
 }
 
+// scanInFlight reports whether the last placement scan fired for this grab is
+// still queued or running in Stash — the metadataScan analogue of
+// identifyInFlight. It exists to stop the throttled re-scan from stacking
+// redundant identical scans behind an earlier one while Stash's serial queue
+// is backed up (the pileup that buried the queue in thousands of duplicate
+// scans when the box was busy transcoding). Same failure-mode handling: a
+// JobStatus query error reports true (assume still in flight) rather than
+// firing a doomed scan against an unreachable Stash; it can't block forever
+// because the query recovers when Stash does.
+func (p *Poller) scanInFlight(ctx context.Context, sc *stash.Client, grabID int64) bool {
+	p.scanJobMu.Lock()
+	jobID := p.scanJob[grabID]
+	p.scanJobMu.Unlock()
+	if jobID == "" {
+		return false
+	}
+	status, err := sc.JobStatus(ctx, jobID)
+	if err != nil {
+		p.log.Warn("scan job status check failed; assuming still in flight", "id", grabID, "job_id", jobID, "err", err)
+		return true
+	}
+	switch status {
+	case "READY", "RUNNING", "STOPPING":
+		return true
+	default:
+		// FINISHED, CANCELLED, FAILED, or "" (no longer in the queue).
+		return false
+	}
+}
+
+// rememberScanJob records the metadataScan job id last fired for a grab so a
+// subsequent tick can see it's still in flight (see scanInFlight).
+func (p *Poller) rememberScanJob(grabID int64, jobID string) {
+	if jobID == "" {
+		return
+	}
+	p.scanJobMu.Lock()
+	p.scanJob[grabID] = jobID
+	p.scanJobMu.Unlock()
+}
+
 // triggerIdentifyBatch fires Stash's Identify task over a set of scene
 // IDs at once, sourcing from the user's StashDB stash-box. Returns
 // ("", nil) when no stash-box is configured (caller logs + moves on).
@@ -1217,6 +1511,21 @@ func (p *Poller) graceElapsed(grabID int64, d time.Duration) bool {
 	return time.Since(since) >= d
 }
 
+// graceStart starts a grab's grace clock if it isn't already running and
+// reports whether it just did — i.e. whether this is the FIRST sighting of
+// the bad condition. Lets a caller attach a one-shot side effect (the
+// error-state resume kick) to the transition without disturbing the
+// elapsed measurement graceElapsed does on the same clock.
+func (p *Poller) graceStart(grabID int64) bool {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	if _, ok := p.grace[grabID]; ok {
+		return false
+	}
+	p.grace[grabID] = time.Now()
+	return true
+}
+
 // graceClear resets a grab's grace clock after the bad condition lifts (a SAB
 // nzo seen again in queue/history, a qBit torrent healthy again), so the next
 // recurrence is measured fresh instead of tripping off the stale first-seen
@@ -1249,9 +1558,15 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		// Never got linked to a qBit torrent. With .torrent grabs now
 		// pinned to their info-hash at add time (and magnets to their
 		// btih), an unlinked grab past this window means the add itself
-		// never landed — don't leave it queued forever.
+		// never landed — don't leave it queued forever. EXCEPT while the
+		// add is still pending in-process (fetch-gate queue, rate-limit
+		// backoff): a bulk batch tail legitimately waits past any fixed
+		// window, and failing it here races the in-flight add (the
+		// post-gate status check then bails without adding, so a retried
+		// batch re-fails its tail forever).
 		if g.Status == "queued" && g.GrabbedAt > 0 &&
-			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout {
+			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout &&
+			!p.pending.Has(g.ID) {
 			g.Status = "failed"
 			g.Reason = "never linked to a qBit torrent (add likely failed)"
 			return true, ""
@@ -1270,7 +1585,8 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		// "queued" was tracked by qBit before, so a missing hash there
 		// really does mean the torrent was removed.
 		if g.Status == "queued" && g.GrabbedAt > 0 &&
-			time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout {
+			(time.Since(time.Unix(g.GrabbedAt, 0)) <= qbitLinkTimeout ||
+				p.pending.Has(g.ID)) {
 			return dirty, ""
 		}
 		// The torrent vanishing does NOT undo what already happened on disk.
@@ -1390,6 +1706,21 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	// clock. (adoptQbitOrphans' revive path is the backstop that recovers a
 	// grab we DO end up failing, should it recover after the grace.)
 	if newStatus == "failed" {
+		// First sighting of the plain "error" state: kick ONE resume.
+		// qBit never auto-resumes an errored torrent, so a transient
+		// write failure (a stalled NAS mount flipped six mid-download
+		// torrents to error on 2026-07-06) otherwise strands the
+		// download until someone hand-resumes it. If the cause
+		// persists the torrent re-errors and the grace window fails
+		// the grab exactly as before. missingFiles is deliberately
+		// NOT kicked: pack dedup deletes duplicate files out from
+		// under seeding torrents, and a resume there would re-download
+		// content the user chose to remove.
+		if p.graceStart(g.ID) && t.State == "error" {
+			p.resumeKick = append(p.resumeKick, t.Hash)
+			p.log.Info("qbit torrent errored; kicking a one-shot resume",
+				"id", g.ID, "hash", t.Hash)
+		}
 		if !p.graceElapsed(g.ID, qbitErrorGrace) {
 			return dirty, t.ContentPath
 		}
@@ -1858,7 +2189,19 @@ func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash stri
 func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool, string, error) {
 	dirty := false
 	if g.ClientID == "" {
-		// No nzo_id to look up — shouldn't normally happen. Skip.
+		// No nzo_id to look up: the async addurl never linked — the daemon
+		// died between the row insert and AddURL returning, or the nzo-link
+		// write failed. Nothing in SAB matches this row and retryGrab only
+		// accepts failed grabs, so without a timeout it polls forever as an
+		// undeletable zombie. Mirror the qBit link timeout, skipping while
+		// the add is still pending in-process (fetch-gate queue / backoff).
+		if g.Status == "queued" && g.GrabbedAt > 0 &&
+			time.Since(time.Unix(g.GrabbedAt, 0)) > qbitLinkTimeout &&
+			!p.pending.Has(g.ID) {
+			g.Status = "failed"
+			g.Reason = "never linked to a SAB nzo (add likely failed)"
+			return true, "", nil
+		}
 		return false, "", nil
 	}
 	if item := findByNzo(queue, g.ClientID); item != nil {
@@ -1995,20 +2338,28 @@ func findByNzo(items []sabnzbd.Item, nzoID string) *sabnzbd.Item {
 	return nil
 }
 
-// triggerPlacementScan asks Stash to scan the directory the placed
-// file lives in, so the placed → confirmed transition takes minutes
-// rather than waiting on Stash's scheduled scan. Records the attempt
-// time so the confirmation step can throttle retries. Best-effort.
+// triggerPlacementScan asks Stash to scan the placed path itself, so the
+// placed → confirmed transition takes minutes rather than waiting on
+// Stash's scheduled scan. Records the attempt time so the confirmation
+// step can throttle retries. Best-effort.
 //
-// The scan is ALWAYS scoped to the placed file's parent folder via
-// FORAGER_STASH_PATH_MAPPING. If the placed path can't be mapped to a
-// Stash-side path (no mapping configured, or a stale path prefix left by
-// a mount rename), we deliberately skip the scan instead of falling back
-// to a full-library scan — re-scanning the whole library per grab is far
-// too expensive, and the grab still confirms via basename lookup once
-// Stash's next scheduled scan indexes the file.
+// The scan is scoped to exactly what was placed, at the grab's natural
+// granularity: a single grab's placedPath is the file (or its own download
+// folder), a pack's placedPath is the pack directory. Stash's metadataScan
+// accepts a file path and scans just that file, so we no longer re-walk the
+// whole containing performer/Unsorted folder (with its siblings + screenshot
+// subfolders) on every retry — that per-grab over-scan is what let the job
+// queue balloon under a Stash slowdown. A directory placedPath (packs) still
+// scans recursively, so pack coverage counting is unchanged.
+//
+// The path is mapped Stash-side via FORAGER_STASH_PATH_MAPPING. If it can't
+// be mapped (no mapping configured, or a stale prefix left by a mount
+// rename), we deliberately skip the scan instead of falling back to a
+// full-library scan — re-scanning the whole library per grab is far too
+// expensive, and the grab still confirms via basename lookup once Stash's
+// next scheduled scan indexes the file.
 func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, grabID int64, placedPath string) {
-	stashSidePath := pathmap.Translate(filepath.Dir(placedPath), p.pool.Settings().StashPathMapping)
+	stashSidePath := pathmap.Translate(placedPath, p.pool.Settings().StashPathMapping)
 	// Stamp the throttle even when we skip, so an unmappable grab doesn't
 	// re-enter this path on every tick.
 	p.scanMu.Lock()
@@ -2023,6 +2374,9 @@ func (p *Poller) triggerPlacementScan(ctx context.Context, sc *stash.Client, gra
 		p.log.Warn("metadataScan trigger failed", "id", grabID, "path", stashSidePath, "err", err)
 	} else {
 		p.log.Info("metadataScan triggered", "id", grabID, "path", stashSidePath, "job_id", jobID)
+		// Record it so the throttled re-scan (scanInFlight) won't stack a
+		// duplicate while this one is still queued behind a busy Stash.
+		p.rememberScanJob(grabID, jobID)
 	}
 }
 

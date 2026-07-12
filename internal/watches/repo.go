@@ -338,6 +338,23 @@ func (r *Repo) MarkGrabbed(ctx context.Context, stashDBID, title, url, indexer, 
 	return err
 }
 
+// RevertGrabbed flips a 'grabbed' watch back to 'watching' — the recovery
+// for a watch whose grab later died (an async add that failed after
+// MarkGrabbed) without the scene ever landing. Clears the found_* fields
+// (that release's grab attempt is spent; the next search re-picks) and
+// resets last_checked=0 so the watch loop re-checks it first. Status-guarded
+// so a concurrent grab/dismiss isn't clobbered; batch/label, performers, and
+// the ignored set stay intact.
+func (r *Repo) RevertGrabbed(ctx context.Context, stashDBID string) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE watches SET
+		  status = 'watching', last_checked = 0, grabbed_at = 0,
+		  found_title = '', found_url = '', found_indexer = '',
+		  found_protocol = '', found_size = 0, found_at = 0, candidates = '[]'
+		WHERE stashdb_id = ? AND status = 'grabbed'`, stashDBID)
+	return err
+}
+
 // DeleteBatch removes every watch in a batch (the Watching tab's per-batch
 // "Clear"). Refuses an empty batchID — that would match every ungrouped
 // single track and wipe them all.
@@ -349,12 +366,15 @@ func (r *Repo) DeleteBatch(ctx context.Context, batchID string) error {
 	return err
 }
 
-// Dismiss rejects the watch's current found release: adds its URL to the
-// ignored set (so the loop never re-surfaces it) and flips the watch back
-// to watching, clearing the found_* fields so the next qualifying release
-// can take their place. No-op-safe when the URL is empty or already
-// ignored. Returns the watch's new ignored URL count for logging.
-func (r *Repo) Dismiss(ctx context.Context, stashDBID, url string) error {
+// Dismiss rejects the watch's current found release: adds its URL AND its
+// title to the ignored set (so the loop never re-surfaces it) and flips
+// the watch back to watching, clearing the found_* fields so the next
+// qualifying release can take their place. The title is recorded because
+// Prowlarr download URLs carry a rotating encrypted link parameter — the
+// same release comes back with a fresh URL on every search, so a
+// URL-only ignore is bypassed on the next re-check. No-op-safe when both
+// are empty or already ignored.
+func (r *Repo) Dismiss(ctx context.Context, stashDBID, url, title string) error {
 	// Read the current ignored set, append, re-marshal — small list, simple.
 	var ignoredJSON string
 	err := r.db.QueryRowContext(ctx,
@@ -367,16 +387,19 @@ func (r *Repo) Dismiss(ctx context.Context, stashDBID, url string) error {
 	if ignoredJSON != "" {
 		_ = json.Unmarshal([]byte(ignoredJSON), &ignored)
 	}
-	if url != "" {
+	for _, add := range []string{url, title} {
+		if add == "" {
+			continue
+		}
 		seen := false
 		for _, u := range ignored {
-			if u == url {
+			if u == add {
 				seen = true
 				break
 			}
 		}
 		if !seen {
-			ignored = append(ignored, url)
+			ignored = append(ignored, add)
 		}
 	}
 	b, _ := json.Marshal(ignored)

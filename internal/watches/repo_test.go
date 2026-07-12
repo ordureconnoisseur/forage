@@ -228,20 +228,22 @@ func TestDismiss(t *testing.T) {
 	_ = r.Add(ctx, Watch{StashDBID: "s", Title: "x", Target: Target1080})
 	_ = r.MarkAvailable(ctx, "s", "Dead 1080p", "http://dead", "PornoLab", "torrent", 100, nil)
 
-	if err := r.Dismiss(ctx, "s", "http://dead"); err != nil {
+	if err := r.Dismiss(ctx, "s", "http://dead", "Dead 1080p"); err != nil {
 		t.Fatal(err)
 	}
 	ws, _ := r.List(ctx)
 	w := ws[0]
-	// Flipped back to watching, found fields cleared, URL recorded as ignored.
+	// Flipped back to watching, found fields cleared, URL AND title recorded
+	// as ignored (Prowlarr URLs rotate between searches; the title is the
+	// durable half of the identity).
 	if w.Status != StatusWatching {
 		t.Errorf("status = %q, want watching", w.Status)
 	}
 	if w.FoundURL != "" || w.FoundTitle != "" {
 		t.Errorf("found fields should be cleared, got %+v", w)
 	}
-	if len(w.IgnoredURLs) != 1 || w.IgnoredURLs[0] != "http://dead" {
-		t.Errorf("ignored urls = %v, want [http://dead]", w.IgnoredURLs)
+	if len(w.IgnoredURLs) != 2 || w.IgnoredURLs[0] != "http://dead" || w.IgnoredURLs[1] != "Dead 1080p" {
+		t.Errorf("ignored set = %v, want [http://dead, Dead 1080p]", w.IgnoredURLs)
 	}
 	// It's claimable again (back to watching).
 	if got, _ := r.ClaimBatch(ctx, 10); len(got) != 1 {
@@ -249,10 +251,10 @@ func TestDismiss(t *testing.T) {
 	}
 	// Dismissing a second different release accumulates, not replaces.
 	_ = r.MarkAvailable(ctx, "s", "Tiny 1080p", "http://tiny", "1337x", "torrent", 50, nil)
-	_ = r.Dismiss(ctx, "s", "http://tiny")
+	_ = r.Dismiss(ctx, "s", "http://tiny", "Tiny 1080p")
 	ws, _ = r.List(ctx)
-	if len(ws[0].IgnoredURLs) != 2 {
-		t.Errorf("ignored urls = %v, want 2 entries", ws[0].IgnoredURLs)
+	if len(ws[0].IgnoredURLs) != 4 {
+		t.Errorf("ignored set = %v, want 4 entries", ws[0].IgnoredURLs)
 	}
 }
 

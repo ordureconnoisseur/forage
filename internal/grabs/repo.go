@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -199,10 +200,14 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 //     window. Stays in Active so a later scan/identify (manual or
 //     scheduled) can promote it back to scanned/confirmed instead of
 //     leaving the user with a permanent false orphan label.
+//   - tagging: a re-filed pack waiting for its rescan to land so the
+//     poller can apply the pack performer to its scenes (advancePackTag).
+//   - distributing: a studio/mixed pack (no performer) whose identified
+//     scenes are being sorted into performer folders (advancePackDistribute).
 func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 	return r.query(ctx, `
 		SELECT * FROM grabs
-		WHERE status IN ('queued', 'downloading', 'completed', 'placed', 'scanned', 'orphaned')
+		WHERE status IN ('queued', 'downloading', 'completed', 'placed', 'scanned', 'orphaned', 'tagging', 'distributing')
 		ORDER BY grabbed_at ASC`)
 }
 
@@ -214,7 +219,8 @@ func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 // grab isn't masked by a later failed retry of the same scene).
 func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) AS sid, status
+		SELECT COALESCE(NULLIF(predicted_stashdb_id, ''), ''),
+		       COALESCE(NULLIF(actual_stashdb_id, ''), ''), status
 		FROM grabs
 		WHERE COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) IS NOT NULL
 		  AND COALESCE(NULLIF(actual_stashdb_id, ''), predicted_stashdb_id) != ''`)
@@ -223,13 +229,35 @@ func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error)
 	}
 	defer rows.Close()
 	out := map[string]string{}
-	for rows.Next() {
-		var sid, status string
-		if rows.Scan(&sid, &status) != nil {
-			continue
+	record := func(sid, status string) {
+		if sid == "" {
+			return
 		}
 		if cur, ok := out[sid]; !ok || statusRank(status) > statusRank(cur) {
 			out[sid] = status
+		}
+	}
+	for rows.Next() {
+		var predicted, actual, status string
+		if rows.Scan(&predicted, &actual, &status) != nil {
+			continue
+		}
+		// Actual-else-predicted: the scene this grab's file IS (or, until
+		// identified, is expected to be).
+		if actual != "" {
+			record(actual, status)
+		} else {
+			record(predicted, status)
+		}
+		// A mismatched grab ALSO stamps its PREDICTED scene: the download
+		// was made FOR that scene and now sits pending human review. The
+		// watch/discover layers use this to hold the scene quiet until the
+		// user resolves the mismatch (redo/delete resumes the hunt), rather
+		// than re-offering releases for a scene whose acquisition is in
+		// limbo. statusRank(mismatched)=0, so any live grab for the same
+		// scene still wins the entry.
+		if status == "mismatched" && actual != "" {
+			record(predicted, status)
 		}
 	}
 	return out, rows.Err()
@@ -241,18 +269,22 @@ func (r *Repo) StatusByStashDBID(ctx context.Context) (map[string]string, error)
 func statusRank(s string) int {
 	switch s {
 	case "confirmed":
-		return 6
+		return 8
 	case "scanned":
-		return 5
+		return 7
 	case "placed":
-		return 4
+		return 6
 	case "completed":
-		return 3
+		return 5
 	case "downloading":
-		return 2
+		return 4
 	case "queued":
-		return 1
-	default: // failed, orphaned, mismatched, unknown
+		return 3
+	case "orphaned":
+		return 2 // in limbo, revivable — outranks failed, below live
+	case "mismatched":
+		return 1 // pending human review — outranks failed, below live
+	default: // failed, unknown
 		return 0
 	}
 }
@@ -278,20 +310,65 @@ func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, e
 	return n > 0, err
 }
 
-// List returns the most recent grabs first, filtered by status if
-// nonempty. Used by the GET /grabs endpoint.
-func (r *Repo) List(ctx context.Context, status string, limit, offset int) ([]Grab, error) {
+// ConfirmedSince returns single-scene grabs that reached 'confirmed' after
+// the given unix time, oldest first — the notify loop's "scene landed in
+// Stash" sweep. Packs are excluded: their many-scene landing has its own
+// UI and doesn't reduce to one watch link.
+func (r *Repo) ConfirmedSince(ctx context.Context, since int64) ([]Grab, error) {
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'confirmed' AND kind = 'single' AND confirmed_at > ?
+		ORDER BY confirmed_at ASC LIMIT 50`, since)
+}
+
+// List returns the most recent grabs first, narrowed by status (unless ""
+// or "any") and by a free-text query q that matches release_title,
+// performer_name, release_indexer, or client_name (case-insensitive
+// substring). Used by the GET /grabs endpoint. q is what lets the UI search
+// the WHOLE grab history rather than just the newest page it holds in memory.
+func (r *Repo) List(ctx context.Context, status, q string, limit, offset int) ([]Grab, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	if status == "" || status == "any" {
-		return r.query(ctx, `
-			SELECT * FROM grabs ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`,
-			limit, offset)
+	where, args := grabFilter(status, q)
+	args = append(args, limit, offset)
+	return r.query(ctx,
+		`SELECT * FROM grabs `+where+` ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`, args...)
+}
+
+// CountFiltered returns how many grabs match the same status+q filter List
+// applies, ignoring limit/offset — so the UI can show a result count and tell
+// when it has paged to the end of the matches.
+func (r *Repo) CountFiltered(ctx context.Context, status, q string) (int, error) {
+	where, args := grabFilter(status, q)
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM grabs `+where, args...).Scan(&n)
+	return n, err
+}
+
+// grabFilter builds the shared WHERE clause (and bound args) for List and
+// CountFiltered. An empty/"any" status and an empty q each drop out; with
+// neither set it returns a bare "" clause (whole table). q is matched as a
+// case-insensitive substring across the human-searchable text columns; it's
+// always parameterized, so a `%`/`_` in the query reads as a LIKE wildcard
+// (acceptable for a search box) but can never inject.
+func grabFilter(status, q string) (string, []any) {
+	var conds []string
+	var args []any
+	if status != "" && status != "any" {
+		conds = append(conds, "status = ?")
+		args = append(args, status)
 	}
-	return r.query(ctx, `
-		SELECT * FROM grabs WHERE status = ? ORDER BY grabbed_at DESC LIMIT ? OFFSET ?`,
-		status, limit, offset)
+	if s := strings.TrimSpace(q); s != "" {
+		like := "%" + s + "%"
+		conds = append(conds,
+			"(release_title LIKE ? OR performer_name LIKE ? OR release_indexer LIKE ? OR client_name LIKE ?)")
+		args = append(args, like, like, like, like)
+	}
+	if len(conds) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(conds, " AND "), args
 }
 
 // CountRecentFailed counts grabs that failed at/after `since` (unix). Old
@@ -331,6 +408,28 @@ func (r *Repo) ByDownloadURL(ctx context.Context, url string) (*Grab, error) {
 	}
 	grabs, err := r.query(ctx, `
 		SELECT * FROM grabs WHERE download_url = ? ORDER BY grabbed_at DESC LIMIT 1`, url)
+	if err != nil || len(grabs) == 0 {
+		return nil, err
+	}
+	g := grabs[0]
+	return &g, nil
+}
+
+// LiveByRelease finds a non-failed grab for the same release, matching by
+// exact download URL OR by (release title + indexer). Prowlarr download
+// URLs embed a rotating encrypted `link` parameter, so the same release
+// gets a fresh URL on every search — URL equality alone misses re-offers.
+// The (title, indexer) pair is the stable identity an indexer gives a
+// release. Returns (nil, nil) when nothing live matches.
+func (r *Repo) LiveByRelease(ctx context.Context, url, title, indexer string) (*Grab, error) {
+	if url == "" && (title == "" || indexer == "") {
+		return nil, nil
+	}
+	grabs, err := r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status != 'failed'
+		  AND (download_url = ? OR (release_title = ? AND release_indexer = ? AND ? != ''))
+		ORDER BY grabbed_at DESC LIMIT 1`, url, title, indexer, title)
 	if err != nil || len(grabs) == 0 {
 		return nil, err
 	}

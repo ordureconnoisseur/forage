@@ -2,8 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/base32"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 type grabRequest struct {
@@ -80,11 +79,11 @@ type grabError struct {
 
 func (e grabError) Error() string { return e.msg }
 
-// doGrab queues a single release: routes to qBit (async torrent add) or
-// SAB (sync), persists the grab row, returns the response shape. Shared
-// by the /grab endpoint and the collection-job worker so both go through
-// exactly one grab path. The torrent add still happens in the background
-// — doGrab returns as soon as the row is inserted.
+// doGrab queues a single release: routes to qBit or SAB, persists the grab
+// row, returns the response shape. Shared by the /grab endpoint and the
+// collection-job worker so both go through exactly one grab path. Both
+// protocols add in the background — doGrab returns as soon as the row is
+// inserted, so a slow indexer fetch never blocks (or false-fails) the grab.
 func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, error) {
 	if req.DownloadURL == "" {
 		return grabResponse{}, grabError{http.StatusBadRequest, "download_url required"}
@@ -172,18 +171,18 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 		if sb == nil {
 			return grabResponse{}, grabError{http.StatusServiceUnavailable, "sab not configured (set sabUrl + sabApiKey in Settings)"}
 		}
-		clientID, err := sb.AddURL(ctx, req.DownloadURL, settings.SabCategory)
-		if err != nil {
-			s.log.Error("grab failed", "protocol", "usenet",
-				"release", req.ReleaseTitle, "scene_id", req.SceneID, "err", err)
-			return grabResponse{}, grabError{http.StatusBadGateway, "sabnzbd: " + err.Error()}
-		}
-		grabID := s.insertGrab(ctx, req, "sabnzbd", clientID, settings.SabCategory, kind)
-		s.log.Info("grab queued",
+		// Async, mirroring the torrent path: insert the queued row and return
+		// immediately, then add to SAB in the background. The addurl call makes
+		// SAB fetch the NZB from the indexer, which under load routinely
+		// outlasts a request timeout — doing it synchronously false-failed the
+		// grab (and reverted the UI button) even though SAB had queued the
+		// download. In the background we can wait it out and link the nzo_id.
+		grabID := s.insertGrab(ctx, req, "sabnzbd", "", settings.SabCategory, kind)
+		go s.addUsenetAsync(req.DownloadURL, settings.SabCategory, req.ReleaseTitle, grabID)
+		s.log.Info("grab queued (async usenet add)",
 			"protocol", "usenet", "client", "sabnzbd", "release", req.ReleaseTitle,
-			"scene_id", req.SceneID, "category", settings.SabCategory,
-			"client_id", clientID, "grab_id", grabID)
-		return grabResponse{OK: true, Client: "sabnzbd", Category: settings.SabCategory, GrabID: grabID, ClientID: clientID}, nil
+			"scene_id", req.SceneID, "category", settings.SabCategory, "grab_id", grabID)
+		return grabResponse{OK: true, Client: "sabnzbd", Category: settings.SabCategory, GrabID: grabID}, nil
 
 	default:
 		return grabResponse{}, grabError{http.StatusBadRequest, "unknown protocol; expected torrent or usenet"}
@@ -286,10 +285,20 @@ func addBackoff(attempt int) time.Duration {
 // (the grab stays queued); a permanent error fails the grab so the row
 // doesn't sit "queued" forever.
 func (s *Server) addTorrentAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	s.pendingAdds.Start(grabID)
 	s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, 1)
 }
 
 func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
+	// The grab stays marked pending across backoff re-attempts (the AfterFunc
+	// chain re-enters this function); only a terminal exit — success, hard
+	// fail, bail — clears it, releasing the poller's link timeout.
+	retryScheduled := false
+	defer func() {
+		if !retryScheduled {
+			s.pendingAdds.Done(grabID)
+		}
+	}()
 	qb := s.pool.Qbit()
 	if qb == nil {
 		s.failGrab(context.Background(), grabID, "qbit not configured")
@@ -326,6 +335,7 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 					}
 				})
 			}
+			retryScheduled = true
 			time.AfterFunc(d, func() {
 				s.addTorrentAttempt(downloadURL, category, releaseTitle, grabID, attempt+1)
 			})
@@ -363,6 +373,83 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 		}
 	}
 	s.log.Info("async torrent added", "release", releaseTitle, "grab_id", grabID, "hash", hash, "attempt", attempt)
+}
+
+// addUsenetAsync hands the NZB URL to SAB off the request path — the usenet
+// analogue of addTorrentAsync. SAB fetches the NZB from the indexer during
+// addurl, so a bulk grab bursts the indexer the same way; the sabGate spaces
+// the calls and the longer SAB add-timeout waits out a slow-but-succeeding
+// fetch so the grab captures its nzo_id instead of false-failing.
+func (s *Server) addUsenetAsync(downloadURL, category, releaseTitle string, grabID int64) {
+	s.pendingAdds.Start(grabID)
+	s.addUsenetAttempt(downloadURL, category, releaseTitle, grabID, 1)
+}
+
+func (s *Server) addUsenetAttempt(downloadURL, category, releaseTitle string, grabID int64, attempt int) {
+	// Pending across backoff re-attempts, cleared on terminal exit — see
+	// addTorrentAttempt.
+	retryScheduled := false
+	defer func() {
+		if !retryScheduled {
+			s.pendingAdds.Done(grabID)
+		}
+	}()
+	sb := s.pool.Sab()
+	if sb == nil {
+		s.failGrab(context.Background(), grabID, "sab not configured")
+		return
+	}
+	// Space the burst before starting the add budget (see addTorrentAttempt).
+	s.sabGate.wait(context.Background())
+	// Generous budget: the SAB client's addurl timeout is 120s; give the
+	// context headroom past it so the client timeout is what governs.
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	// Bail if the grab was deleted / retried / already linked while we waited.
+	if grabID != 0 && s.grabs != nil {
+		if g, _ := s.grabs.Get(ctx, grabID); g == nil || g.Status != "queued" {
+			return
+		}
+	}
+	clientID, err := sb.AddURL(ctx, downloadURL, category)
+	if err != nil {
+		// Only retry on an explicit indexer rate-limit (429/503). A timeout is
+		// deliberately NOT retried: SAB may have queued the download anyway, so
+		// re-adding would duplicate it — the adoption sweep reconciles any such
+		// orphan under the forage category instead.
+		if isTransientFetchErr(err) && attempt < addMaxAttempts {
+			d := addBackoff(attempt)
+			s.log.Warn("usenet add rate-limited; auto-retrying",
+				"grab_id", grabID, "attempt", attempt, "retry_in", d.String(), "err", err)
+			if s.grabs != nil {
+				_ = s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
+					if g.Status == "queued" {
+						g.Reason = fmt.Sprintf("indexer rate-limited — auto-retrying (%d/%d)", attempt, addMaxAttempts)
+					}
+				})
+			}
+			retryScheduled = true
+			time.AfterFunc(d, func() {
+				s.addUsenetAttempt(downloadURL, category, releaseTitle, grabID, attempt+1)
+			})
+			return
+		}
+		s.log.Error("async usenet add", "release", releaseTitle, "grab_id", grabID, "attempt", attempt, "err", err)
+		s.failGrab(context.Background(), grabID, "sabnzbd: "+err.Error())
+		return
+	}
+	// Link the grab to its SAB job by nzo_id, only if the poller hasn't already
+	// (CAS-retry so a concurrent tick write doesn't clobber it).
+	if clientID != "" && s.grabs != nil {
+		if uerr := s.applyGrabUpdate(ctx, grabID, func(g *grabs.Grab) {
+			if g.ClientID == "" {
+				g.ClientID = clientID
+			}
+		}); uerr != nil {
+			s.log.Warn("link grab nzo_id", "grab_id", grabID, "err", uerr)
+		}
+	}
+	s.log.Info("async usenet added", "release", releaseTitle, "grab_id", grabID, "nzo_id", clientID, "attempt", attempt)
 }
 
 // postGrabRetry re-attempts a failed grab using its stored download URL —
@@ -503,7 +590,7 @@ func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "grabs unavailable")
 		return
 	}
-	failed, err := s.grabs.List(r.Context(), "failed", 500, 0)
+	failed, err := s.grabs.List(r.Context(), "failed", "", 500, 0)
 	if err != nil {
 		s.log.Error("retry-all list", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -561,38 +648,10 @@ func humanBytes(n int64) string {
 	}
 }
 
-// magnetInfoHash extracts the v1 info_hash from a magnet URI, normalised
-// to the lowercase 40-char hex that qBit keys torrents by. Handles both
-// hex (btih:<40 hex>) and base32 (btih:<32 base32>) encodings. Returns ""
-// for non-magnets, v2-only magnets (btmh), or anything malformed — callers
-// then fall back to poller-side linking.
+// magnetInfoHash extracts the v1 info_hash from a magnet URI — moved to
+// torrentmeta so the qbit client can share it for duplicate-add recovery.
 func magnetInfoHash(downloadURL string) string {
-	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(downloadURL)), "magnet:") {
-		return ""
-	}
-	u, err := url.Parse(downloadURL)
-	if err != nil {
-		return ""
-	}
-	const prefix = "urn:btih:"
-	for _, xt := range u.Query()["xt"] {
-		if !strings.HasPrefix(xt, prefix) {
-			continue
-		}
-		h := strings.TrimSpace(xt[len(prefix):])
-		switch len(h) {
-		case 40:
-			if _, err := hex.DecodeString(h); err == nil {
-				return strings.ToLower(h)
-			}
-		case 32:
-			b, err := base32.StdEncoding.DecodeString(strings.ToUpper(h))
-			if err == nil && len(b) == 20 {
-				return hex.EncodeToString(b)
-			}
-		}
-	}
-	return ""
+	return torrentmeta.MagnetInfoHash(downloadURL)
 }
 
 // failGrab transitions a grab to failed with a reason. Best-effort.

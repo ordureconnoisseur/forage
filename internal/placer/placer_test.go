@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -69,6 +70,151 @@ func TestPlaceDirResumesPartialMirror(t *testing.T) {
 	}
 	if res2.Mode != "" {
 		t.Errorf("expected idempotent (Mode \"\"), got %q", res2.Mode)
+	}
+}
+
+// TestPlaceDirSkipsSamples guards the sample-clip filter: a scene-group
+// release folder ships the full video plus a short preview (as a sibling
+// "-sample" file and inside a Sample/ subdir), and mirroring those made
+// Stash create junk, un-identifiable scenes. The full video must place; the
+// samples must not. A large video that merely has "sample" in its name (no
+// bigger sibling) must be kept — the precision guard.
+func TestPlaceDirSkipsSamples(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "Studio.24.01.05.Perf.XXX.1080p-GRP")
+
+	big := make([]byte, 4000)  // the real scene
+	small := make([]byte, 100) // a preview sample (<50% of big)
+	write := func(rel string, b []byte) {
+		full := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, b, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("studio.24.01.05.perf.mp4", big)               // keep: the scene
+	write("studio.24.01.05.perf-sample.mp4", small)      // skip: sibling sample
+	write(filepath.Join("Sample", "preview.mp4"), small) // skip: in Sample/ dir
+	write("studio.24.01.05.perf.nfo", small)             // keep: not a video
+	write("proof-sample.jpg", small)                     // keep: not a video
+
+	p := New(lib, discardLogger())
+	dest := filepath.Join(lib, "Perf", "Studio.24.01.05.Perf.XXX.1080p-GRP")
+	if _, err := p.Place(src, "Perf"); err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+
+	keep := []string{"studio.24.01.05.perf.mp4", "studio.24.01.05.perf.nfo", "proof-sample.jpg"}
+	for _, n := range keep {
+		if _, err := os.Stat(filepath.Join(dest, n)); err != nil {
+			t.Errorf("expected %s to be placed: %v", n, err)
+		}
+	}
+	skip := []string{"studio.24.01.05.perf-sample.mp4", filepath.Join("Sample", "preview.mp4")}
+	for _, n := range skip {
+		if _, err := os.Stat(filepath.Join(dest, n)); err == nil {
+			t.Errorf("sample %s should NOT have been placed", n)
+		}
+	}
+	// The Sample/ directory itself should not be recreated in the library.
+	if _, err := os.Stat(filepath.Join(dest, "Sample")); err == nil {
+		t.Errorf("Sample/ dir should not have been mirrored")
+	}
+}
+
+// TestPlaceSampleNamedMainKept is the false-positive guard: when the only /
+// largest video has "sample" in its name (some OnlyFans titles do), it's the
+// scene, not a preview, and must be kept.
+func TestPlaceSampleNamedMainKept(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+	src := filepath.Join(root, "dl", "Selti-gym-workout-sample")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	main := "Selti-naked-gym-workout-sample-GovBRLDI.mp4"
+	if err := os.WriteFile(filepath.Join(src, main), make([]byte, 3000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+	dest := filepath.Join(lib, "Selti", "Selti-gym-workout-sample")
+	if _, err := p.Place(src, "Selti"); err != nil {
+		t.Fatalf("Place: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, main)); err != nil {
+		t.Errorf("standalone 'sample'-named video should be kept: %v", err)
+	}
+}
+
+// TestPlaceUnhidesHiddenFiles guards the dot-strip: dot-hidden source files
+// (balbums.st names clips ".y0hw..._source.mp4") must land VISIBLE in the
+// library, or Stash's scanner skips them and they never become scenes. Covers
+// both the single-file and the pack-folder paths, and the idempotent re-run
+// (the un-hidden dest must be recognised as ours, not re-placed as a hidden
+// duplicate).
+func TestPlaceUnhidesHiddenFiles(t *testing.T) {
+	root := t.TempDir()
+	lib := filepath.Join(root, "library")
+
+	// Single hidden file.
+	sf := filepath.Join(root, "dl", ".y0hw_source.mp4")
+	if err := os.MkdirAll(filepath.Dir(sf), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sf, []byte("scene"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p := New(lib, discardLogger())
+	res, err := p.Place(sf, "Bubblexgun")
+	if err != nil {
+		t.Fatalf("Place single hidden: %v", err)
+	}
+	if base := filepath.Base(res.Path); base != "y0hw_source.mp4" {
+		t.Errorf("single file placed as %q, want un-hidden y0hw_source.mp4", base)
+	}
+
+	// Pack with a mix of hidden and visible files.
+	src := filepath.Join(root, "dl", "balbums - pack")
+	for _, n := range []string{".y0hw1_source.mp4", ".y0hw2_source.mp4", "visible.mp4"} {
+		if err := os.WriteFile(filepath.Join(src, n), []byte(n), 0o644); err != nil {
+			if os.MkdirAll(src, 0o755) == nil {
+				_ = os.WriteFile(filepath.Join(src, n), []byte(n), 0o644)
+			}
+		}
+	}
+	dest := filepath.Join(lib, "Bubblexgun", "balbums - pack")
+	if _, err := p.Place(src, "Bubblexgun"); err != nil {
+		t.Fatalf("Place pack: %v", err)
+	}
+	for _, want := range []string{"y0hw1_source.mp4", "y0hw2_source.mp4", "visible.mp4"} {
+		if _, err := os.Stat(filepath.Join(dest, want)); err != nil {
+			t.Errorf("expected un-hidden %s in library: %v", want, err)
+		}
+	}
+	for _, notWant := range []string{".y0hw1_source.mp4", ".y0hw2_source.mp4"} {
+		if _, err := os.Stat(filepath.Join(dest, notWant)); err == nil {
+			t.Errorf("hidden %s should not exist in library", notWant)
+		}
+	}
+	// Re-run must be a no-op: the un-hidden dest is recognised as ours (not
+	// re-placed as hidden duplicates).
+	res2, err := p.Place(src, "Bubblexgun")
+	if err != nil {
+		t.Fatalf("Place pack (idempotent): %v", err)
+	}
+	if res2.Mode != "" {
+		t.Errorf("re-run placed files (Mode %q); un-hide broke idempotency", res2.Mode)
+	}
+	ents, _ := os.ReadDir(dest)
+	if len(ents) != 3 {
+		names := make([]string, 0, len(ents))
+		for _, e := range ents {
+			names = append(names, e.Name())
+		}
+		t.Errorf("dest has %d entries after re-run, want 3: %v", len(ents), names)
 	}
 }
 
@@ -321,6 +467,9 @@ func TestPlaceSingleFileCollisionStillSuffixes(t *testing.T) {
 // CreateTemp's 0600, which made library copies unreadable to a Stash
 // running as a different uid.
 func TestCopyFileWorldReadable(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits are not honoured on windows")
+	}
 	root := t.TempDir()
 	src := filepath.Join(root, "src.mkv")
 	dest := filepath.Join(root, "dest.mkv")

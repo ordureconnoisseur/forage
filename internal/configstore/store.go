@@ -97,6 +97,16 @@ type StoredConfig struct {
 	// NEVER the plaintext. The /config endpoint accepts a plaintext
 	// `password`, hashes it here, and only the hash is ever persisted.
 	PasswordHash *string `json:"passwordHash,omitempty"`
+	// Telegram notification sink: bot token + chat id (both required to
+	// activate). The token is a secret — /config masks it like the API keys.
+	TelegramBotToken *string `json:"telegramBotToken,omitempty"`
+	TelegramChatID   *string `json:"telegramChatId,omitempty"`
+	// NotifyWebhookURL receives {"event","message","ts"} JSON per event
+	// batch — the generic notification sink.
+	NotifyWebhookURL *string `json:"notifyWebhookUrl,omitempty"`
+	// StashPublicURL is the user-reachable Stash base URL that
+	// notification links point at (falls back to StashURL when empty).
+	StashPublicURL *string `json:"stashPublicUrl,omitempty"`
 }
 
 // Patch is the wire shape POSTed to /config. Identical to StoredConfig
@@ -350,6 +360,18 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.PasswordHash != nil {
 		base.PasswordHash = patch.PasswordHash
+	}
+	if patch.TelegramBotToken != nil {
+		base.TelegramBotToken = patch.TelegramBotToken
+	}
+	if patch.TelegramChatID != nil {
+		base.TelegramChatID = patch.TelegramChatID
+	}
+	if patch.NotifyWebhookURL != nil {
+		base.NotifyWebhookURL = patch.NotifyWebhookURL
+	}
+	if patch.StashPublicURL != nil {
+		base.StashPublicURL = patch.StashPublicURL
 	}
 }
 

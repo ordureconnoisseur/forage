@@ -212,9 +212,68 @@ func (c *Client) AddTorrent(ctx context.Context, downloadURL, category string) (
 		return "", fmt.Errorf("login: %w", err)
 	}
 	if strings.HasPrefix(downloadURL, "magnet:") {
-		return "", c.addByURLs(ctx, downloadURL, category)
+		err := c.addByURLs(ctx, downloadURL, category)
+		if err == nil {
+			return "", nil
+		}
+		// qBit refuses a duplicate magnet with the same bare "Fails." it
+		// uses for a genuinely unparseable one. When the URI carries its
+		// btih and that torrent is already present, this is the duplicate
+		// case — recover it exactly like the .torrent path instead of
+		// failing a grab whose download is already sitting in qBit.
+		if hash := torrentmeta.MagnetInfoHash(downloadURL); hash != "" {
+			if recovered, rerr := c.recoverDuplicateAdd(ctx, hash, category, func() error {
+				return c.addByURLs(ctx, downloadURL, category)
+			}); recovered {
+				return hash, rerr
+			}
+		}
+		return "", err
 	}
 	return c.addByFetchedFile(ctx, downloadURL, category)
+}
+
+// recoverDuplicateAdd handles qBit's "Fails." refusal when the refused
+// info-hash turns out to already be present: the add is a recoverable
+// success (the grab links to the existing download), not a failure.
+// Returns recovered=false when the hash isn't in qBit after all — the
+// refusal really was a parse failure and the caller should surface its
+// own error. readd re-attempts the original add after a dead
+// missingFiles husk is cleared.
+func (c *Client) recoverDuplicateAdd(ctx context.Context, hash, category string, readd func() error) (recovered bool, err error) {
+	t, terr := c.TorrentInfo(ctx, hash)
+	if terr != nil || t == nil {
+		return false, nil
+	}
+	// A missingFiles husk — the data was deleted out from under the old
+	// entry (a manual download later removed from the library, say) — can
+	// never download again, and its mere presence blocks every future add
+	// of this hash. Whatever category it nominally belongs to, it's dead
+	// for everyone: drop the entry (its files are already gone) and add
+	// fresh.
+	if t.State == "missingFiles" {
+		if derr := c.DeleteTorrent(ctx, hash, false); derr == nil {
+			if rerr := readd(); rerr == nil {
+				return true, nil
+			}
+		}
+		return true, fmt.Errorf("a stale qbit entry for this torrent had lost its files; clearing it didn't unblock the add — remove the torrent in qBit and retry")
+	}
+	// The grab now rides a torrent added outside forage. If it's
+	// uncategorised (a manual add), adopt it properly: set the forage
+	// category and start it, so a paused 0% torrent doesn't wedge the grab
+	// with no hint why. But a torrent that BELONGS to another category (a
+	// cross-seed under the *arr stack, say) is another app's: re-
+	// categorising it can physically relocate the payload under Auto
+	// Torrent Management and break that app's import/seeding, so leave it
+	// entirely alone — the hash link alone is the success.
+	if t.Category == "" || t.Category == category {
+		if category != "" && t.Category != category {
+			_ = c.SetCategory(ctx, hash, category)
+		}
+		_ = c.Resume(ctx, hash)
+	}
+	return true, nil
 }
 
 // addByURLs is the simple form qBit handles natively — used only for
@@ -353,37 +412,10 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		// torrent is already present, so that's a recoverable success
 		// (the grab links to the existing download), not a failure.
 		if hash != "" {
-			if t, terr := c.TorrentInfo(ctx, hash); terr == nil && t != nil {
-				// A missingFiles husk — the data was deleted out from under
-				// the old entry (a manual download later removed from the
-				// library, say) — can never download again, and its mere
-				// presence blocks every future add of this hash. Whatever
-				// category it nominally belongs to, it's dead for everyone:
-				// drop the entry (its files are already gone) and add fresh.
-				if t.State == "missingFiles" {
-					if derr := c.DeleteTorrent(ctx, hash, false); derr == nil {
-						if rerr := c.postAdd(ctx, &buf, mw.FormDataContentType()); rerr == nil {
-							return hash, nil
-						}
-					}
-					return hash, fmt.Errorf("a stale qbit entry for this torrent had lost its files; clearing it didn't unblock the add — remove the torrent in qBit and retry")
-				}
-				// The grab now rides a torrent added outside forage. If it's
-				// uncategorised (a manual add), adopt it properly: set the
-				// forage category and start it, so a paused 0% torrent
-				// doesn't wedge the grab with no hint why. But a torrent
-				// that BELONGS to another category (a cross-seed under the
-				// *arr stack, say) is another app's: re-categorising it can
-				// physically relocate the payload under Auto Torrent
-				// Management and break that app's import/seeding, so leave
-				// it entirely alone — the hash link alone is the success.
-				if t.Category == "" || t.Category == category {
-					if category != "" && t.Category != category {
-						_ = c.SetCategory(ctx, hash, category)
-					}
-					_ = c.Resume(ctx, hash)
-				}
-				return hash, nil
+			if recovered, rerr := c.recoverDuplicateAdd(ctx, hash, category, func() error {
+				return c.postAdd(ctx, &buf, mw.FormDataContentType())
+			}); recovered {
+				return hash, rerr
 			}
 		}
 		// We confirmed the bytes are a bencoded .torrent above, so this

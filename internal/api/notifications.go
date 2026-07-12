@@ -34,7 +34,7 @@ func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
 		// Stalled is a computed (not stored) flag, so count it by applying
 		// the same isStalled check the /grabs view uses over the currently
 		// downloading grabs.
-		if dl, err := s.grabs.List(r.Context(), "downloading", 200, 0); err == nil {
+		if dl, err := s.grabs.List(r.Context(), "downloading", "", 200, 0); err == nil {
 			for _, g := range dl {
 				if isStalled(g) {
 					out.GrabsStalled++
@@ -43,7 +43,7 @@ func (s *Server) getNotifications(w http.ResponseWriter, r *http.Request) {
 		}
 		// Placement-failing: downloaded grabs stuck at "completed" with a
 		// persistent place_error.
-		if comp, err := s.grabs.List(r.Context(), "completed", 200, 0); err == nil {
+		if comp, err := s.grabs.List(r.Context(), "completed", "", 200, 0); err == nil {
 			for _, g := range comp {
 				if isPlaceFailing(g) {
 					out.GrabsPlaceFailing++

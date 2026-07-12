@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/notify"
 	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/prowlarr"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
@@ -37,11 +38,23 @@ type Pool struct {
 	qbit     atomic.Pointer[qbit.Client]
 	sab      atomic.Pointer[sabnzbd.Client]
 	placer   atomic.Pointer[placer.Placer]
+	notifier atomic.Pointer[notify.Notifier]
 
 	// placerLog is the logger every constructed placer carries, wired
 	// once at boot via SetPlacerLogger and reused by each Reload's
 	// reconstruction.
 	placerLog atomic.Pointer[slog.Logger]
+
+	// qbitHealth / sabHealth accumulate the background reachability
+	// probes for the download clients (see health.go). They live here,
+	// next to the client pointers they describe, so Reload can reset
+	// them when it swaps the clients: a verdict about the old client is
+	// never attributed to the new one. healthKick (buffered, size 1)
+	// wakes RunHealthProbes right after a Reload so a config fix is
+	// re-verified within seconds instead of one full probe interval.
+	qbitHealth probeState
+	sabHealth  probeState
+	healthKick chan struct{}
 
 	// snapshot of the categories + library root the clients were
 	// built from. Cheap to copy under reads; held atomically alongside
@@ -81,7 +94,7 @@ type Settings struct {
 
 // New returns an empty Pool. Reload it before using.
 func New() *Pool {
-	p := &Pool{}
+	p := &Pool{healthKick: make(chan struct{}, 1)}
 	p.settings.Store(&Settings{})
 	return p
 }
@@ -128,6 +141,10 @@ func (p *Pool) Reload(cfg config.Config) {
 	// despite SetPlacer's documented contract.
 	p.placer.Store(placer.New(cfg.LibraryRoot, p.placerLog.Load()))
 
+	// notify.New returns nil when neither sink is configured — the same
+	// nil-means-off contract as the other clients.
+	p.notifier.Store(notify.New(cfg.TelegramBotToken, cfg.TelegramChatID, cfg.NotifyWebhookURL))
+
 	p.settings.Store(&Settings{
 		QbitCategory:        cfg.QbitCategory,
 		SabCategory:         cfg.SabCategory,
@@ -139,6 +156,19 @@ func (p *Pool) Reload(cfg config.Config) {
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 	})
+
+	// The swapped-in clients invalidate the reachability verdicts, which
+	// were measured against the old ones. Reset to optimistic-unprobed
+	// and wake the prober so the new clients are verified within seconds
+	// (non-blocking send: a pending kick already covers this Reload; the
+	// nil-channel case only arises for a zero-value Pool in tests, where
+	// the default branch makes it a no-op).
+	p.qbitHealth.reset()
+	p.sabHealth.reset()
+	select {
+	case p.healthKick <- struct{}{}:
+	default:
+	}
 }
 
 // SetPlacerLogger wires the logger every constructed placer carries —
@@ -166,6 +196,10 @@ func (p *Pool) Sab() *sabnzbd.Client { return p.sab.Load() }
 
 // Placer returns the current Placer. Always non-nil; check Configured().
 func (p *Pool) Placer() *placer.Placer { return p.placer.Load() }
+
+// Notifier returns the current external-notification sink, or nil when
+// notifications are unconfigured (notify.Notifier methods are nil-safe).
+func (p *Pool) Notifier() *notify.Notifier { return p.notifier.Load() }
 
 // Settings returns a snapshot of the non-client config knobs. Always
 // non-nil after the first Reload().

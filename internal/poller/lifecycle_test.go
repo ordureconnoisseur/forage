@@ -53,12 +53,19 @@ type fakeQbit struct {
 	mu       sync.Mutex
 	torrents []qbit.Torrent
 	files    map[string][]qbit.TorrentFile // info_hash → file list
+	resumed  []string                      // hashes sent to /torrents/start|resume, in order
 }
 
 func (f *fakeQbit) set(ts []qbit.Torrent) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.torrents = ts
+}
+
+func (f *fakeQbit) resumedHashes() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.resumed...)
 }
 
 func (f *fakeQbit) handler() http.Handler {
@@ -80,6 +87,15 @@ func (f *fakeQbit) handler() http.Handler {
 		f.mu.Unlock()
 		writeJSON(w, fl)
 	})
+	recordResume := func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.resumed = append(f.resumed, r.Form.Get("hashes"))
+		f.mu.Unlock()
+		io.WriteString(w, "")
+	}
+	mux.HandleFunc("/api/v2/torrents/start", recordResume)
+	mux.HandleFunc("/api/v2/torrents/resume", recordResume)
 	return mux
 }
 
@@ -98,11 +114,12 @@ type fakeScene struct {
 type fakeStash struct {
 	mu        sync.Mutex
 	scenes    []fakeScene
-	reqs      int  // total GraphQL requests served (lets a test prove a code path made no calls)
-	generated int  // metadataGenerate calls served (proves deferred preview/sprite generation fired)
-	scanned   int  // metadataScan calls served (proves a (re-)scan fired)
-	boxErr    bool // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
-	jobErr    bool // when true, findJob queries 500 (simulates a JobStatus query failure)
+	reqs      int        // total GraphQL requests served (lets a test prove a code path made no calls)
+	generated int        // metadataGenerate calls served (proves deferred preview/sprite generation fired)
+	scanned   int        // metadataScan calls served (proves a (re-)scan fired)
+	scanPaths [][]string // paths sent to each metadataScan, in order (proves scan scoping)
+	boxErr    bool       // when true, stashBoxes queries 500 (simulates Stash unreachable for the endpoint lookup)
+	jobErr    bool       // when true, findJob queries 500 (simulates a JobStatus query failure)
 	jobStatus string
 }
 
@@ -129,6 +146,17 @@ func (f *fakeStash) scanCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.scanned
+}
+
+// lastScanPaths returns the paths sent to the most recent metadataScan
+// (nil if none fired), so a test can assert scan scoping.
+func (f *fakeStash) lastScanPaths() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.scanPaths) == 0 {
+		return nil
+	}
+	return f.scanPaths[len(f.scanPaths)-1]
 }
 
 func (f *fakeStash) reqCount() int {
@@ -160,8 +188,17 @@ func (f *fakeStash) handler() http.Handler {
 		case strings.Contains(q, "metadataIdentify"):
 			writeRaw(w, `{"data":{"metadataIdentify":"identify-job-1"}}`)
 		case strings.Contains(q, "metadataScan"):
+			var req struct {
+				Variables struct {
+					Input struct {
+						Paths []string `json:"paths"`
+					} `json:"input"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(body, &req)
 			f.mu.Lock()
 			f.scanned++
+			f.scanPaths = append(f.scanPaths, req.Variables.Input.Paths)
 			f.mu.Unlock()
 			writeRaw(w, `{"data":{"metadataScan":"scan-job-1"}}`)
 		case strings.Contains(q, "findJob"):
@@ -326,7 +363,7 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 	pool.Reload(cfg)
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour)
+	p := New(repo, dbh, pool, log, time.Minute, 6*time.Hour, nil)
 
 	return &rig{poller: p, repo: repo, qbit: fq, sab: fsab, stash: fs, libRoot: libRoot, stage: stage, cfg: cfg}
 }
@@ -941,6 +978,55 @@ func TestQueuedGrabSurvivesHashNotYetInQbit(t *testing.T) {
 	}
 }
 
+// TestQueuedSabGrabWithoutNzoTimesOut pins the SAB mirror of the qBit link
+// timeout: a queued SAB grab with no nzo_id (the daemon died between the row
+// insert and AddURL returning) must fail once past the link window — it can
+// never be found in SAB's queue/history, and retryGrab only accepts failed
+// grabs, so without the timeout it polls forever as an undeletable zombie.
+// While the async add is still pending in-process (fetch-gate queue), the
+// timeout must NOT fire.
+func TestQueuedSabGrabWithoutNzoTimesOut(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Hazel Moore - Release", Client: "sabnzbd",
+		ClientID: "", Category: "forager",
+		Status: "queued", Kind: "single", GrabbedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Fresh grab, no nzo yet — inside the link window, stays queued.
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "queued" {
+		t.Fatalf("inside window: status=%q (reason=%q), want queued", g.Status, g.Reason)
+	}
+
+	// Age it past the window while an add is pending in-process — a bulk
+	// batch tail waiting on the fetch gate must not be failed.
+	g := r.get(t, id)
+	g.GrabbedAt = time.Now().Add(-qbitLinkTimeout - time.Minute).Unix()
+	if err := r.repo.Update(ctx, *g); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	r.poller.pending = grabs.NewPendingAdds()
+	r.poller.pending.Start(id)
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "queued" {
+		t.Fatalf("pending add: status=%q (reason=%q), want queued", g.Status, g.Reason)
+	}
+
+	// Add chain terminated (or daemon restarted: registry empty) — now the
+	// missing nzo means the add really died.
+	r.poller.pending.Done(id)
+	r.tick(t)
+	if g := r.get(t, id); g.Status != "failed" {
+		t.Fatalf("past window: status=%q (reason=%q), want failed", g.Status, g.Reason)
+	}
+}
+
 // sameFile reports whether two paths are hardlinks of the same inode.
 func sameFile(t *testing.T, a, b string) bool {
 	t.Helper()
@@ -1296,10 +1382,25 @@ func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
 		State: "error", Progress: 0.5,
 	}})
 
-	// First sighting only starts the grace clock — the grab must NOT fail.
+	// First sighting only starts the grace clock — the grab must NOT fail,
+	// and the tick must kick exactly one resume (qBit never auto-resumes an
+	// errored torrent, so a transient write failure otherwise strands it).
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "downloading" {
 		t.Fatalf("transient error within grace: status=%q (reason %q), want downloading", g.Status, g.Reason)
+	}
+	if got := r.qbit.resumedHashes(); len(got) != 1 || got[0] != hash {
+		t.Fatalf("first error sighting should kick one resume for %s, got %v", hash, got)
+	}
+
+	// A second error tick within the grace is NOT a new sighting — no
+	// second kick, and still no fail.
+	r.tick(t)
+	if got := r.qbit.resumedHashes(); len(got) != 1 {
+		t.Fatalf("repeat error tick must not re-kick, got %v", got)
+	}
+	if g := r.get(t, id); g.Status != "downloading" {
+		t.Fatalf("still within grace: status=%q, want downloading", g.Status)
 	}
 
 	// Backdate the grace clock past qbitErrorGrace; the persisting error is now
@@ -1310,6 +1411,41 @@ func TestQbitTransientErrorDoesNotFailImmediately(t *testing.T) {
 	r.tick(t)
 	if g := r.get(t, id); g.Status != "failed" {
 		t.Fatalf("error persisted past grace: status=%q, want failed", g.Status)
+	}
+}
+
+// TestQbitMissingFilesNotResumed pins the resume-kick exclusion: a
+// missingFiles torrent must NOT be auto-resumed — pack dedup deletes
+// duplicate files out from under seeding torrents, and a resume there
+// would re-download content the user chose to remove. The grace window
+// still fails it as before.
+func TestQbitMissingFilesNotResumed(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	const hash = "missingfileshash00"
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Performer - Deduped Husk",
+		Client:       "qbit",
+		ClientID:     hash,
+		Category:     "forager",
+		Status:       "downloading",
+		GrabbedAt:    time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: "Deduped Husk", Category: "forager",
+		State: "missingFiles", Progress: 1,
+	}})
+
+	r.tick(t)
+	if got := r.qbit.resumedHashes(); len(got) != 0 {
+		t.Fatalf("missingFiles must not be auto-resumed, got %v", got)
+	}
+	if g := r.get(t, id); g.Status != "downloading" {
+		t.Fatalf("within grace: status=%q, want downloading", g.Status)
 	}
 }
 
@@ -1442,8 +1578,39 @@ func TestPackRescansWhenSettledBelowCoverage(t *testing.T) {
 	if r.stash.scanCount() == before {
 		t.Fatalf("expected a re-scan for a settled-but-incomplete pack, none fired")
 	}
+	// The re-scan must be scoped to the pack directory itself, not its parent
+	// (/lib/P) — the parent holds every other pack/single under that performer.
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/Pack" {
+		t.Fatalf("pack re-scan must be scoped to the pack dir, got %v", got)
+	}
 	if g.Status == "confirmed" {
 		t.Fatalf("pack must not confirm below the coverage floor, got %q", g.Status)
+	}
+}
+
+// TestPlacementScanScopedToPlacedPath pins that the post-placement scan is
+// scoped to exactly the placed path — the file for a single grab, the pack
+// directory for a pack — and never the parent folder. Scanning the parent
+// re-walks every sibling (other performers' scenes, other packs, screenshot
+// subfolders) on each retry, which is what let Stash's job queue balloon into
+// thousands of redundant scans under a slowdown.
+func TestPlacementScanScopedToPlacedPath(t *testing.T) {
+	r := newRig(t, "")
+	// Identity mapping so the Stash-side path equals the forage-side path.
+	r.setConfig(func(c *config.Config) { c.StashPathMapping = "/lib:/lib" })
+	sc := r.poller.pool.Stash()
+
+	// Single: placedPath is the file → scan the file, not /lib/P.
+	r.poller.triggerPlacementScan(context.Background(), sc, 1, "/lib/P/scene.mp4")
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/scene.mp4" {
+		t.Fatalf("single scan must be file-scoped, got %v", got)
+	}
+
+	// Pack: placedPath is the directory → scan the dir (Stash recurses into
+	// it), not the parent /lib/P.
+	r.poller.triggerPlacementScan(context.Background(), sc, 2, "/lib/P/Pack")
+	if got := r.stash.lastScanPaths(); len(got) != 1 || got[0] != "/lib/P/Pack" {
+		t.Fatalf("pack scan must be dir-scoped to the pack folder, got %v", got)
 	}
 }
 
@@ -1465,9 +1632,10 @@ func TestPackDefersConfirmWhenEndpointLookupFails(t *testing.T) {
 	newPack := func(id int64) *grabs.Grab {
 		g := &grabs.Grab{
 			ID: id, Kind: "pack", Status: "scanned",
-			PlacedPath:  "/lib/P/Pack",
-			CompletedAt: time.Now().Add(-1 * time.Minute).Unix(),
-			PackFiles:   2,
+			PerformerName: "Pack Performer", // performer set → confirm path (not distribute)
+			PlacedPath:    "/lib/P/Pack",
+			CompletedAt:   time.Now().Add(-1 * time.Minute).Unix(),
+			PackFiles:     2,
 		}
 		r.poller.packMu.Lock()
 		r.poller.packScan[id] = packScanState{count: 2, since: time.Now().Add(-10 * time.Minute)}
@@ -1529,5 +1697,45 @@ func TestIdentifyInFlightAssumesInFlightOnError(t *testing.T) {
 	r.stash.setJob(false, "")
 	if r.poller.identifyInFlight(ctx, sc, 1) {
 		t.Fatalf("a drained/finished job must not be in flight")
+	}
+}
+
+// TestScanInFlightGuard pins the metadataScan de-duplication guard: while a
+// grab's last placement scan is still queued/running, forage must report it
+// in flight and skip re-firing, so a throttled re-scan can't stack duplicate
+// scans behind a busy Stash queue. Same failure-mode contract as identify: a
+// JobStatus error is treated as in flight; a drained job frees a re-fire.
+func TestScanInFlightGuard(t *testing.T) {
+	r := newRig(t, "")
+	sc := r.poller.pool.Stash()
+	ctx := context.Background()
+
+	// No remembered scan → free to fire.
+	if r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("no remembered scan should not be in flight")
+	}
+
+	r.poller.rememberScanJob(1, "scan-job-1")
+
+	// Still queued/running → in flight, so a re-scan is suppressed.
+	r.stash.setJob(false, "READY")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a READY scan must be in flight")
+	}
+	r.stash.setJob(false, "RUNNING")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a RUNNING scan must be in flight")
+	}
+
+	// JobStatus error → assume in flight (don't fire against an unreachable Stash).
+	r.stash.setJob(true, "")
+	if !r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a JobStatus error must be treated as in flight")
+	}
+
+	// Job drained/finished → free to fire the next scan.
+	r.stash.setJob(false, "")
+	if r.poller.scanInFlight(ctx, sc, 1) {
+		t.Fatalf("a drained/finished scan must not be in flight")
 	}
 }
