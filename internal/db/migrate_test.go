@@ -213,3 +213,70 @@ func TestSceneCacheMigration(t *testing.T) {
 		}
 	}
 }
+
+// TestGrabsRetryMigration verifies the 2026-07-12 deferred-retry columns
+// (attempts, next_retry_at) are added to a pre-migration grabs table and
+// existing rows survive with the zero-value defaults.
+func TestGrabsRetryMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "forager.db")
+
+	d1, err := Open(path)
+	if err != nil {
+		t.Fatalf("initial Open: %v", err)
+	}
+	d1.Close()
+
+	// Rebuild grabs WITHOUT the retry columns and seed a row, simulating a
+	// database from before this migration.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE grabs`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`
+		CREATE TABLE grabs (
+		  id INTEGER PRIMARY KEY,
+		  release_title TEXT NOT NULL,
+		  client_id TEXT,
+		  client_name TEXT,
+		  client TEXT NOT NULL DEFAULT 'qbit',
+		  status TEXT NOT NULL DEFAULT 'queued',
+		  grabbed_at INTEGER NOT NULL,
+		  updated_at INTEGER NOT NULL,
+		  rev INTEGER NOT NULL DEFAULT 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(
+		`INSERT INTO grabs (release_title, grabbed_at, updated_at) VALUES ('Old Grab', 1, 1)`,
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	d2, err := Open(path)
+	if err != nil {
+		t.Fatalf("migrating Open: %v", err)
+	}
+	defer d2.Close()
+
+	for _, col := range []string{"attempts", "next_retry_at"} {
+		var n int
+		if err := d2.QueryRow(
+			`SELECT COUNT(*) FROM pragma_table_info('grabs') WHERE name = ?`, col,
+		).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Errorf("column %s missing after migration", col)
+		}
+	}
+	var attempts int
+	if err := d2.QueryRow(`SELECT attempts FROM grabs WHERE release_title = 'Old Grab'`).Scan(&attempts); err != nil {
+		t.Fatalf("old row lost: %v", err)
+	}
+	if attempts != 0 {
+		t.Errorf("attempts = %d, want 0 default", attempts)
+	}
+}

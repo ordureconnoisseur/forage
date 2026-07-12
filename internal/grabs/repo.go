@@ -75,6 +75,11 @@ type Grab struct {
 	// surfaced. Torrent-only; SAB grabs leave these at 0.
 	Progress   float64
 	ProgressAt int64
+	// Attempts counts failed add attempts for the deferred-retry flow
+	// (status "deferred"); NextRetryAt is the unix time the retry loop
+	// may re-drive the add. Both zero for grabs that never deferred.
+	Attempts    int
+	NextRetryAt int64
 	// Rev is the optimistic-lock version, bumped by Update. Carry the value
 	// you loaded back into Update; if the row's rev advanced meanwhile (a
 	// concurrent write), Update returns ErrStaleUpdate rather than clobber.
@@ -167,6 +172,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  confirmed_at = ?,
 		  pack_files = ?, pack_identified = ?, pack_deduped = ?,
 		  progress = ?, progress_at = ?,
+		  attempts = ?, next_retry_at = ?,
 		  rev = rev + 1
 		WHERE id = ? AND rev = ?`,
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
@@ -177,6 +183,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.PackFiles, g.PackIdentified, g.PackDeduped,
 		g.Progress, g.ProgressAt,
+		g.Attempts, nullInt(g.NextRetryAt),
 		g.ID, g.Rev,
 	)
 	if err != nil {
@@ -204,6 +211,11 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 //     poller can apply the pack performer to its scenes (advancePackTag).
 //   - distributing: a studio/mixed pack (no performer) whose identified
 //     scenes are being sorted into performer folders (advancePackDistribute).
+//
+// 'deferred' is deliberately absent: a deferred grab's add never landed
+// in the client, so the link-timeout sweep would false-fail it while it
+// waits for its retry slot. The deferred-retry loop owns that state and
+// re-enters it here via retryGrab (status back to queued).
 func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 	return r.query(ctx, `
 		SELECT * FROM grabs
@@ -278,7 +290,10 @@ func statusRank(s string) int {
 		return 5
 	case "downloading":
 		return 4
-	case "queued":
+	case "queued", "deferred":
+		// deferred ranks with queued: the add hasn't landed yet but the
+		// retry loop will re-drive it, so the scene is still in-flight
+		// and watch/discover must not re-offer releases for it.
 		return 3
 	case "orphaned":
 		return 2 // in limbo, revivable — outranks failed, below live
@@ -305,9 +320,23 @@ func (r *Repo) HasLiveGrabForRelease(ctx context.Context, title string) (bool, e
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(1) FROM grabs
 		WHERE release_title = ?
-		  AND status IN ('queued','downloading','completed','placed','scanned','confirmed')`,
+		  AND status IN ('queued','deferred','downloading','completed','placed','scanned','confirmed')`,
 		title).Scan(&n)
 	return n > 0, err
+}
+
+// DeferredDue returns deferred grabs whose retry time has arrived,
+// soonest first, capped at limit: the deferred-retry loop's work list.
+// The cap bounds one tick's worth of re-adds (a SAB re-add is a
+// synchronous call); anything past it is picked up next tick.
+func (r *Repo) DeferredDue(ctx context.Context, now int64, limit int) ([]Grab, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'deferred' AND next_retry_at IS NOT NULL AND next_retry_at <= ?
+		ORDER BY next_retry_at ASC LIMIT ?`, now, limit)
 }
 
 // ConfirmedSince returns single-scene grabs that reached 'confirmed' after
@@ -509,7 +538,7 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		kind, pack_files, pack_identified, pack_deduped,
-		progress, progress_at, rev`
+		progress, progress_at, attempts, next_retry_at, rev`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -534,7 +563,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		predictedID, releaseIndexer, downloadURL, clientID, clientName, category, actualID, reason sql.NullString
 		performerName, placedPath, placeError                                                      sql.NullString
 		predictedConfidence                                                                        sql.NullFloat64
-		releaseSize, completedAt, placedAt, confirmedAt                                            sql.NullInt64
+		releaseSize, completedAt, placedAt, confirmedAt, nextRetryAt                               sql.NullInt64
 		kind                                                                                       sql.NullString
 	)
 	err := rows.Scan(&g.ID,
@@ -544,10 +573,11 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
 		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
-		&g.Progress, &g.ProgressAt, &g.Rev)
+		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &g.Rev)
 	if err != nil {
 		return g, err
 	}
+	g.NextRetryAt = nextRetryAt.Int64
 	g.Kind = kind.String
 	if g.Kind == "" {
 		g.Kind = "single"

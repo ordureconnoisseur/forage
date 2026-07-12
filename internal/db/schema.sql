@@ -105,6 +105,16 @@ CREATE TABLE IF NOT EXISTS meta (
 -- background poller advances the status: queued → downloading →
 -- completed → confirmed | mismatched | orphaned (or failed).
 --
+-- `deferred` is the retry-pending state between queued and failed: an
+-- add that failed TRANSIENTLY (download client unreachable, indexer
+-- 5xx) parks here instead of failing outright. `attempts` counts failed
+-- add attempts so far; `next_retry_at` is when the deferred-retry loop
+-- may re-drive the add (exponential backoff). Once the attempt budget
+-- is spent the grab settles to failed with the final error in `reason`.
+-- Deferred grabs are deliberately NOT in the poller's Active() set: the
+-- add never landed, so the link-timeout sweep would otherwise fail them
+-- while they wait for their retry slot.
+--
 -- `client` is the download-client kind ("qbit" | "sabnzbd"). `client_id`
 -- holds qBit's info_hash for torrents and SAB's nzo_id for usenet.
 -- `client_name` is the on-disk name the client reports — used by the
@@ -152,10 +162,17 @@ CREATE TABLE IF NOT EXISTS grabs (
   -- progress is 0..1; progress_at is the unix time it last increased.
   progress              REAL NOT NULL DEFAULT 0,
   progress_at           INTEGER NOT NULL DEFAULT 0,
+  -- deferred-retry state (status='deferred'): failed add attempts so
+  -- far, and the unix time the retry loop may try again. 0/NULL for
+  -- grabs that never deferred.
+  attempts              INTEGER NOT NULL DEFAULT 0,
+  next_retry_at         INTEGER,
   -- optimistic-lock version: bumped on every Update; the WHERE clause
   -- matches on it so a stale writer (poller tick vs concurrent API edit)
-  -- loses instead of clobbering. MUST stay the last column so SELECT *
-  -- column order matches the ALTER-appended column on migrated DBs.
+  -- loses instead of clobbering. (Physical column order no longer
+  -- matters to reads: the repo rewrites SELECT * to an explicit column
+  -- list, so migrated DBs whose ALTER-appended columns land after rev
+  -- scan identically to fresh ones.)
   rev                   INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_grabs_status     ON grabs(status);
