@@ -8,6 +8,9 @@ import {
   type MissingResponse,
   type MissingScene,
   type OwnedScene,
+  fetchSubscriptions,
+  subscribe,
+  unsubscribe,
 } from "../api";
 import { humanSize } from "../format";
 import WatchControl from "../WatchControl";
@@ -65,6 +68,23 @@ export default function MissingScenes({
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [watchBusy, setWatchBusy] = useState(false);
+  // Subscription state for the header button: whether THIS subject has a
+  // permanent watch. Loaded once per subject; toggled optimistically.
+  const [subscribed, setSubscribed] = useState(false);
+  const [subBusy, setSubBusy] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setSubscribed(false);
+    fetchSubscriptions()
+      .then((r) => {
+        if (cancelled) return;
+        setSubscribed(r.subscriptions.some((x) => x.stashdb_id === subject.id));
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [subject.kind, subject.id]);
   const [watchedMsg, setWatchedMsg] = useState<string | null>(null);
   // Owned · Both · Missing filter. Persisted so the choice sticks across
   // performers and sessions; defaults to Missing (the original behaviour).
@@ -210,7 +230,33 @@ export default function MissingScenes({
     <div>
       <div className="page-header page-header-row">
         <div>
-          <h2>{data.subject.name}</h2>
+          <h2>
+            {data.subject.name}
+            <button
+              className={"subscribe-btn" + (subscribed ? " on" : "")}
+              disabled={subBusy}
+              title={
+                subscribed
+                  ? "Subscribed: new scenes are watched automatically. Click to unsubscribe."
+                  : "Subscribe: automatically watch every scene released from today on. Backlog stays manual (Watch all missing below)."
+              }
+              onClick={() => {
+                setSubBusy(true);
+                const fn = subscribed
+                  ? unsubscribe(subject.id)
+                  : subscribe({
+                      stashdb_id: subject.id,
+                      kind: subject.kind,
+                      name: data.subject.name,
+                    });
+                fn.then(() => setSubscribed(!subscribed))
+                  .catch(() => {})
+                  .finally(() => setSubBusy(false));
+              }}
+            >
+              {subscribed ? "★ Subscribed" : "☆ Subscribe"}
+            </button>
+          </h2>
           <div className="meta">
             {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}
             <strong>{data.missing.length} missing</strong>

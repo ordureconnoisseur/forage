@@ -991,6 +991,61 @@ export function isActiveStatus(s: GrabStatus): boolean {
   return ACTIVE_STATUSES.includes(s);
 }
 
+// ── Subscriptions (permanent performer/studio watches) ────────────
+
+export interface Subscription {
+  stashdb_id: string;
+  kind: "performer" | "studio";
+  name: string;
+  image_url?: string;
+  auto_grab: boolean;
+  created_at: number;
+  last_checked: number;
+  // Rail badges: watches created since the card was last opened, and
+  // watches sitting available (grabbable) right now.
+  new_count: number;
+  ready_count: number;
+}
+
+export function fetchSubscriptions(): Promise<{ subscriptions: Subscription[] }> {
+  return get<{ subscriptions: Subscription[] }>("/subscriptions");
+}
+
+export function subscribe(sub: {
+  stashdb_id: string;
+  kind: "performer" | "studio";
+  name: string;
+  image_url?: string;
+}): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>("/subscriptions", sub);
+}
+
+export async function unsubscribe(stashdbID: string): Promise<{ ok: boolean }> {
+  const r = await fetch(
+    foragerBase() + `/subscriptions/${encodeURIComponent(stashdbID)}`,
+    { method: "DELETE", headers: authHeaders(), credentials: "include" },
+  );
+  if (!r.ok) return throwForStatus(r);
+  return r.json() as Promise<{ ok: boolean }>;
+}
+
+export function setSubscriptionAutoGrab(
+  stashdbID: string,
+  enabled: boolean,
+): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>(
+    `/subscriptions/${encodeURIComponent(stashdbID)}/auto-grab`,
+    { enabled },
+  );
+}
+
+export function markSubscriptionSeen(stashdbID: string): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>(
+    `/subscriptions/${encodeURIComponent(stashdbID)}/seen`,
+    {},
+  );
+}
+
 // ── Health (used to know what clients are configured) ─────────────
 
 export interface Health {

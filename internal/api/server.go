@@ -25,6 +25,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
+	"github.com/ordureconnoisseur/forager/internal/subscriptions"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -40,9 +41,10 @@ type Server struct {
 	pool      *clientpool.Pool
 	bootstrap config.BootstrapConfig
 	store     *configstore.Store
-	grabs     *grabs.Repo   // never nil
-	watches   *watches.Repo // never nil
-	rss       *rss.Repo     // never nil; RSS-sync watermark store
+	grabs     *grabs.Repo         // never nil
+	watches   *watches.Repo       // never nil
+	subs      *subscriptions.Repo // never nil; permanent performer/studio watches
+	rss       *rss.Repo           // never nil; RSS-sync watermark store
 	log       *slog.Logger
 	version   string
 	adoptNow  func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
@@ -71,6 +73,10 @@ type Server struct {
 	// should switch to. Defaults to resolveFailoverRelease in New();
 	// a field so tests can stub the heavy scene-resolution path.
 	resolveFailover func(context.Context, *grabs.Grab) *sceneRelease
+
+	// subScenes is the subscription loop's scene source. Defaults to the
+	// lazy StashDB scene cache in New(); a field so tests can stub it.
+	subScenes func(context.Context, string, string) ([]stashdb.Scene, error)
 
 	refreshMu sync.Mutex
 	// sceneSyncMu (TryLock) enforces ONE background scene-cache sync at a time.
@@ -164,6 +170,7 @@ func New(opts Options) *Server {
 		store:       opts.Store,
 		grabs:       opts.Grabs,
 		watches:     opts.Watches,
+		subs:        subscriptions.NewRepo(opts.DB),
 		rss:         rss.NewRepo(opts.DB),
 		log:         opts.Log,
 		version:     opts.Version,
@@ -172,6 +179,7 @@ func New(opts Options) *Server {
 		sessionKey:  loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 	s.resolveFailover = s.resolveFailoverRelease
+	s.subScenes = s.defaultSubScenes
 	return s
 }
 
@@ -239,6 +247,12 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/watches/{id}", s.deleteWatch)
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
+
+		r.Get("/subscriptions", s.getSubscriptions)
+		r.Post("/subscriptions", s.postSubscription)
+		r.Delete("/subscriptions/{id}", s.deleteSubscription)
+		r.Post("/subscriptions/{id}/auto-grab", s.postSubscriptionAutoGrab)
+		r.Post("/subscriptions/{id}/seen", s.postSubscriptionSeen)
 		r.Post("/watches/{id}/dismiss", s.postWatchDismiss)
 		r.Post("/watches/{id}/redo", s.postWatchRedo)
 		r.Get("/missing-scenes", s.getMissingScenes)

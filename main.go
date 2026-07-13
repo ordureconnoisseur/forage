@@ -139,6 +139,12 @@ func main() {
 	// sink is configured.
 	launch(func() { server.RunNotifyLoop(ctx) })
 
+	// Subscription loop: permanent performer/studio watches. Diffs each
+	// subject's StashDB scene list against its watermark and creates
+	// ordinary scene watches for new releases; the watch machinery does
+	// the rest. Auto-grab subscriptions also grab their available watches.
+	launch(func() { server.RunSubscriptionLoop(ctx) })
+
 	// Deferred-retry loop: re-drives grabs whose add failed transiently
 	// (client unreachable, indexer 5xx) with exponential backoff, holding
 	// retries while the Pool's health prober says the client is down so

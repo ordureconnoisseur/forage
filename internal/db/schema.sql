@@ -324,3 +324,38 @@ CREATE TABLE IF NOT EXISTS pack_duplicate (
 CREATE INDEX IF NOT EXISTS idx_pack_dup_status ON pack_duplicate(status);
 CREATE INDEX IF NOT EXISTS idx_pack_dup_grab   ON pack_duplicate(grab_id);
 
+
+-- Subscriptions: permanent performer/studio watches ("subscribe to
+-- Kenzie Reeves"). Where a scene watch tracks ONE scene and a
+-- collection job sweeps the BACKLOG once, a subscription covers the
+-- future: the subscription loop diffs the subject's StashDB scene list
+-- against `watermark` (newest release date already processed) and
+-- creates ordinary scene watches for anything new, batch-tagged
+-- 'sub:<stashdb_id>' so the whole existing watch machinery (re-search,
+-- RSS, available, notify, grab) takes over. Backlog is deliberately NOT
+-- included (watermark initialises to the subscribe date); the UI offers
+-- the existing watch-all-missing for that.
+--
+-- `auto_grab` opts one subscription into hands-free grabbing: the loop
+-- grabs its batch's available watches through the same path as the UI
+-- button (benched-indexer filter included). `last_seen_at` drives the
+-- Grabs-tab rail badge: batch activity after this stamp counts as new.
+CREATE TABLE IF NOT EXISTS subscriptions (
+  stashdb_id   TEXT PRIMARY KEY,
+  kind         TEXT NOT NULL DEFAULT 'performer', -- 'performer' | 'studio'
+  name         TEXT NOT NULL,
+  image_url    TEXT,
+  auto_grab    INTEGER NOT NULL DEFAULT 0,
+  created_at   INTEGER NOT NULL,
+  last_checked INTEGER NOT NULL DEFAULT 0,
+  watermark    INTEGER NOT NULL DEFAULT 0,
+  -- seen_total mirrors the subject's total_stashdb_scenes aggregate at
+  -- the last processed pass. Change detection needs BOTH signals: a new
+  -- scene with a NEWER date moves last_release_unix past the watermark,
+  -- but a scene added later carrying the SAME newest date only moves the
+  -- count. Without it, steady state (watermark == last release) would
+  -- either re-fetch every subject's scene list hourly or miss same-day
+  -- additions entirely.
+  seen_total   INTEGER NOT NULL DEFAULT 0,
+  last_seen_at INTEGER NOT NULL DEFAULT 0
+);
