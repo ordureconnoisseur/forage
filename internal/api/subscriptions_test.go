@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -297,5 +298,50 @@ func TestReconcileAutoIgnoresDeadRelease(t *testing.T) {
 	}
 	if len(infra.IgnoredURLs) != 0 {
 		t.Fatalf("infra failure must NOT ignore the release: %v", infra.IgnoredURLs)
+	}
+}
+
+// Bulk retry-all skips content-dead grabs: re-queuing a release whose
+// articles are gone just feeds the client a doomed job. (The single-grab
+// Retry button deliberately has no such filter.)
+func TestRetryAllSkipsContentDead(t *testing.T) {
+	s := newDeferTestServer(t)
+	s.pool.Reload(config.Config{QbitURL: "http://127.0.0.1:1"})
+	ctx := context.Background()
+
+	mk := func(title, reason string) {
+		id, err := s.grabs.Insert(ctx, grabs.Grab{
+			ReleaseTitle: title, Client: "qbit",
+			DownloadURL: "magnet:?xt=urn:btih:ffffffffffffffffffffffffffffffffffff" + title[len(title)-4:],
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, _ := s.grabs.Get(ctx, id)
+		g.Status = "failed"
+		g.Reason = reason
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("Dead.Release.aaaa", "sab: Aborted, cannot be completed - see docs")
+	mk("Live.Release.bbbb", "qbit request: dial tcp: connection refused")
+
+	req := httptest.NewRequest(http.MethodPost, "/grabs/retry-all-failed", nil)
+	rec := httptest.NewRecorder()
+	s.postRetryAllFailed(rec, req)
+
+	var out struct {
+		Retried     int `json:"retried"`
+		ContentDead int `json:"content_dead"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.ContentDead != 1 {
+		t.Fatalf("content_dead = %d, want 1", out.ContentDead)
+	}
+	if out.Retried != 1 {
+		t.Fatalf("retried = %d, want 1 (only the infra-failed grab)", out.Retried)
 	}
 }
