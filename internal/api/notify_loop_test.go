@@ -368,10 +368,11 @@ func TestNotifyLandedGrabs(t *testing.T) {
 	}
 }
 
-// The deferred digest fires once per grab, on its FIRST deferral only:
-// re-defers (higher attempt counts) stay silent, and the ending arrives
-// via the landed/failed digests instead.
-func TestNotifyDeferredGrabsFirstDeferralOnly(t *testing.T) {
+// The deferred digest fires for a grab's first TWO deferrals at most
+// (the widened window that survives the 60s-backoff-vs-2m-sweep race;
+// see notifyDeferredGrabs) and goes silent from attempt 3 on: the
+// story's ending arrives via the landed/failed digests instead.
+func TestNotifyDeferredGrabsEarlyAttemptsOnly(t *testing.T) {
 	ctx := context.Background()
 	dbh, err := db.Open(t.TempDir() + "/nd.db")
 	if err != nil {
@@ -424,7 +425,9 @@ func TestNotifyDeferredGrabsFirstDeferralOnly(t *testing.T) {
 	}
 	mu.Unlock()
 
-	// Re-deferral (attempts=2) bumps updated_at but must stay silent.
+	// Second deferral (attempts=2) is still within the notify window: the
+	// guaranteed-catchable slot for fast-cycling failures the 60s first
+	// backoff can hide from the 2m sweep.
 	time.Sleep(1100 * time.Millisecond)
 	g, _ = s.grabs.Get(ctx, id)
 	g.Attempts = 2
@@ -433,10 +436,24 @@ func TestNotifyDeferredGrabsFirstDeferralOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.tickNotify(ctx)
+	mu.Lock()
+	if len(messages) != 2 {
+		t.Fatalf("second deferral should notify (guaranteed-catch slot): got %d messages", len(messages))
+	}
+	mu.Unlock()
 
+	// From attempt 3 on the grab's story is known; stay silent.
+	time.Sleep(1100 * time.Millisecond)
+	g, _ = s.grabs.Get(ctx, id)
+	g.Attempts = 3
+	g.NextRetryAt = time.Now().Add(15 * time.Minute).Unix()
+	if err := s.grabs.Update(ctx, *g); err != nil {
+		t.Fatal(err)
+	}
+	s.tickNotify(ctx)
 	mu.Lock()
 	defer mu.Unlock()
-	if len(messages) != 1 {
-		t.Fatalf("re-deferral must not re-notify: got %d messages", len(messages))
+	if len(messages) != 2 {
+		t.Fatalf("attempt 3+ must not re-notify: got %d messages", len(messages))
 	}
 }

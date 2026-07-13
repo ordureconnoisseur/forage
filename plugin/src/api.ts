@@ -724,6 +724,9 @@ export interface Grab {
   attempts?: number;
   next_retry_at?: number;
   max_attempts?: number;
+  // Why the grab is deferred: "indexer" (fetch failed; failover may
+  // rescue) or "client" (download client unreachable; retry on recovery).
+  fail_kind?: string;
   performer_name?: string;
   placed_path?: string;
   place_error?: string;

@@ -427,20 +427,25 @@ func TestFailoverSingleShotGating(t *testing.T) {
 		return g
 	}
 
-	if r := s.maybeFailOverRelease(ctx, mk(1, "indexer", "Idx")); r != "" || calls != 0 {
+	if r, sw := s.maybeFailOverRelease(ctx, mk(1, "indexer", "Idx")); r != "" || sw || calls != 0 {
 		t.Fatalf("attempt 1 must retry the original release (calls=%d)", calls)
 	}
-	if r := s.maybeFailOverRelease(ctx, mk(3, "indexer", "Idx")); r != "" || calls != 0 {
+	if r, sw := s.maybeFailOverRelease(ctx, mk(3, "indexer", "Idx")); r != "" || sw || calls != 0 {
 		t.Fatalf("attempt 3+ must not fail over again (calls=%d)", calls)
 	}
-	if r := s.maybeFailOverRelease(ctx, mk(2, "client", "Idx")); r != "" || calls != 0 {
+	if r, sw := s.maybeFailOverRelease(ctx, mk(2, "client", "Idx")); r != "" || sw || calls != 0 {
 		t.Fatalf("client-side failures never fail over (calls=%d)", calls)
 	}
-	if r := s.maybeFailOverRelease(ctx, mk(2, "indexer", "")); r != "" || calls != 0 {
+	if r, sw := s.maybeFailOverRelease(ctx, mk(2, "indexer", "")); r != "" || sw || calls != 0 {
 		t.Fatalf("empty failed-indexer must not fail over (calls=%d)", calls)
 	}
-	_ = s.maybeFailOverRelease(ctx, mk(2, "indexer", "Idx"))
+	// The resolver ran and found nothing: the reason must say so (the
+	// user sees why the failover "did nothing"), with no switch flagged.
+	r, sw := s.maybeFailOverRelease(ctx, mk(2, "indexer", "Idx"))
 	if calls != 1 {
 		t.Fatalf("attempts==2 indexer failure must consult the resolver once, got %d", calls)
+	}
+	if sw || !strings.Contains(r, "no alternative source found") {
+		t.Fatalf("no-alternative outcome must be stamped in the reason, got %q (switched=%v)", r, sw)
 	}
 }

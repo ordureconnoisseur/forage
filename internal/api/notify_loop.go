@@ -237,16 +237,27 @@ const (
 	notifyReasonMax = 90
 )
 
-// notifyDeferredGrabs digests grabs that just entered the deferred-retry
-// flow, so a Telegram-first user learns about an indexer or client
-// problem when it STARTS, not ~81 minutes later when budgets exhaust
-// into the failed digest (and never at all for grabs that eventually
-// land, or for client outages the UI banner only shows in the browser).
-// Fires once per grab, on its FIRST deferral (Attempts == 1): re-defers
-// bump updated_at but carry higher attempt counts, and the story's
-// ending arrives via the landed or failed digests. Same watermark
-// mechanics as notifyFailedGrabs; grouped by reason because a deferral
-// burst usually has ONE cause.
+// notifyDeferredGrabs digests grabs that recently entered the
+// deferred-retry flow, so a Telegram-first user learns about an indexer
+// or client problem when it STARTS, not ~81 minutes later when budgets
+// exhaust into the failed digest (and never at all for grabs that
+// eventually land, or for client outages the UI banner only shows in
+// the browser).
+//
+// The sweep sees only rows CURRENTLY deferred, and a first deferral's
+// backoff (60s) is SHORTER than the sweep cadence (2m), so an
+// attempts==1-only filter missed roughly half of first deferrals (a
+// grab could defer and be re-driven entirely between two ticks; field-
+// verified on 2026-07-12). Accepting attempts <= 2 covers both real
+// classes: an outage-HELD grab sits deferred at attempts==1 long
+// enough for any sweep, and a fast-cycling failure is guaranteed
+// caught at attempts==2, whose 5m backoff spans two sweep periods. A
+// grab that defers once and recovers on its first retry never pings,
+// which is a feature: a 60-second blip that self-healed is noise, and
+// the landed digest tells its ending. Worst case is two pings for one
+// grab (held at 1, later caught at 2), bounded and informative. Same
+// watermark mechanics as notifyFailedGrabs; grouped by reason because
+// a deferral burst usually has ONE cause.
 func (s *Server) notifyDeferredGrabs(ctx context.Context, now int64) {
 	wm, ok := s.notifyWatermark(ctx, metaNotifyGrabDeferredAt, now)
 	if !ok {
@@ -260,7 +271,7 @@ func (s *Server) notifyDeferredGrabs(ctx context.Context, now int64) {
 	titles := map[string][]string{}
 	maxAt := wm
 	for _, g := range deferred {
-		if g.UpdatedAt <= wm || g.Attempts != 1 {
+		if g.UpdatedAt <= wm || g.Attempts > 2 {
 			continue
 		}
 		r := truncateLine(g.Reason, notifyReasonMax)
@@ -297,6 +308,9 @@ func (s *Server) notifyDeferredGrabs(ctx context.Context, now int64) {
 		s.log.Warn("notify send failed; will retry", "event", "grabs_deferred", "err", err)
 		return
 	}
+	// Success is logged so a "did the ping actually go out" question is
+	// answerable from the daemon log, not just the phone.
+	s.log.Info("notify sent", "event", "grabs_deferred", "grabs", total)
 	s.setNotifyWatermark(ctx, metaNotifyGrabDeferredAt, maxAt)
 }
 

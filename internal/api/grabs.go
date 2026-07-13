@@ -73,9 +73,13 @@ type grabOut struct {
 	// Deferred-retry state (status "deferred"): failed add attempts so
 	// far, when the retry loop will re-drive the add, and the total
 	// attempt budget (so the UI never hardcodes the daemon's constant).
-	Attempts      int           `json:"attempts,omitempty"`
-	NextRetryAt   int64         `json:"next_retry_at,omitempty"`
-	MaxAttempts   int           `json:"max_attempts,omitempty"`
+	Attempts    int   `json:"attempts,omitempty"`
+	NextRetryAt int64 `json:"next_retry_at,omitempty"`
+	MaxAttempts int   `json:"max_attempts,omitempty"`
+	// FailKind ('indexer' | 'client') categorises WHY the grab is
+	// deferred, so the row can say "indexer trouble" vs "client offline"
+	// at a glance instead of making the user parse the raw error.
+	FailKind      string        `json:"fail_kind,omitempty"`
 	PerformerName string        `json:"performer_name,omitempty"`
 	PlacedPath    string        `json:"placed_path,omitempty"`
 	PlaceError    string        `json:"place_error,omitempty"`
@@ -201,6 +205,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			Attempts:            g.Attempts,
 			NextRetryAt:         g.NextRetryAt,
 			MaxAttempts:         deferMaxAttempts,
+			FailKind:            g.FailKind,
 			Adopted:             g.DownloadURL == "" && g.ClientID != "",
 			PlaceFailing:        isPlaceFailing(g),
 			Reason:              g.Reason,

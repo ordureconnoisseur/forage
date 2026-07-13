@@ -52,9 +52,14 @@ type Item struct {
 	Status     string  // "Queued" | "Downloading" | "Completed" | "Failed" | ...
 	Percentage float64 // 0..100
 	Path       string  // history: final on-disk path / storage location
-	Completed  int64   // history: unix time the job finished (0 if absent)
-	EtaSecs    int64   // queue: seconds remaining (parsed from timeleft)
-	SpeedBps   int64   // queue: current download speed, bytes/s (queue-global)
+	// FailMessage is SAB's human explanation for a Failed history slot
+	// ("Repair failed, not enough repair blocks (3 short)", "Aborted,
+	// cannot be completed" ...). Empty for non-failed slots and for the
+	// queue endpoint, which doesn't carry it.
+	FailMessage string
+	Completed   int64 // history: unix time the job finished (0 if absent)
+	EtaSecs     int64 // queue: seconds remaining (parsed from timeleft)
+	SpeedBps    int64 // queue: current download speed, bytes/s (queue-global)
 }
 
 // Version is the low-cost reachability + auth probe used at boot and
@@ -258,12 +263,13 @@ func (c *Client) History(ctx context.Context, limit int, category string) ([]Ite
 	var resp struct {
 		History struct {
 			Slots []struct {
-				NzoID     string `json:"nzo_id"`
-				Name      string `json:"name"`
-				Category  string `json:"category"`
-				Status    string `json:"status"`
-				Storage   string `json:"storage"`
-				Completed int64  `json:"completed"`
+				NzoID       string `json:"nzo_id"`
+				Name        string `json:"name"`
+				Category    string `json:"category"`
+				Status      string `json:"status"`
+				Storage     string `json:"storage"`
+				Completed   int64  `json:"completed"`
+				FailMessage string `json:"fail_message"`
 			} `json:"slots"`
 		} `json:"history"`
 	}
@@ -273,12 +279,13 @@ func (c *Client) History(ctx context.Context, limit int, category string) ([]Ite
 	out := make([]Item, 0, len(resp.History.Slots))
 	for _, s := range resp.History.Slots {
 		out = append(out, Item{
-			NzoID:     s.NzoID,
-			Name:      s.Name,
-			Category:  s.Category,
-			Status:    s.Status,
-			Path:      s.Storage,
-			Completed: s.Completed,
+			NzoID:       s.NzoID,
+			Name:        s.Name,
+			Category:    s.Category,
+			Status:      s.Status,
+			Path:        s.Storage,
+			Completed:   s.Completed,
+			FailMessage: s.FailMessage,
 		})
 	}
 	return out, nil

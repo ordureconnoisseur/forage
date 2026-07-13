@@ -2208,7 +2208,12 @@ function GrabRow({
               {g.reason && <div className="grab-reason">{g.reason}</div>}
               {g.status === "deferred" && (
                 <div className="grab-reason">
-                  attempt {(g.attempts ?? 0) + 1}/{g.max_attempts ?? 5}{" "}
+                  attempt {(g.attempts ?? 0) + 1}/{g.max_attempts ?? 5}
+                  {g.fail_kind === "client"
+                    ? " · download client offline"
+                    : g.fail_kind === "indexer"
+                      ? " · indexer trouble"
+                      : ""}{" "}
                   {retryEta(g.next_retry_at)}
                 </div>
               )}
@@ -2506,6 +2511,14 @@ function GrabRow({
               </button>
             )}
             {retryErr && <span className="grab-delete-err">{retryErr}</span>}
+            {/* The budget ran out on its own: tell the user what the
+                buttons DO about it instead of leaving a dead end. */}
+            {g.status === "failed" && (g.reason ?? "").includes("gave up after") && (
+              <span className="grab-retry-hint">
+                auto-retry exhausted · Retry restarts the budget; if the
+                source is dead, pick another release
+              </span>
+            )}
             {/* When a grab stalled or didn't land cleanly, jump back to
                 the scene's releases to pick a different one. (Deferred
                 grabs auto-retry the SAME release on a backoff schedule;

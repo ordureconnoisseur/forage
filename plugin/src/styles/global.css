@@ -3132,6 +3132,11 @@ code.grab-fact-v,
   opacity: 0.6;
   cursor: default;
 }
+.grab-retry-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  align-self: center;
+}
 .grab-delete-err {
   font-size: 12px;
   color: #fca5a5;

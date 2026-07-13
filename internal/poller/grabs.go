@@ -2245,7 +2245,14 @@ func (p *Poller) advanceSab(g *grabs.Grab, queue, history []sabnzbd.Item) (bool,
 		case "Failed":
 			if g.Status != "failed" {
 				g.Status = "failed"
+				// Carry SAB's own explanation when it has one: "Repair
+				// failed, not enough repair blocks (3 short)" tells the
+				// user to re-pick, where a bare status=Failed told them
+				// nothing.
 				g.Reason = "sab status=Failed"
+				if item.FailMessage != "" {
+					g.Reason = "sab: " + item.FailMessage
+				}
 				dirty = true
 			}
 		default:
