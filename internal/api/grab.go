@@ -677,17 +677,28 @@ func (s *Server) postRetryAllFailed(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
-	retried, skipped := 0, 0
+	retried, skipped, dead := 0, 0, 0
 	for i := range failed {
 		g := failed[i]
+		// Bulk retry is indiscriminate by nature, so it must not re-queue
+		// releases whose failure marked the CONTENT dead (missing
+		// articles, unrepairable, corrupt): those are guaranteed to fail
+		// identically and just feed SAB/qBit doomed jobs (observed
+		// 2026-07-13: the same aborted NZB re-added repeatedly). The
+		// single-grab Retry button deliberately keeps no such filter:
+		// retrying one specific grab is explicit user intent.
+		if contentDeadReason(g.Reason) {
+			dead++
+			continue
+		}
 		if rerr := s.retryGrab(r.Context(), &g, true); rerr != nil {
 			skipped++
 			continue
 		}
 		retried++
 	}
-	s.log.Info("retry all failed", "retried", retried, "skipped", skipped)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retried": retried, "skipped": skipped})
+	s.log.Info("retry all failed", "retried", retried, "skipped", skipped, "content_dead", dead)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "retried": retried, "skipped": skipped, "content_dead": dead})
 }
 
 // applyGrabUpdate loads the grab fresh, runs apply (which sets the handler's
