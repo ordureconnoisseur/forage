@@ -183,5 +183,21 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sce
 	// user would see at the top of the interactive list, minus the
 	// failed/benched indexers.
 	rankReleases(out)
-	return chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, "torrent", s.disabledIndexers(ctx))
+	alt := chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, "torrent", s.disabledIndexers(ctx))
+	if alt == nil {
+		// The expensive part ran and found nothing usable: say so, with
+		// enough shape to judge why, or a no-op failover is
+		// indistinguishable from a broken one (field-learned 2026-07-12,
+		// when reconstructing this exact outcome took timing forensics).
+		verified := 0
+		for i := range out {
+			if out[i].Verified {
+				verified++
+			}
+		}
+		s.log.Info("failover: no qualifying alternative",
+			"grab_id", g.ID, "failed_indexer", g.ReleaseIndexer,
+			"releases_found", len(out), "verified", verified)
+	}
+	return alt
 }

@@ -233,21 +233,25 @@ func (s *Server) tickDeferredRetries(ctx context.Context) {
 		if s.clientRetryBlocked(&g) {
 			continue // hold the grab, attempt budget untouched
 		}
-		reason := s.maybeFailOverRelease(ctx, &g)
+		reason, switched := s.maybeFailOverRelease(ctx, &g)
 		if rerr := s.retryGrabWithReason(ctx, &g, false, reason); rerr != nil {
 			s.log.Warn("deferred retry", "grab_id", g.ID, "err", rerr)
 			continue
 		}
 		s.log.Info("deferred grab retrying",
 			"grab_id", g.ID, "attempt", g.Attempts+1, "max", deferMaxAttempts,
-			"failover", reason != "")
+			"failover", switched)
 	}
 }
 
 // maybeFailOverRelease switches an indexer-failed grab to the scene's
 // best verified release on a different, non-benched indexer before its
-// re-drive (see failover.go), returning the reason line to stamp on the
-// re-queued row ("" = no switch; retry the original release).
+// re-drive (see failover.go). It returns the reason line to stamp on the
+// re-queued row ("" = failover wasn't applicable; retryGrab writes its
+// default) and whether the release actually switched. When the resolver
+// RAN and found no qualifying alternative, the reason says so: the user
+// staring at a struggling grab deserves to know the failover looked and
+// came up empty, not to wonder why the feature did nothing.
 //
 // Fires exactly ONCE per grab, on the retry after the SECOND consecutive
 // indexer failure (Attempts == 2): the first retry re-drives the
@@ -258,19 +262,20 @@ func (s *Server) tickDeferredRetries(ctx context.Context) {
 // caps the resolution cost (a full scene search + matcher verify) at one
 // per grab. The row mutates in place: scene linkage kept, client link
 // cleared, so Phase-B confirmation is unaffected.
-func (s *Server) maybeFailOverRelease(ctx context.Context, g *grabs.Grab) string {
+func (s *Server) maybeFailOverRelease(ctx context.Context, g *grabs.Grab) (string, bool) {
 	if g.FailKind != "indexer" || g.Attempts != 2 || s.resolveFailover == nil {
-		return ""
+		return "", false
 	}
 	// Without the failed indexer's name the "different indexer" pick is
 	// meaningless: the fresh search may return the SAME failing release
 	// under a re-tokenised download URL and "fail over" to it.
 	if g.ReleaseIndexer == "" {
-		return ""
+		return "", false
 	}
 	alt := s.resolveFailover(ctx, g)
 	if alt == nil {
-		return ""
+		return fmt.Sprintf("auto-retrying (attempt %d/%d; no alternative source found)",
+			g.Attempts+1, deferMaxAttempts), false
 	}
 	if uerr := s.applyGrabUpdate(ctx, g.ID, func(fresh *grabs.Grab) {
 		if fresh.Status != "deferred" {
@@ -289,11 +294,11 @@ func (s *Server) maybeFailOverRelease(ctx context.Context, g *grabs.Grab) string
 		fresh.ClientName = ""
 	}); uerr != nil {
 		s.log.Warn("failover: switch release", "grab_id", g.ID, "err", uerr)
-		return ""
+		return "", false
 	}
 	s.log.Info("failover: switching release",
 		"grab_id", g.ID, "from", g.ReleaseIndexer, "to", alt.Indexer, "release", alt.Title)
 	// retryGrab claims and drives the FRESH row, so the switched values
 	// reach the client even though our local snapshot is stale.
-	return fmt.Sprintf("failed over to %s (attempt %d/%d)", alt.Indexer, g.Attempts+1, deferMaxAttempts)
+	return fmt.Sprintf("failed over to %s (attempt %d/%d)", alt.Indexer, g.Attempts+1, deferMaxAttempts), true
 }
