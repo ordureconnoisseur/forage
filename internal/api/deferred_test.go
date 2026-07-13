@@ -17,6 +17,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/subscriptions"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -78,6 +79,7 @@ func newDeferTestServer(t *testing.T) *Server {
 		pool:    clientpool.New(),
 		grabs:   grabs.NewRepo(dbh),
 		watches: watches.NewRepo(dbh),
+		subs:    subscriptions.NewRepo(dbh),
 		log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 }

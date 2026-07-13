@@ -7019,3 +7019,136 @@ code.grab-fact-v,
   flex: 0 0 44%;
   scroll-snap-align: start;
 }
+
+/* ── Subscriptions (permanent performer/studio watches) ─────────── */
+
+/* Header subscribe toggle, next to the subject name. */
+.subscribe-btn {
+  margin-left: 12px;
+  padding: 3px 12px;
+  font-size: 12px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.subscribe-btn:hover { color: var(--text); border-color: var(--accent); }
+.subscribe-btn.on {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.5);
+  background: rgba(var(--accent-rgb), 0.10);
+}
+
+/* Bottom-of-Grabs rail. */
+.subs-rail {
+  margin-top: 28px;
+  padding-top: 14px;
+  border-top: 1px solid var(--glass-border);
+}
+.subs-rail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.subs-rail-head h3 { margin: 0; font-size: 14px; }
+.subs-rail-hint { font-size: 11px; color: var(--text-muted); }
+.subs-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+}
+.subs-card { position: relative; flex: 0 0 auto; }
+.subs-card-body {
+  position: relative;
+  display: block;
+  width: 92px;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.03);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: center;
+}
+.subs-card-body:hover { border-color: var(--accent); }
+.subs-card-body img {
+  display: block;
+  width: 92px;
+  height: 122px;
+  object-fit: cover;
+}
+.subs-card-initial {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 92px;
+  height: 122px;
+  font-size: 34px;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.04);
+}
+.subs-card-name {
+  display: block;
+  padding: 5px 6px;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subs-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  min-width: 18px;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: #0a0a0a;
+  font-size: 10px;
+  font-weight: 700;
+}
+.subs-badge-ready {
+  top: 27px;
+  background: var(--status-completed);
+}
+.subs-card-actions {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.subs-card:hover .subs-card-actions { opacity: 1; }
+.subs-auto,
+.subs-remove {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.subs-auto.on { color: #facc15; }
+.subs-remove:hover { color: var(--status-failed); }
+
+/* Scene-group collapse affordance. */
+.gsg-clickable { cursor: pointer; }
+.gsg-chevron {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-right: 6px;
+  align-self: center;
+}
