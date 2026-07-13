@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 	"github.com/ordureconnoisseur/forager/internal/subscriptions"
@@ -201,5 +202,100 @@ func TestSubscriptionPingFirstLeavesAvailableAlone(t *testing.T) {
 	wt := s.findWatch(ctx, "scene-manual")
 	if wt == nil || wt.Status != watches.StatusAvailable {
 		t.Fatalf("ping-first sub must leave the available watch for the user, got %+v", wt)
+	}
+}
+
+// contentDeadReason separates release-is-dead failures (auto-ignore on
+// revert) from infrastructure failures (same release retries fine).
+func TestContentDeadReason(t *testing.T) {
+	dead := []string{
+		"sab: Aborted, cannot be completed - https://sabnzbd.org/not-complete",
+		"sab: Repair failed, not enough repair blocks (5 short)",
+		"sab: RAR files failed to verify",
+		"torrent add: fetch torrent 429 (gave up after 5 attempts)",
+	}
+	alive := []string{
+		"sab: Unpacking failed, write error or disk is full?  in the file /data/porn/downloads",
+		"qbit request: dial tcp: connection refused",
+		"sab status=Failed",
+		"never linked to a qBit torrent (add likely failed)",
+	}
+	for _, r := range dead {
+		if !contentDeadReason(r) {
+			t.Errorf("want content-dead: %q", r)
+		}
+	}
+	for _, r := range alive {
+		if contentDeadReason(r) {
+			t.Errorf("must NOT be content-dead (release is fine): %q", r)
+		}
+	}
+}
+
+// The reconcile reverse pass auto-ignores a content-dead release: the
+// watch reverts to watching AND carries the dead URL in ignored_urls, so
+// the next re-search must pick a different source. An infra-side failure
+// reverts plain (same release stays eligible).
+func TestReconcileAutoIgnoresDeadRelease(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	// Pre-warm owned memo (no Stash in the harness).
+	s.ownedCopies = map[string][]stash.SceneRef{}
+	s.ownedCopiesFetched = time.Now()
+
+	mkFailed := func(scene, url, reason string) {
+		id, err := s.grabs.Insert(ctx, grabs.Grab{
+			ReleaseTitle: "Rel " + scene, Client: "sabnzbd",
+			DownloadURL: url, PredictedStashDBID: scene,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, _ := s.grabs.Get(ctx, id)
+		g.Status = "failed"
+		g.Reason = reason
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkGrabbedWatch := func(scene, url string) {
+		if err := s.watches.Add(ctx, watches.Watch{StashDBID: scene, Title: "Scene " + scene}); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.watches.MarkAvailable(ctx, scene, "Rel "+scene, url, "Idx", "usenet", 1, nil); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.watches.MarkGrabbed(ctx, scene, "Rel "+scene, url, "Idx", "usenet", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mkFailed("scene-dead", "http://idx/dead.nzb", "sab: Aborted, cannot be completed - see docs")
+	mkGrabbedWatch("scene-dead", "http://idx/dead.nzb")
+	mkFailed("scene-infra", "http://idx/infra.nzb", "sab: Unpacking failed, write error or disk is full?")
+	mkGrabbedWatch("scene-infra", "http://idx/infra.nzb")
+
+	s.reconcileWatches(ctx)
+
+	dead := s.findWatch(ctx, "scene-dead")
+	if dead == nil || dead.Status != watches.StatusWatching {
+		t.Fatalf("dead-release watch must revert to watching, got %+v", dead)
+	}
+	found := false
+	for _, u := range dead.IgnoredURLs {
+		if u == "http://idx/dead.nzb" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("dead release URL missing from ignored_urls: %v", dead.IgnoredURLs)
+	}
+
+	infra := s.findWatch(ctx, "scene-infra")
+	if infra == nil || infra.Status != watches.StatusWatching {
+		t.Fatalf("infra-failure watch must revert to watching, got %+v", infra)
+	}
+	if len(infra.IgnoredURLs) != 0 {
+		t.Fatalf("infra failure must NOT ignore the release: %v", infra.IgnoredURLs)
 	}
 }

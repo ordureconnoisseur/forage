@@ -159,11 +159,11 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	// nothing pending resolution. A mismatched grab in the review queue
 	// holds its watch quiet — the user's verdict decides whether the hunt
 	// resumes (redo/delete removes the coverage), not the machine's.
-	var stranded []string
+	var stranded []watches.Watch
 	for _, wt := range list {
 		if wt.Status == watches.StatusGrabbed {
 			if !covered[wt.StashDBID] {
-				stranded = append(stranded, wt.StashDBID)
+				stranded = append(stranded, wt)
 			}
 			continue
 		}
@@ -190,9 +190,32 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	if oerr != nil {
 		return
 	}
-	for _, sid := range stranded {
+	for _, wt := range stranded {
+		sid := wt.StashDBID
 		if len(owned[sid]) > 0 {
 			continue // scene landed anyway; the watch's job really is done
+		}
+		// When the grab of THIS watch's release died for a content-side
+		// reason (missing articles, unrepairable, corrupt: the release
+		// itself is dead on the wire), reverting alone re-runs the loop
+		// that killed it: the re-search ranks the same release best,
+		// re-offers it, and the re-grab dies identically (observed
+		// 2026-07-13: the same aborted NZB grabbed 4x in 57h). Dismiss
+		// instead: same revert, plus the dead release joins ignored_urls
+		// so the re-search picks a DIFFERENT source. Infra-side failures
+		// (NAS write error, client outage) keep the plain revert: the
+		// release is fine and remains the best candidate.
+		if wt.FoundURL != "" {
+			if g, gerr := s.grabs.ByDownloadURL(ctx, wt.FoundURL); gerr == nil &&
+				g != nil && g.Status == "failed" && contentDeadReason(g.Reason) {
+				if derr := s.watches.Dismiss(ctx, sid, wt.FoundURL, wt.FoundTitle); derr != nil {
+					s.log.Warn("watch dismiss dead release", "scene", sid, "err", derr)
+					continue
+				}
+				s.log.Info("watch reverted; dead release auto-ignored",
+					"scene", sid, "release", wt.FoundTitle, "reason", g.Reason)
+				continue
+			}
 		}
 		if err := s.watches.RevertGrabbed(ctx, sid); err != nil {
 			s.log.Warn("watch revert grabbed", "scene", sid, "err", err)
@@ -225,6 +248,32 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// contentDeadReason reports whether a failed grab's reason marks the
+// RELEASE ITSELF as dead (re-grabbing the same source is doomed), as
+// opposed to an infrastructure failure the same release would survive on
+// a retry. The SAB markers are SABnzbd's stable fail_message phrases
+// (carried into the reason since the failure-storytelling change); the
+// "gave up after" marker is the deferred-retry budget exhausting, which
+// only settles after multiple real attempts and a failover pass, so the
+// URL has proven itself dead. Deliberately NOT matched: "write error",
+// "disk is full", client-unreachable text.
+func contentDeadReason(reason string) bool {
+	r := strings.ToLower(reason)
+	for _, marker := range []string{
+		"cannot be completed", // SAB: articles missing on every provider
+		"repair failed",       // SAB: not enough par2 blocks
+		"failed to verify",    // SAB: RAR verification failure
+		"encrypted",           // SAB: password-protected junk
+		"unwanted extension",  // SAB: policy-blocked content
+		"gave up after",       // deferred-retry budget exhausted
+	} {
+		if strings.Contains(r, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // postWatchGrab grabs the auto-picked (best) release recorded on a watch and
