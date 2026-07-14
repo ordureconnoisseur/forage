@@ -211,8 +211,30 @@ func (r *Repo) IDs(ctx context.Context) (map[string]string, error) {
 // budget and starve everything added after it — the singles would sit at
 // last_checked=0 forever behind the batch. Round-robin gives a 600-row batch
 // and a handful of singles each a fair share of the budget, so both progress.
-// Within a group's rank, oldest-checked wins (never-checked rows surface
-// first); created_at/stashdb_id break remaining ties deterministically.
+//
+// NEVER-SEARCHED watches (last_checked = 0) form a priority lane ABOVE
+// the round-robin: a scene's FIRST search is where the yield is (most
+// watched scenes are old enough that their releases already exist, so
+// the first search usually decides available-or-not on the spot), while
+// re-checks hunt future releases at low per-tick yield — and the RSS
+// loop covers freshly-posted releases for every watch independently of
+// re-check cadence, so delaying re-checks behind a first-search backlog
+// costs almost nothing. Group fairness still applies WITHIN each lane
+// (rank round-robins across batches), so a giant unsearched backfill
+// can't starve a newly-added single's first search either. Within a
+// group's rank, oldest-checked wins; created_at/stashdb_id break
+// remaining ties deterministically.
+// CountUnsearched returns how many watching-status watches have never
+// been searched. The watch loop widens its per-tick budget while this
+// is non-zero, so a fresh backfill's first-search backlog drains at
+// double speed.
+func (r *Repo) CountUnsearched(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM watches WHERE status = 'watching' AND last_checked = 0`).Scan(&n)
+	return n, err
+}
+
 func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 	if n <= 0 {
 		return nil, nil
@@ -220,7 +242,8 @@ func (r *Repo) ClaimBatch(ctx context.Context, n int) ([]Watch, error) {
 	ws, err := r.query(ctx, `
 		SELECT `+cols+` FROM watches
 		WHERE status = 'watching'
-		ORDER BY ROW_NUMBER() OVER (
+		ORDER BY (last_checked = 0) DESC,
+		         ROW_NUMBER() OVER (
 		           PARTITION BY batch_id
 		           ORDER BY last_checked ASC, created_at ASC, stashdb_id ASC) ASC,
 		         last_checked ASC, created_at ASC, stashdb_id ASC
