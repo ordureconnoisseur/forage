@@ -97,6 +97,16 @@ func (s *Server) watchTick(ctx context.Context) {
 		return
 	}
 	batch := s.watchBatchSize(total)
+	// First-search burst: while never-searched watches exist, double the
+	// budget so a fresh backfill reaches first-search coverage in half
+	// the ticks. First searches are the high-yield moment; ~16 lean
+	// searches x ~40s still fits comfortably in a 30-minute tick.
+	if unsearched, uerr := s.watches.CountUnsearched(ctx); uerr == nil && unsearched > 0 {
+		batch = watchMaxBatch * 2
+		if unsearched+watchMaxBatch < batch {
+			batch = unsearched + watchMaxBatch
+		}
+	}
 	claimed, err := s.watches.ClaimBatch(ctx, batch)
 	if err != nil {
 		s.log.Warn("watch claim", "err", err)

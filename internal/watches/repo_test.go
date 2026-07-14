@@ -369,3 +369,75 @@ func TestCandidatesRoundTrip(t *testing.T) {
 		t.Errorf("candidates round-trip wrong: %s", ws[0].Candidates)
 	}
 }
+
+// TestClaimBatchUnsearchedFirst pins the priority lane: never-searched
+// watches are claimed before ANY re-check, across all groups, while
+// group fairness still round-robins within the unsearched lane.
+func TestClaimBatchUnsearchedFirst(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+
+	// An old batch whose watches were all searched long ago (oldest
+	// last_checked in the table: the round-robin would pick these first).
+	for i := 0; i < 3; i++ {
+		id := "old-" + string(rune(48+i))
+		if err := r.Add(ctx, Watch{StashDBID: id, Title: id, BatchID: "old-batch"}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.db.ExecContext(ctx,
+			`UPDATE watches SET last_checked = 100 WHERE stashdb_id = ?`, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A fresh backfill batch + a fresh single, both never searched.
+	for i := 0; i < 2; i++ {
+		if err := r.Add(ctx, Watch{StashDBID: "new-" + string(rune(48+i)), Title: "n", BatchID: "new-batch"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.Add(ctx, Watch{StashDBID: "new-single", Title: "s"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.ClaimBatch(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []string
+	for _, w := range got {
+		ids = append(ids, w.StashDBID)
+	}
+	t.Logf("first claim: %v", ids)
+	if len(got) != 3 {
+		t.Fatalf("claimed %d, want 3", len(got))
+	}
+	for _, w := range got {
+		if w.StashDBID[:3] == "old" {
+			t.Fatalf("re-check claimed while unsearched watches existed: %s (got %v)",
+				w.StashDBID, []string{got[0].StashDBID, got[1].StashDBID, got[2].StashDBID})
+		}
+	}
+	// Within the unsearched lane, both groups progress (round-robin):
+	// the claim must include the single, not just the batch's rows.
+	seenSingle := false
+	for _, w := range got {
+		if w.StashDBID == "new-single" {
+			seenSingle = true
+		}
+	}
+	if !seenSingle {
+		t.Fatalf("unsearched single starved by unsearched batch: %v",
+			[]string{got[0].StashDBID, got[1].StashDBID, got[2].StashDBID})
+	}
+
+	// With every zero consumed, re-checks resume: the oldest-checked
+	// group's turn comes first. (Group-fairness rank still interleaves
+	// groups beyond the first slot, by design.)
+	got2, err := r.ClaimBatch(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got2) != 1 || got2[0].StashDBID[:3] != "old" {
+		t.Fatalf("expected a re-check after the unsearched lane drained, got %v", got2)
+	}
+}
