@@ -352,7 +352,7 @@ func TestDeadReleaseMemoryBlocksAutoPicks(t *testing.T) {
 		{Title: "Healthy.Alt", Indexer: "IdxC", Size: 777, Protocol: "usenet",
 			Verified: true, DownloadURL: "http://x/healthy"},
 	}
-	got := s.bestWatchMatch(cands, nil)
+	got := s.bestWatchMatch(cands, nil, 0)
 	if got == nil || got.Title != "Healthy.Alt" {
 		t.Fatalf("bestWatchMatch = %+v, want Healthy.Alt (dead release skipped by identity)", got)
 	}

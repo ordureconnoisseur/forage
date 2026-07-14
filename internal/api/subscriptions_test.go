@@ -346,3 +346,104 @@ func TestRetryAllSkipsContentDead(t *testing.T) {
 		t.Fatalf("retried = %d, want 1 (only the infra-failed grab)", out.Retried)
 	}
 }
+
+// Upgrade-watch semantics: only releases BEATING the floor qualify, and
+// reconcile treats owned-below-floor as "keep hunting" rather than done.
+func TestUpgradeWatchFloorGate(t *testing.T) {
+	s := newDeferTestServer(t)
+	cands := []sceneRelease{
+		{Title: "Scene.Name.720p.MP4", Indexer: "A", Protocol: "torrent", Seeders: 50,
+			Verified: true, DownloadURL: "http://x/720"},
+		{Title: "Scene.Name.1080p.MP4", Indexer: "B", Protocol: "torrent", Seeders: 40,
+			Verified: true, DownloadURL: "http://x/1080"},
+	}
+	// Floor 720: only the 1080p qualifies.
+	got := s.bestWatchMatch(cands, nil, 720)
+	if got == nil || got.DownloadURL != "http://x/1080" {
+		t.Fatalf("floor 720: want the 1080p release, got %+v", got)
+	}
+	// Floor 1080: nothing beats it.
+	if got := s.bestWatchMatch(cands, nil, 1080); got != nil {
+		t.Fatalf("floor 1080: want no match, got %+v", got)
+	}
+	// Floor 0 (acquire watch): best release wins as before.
+	if got := s.bestWatchMatch(cands, nil, 0); got == nil {
+		t.Fatal("acquire watch must still match")
+	}
+}
+
+// Reconcile must not graduate an upgrade watch just because the scene is
+// owned (that is its starting condition); it graduates when a copy
+// exceeds the floor.
+func TestReconcileUpgradeWatchInvariant(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	s.ownedCopies = map[string][]stash.SceneRef{
+		"up-pending": {{SceneID: "l1", Height: 720}},
+		"up-done":    {{SceneID: "l2", Height: 720}, {SceneID: "l3", Height: 1080}},
+	}
+	s.ownedCopiesFetched = time.Now()
+
+	for _, sid := range []string{"up-pending", "up-done"} {
+		if err := s.watches.Add(ctx, watches.Watch{
+			StashDBID: sid, Title: sid, UpgradeFloor: 720,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		// Simulate a grabbed upgrade watch (upgrade grab was fired earlier).
+		if err := s.watches.MarkGrabbed(ctx, sid, "T", "http://u", "I", "torrent", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.reconcileWatches(ctx)
+
+	pending := s.findWatch(ctx, "up-pending")
+	if pending == nil || pending.Status != watches.StatusWatching {
+		t.Fatalf("owned-below-floor upgrade watch must revert to hunting, got %+v", pending)
+	}
+	done := s.findWatch(ctx, "up-done")
+	if done == nil || done.Status != watches.StatusGrabbed {
+		t.Fatalf("owned-above-floor upgrade watch must stay done, got %+v", done)
+	}
+}
+
+// The creation endpoint watches exactly the owned-below-cutoff scenes.
+func TestPostUpgradeWatchesFilters(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	s.ownedCopies = map[string][]stash.SceneRef{
+		"sc-720":  {{SceneID: "a", Height: 720}},
+		"sc-2160": {{SceneID: "b", Height: 2160}},
+	}
+	s.ownedCopiesFetched = time.Now()
+	s.subScenes = func(context.Context, string, string) ([]stashdb.Scene, error) {
+		return []stashdb.Scene{
+			{ID: "sc-720", Title: "Owned 720p", Date: "2020-01-01"},
+			{ID: "sc-2160", Title: "Owned 4K", Date: "2020-01-02"},
+			{ID: "sc-missing", Title: "Not Owned", Date: "2020-01-03"},
+		}, nil
+	}
+
+	body := strings.NewReader(`{"kind":"performer","stashdb_id":"perf-x","name":"Perf X","cutoff":1080}`)
+	req := httptest.NewRequest(http.MethodPost, "/watches/upgrade", body)
+	rec := httptest.NewRecorder()
+	s.postUpgradeWatches(rec, req)
+
+	var out struct {
+		Created int `json:"created"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if out.Created != 1 {
+		t.Fatalf("created = %d, want 1 (only the owned-720p scene)", out.Created)
+	}
+	wt := s.findWatch(ctx, "sc-720")
+	if wt == nil || wt.UpgradeFloor != 720 || wt.BatchID != "upg:perf-x" {
+		t.Fatalf("upgrade watch wrong: %+v", wt)
+	}
+	if s.findWatch(ctx, "sc-2160") != nil || s.findWatch(ctx, "sc-missing") != nil {
+		t.Fatal("at-cutoff and unowned scenes must not be watched for upgrades")
+	}
+}

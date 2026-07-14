@@ -11,6 +11,7 @@ import {
   fetchSubscriptions,
   subscribe,
   unsubscribe,
+  createUpgradeWatches,
 } from "../api";
 import { humanSize } from "../format";
 import WatchControl from "../WatchControl";
@@ -72,6 +73,8 @@ export default function MissingScenes({
   // permanent watch. Loaded once per subject; toggled optimistically.
   const [subscribed, setSubscribed] = useState(false);
   const [subBusy, setSubBusy] = useState(false);
+  const [upgBusy, setUpgBusy] = useState(false);
+  const [upgMsg, setUpgMsg] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setSubscribed(false);
@@ -256,6 +259,32 @@ export default function MissingScenes({
             >
               {subscribed ? "★ Subscribed" : "☆ Subscribe"}
             </button>
+            <button
+              className="subscribe-btn"
+              disabled={upgBusy}
+              title="Create upgrade watches: every owned scene below 1080p gets watched for a better release. When one lands, the old and new copies go to the duplicate review queue."
+              onClick={() => {
+                setUpgBusy(true);
+                createUpgradeWatches({
+                  kind: subject.kind,
+                  stashdb_id: subject.id,
+                  name: data.subject.name,
+                  cutoff: 1080,
+                })
+                  .then((r) =>
+                    setUpgMsg(
+                      r.created > 0
+                        ? `watching ${r.created} scene${r.created === 1 ? "" : "s"} for upgrades`
+                        : "nothing below 1080p to upgrade",
+                    ),
+                  )
+                  .catch((e) => setUpgMsg((e as Error).message))
+                  .finally(() => setUpgBusy(false));
+              }}
+            >
+              {upgBusy ? "…" : "⬆ Upgrades <1080p"}
+            </button>
+            {upgMsg && <span className="upg-msg">{upgMsg}</span>}
           </h2>
           <div className="meta">
             {data.total_scenes} on StashDB · {data.owned_count} in library ·{" "}

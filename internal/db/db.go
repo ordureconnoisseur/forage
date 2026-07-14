@@ -316,6 +316,10 @@ func migrateGrabsColumns(db *sql.DB) error {
 			{"grabbed_at", `ALTER TABLE watches ADD COLUMN grabbed_at INTEGER NOT NULL DEFAULT 0`},
 			{"performers", `ALTER TABLE watches ADD COLUMN performers TEXT NOT NULL DEFAULT '[]'`},
 			{"search_count", `ALTER TABLE watches ADD COLUMN search_count INTEGER NOT NULL DEFAULT 0`},
+			// 2026-07-14 upgrade watches: 0 = normal acquire watch; >0 =
+			// the owned copy's height at creation, and only releases
+			// EXCEEDING it may flip the watch available.
+			{"upgrade_floor", `ALTER TABLE watches ADD COLUMN upgrade_floor INTEGER NOT NULL DEFAULT 0`},
 		}
 		for _, c := range watchCols {
 			var has int

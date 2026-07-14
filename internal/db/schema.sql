@@ -272,7 +272,13 @@ CREATE TABLE IF NOT EXISTS watches (
   -- how many times this scene has been re-searched for a release (incremented
   -- on every loop claim and manual search-now). Surfaced in the Watching tab
   -- so you can see how hard forage has tried on a still-unfound scene.
-  search_count   INTEGER NOT NULL DEFAULT 0
+  search_count   INTEGER NOT NULL DEFAULT 0,
+  -- upgrade watches: 0 = normal acquire watch; >0 = the owned copy's
+  -- height when the watch was created, and only releases EXCEEDING it
+  -- may flip the watch available. An upgrade watch is DONE when an
+  -- owned copy exceeds the floor (not when "a grab exists": the scene
+  -- is owned by definition, usually via an old confirmed grab).
+  upgrade_floor  INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_watches_status  ON watches(status);
 CREATE INDEX IF NOT EXISTS idx_watches_checked ON watches(last_checked ASC);
