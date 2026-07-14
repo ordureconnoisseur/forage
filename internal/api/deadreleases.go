@@ -45,6 +45,9 @@ func deadReleaseKey(title, indexer string, size int64) string {
 // listing error it serves the previous set (or empty), never blocking a
 // caller.
 func (s *Server) contentDeadReleases(ctx context.Context) map[string]deadRelease {
+	if s.grabs == nil {
+		return map[string]deadRelease{} // pared-down test servers; nil-safe like failGrab
+	}
 	s.deadReleases.mu.Lock()
 	defer s.deadReleases.mu.Unlock()
 	if s.deadReleases.set != nil && time.Since(s.deadReleases.fetchedAt) < deadReleasesTTL {
