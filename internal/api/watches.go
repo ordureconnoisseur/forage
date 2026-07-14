@@ -268,6 +268,13 @@ func contentDeadReason(reason string) bool {
 		"encrypted",           // SAB: password-protected junk
 		"unwanted extension",  // SAB: policy-blocked content
 		"gave up after",       // deferred-retry budget exhausted
+		// qBit/libtorrent rejecting the .torrent FILE itself (PornoLab's
+		// cp1251 name fields, chiefly). Deterministic per release: the
+		// same bytes decline forever, and transcoding the name would
+		// change the infohash and break the private tracker, so another
+		// release is the only remedy. Observed looping 2026-07-14 before
+		// this marker existed.
+		"declined this torrent",
 	} {
 		if strings.Contains(r, marker) {
 			return true

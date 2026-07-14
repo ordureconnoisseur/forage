@@ -214,6 +214,7 @@ func TestContentDeadReason(t *testing.T) {
 		"sab: Repair failed, not enough repair blocks (5 short)",
 		"sab: RAR files failed to verify",
 		"torrent add: fetch torrent 429 (gave up after 5 attempts)",
+		"torrent add: qbit declined this torrent — it's a valid .torrent but qbit/libtorrent wouldn't add it",
 	}
 	alive := []string{
 		"sab: Unpacking failed, write error or disk is full?  in the file /data/porn/downloads",
