@@ -7043,9 +7043,9 @@ code.grab-fact-v,
 
 /* Bottom-of-Grabs rail. */
 .subs-rail {
-  margin-top: 28px;
-  padding-top: 14px;
-  border-top: 1px solid var(--glass-border);
+  margin-bottom: 18px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--glass-border);
 }
 .subs-rail-head {
   display: flex;

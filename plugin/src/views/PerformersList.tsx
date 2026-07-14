@@ -1,3 +1,4 @@
+import SubscriptionsRow from "../SubscriptionsRow";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchPerformers,
@@ -104,6 +105,7 @@ export default function PerformersList({
 
   return (
     <div>
+      <SubscriptionsRow kind="performer" />
       <div className="controls">
         <input
           type="text"
