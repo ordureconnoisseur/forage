@@ -1,3 +1,4 @@
+import SubscriptionsRow from "../SubscriptionsRow";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   fetchStudios,
@@ -96,6 +97,7 @@ export default function StudiosList({
 
   return (
     <div>
+      <SubscriptionsRow kind="studio" />
       <div className="controls">
         <input
           type="text"
