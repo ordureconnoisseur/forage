@@ -650,6 +650,15 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 					g.Reason = "stash phash → different scene than predicted"
 				}
 				dirty = true
+				// A single grab confirming into a scene that ALREADY has
+				// other copies (an upgrade landing beside the old file, or
+				// a deliberate re-download) leaves two files claiming one
+				// scene: surface the pair in the duplicate-review queue,
+				// the same flow pack collisions use, so the user picks the
+				// keeper. Best-effort; never blocks the confirm.
+				if g.Status == "confirmed" && g.Kind == "single" {
+					p.maybeRecordSingleDuplicate(ctx, stashC, g, scene)
+				}
 			case scene != nil:
 				// File is in Stash but has no StashDB cross-id.
 				if g.Status != "scanned" {
@@ -1354,6 +1363,28 @@ func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps st
 		return false, err
 	}
 	return true, nil
+}
+
+// maybeRecordSingleDuplicate surfaces a review item when a SINGLE grab
+// confirms into a scene that already has other local copies: the
+// upgrade-watch flow lands its better file beside the old one on
+// purpose, and a deliberate re-download does the same by accident.
+// Reuses the pack duplicate-review machinery wholesale (the "pack" side
+// is simply this grab's file). Best-effort: any lookup failure skips
+// quietly; the confirm itself is never held up.
+func (p *Poller) maybeRecordSingleDuplicate(ctx context.Context, sc *stash.Client, g *grabs.Grab, scene *stash.SceneMatch) {
+	endpoint, err := p.identifyEndpoint(ctx, sc)
+	if err != nil || endpoint == "" {
+		return
+	}
+	refs, err := sc.FindSceneRefsByStashID(ctx, endpoint, scene.StashDBID)
+	if err != nil || len(refs) < 2 {
+		return // sole copy: nothing to review
+	}
+	if _, rerr := p.recordReviewDuplicate(ctx, g, *scene, refs, map[string]bool{scene.ID: true}); rerr == nil {
+		p.log.Info("single grab landed beside existing copies; queued for review",
+			"id", g.ID, "scene", scene.StashDBID, "copies", len(refs))
+	}
 }
 
 // packScanSettled reports whether Stash has stopped indexing new scenes

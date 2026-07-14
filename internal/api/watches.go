@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -169,7 +170,13 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 		}
 		// Forward flip stays LIVE-only: a pending mismatch must not retract
 		// an already-surfaced 'available' offer (the user may still want to
-		// grab it), it only stops new searching.
+		// grab it), it only stops new searching. UPGRADE watches graduate on
+		// their own invariant instead: an owned copy above the floor. (Their
+		// scene is owned via an old confirmed grab, so live[] is vacuously
+		// true for them and would mark every upgrade watch done on sight.)
+		if wt.UpgradeFloor > 0 {
+			continue // checkWatch owns upgrade graduation
+		}
 		if live[wt.StashDBID] {
 			if err := s.watches.MarkGrabbed(ctx, wt.StashDBID,
 				wt.FoundTitle, wt.FoundURL, wt.FoundIndexer, wt.FoundProtocol, wt.FoundSize); err != nil {
@@ -192,7 +199,13 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	}
 	for _, wt := range stranded {
 		sid := wt.StashDBID
-		if len(owned[sid]) > 0 {
+		if wt.UpgradeFloor > 0 {
+			// An upgrade watch's job is done only when a copy BEATS the
+			// floor; merely owning the old copy is its starting condition.
+			if ownedAboveFloor(owned[sid], wt.UpgradeFloor) {
+				continue
+			}
+		} else if len(owned[sid]) > 0 {
 			continue // scene landed anyway; the watch's job really is done
 		}
 		// When the grab of THIS watch's release died for a content-side
@@ -248,6 +261,17 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ownedAboveFloor reports whether any owned copy of a scene exceeds an
+// upgrade watch's floor height: the upgrade-done invariant.
+func ownedAboveFloor(copies []stash.SceneRef, floor int) bool {
+	for _, c := range copies {
+		if c.Height > floor {
+			return true
+		}
+	}
+	return false
 }
 
 // contentDeadReason reports whether a failed grab's reason marks the

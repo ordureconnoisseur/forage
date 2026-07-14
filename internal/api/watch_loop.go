@@ -135,20 +135,42 @@ func (s *Server) watchBatchSize(total int) int {
 // available (best release by preference). last_checked was already stamped by
 // ClaimBatch.
 func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
-	// Hold: a scene whose grab is pending resolution (mismatched in the
-	// review queue, orphaned in limbo) or already live must not be
-	// re-searched — the machine's mismatch verdict is a question FOR THE
-	// USER, and re-searching while it's unanswered re-offers releases for
-	// a scene whose acquisition is in flight. Flip the watch to 'grabbed'
-	// (the quiet state); resolving the mismatch (redo/delete) removes the
-	// coverage and the reconcile reverse pass resumes the hunt.
-	if _, covered, cerr := s.grabbedSceneSet(ctx); cerr == nil && covered[w.StashDBID] {
-		if err := s.watches.MarkGrabbed(ctx, w.StashDBID,
-			w.FoundTitle, w.FoundURL, w.FoundIndexer, w.FoundProtocol, w.FoundSize); err == nil {
-			s.log.Info("watch held — a grab for this scene is live or pending mismatch review",
-				"scene", w.StashDBID, "title", w.Title)
+	// UPGRADE watches invert the coverage rules: the scene is owned by
+	// definition (usually via an old CONFIRMED grab), so "a grab exists"
+	// means nothing. Done means an owned copy exceeds the floor; an
+	// in-flight grab (the upgrade being fetched) just skips this tick.
+	if w.UpgradeFloor > 0 {
+		if owned, oerr := s.ownedSceneCopies(ctx); oerr == nil &&
+			ownedAboveFloor(owned[w.StashDBID], w.UpgradeFloor) {
+			if err := s.watches.MarkGrabbed(ctx, w.StashDBID,
+				w.FoundTitle, w.FoundURL, w.FoundIndexer, w.FoundProtocol, w.FoundSize); err == nil {
+				s.log.Info("upgrade watch done: owned copy exceeds the floor",
+					"scene", w.StashDBID, "floor", w.UpgradeFloor)
+			}
+			return
 		}
-		return
+		if st, serr := s.grabs.StatusByStashDBID(ctx); serr == nil {
+			if cur, ok := st[w.StashDBID]; ok && cur != "confirmed" && cur != "failed" &&
+				cur != "mismatched" && cur != "orphaned" {
+				return // upgrade grab in flight; re-check next rotation
+			}
+		}
+	} else {
+		// Hold: a scene whose grab is pending resolution (mismatched in the
+		// review queue, orphaned in limbo) or already live must not be
+		// re-searched — the machine's mismatch verdict is a question FOR THE
+		// USER, and re-searching while it's unanswered re-offers releases for
+		// a scene whose acquisition is in flight. Flip the watch to 'grabbed'
+		// (the quiet state); resolving the mismatch (redo/delete) removes the
+		// coverage and the reconcile reverse pass resumes the hunt.
+		if _, covered, cerr := s.grabbedSceneSet(ctx); cerr == nil && covered[w.StashDBID] {
+			if err := s.watches.MarkGrabbed(ctx, w.StashDBID,
+				w.FoundTitle, w.FoundURL, w.FoundIndexer, w.FoundProtocol, w.FoundSize); err == nil {
+				s.log.Info("watch held — a grab for this scene is live or pending mismatch review",
+					"scene", w.StashDBID, "title", w.Title)
+			}
+			return
+		}
 	}
 	m, err := s.Matcher(ctx)
 	if err != nil {
@@ -234,7 +256,7 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	// whatever its resolution (no quality target; the stored candidate list
 	// lets the user pick a different one, and quality floors live in the
 	// release reject rules the scorer already applies).
-	best := s.bestWatchMatch(cands, w.IgnoredURLs)
+	best := s.bestWatchMatch(cands, w.IgnoredURLs, w.UpgradeFloor)
 	if best == nil {
 		return
 	}
@@ -312,7 +334,7 @@ func (s *Server) dropAlreadyGrabbed(ctx context.Context, cands []sceneRelease) [
 	return kept
 }
 
-func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRelease {
+func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string, upgradeFloor int) *sceneRelease {
 	ignoredSet := make(map[string]bool, len(ignored))
 	for _, u := range ignored {
 		ignoredSet[u] = true
@@ -336,6 +358,11 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 			continue
 		}
 		if _, isDead := dead[deadReleaseKey(c.Title, c.Indexer, c.Size)]; isDead {
+			continue
+		}
+		// Upgrade watches only care about releases that BEAT the owned
+		// copy; an equal-or-worse find is not an upgrade.
+		if upgradeFloor > 0 && scoring.ResolutionHeight(c.Title) <= upgradeFloor {
 			continue
 		}
 		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {

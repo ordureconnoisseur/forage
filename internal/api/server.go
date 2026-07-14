@@ -252,6 +252,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
 
+		r.Post("/watches/upgrade", s.postUpgradeWatches)
+
 		r.Get("/subscriptions", s.getSubscriptions)
 		r.Post("/subscriptions", s.postSubscription)
 		r.Delete("/subscriptions/{id}", s.deleteSubscription)

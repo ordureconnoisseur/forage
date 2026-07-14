@@ -64,6 +64,12 @@ type Watch struct {
 	Candidates json.RawMessage `json:"candidates,omitempty"`
 	// GrabbedAt is when the watch was grabbed (status='grabbed'); 0 otherwise.
 	GrabbedAt int64 `json:"grabbed_at,omitempty"`
+	// UpgradeFloor marks an UPGRADE watch: 0 = normal acquire watch; >0 =
+	// the owned copy's height when the watch was created. Only releases
+	// exceeding the floor may flip the watch available, and the watch is
+	// DONE when an owned copy exceeds the floor (the scene is owned by
+	// definition, so grab-existence is not a completion signal for it).
+	UpgradeFloor int `json:"upgrade_floor,omitempty"`
 	// SearchCount is how many times this scene has been re-searched for a
 	// release (bumped on every loop claim and manual search-now). Lets the
 	// Watching tab show how many attempts a still-unfound scene has had.
@@ -135,8 +141,8 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 		INSERT INTO watches (
 		  stashdb_id, title, date, studio_name, image_url,
 		  performer_name, performer_id, target, status, created_at, last_checked,
-		  batch_id, batch_label, performers
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?, ?)
+		  batch_id, batch_label, performers, upgrade_floor
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?, ?, ?)
 		ON CONFLICT(stashdb_id) DO UPDATE SET
 		  target = excluded.target,
 		  status = 'watching',
@@ -145,13 +151,14 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 		  batch_id = excluded.batch_id,
 		  batch_label = excluded.batch_label,
 		  performers = excluded.performers,
+		  upgrade_floor = excluded.upgrade_floor,
 		  found_title = '', found_url = '', found_indexer = '',
 		  found_protocol = '', found_size = 0, found_at = 0,
 		  candidates = '[]', grabbed_at = 0,
 		  last_checked = 0`,
 		w.StashDBID, w.Title, w.Date, w.StudioName, w.ImageURL,
 		w.PerformerName, w.PerformerID, w.Target, w.CreatedAt,
-		w.BatchID, w.BatchLabel, string(perfsJSON))
+		w.BatchID, w.BatchLabel, string(perfsJSON), w.UpgradeFloor)
 	return err
 }
 
@@ -446,7 +453,7 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(found_protocol,''), found_size,
 	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
 	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at,
-	COALESCE(performers,'[]'), search_count`
+	COALESCE(performers,'[]'), search_count, upgrade_floor`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
@@ -463,7 +470,7 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
-			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON, &w.SearchCount,
+			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON, &w.SearchCount, &w.UpgradeFloor,
 		); err != nil {
 			return nil, err
 		}

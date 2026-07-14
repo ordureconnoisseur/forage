@@ -1045,6 +1045,15 @@ export function setSubscriptionAutoGrab(
   );
 }
 
+export function createUpgradeWatches(req: {
+  kind: "performer" | "studio";
+  stashdb_id: string;
+  name: string;
+  cutoff: number; // height: watch owned scenes strictly below this
+}): Promise<{ ok: boolean; created: number; already_watched: number; at_or_above_cutoff: number }> {
+  return postJSON("/watches/upgrade", req);
+}
+
 export function markSubscriptionSeen(stashdbID: string): Promise<{ ok: boolean }> {
   return postJSON<{ ok: boolean }>(
     `/subscriptions/${encodeURIComponent(stashdbID)}/seen`,
