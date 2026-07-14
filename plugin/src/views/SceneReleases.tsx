@@ -610,6 +610,20 @@ function ReleaseList({
             <div className="release-body">
               <div className="release-title">{r.title}</div>
               <div className="release-meta">
+                {(r.failed_count ?? 0) > 0 && (
+                  <span
+                    className="release-dead"
+                    title={
+                      "This exact release already failed " +
+                      r.failed_count +
+                      (r.failed_count === 1 ? " time" : " times") +
+                      " for a content reason and will almost certainly fail again. Last: " +
+                      (r.failed_reason ?? "")
+                    }
+                  >
+                    ☠ died {r.failed_count}x
+                  </span>
+                )}
                 {isBest && (
                   <span
                     className="release-best"

@@ -326,7 +326,7 @@ func (s *Server) grabAvailableWatch(ctx context.Context, id string) error {
 		if len(wt.Candidates) > 0 {
 			_ = json.Unmarshal(wt.Candidates, &cands)
 		}
-		if alt := chooseFailover(cands, wt.FoundIndexer, wt.FoundURL, "", disabled); alt != nil {
+		if alt := chooseFailover(cands, wt.FoundIndexer, wt.FoundURL, "", disabled, s.contentDeadReleases(ctx)); alt != nil {
 			s.log.Info("watch grab: auto-pick indexer is benched; using next candidate",
 				"scene", id, "from", wt.FoundIndexer, "to", alt.Indexer, "release", alt.Title)
 			pickURL, pickTitle, pickIndexer = alt.DownloadURL, alt.Title, alt.Indexer

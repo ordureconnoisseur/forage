@@ -7152,3 +7152,14 @@ code.grab-fact-v,
   margin-right: 6px;
   align-self: center;
 }
+
+/* Dead-release badge: this exact release has failed for content
+   reasons before; grabbing it again is near-certain to fail. */
+.release-dead {
+  color: var(--status-failed);
+  background: var(--status-failed-bg);
+  border-radius: var(--radius-pill);
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
