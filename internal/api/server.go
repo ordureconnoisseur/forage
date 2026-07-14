@@ -69,6 +69,10 @@ type Server struct {
 	// deferred-retry failover picker (see failover.go). Zero value ready.
 	indexerDisabled disabledIndexerCache
 
+	// deadReleases caches the content-dead release set (see
+	// deadreleases.go). Zero value ready.
+	deadReleases deadReleaseCache
+
 	// resolveFailover finds the release a deferred indexer-failure grab
 	// should switch to. Defaults to resolveFailoverRelease in New();
 	// a field so tests can stub the heavy scene-resolution path.

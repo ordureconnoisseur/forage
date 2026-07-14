@@ -369,6 +369,12 @@ export interface SceneRelease {
   download_url: string;
   verified: boolean;
   confidence: number;
+  // Failure history for this exact release (title+indexer+size): grabs
+  // of it that died for a content-side reason (missing articles,
+  // unrepairable, corrupt, libtorrent-declined). A badge, so a release
+  // that already died 8 times reads as dead before the 9th Grab click.
+  failed_count?: number;
+  failed_reason?: string;
   // Populated only when the release is NOT verified because the
   // matcher thinks it's a different scene. Lets the UI warn the user
   // that grabbing this would not get them the scene they're viewing.

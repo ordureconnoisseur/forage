@@ -307,6 +307,11 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 	for _, u := range ignored {
 		ignoredSet[u] = true
 	}
+	// Global dead-release memory, on top of this watch's own ignore
+	// list: a content-dead release (missing articles, unrepairable,
+	// libtorrent-declined) is dead for EVERY scene that lists it, and
+	// the per-watch list can't carry that knowledge across scenes.
+	dead := s.contentDeadReleases(context.Background())
 	bestIdx := -1
 	for i := range cands {
 		c := &cands[i]
@@ -318,6 +323,9 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string) *sceneRe
 		// URLs rotate between searches, so the title is the durable half.
 		if !c.Verified || c.Rejected || c.DownloadURL == "" ||
 			ignoredSet[c.DownloadURL] || ignoredSet[c.Title] {
+			continue
+		}
+		if _, isDead := dead[deadReleaseKey(c.Title, c.Indexer, c.Size)]; isDead {
 			continue
 		}
 		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {

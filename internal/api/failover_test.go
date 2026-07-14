@@ -36,7 +36,7 @@ func TestChooseFailover(t *testing.T) {
 	}
 	disabled := map[string]bool{"benchedidx": true}
 
-	got := chooseFailover(ranked, "FailedIdx", "http://p/dl/1", "torrent", disabled)
+	got := chooseFailover(ranked, "FailedIdx", "http://p/dl/1", "torrent", disabled, nil)
 	if got == nil || got.Indexer != "GoodAlt" {
 		t.Fatalf("chooseFailover = %+v, want GoodAlt (first verified grabbable torrent on a healthy other indexer)", got)
 	}
@@ -44,13 +44,13 @@ func TestChooseFailover(t *testing.T) {
 	// Same indexer under a different URL is still skipped (case-insensitive).
 	got = chooseFailover([]sceneRelease{
 		mk("failedidx", "http://p/dl/9", true, false, 10, "torrent"),
-	}, "FailedIdx", "http://p/dl/1", "torrent", nil)
+	}, "FailedIdx", "http://p/dl/1", "torrent", nil, nil)
 	if got != nil {
 		t.Fatalf("release from the failed indexer must be skipped, got %+v", got)
 	}
 
 	// No qualifying alternative: nil.
-	if got := chooseFailover(nil, "X", "", "torrent", nil); got != nil {
+	if got := chooseFailover(nil, "X", "", "torrent", nil, nil); got != nil {
 		t.Fatalf("empty list must return nil, got %+v", got)
 	}
 }
@@ -306,5 +306,60 @@ func TestGrabAvailableWatchSkipsBenchedIndexer(t *testing.T) {
 	wt := s.findWatch(ctx, "sc1")
 	if wt == nil || wt.FoundIndexer != "GoodIdx" {
 		t.Fatalf("watch found_* not updated to the grabbed release: %+v", wt)
+	}
+}
+
+// The global dead-release memory blocks both auto-pickers from choosing
+// a release that already died for a content reason ANYWHERE, and the
+// key is release identity (title+indexer+size), not the rotating URL.
+func TestDeadReleaseMemoryBlocksAutoPicks(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+
+	// Two failed grabs of one release (content-dead), one infra failure.
+	mk := func(title, indexer, reason string, size int64) {
+		id, err := s.grabs.Insert(ctx, grabs.Grab{
+			ReleaseTitle: title, ReleaseIndexer: indexer, ReleaseSize: size,
+			Client: "sabnzbd", DownloadURL: "http://x/" + title,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		g, _ := s.grabs.Get(ctx, id)
+		g.Status = "failed"
+		g.Reason = reason
+		if err := s.grabs.Update(ctx, *g); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mk("Dead.Pack.Vol.2", "IdxA", "sab: Aborted, cannot be completed", 999)
+	mk("Dead.Pack.Vol.2", "IdxA", "sab: Aborted, cannot be completed", 999)
+	mk("Blip.Release", "IdxB", "sab: Unpacking failed, write error or disk is full?", 555)
+
+	dead := s.contentDeadReleases(ctx)
+	if e, ok := dead[deadReleaseKey("Dead.Pack.Vol.2", "IdxA", 999)]; !ok || e.Count != 2 {
+		t.Fatalf("dead set missing the twice-failed release: %+v", dead)
+	}
+	if _, ok := dead[deadReleaseKey("Blip.Release", "IdxB", 555)]; ok {
+		t.Fatal("infra failure must not enter the dead set")
+	}
+
+	// bestWatchMatch skips the dead release even with a rotated URL and
+	// picks the healthy lower-ranked alternative.
+	cands := []sceneRelease{
+		{Title: "Dead.Pack.Vol.2", Indexer: "IdxA", Size: 999, Protocol: "usenet",
+			Verified: true, DownloadURL: "http://rotated/new-token-123"},
+		{Title: "Healthy.Alt", Indexer: "IdxC", Size: 777, Protocol: "usenet",
+			Verified: true, DownloadURL: "http://x/healthy"},
+	}
+	got := s.bestWatchMatch(cands, nil)
+	if got == nil || got.Title != "Healthy.Alt" {
+		t.Fatalf("bestWatchMatch = %+v, want Healthy.Alt (dead release skipped by identity)", got)
+	}
+
+	// chooseFailover honours the same set.
+	alt := chooseFailover(cands, "OtherIdx", "http://other", "", nil, dead)
+	if alt == nil || alt.Title != "Healthy.Alt" {
+		t.Fatalf("chooseFailover = %+v, want Healthy.Alt", alt)
 	}
 }

@@ -119,10 +119,15 @@ func (s *Server) fetchDisabledIndexers(ctx context.Context) (map[string]bool, er
 // deferred failover, whose grab is already bound to qBit; "" for the
 // watch auto-pick, where no client is committed yet). Returns nil when
 // no alternative qualifies.
-func chooseFailover(ranked []sceneRelease, failedIndexer, failedURL, protocol string, disabled map[string]bool) *sceneRelease {
+func chooseFailover(ranked []sceneRelease, failedIndexer, failedURL, protocol string, disabled map[string]bool, dead map[string]deadRelease) *sceneRelease {
 	for i := range ranked {
 		r := &ranked[i]
 		if !r.Verified || r.Rejected || !grabbable(*r) {
+			continue
+		}
+		// A release that already died for a content-side reason anywhere
+		// is not an alternative, it's the same trap on another scene.
+		if _, isDead := dead[deadReleaseKey(r.Title, r.Indexer, r.Size)]; isDead {
 			continue
 		}
 		if (protocol != "" && r.Protocol != protocol) || r.DownloadURL == "" {
@@ -183,7 +188,8 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sce
 	// user would see at the top of the interactive list, minus the
 	// failed/benched indexers.
 	rankReleases(out)
-	alt := chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, "torrent", s.disabledIndexers(ctx))
+	alt := chooseFailover(out, g.ReleaseIndexer, g.DownloadURL, "torrent",
+		s.disabledIndexers(ctx), s.contentDeadReleases(ctx))
 	if alt == nil {
 		// The expensive part ran and found nothing usable: say so, with
 		// enough shape to judge why, or a no-op failover is

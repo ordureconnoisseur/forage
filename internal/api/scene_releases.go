@@ -82,6 +82,12 @@ type sceneRelease struct {
 	DownloadURL string  `json:"download_url"`
 	Verified    bool    `json:"verified"` // matcher confirms this release is the target scene
 	Confidence  float64 `json:"confidence"`
+	// Failure history for THIS exact release (title+indexer+size): how
+	// many grabs of it died for a content-side reason, and the last
+	// reason. The UI badges these so a release that already died 8
+	// times reads as dead before the 9th Grab click.
+	FailedCount  int    `json:"failed_count,omitempty"`
+	FailedReason string `json:"failed_reason,omitempty"`
 	// When a release is NOT verified because the matcher thinks it's a
 	// different scene, these name that scene so the UI can warn the
 	// user ("this looks like X, not the scene you're viewing").
@@ -188,6 +194,17 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 
 	// Verify which releases are this scene + shape them for the UI.
 	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases)
+
+	// Annotate failure history before ranking so the UI can badge dead
+	// releases (ranking itself is deliberately untouched: a dead badge
+	// informs; silently re-ordering would hide why).
+	dead := s.contentDeadReleases(r.Context())
+	for i := range out {
+		if e, ok := dead[deadReleaseKey(out[i].Title, out[i].Indexer, out[i].Size)]; ok {
+			out[i].FailedCount = e.Count
+			out[i].FailedReason = e.LastReason
+		}
+	}
 
 	// Rank: verified-first, then non-rejected, then the canonical betterRelease
 	// comparator (resolution by score, then match confidence within a tier, then
