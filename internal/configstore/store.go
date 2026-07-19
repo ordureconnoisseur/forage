@@ -75,6 +75,9 @@ type StoredConfig struct {
 	// editor, so the client stops auto-recompiling them from ReleasePrefs.
 	// *bool so an explicit false (back-to-simple) round-trips.
 	ReleaseAdvanced *bool `json:"releaseAdvanced,omitempty"`
+	// DiscoverFilters: named Discover content filters
+	// ("Name=GENDER1,GENDER2;..."), deployment-specific.
+	DiscoverFilters *string `json:"discoverFilters,omitempty"`
 	// ExcludedSceneTags drops scenes carrying any of these StashDB tag
 	// names from the gap analysis (case-insensitive). nil = no change.
 	ExcludedSceneTags *[]string `json:"excludedSceneTags,omitempty"`

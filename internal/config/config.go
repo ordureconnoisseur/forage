@@ -81,6 +81,11 @@ type Config struct {
 	// ReleaseAdvanced marks ReleaseRules as hand-tuned in the advanced
 	// editor, so the client stops auto-recompiling them from ReleasePrefs.
 	ReleaseAdvanced bool
+	// DiscoverFilters configures named content filters for the Discover
+	// page, format "Name=GENDER1,GENDER2;Name2=...", where genders are
+	// Stash performer gender enums. Deployment-specific configuration:
+	// the mechanism ships dormant (no filters, no UI chips) unless set.
+	DiscoverFilters string
 	// ExcludedSceneTags is a list of StashDB tag names whose scenes are
 	// dropped from the missing-scenes gap analysis (and its counts) —
 	// e.g. "Compilation", "Music Video". Matched case-insensitively.
@@ -182,6 +187,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.ReleasePrefs = b.envOr("FORAGER_RELEASE_PREFS", "", "releasePrefs")
 	b.ReleaseAdvanced = b.envBool("FORAGER_RELEASE_ADVANCED", false, "releaseAdvanced")
 	b.ExcludedSceneTags = parseCSVStrings(b.envOr("FORAGER_EXCLUDED_SCENE_TAGS", "", "excludedSceneTags"))
+	b.DiscoverFilters = b.envOr("FORAGER_DISCOVER_FILTERS", "", "discoverFilters")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -280,6 +286,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.ReleaseRules = str("releaseRules", stored.ReleaseRules, b.ReleaseRules, "")
 	out.ReleasePrefs = str("releasePrefs", stored.ReleasePrefs, b.ReleasePrefs, "")
 	out.ReleaseAdvanced = boolean("releaseAdvanced", stored.ReleaseAdvanced, b.ReleaseAdvanced, false)
+	out.DiscoverFilters = str("discoverFilters", stored.DiscoverFilters, b.DiscoverFilters, "")
 	if stored.ExcludedSceneTags != nil {
 		out.ExcludedSceneTags = append([]string(nil), (*stored.ExcludedSceneTags)...)
 		src["excludedSceneTags"] = SourceJSON

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/cache"
@@ -33,6 +35,9 @@ type discoverPerformer struct {
 	StashID  string `json:"stash_id"`
 	Name     string `json:"name"`
 	Favorite bool   `json:"favorite"`
+	// Gender: Stash performer gender enum, cached for the configurable
+	// Discover content filters. Omitted from JSON when empty.
+	Gender string `json:"gender,omitempty"`
 	// Stats used by the plugin's hovercard. Sourced from
 	// performer_cache aggregates (set by the 12h scene-cache refresh).
 	// Zero values are fine — UI elides them when 0.
@@ -48,6 +53,9 @@ type discoverResponse struct {
 	Days                int             `json:"days"`
 	RefreshedAt         int64           `json:"refreshed_at"`
 	TrendingRefreshedAt int64           `json:"trending_refreshed_at"`
+	// Filters is the deployment's configured content-filter names; the
+	// UI renders selection chips only when non-empty.
+	Filters []string `json:"filters,omitempty"`
 }
 
 // getDiscover returns recent unowned StashDB scenes featuring ≥1 of
@@ -143,6 +151,18 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// hot globally", regardless of which performers we have.
 	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
 
+	// Configurable content filters (deployment config, dormant when
+	// unset): ?flt=<name> keeps scenes with at least one local performer
+	// whose gender is in the named set. Trending scenes whose performers
+	// aren't local can't be judged and are dropped under a filter.
+	filters := parseDiscoverFilters(s.pool.Settings().DiscoverFilters)
+	if name := r.URL.Query().Get("flt"); name != "" {
+		if genders, ok := filters[name]; ok {
+			scenes = filterScenesByGender(scenes, genders)
+			trending = filterScenesByGender(trending, genders)
+		}
+	}
+
 	// Hide scenes forage already has in flight or in the library. The
 	// cached `owned` flag covers externally-owned scenes but lags a fresh
 	// grab until the next scene-cache refresh; this drops a just-confirmed
@@ -162,7 +182,64 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 		Days:                days,
 		RefreshedAt:         refreshedAt,
 		TrendingRefreshedAt: trendingRefreshedAt,
+		Filters:             filterNames(filters),
 	})
+}
+
+// parseDiscoverFilters parses the deployment's named content filters
+// ("Name=GENDER1,GENDER2;Name2=..."): filter name to the gender set
+// (uppercased) it selects. Empty/malformed entries are skipped; an
+// unset config yields an empty map, which keeps the whole feature
+// dormant (no chips, no filtering).
+func parseDiscoverFilters(raw string) map[string][]string {
+	out := map[string][]string{}
+	for _, part := range strings.Split(raw, ";") {
+		name, list, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || strings.TrimSpace(name) == "" {
+			continue
+		}
+		var genders []string
+		for _, g := range strings.Split(list, ",") {
+			if g = strings.ToUpper(strings.TrimSpace(g)); g != "" {
+				genders = append(genders, g)
+			}
+		}
+		if len(genders) > 0 {
+			out[strings.TrimSpace(name)] = genders
+		}
+	}
+	return out
+}
+
+func filterNames(filters map[string][]string) []string {
+	if len(filters) == 0 {
+		return nil
+	}
+	names := make([]string, 0, len(filters))
+	for n := range filters {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// filterScenesByGender keeps scenes with at least one performer whose
+// gender is in the set. Filters in place.
+func filterScenesByGender(scenes []discoverScene, genders []string) []discoverScene {
+	want := map[string]bool{}
+	for _, g := range genders {
+		want[g] = true
+	}
+	kept := scenes[:0]
+	for _, sc := range scenes {
+		for _, p := range sc.Performers {
+			if want[p.Gender] {
+				kept = append(kept, sc)
+				break
+			}
+		}
+	}
+	return kept
 }
 
 // discoverRawRow is the intermediate shape between scan and hydrate.
@@ -323,7 +400,7 @@ func loadPerformersByIDs(ctx context.Context, db *sql.DB, ids map[string]struct{
 		first = false
 	}
 	rows, err := db.QueryContext(ctx,
-		"SELECT stash_id, name, favorite, scene_count, "+
+		"SELECT stash_id, name, favorite, COALESCE(gender,''), scene_count, "+
 			"total_stashdb_scenes, owned_scenes_count, last_release_unix "+
 			"FROM performer_cache WHERE stash_id IN ("+string(placeholders)+")",
 		args...)
@@ -334,7 +411,7 @@ func loadPerformersByIDs(ctx context.Context, db *sql.DB, ids map[string]struct{
 	for rows.Next() {
 		var p discoverPerformer
 		var fav int
-		if err := rows.Scan(&p.StashID, &p.Name, &fav, &p.SceneCount,
+		if err := rows.Scan(&p.StashID, &p.Name, &fav, &p.Gender, &p.SceneCount,
 			&p.TotalStashDBScenes, &p.OwnedScenesCount, &p.LastReleaseUnix); err != nil {
 			return nil, err
 		}

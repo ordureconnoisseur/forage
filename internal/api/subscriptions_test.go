@@ -447,3 +447,27 @@ func TestPostUpgradeWatchesFilters(t *testing.T) {
 		t.Fatal("at-cutoff and unowned scenes must not be watched for upgrades")
 	}
 }
+
+// Discover content filters: parsing, dormancy when unconfigured, and
+// gender-set scene filtering.
+func TestDiscoverContentFilters(t *testing.T) {
+	// Parser: named sets, uppercased, malformed entries skipped.
+	f := parseDiscoverFilters("Trans=transgender_female, TRANSGENDER_MALE; Broken; Fem=FEMALE")
+	if len(f) != 2 || len(f["Trans"]) != 2 || f["Trans"][0] != "TRANSGENDER_FEMALE" {
+		t.Fatalf("parse = %v", f)
+	}
+	if parseDiscoverFilters("") == nil || len(parseDiscoverFilters("")) != 0 {
+		t.Fatal("unset config must yield an empty (dormant) map")
+	}
+
+	scenes := []discoverScene{
+		{StashDBID: "s1", Performers: []discoverPerformer{{Name: "A", Gender: "TRANSGENDER_FEMALE"}}},
+		{StashDBID: "s2", Performers: []discoverPerformer{{Name: "B", Gender: "FEMALE"}}},
+		{StashDBID: "s3", Performers: []discoverPerformer{{Name: "C", Gender: "FEMALE"}, {Name: "D", Gender: "TRANSGENDER_MALE"}}},
+		{StashDBID: "s4", Performers: nil}, // no local performers: unjudgeable, dropped
+	}
+	got := filterScenesByGender(scenes, f["Trans"])
+	if len(got) != 2 || got[0].StashDBID != "s1" || got[1].StashDBID != "s3" {
+		t.Fatalf("filter kept %v", got)
+	}
+}

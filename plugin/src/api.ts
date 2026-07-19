@@ -219,6 +219,9 @@ export interface DiscoverResponse {
   days: number;
   refreshed_at: number;
   trending_refreshed_at: number;
+  // Deployment-configured content-filter names; render selection chips
+  // only when present. Absent on unconfigured (public-default) daemons.
+  filters?: string[];
 }
 
 export function fetchDiscover(opts?: {
@@ -226,10 +229,12 @@ export function fetchDiscover(opts?: {
   favoriteOnly?: boolean;
   limit?: number;
   trendingLimit?: number;
+  filter?: string; // deployment-configured content filter name
 }): Promise<DiscoverResponse> {
   const params = new URLSearchParams();
   if (opts?.days != null) params.set("days", String(opts.days));
   if (opts?.favoriteOnly) params.set("favorite_only", "true");
+  if (opts?.filter) params.set("flt", opts.filter);
   if (opts?.limit != null) params.set("limit", String(opts.limit));
   if (opts?.trendingLimit != null)
     params.set("trending_limit", String(opts.trendingLimit));
