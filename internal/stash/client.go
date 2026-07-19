@@ -37,6 +37,11 @@ type Performer struct {
 	StashIDs   []StashID `json:"stash_ids"`
 	SceneCount int       `json:"scene_count"`
 	Favorite   bool      `json:"favorite"`
+	// Gender is Stash's performer gender enum (MALE, FEMALE,
+	// TRANSGENDER_MALE, TRANSGENDER_FEMALE, INTERSEX, NON_BINARY) or
+	// empty. Cached so Discover's configurable content filters can
+	// select scenes by the genders of their local performers.
+	Gender string `json:"gender"`
 }
 
 type Studio struct {
@@ -52,7 +57,7 @@ const performersQuery = `
 query ForagerAllPerformers($page: Int!, $perPage: Int!) {
   findPerformers(filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }) {
     count
-    performers { id name alias_list stash_ids { endpoint stash_id } scene_count favorite }
+    performers { id name alias_list stash_ids { endpoint stash_id } scene_count favorite gender }
   }
 }`
 

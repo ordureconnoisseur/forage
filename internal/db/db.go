@@ -234,6 +234,7 @@ func migrateGrabsColumns(db *sql.DB) error {
 		return n > 0, nil
 	}
 	aggCols := []struct{ col, decl string }{
+		{"gender", `ALTER TABLE performer_cache ADD COLUMN gender TEXT NOT NULL DEFAULT ''`},
 		{"total_stashdb_scenes", `ALTER TABLE performer_cache ADD COLUMN total_stashdb_scenes INTEGER NOT NULL DEFAULT 0`},
 		{"owned_scenes_count", `ALTER TABLE performer_cache ADD COLUMN owned_scenes_count INTEGER NOT NULL DEFAULT 0`},
 		{"last_release_unix", `ALTER TABLE performer_cache ADD COLUMN last_release_unix INTEGER NOT NULL DEFAULT 0`},

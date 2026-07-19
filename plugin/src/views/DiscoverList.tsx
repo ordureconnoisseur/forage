@@ -52,6 +52,11 @@ export default function DiscoverList({
     () => localStorage.getItem("forage.discover.favorite_only") === "true",
   );
   const [q, setQ] = useState("");
+  // Deployment-configured content filter ("" = all). Persisted like the
+  // other Discover view prefs.
+  const [contentFilter, setContentFilter] = useState<string>(
+    () => localStorage.getItem("forage.discover.filter") || "",
+  );
   const lastFetch = useRef(0);
   // Multi-select over the "From your performers" grid, same interaction
   // as MissingScenes: Select flips cards into toggle mode, the bottom
@@ -74,6 +79,9 @@ export default function DiscoverList({
   useEffect(() => {
     localStorage.setItem("forage.discover.favorite_only", String(favoriteOnly));
   }, [favoriteOnly]);
+  useEffect(() => {
+    localStorage.setItem("forage.discover.filter", contentFilter);
+  }, [contentFilter]);
 
   // Fetch on mount + whenever filters change. Light polling for
   // background refresh — the underlying cache only changes every 12h
@@ -96,6 +104,7 @@ export default function DiscoverList({
       inFlight = true;
       try {
         const r = await fetchDiscover({
+          filter: contentFilter || undefined,
           days,
           favoriteOnly,
           trendingLimit: TRENDING_LIMIT,
@@ -128,7 +137,7 @@ export default function DiscoverList({
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [days, favoriteOnly, reloadKey]);
+  }, [days, favoriteOnly, contentFilter, reloadKey]);
 
   // Changing the day window / favourites filter swaps the scene set out
   // from under a selection — drop it rather than keep invisible picks.
@@ -272,6 +281,22 @@ export default function DiscoverList({
           />
           Favourites only
         </label>
+        {(data.filters ?? []).length > 0 && (
+          <span className="discover-filters">
+            {(data.filters ?? []).map((f) => (
+              <button
+                key={f}
+                className={
+                  "grab-chip" + (contentFilter === f ? " active chip-any" : "")
+                }
+                title={`Only show ${f} content (deployment filter)`}
+                onClick={() => setContentFilter(contentFilter === f ? "" : f)}
+              >
+                <span className="chip-label">{f}</span>
+              </button>
+            ))}
+          </span>
+        )}
         <span className="count">
           {filtered.length} / {data.scenes.length}
         </span>

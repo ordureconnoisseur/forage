@@ -20,6 +20,9 @@ CREATE TABLE IF NOT EXISTS performer_cache (
   aliases               TEXT,                    -- JSON array
   favorite              INTEGER NOT NULL DEFAULT 0,
   scene_count           INTEGER NOT NULL DEFAULT 0,
+  -- Stash performer gender enum ('' when unset); drives Discover's
+  -- configurable content filters.
+  gender                TEXT NOT NULL DEFAULT '',
   total_stashdb_scenes  INTEGER NOT NULL DEFAULT 0,
   owned_scenes_count    INTEGER NOT NULL DEFAULT 0,
   last_release_unix     INTEGER NOT NULL DEFAULT 0,
@@ -50,6 +53,9 @@ CREATE TABLE IF NOT EXISTS studio_cache (
   aliases               TEXT,                    -- JSON array
   favorite              INTEGER NOT NULL DEFAULT 0,
   scene_count           INTEGER NOT NULL DEFAULT 0,
+  -- Stash performer gender enum ('' when unset); drives Discover's
+  -- configurable content filters.
+  gender                TEXT NOT NULL DEFAULT '',
   total_stashdb_scenes  INTEGER NOT NULL DEFAULT 0,
   owned_scenes_count    INTEGER NOT NULL DEFAULT 0,
   last_release_unix     INTEGER NOT NULL DEFAULT 0,

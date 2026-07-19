@@ -64,13 +64,14 @@ func RefreshPerformers(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO performer_cache (stash_id, stashdb_id, name, aliases, favorite, scene_count, refreshed_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO performer_cache (stash_id, stashdb_id, name, aliases, favorite, gender, scene_count, refreshed_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(stash_id) DO UPDATE SET
 			stashdb_id   = excluded.stashdb_id,
 			name         = excluded.name,
 			aliases      = excluded.aliases,
 			favorite     = excluded.favorite,
+			gender       = excluded.gender,
 			scene_count  = excluded.scene_count,
 			refreshed_at = excluded.refreshed_at
 	`)
@@ -113,6 +114,7 @@ func RefreshPerformers(ctx context.Context, sc *stash.Client, sdb *stashdb.Clien
 			p.Name,
 			string(aliasesJSON),
 			fav,
+			p.Gender,
 			p.SceneCount,
 			start,
 		); err != nil {

@@ -90,6 +90,9 @@ type Settings struct {
 	// ExcludedSceneTags: StashDB tag names whose scenes are dropped from
 	// the missing-scenes gap analysis (case-insensitive).
 	ExcludedSceneTags []string
+	// DiscoverFilters: raw named-filter config for Discover
+	// ("Name=GENDER1,GENDER2;..."); parsed in the api layer.
+	DiscoverFilters string
 }
 
 // New returns an empty Pool. Reload it before using.
@@ -155,6 +158,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		PackDedupKeep:       cfg.PackDedupKeep,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
+		DiscoverFilters:     cfg.DiscoverFilters,
 	})
 
 	// The swapped-in clients invalidate the reachability verdicts, which
