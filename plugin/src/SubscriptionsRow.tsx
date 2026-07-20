@@ -9,6 +9,58 @@ import {
   studioImageURL,
 } from "./api";
 
+// Line icons in the app's stroke style (24 viewBox, currentColor,
+// round caps), same language as WatchControl's bookmark. No emoji:
+// glyph rendering varies wildly across platforms; these don't.
+function iconProps(size: number) {
+  return {
+    viewBox: "0 0 24 24",
+    width: size,
+    height: size,
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 2,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+}
+
+// Bolt outline (SVG Repo, CC0): the auto-grab toggle.
+function BoltIcon() {
+  return (
+    <svg {...iconProps(12)}>
+      <path d="M12.9996 3L5.06859 12.6934C4.72703 13.1109 4.55625 13.3196 4.55471 13.4956C4.55336 13.6486 4.62218 13.7939 4.74148 13.8897C4.87867 14 5.14837 14 5.68776 14H11.9996L10.9996 21L18.9305 11.3066C19.2721 10.8891 19.4429 10.6804 19.4444 10.5044C19.4458 10.3514 19.377 10.2061 19.2577 10.1103C19.1205 10 18.8508 10 18.3114 10H11.9996L12.9996 3Z" />
+    </svg>
+  );
+}
+
+function XIcon() {
+  return (
+    <svg {...iconProps(11)}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}
+
+// Notification bell: the "new scenes found" badge.
+function BellIcon() {
+  return (
+    <svg {...iconProps(10)} strokeWidth={2.4}>
+      <path d="M18 15.5V11a6 6 0 1 0-12 0v4.5L4.5 18h15L18 15.5z" />
+      <path d="M10 21a2.2 2.2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
+function DownIcon() {
+  return (
+    <svg {...iconProps(10)} strokeWidth={2.6}>
+      <path d="M12 4v14M6 12l6 6 6-6" />
+    </svg>
+  );
+}
+
 // Card portrait: prefer the daemon's Stash image proxy by local id (the
 // same images the Performers/Studios grids show), then any stored
 // image_url, then the initial-letter placeholder.
@@ -98,7 +150,11 @@ export default function SubscriptionsRow({ kind }: { kind: "performer" | "studio
                 </span>
               )}
               {sub.new_count > 0 && (
-                <span className="subs-badge" title={`${sub.new_count} new since you last looked`}>
+                <span
+                  className="subs-badge"
+                  title={`${sub.new_count} new scene${sub.new_count === 1 ? "" : "s"} found since you last looked`}
+                >
+                  <BellIcon />
                   {sub.new_count > 99 ? "99+" : sub.new_count}
                 </span>
               )}
@@ -107,7 +163,8 @@ export default function SubscriptionsRow({ kind }: { kind: "performer" | "studio
                   className="subs-badge subs-badge-ready"
                   title={`${sub.ready_count} release${sub.ready_count === 1 ? "" : "s"} ready to grab`}
                 >
-                  ⬇{sub.ready_count}
+                  <DownIcon />
+                  {sub.ready_count}
                 </span>
               )}
               <span className="subs-scrim">
@@ -126,14 +183,14 @@ export default function SubscriptionsRow({ kind }: { kind: "performer" | "studio
                   setSubscriptionAutoGrab(sub.stashdb_id, !sub.auto_grab).then(load)
                 }
               >
-                ⚡
+                <BoltIcon />
               </button>
               <button
                 className="subs-remove"
                 title="Unsubscribe (existing watches are kept)"
                 onClick={() => unsubscribe(sub.stashdb_id).then(load)}
               >
-                ✕
+                <XIcon />
               </button>
             </div>
           </li>

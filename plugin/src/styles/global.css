@@ -7176,16 +7176,20 @@ code.grab-fact-v,
   top: 6px;
   right: 6px;
   z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
   min-width: 18px;
-  padding: 1px 6px;
+  padding: 2px 6px;
   border-radius: var(--radius-pill);
   background: linear-gradient(135deg, var(--accent), var(--accent-bright, var(--accent)));
   color: #0a0a0a;
   font-size: 10px;
   font-weight: 700;
-  text-align: center;
+  line-height: 1;
   box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55), 0 2px 6px rgba(0, 0, 0, 0.4);
 }
+.subs-badge svg { display: block; }
 .subs-badge-ready {
   top: 28px;
   background: var(--status-completed);
@@ -7203,6 +7207,8 @@ code.grab-fact-v,
    on, so the state is visible even at rest. */
 .subs-auto,
 .subs-remove {
+  display: grid;
+  place-items: center;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -7212,13 +7218,16 @@ code.grab-fact-v,
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   color: var(--text-muted);
-  font-size: 11px;
-  line-height: 1;
   cursor: pointer;
   opacity: 0;
   transition: opacity 140ms ease, color 120ms ease, border-color 120ms ease,
     transform 120ms ease;
 }
+.subs-auto svg,
+.subs-remove svg { display: block; }
+/* Bolt fills gold when auto-grab is armed, so on/off reads at a glance
+   without relying on colour of the stroke alone. */
+.subs-auto.on svg { fill: rgba(250, 204, 21, 0.35); }
 .subs-card:hover .subs-auto,
 .subs-card:hover .subs-remove,
 .subs-auto.on {
