@@ -140,6 +140,14 @@ export default function MissingScenes({
   if (!data) return null;
 
   const isStudio = subject.kind === "studio";
+  // Stable per-subject batch: every watch added from this page, one by
+  // one via the card control or via multi-select, joins the same
+  // Watching-tab group, labeled with the subject's name. Deterministic
+  // (kind + id) so repeat visits and repeat selections keep merging.
+  const subjectBatch = {
+    id: `${subject.kind}:${subject.id}`,
+    label: data.subject.name,
+  };
   // The library folder a grab/watch for a given scene lands in. A performer
   // page uses the page performer; a studio is not a folder, so a studio page
   // uses each scene's own primary performer (per-scene). performer_id is only
@@ -183,7 +191,11 @@ export default function MissingScenes({
       };
     });
     try {
-      await addWatches({ batch_label: data.subject.name, watches });
+      await addWatches({
+        batch_id: subjectBatch.id,
+        batch_label: subjectBatch.label,
+        watches,
+      });
     } catch {
       // best-effort; the toast still confirms intent
     }
@@ -383,6 +395,7 @@ export default function MissingScenes({
                 s={e.s}
                 performerName={place.name}
                 performerId={place.id}
+                batch={subjectBatch}
                 selecting={selecting}
                 selected={selected.has(e.s.stashdb_id)}
                 owned={e.kind === "owned"}
@@ -429,6 +442,7 @@ function SceneCard({
   s,
   performerName,
   performerId,
+  batch,
   selecting,
   selected,
   owned,
@@ -438,6 +452,7 @@ function SceneCard({
   s: MissingScene;
   performerName: string;
   performerId: string;
+  batch: { id: string; label?: string };
   selecting: boolean;
   selected: boolean;
   // owned marks an already-in-library scene: show its current resolution and
@@ -520,6 +535,7 @@ function SceneCard({
             }}
             performerName={performerName}
             performerId={performerId}
+            batch={batch}
             initialStatus={s.watch_status || ""}
             variant="overlay"
           />

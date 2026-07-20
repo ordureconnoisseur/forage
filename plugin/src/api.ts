@@ -112,6 +112,8 @@ export interface Performer {
   aliases?: string[];
   favorite?: boolean;
   scene_count: number;
+  // Cached Stash gender enum, what the content-filter chips match on.
+  gender?: string;
   // Aggregates populated by the 12h scene-cache refresh. Zero when the
   // refresh hasn't run yet, or when the performer has no StashDB
   // cross-id (so we couldn't query their filmography).
@@ -123,9 +125,11 @@ export interface Performer {
 export interface PerformersResponse {
   performers: Performer[];
   refreshed_at: number;
-  // Deployment-configured content-filter names (same sets as Discover);
-  // absent on unconfigured deployments, which keeps the chips hidden.
-  filters?: string[];
+  // Deployment-configured content filters (same sets as Discover) as a
+  // full name→genders mapping, so the chips filter the already-loaded
+  // list in memory, no refetch on toggle. Absent on unconfigured
+  // deployments, which keeps the chips hidden.
+  filters?: Record<string, string[]>;
 }
 
 export type PerformerSort =
@@ -138,13 +142,11 @@ export function fetchPerformers(opts?: {
   sort?: PerformerSort;
   favoriteOnly?: boolean;
   q?: string;
-  filter?: string;
 }): Promise<PerformersResponse> {
   const params = new URLSearchParams();
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.favoriteOnly) params.set("favorite_only", "true");
   if (opts?.q) params.set("q", opts.q);
-  if (opts?.filter) params.set("flt", opts.filter);
   return get<PerformersResponse>("/performers?" + params.toString());
 }
 
@@ -1413,6 +1415,11 @@ export interface AddWatchReq {
   // Optional/vestigial — the matcher ignores it (best release by preference
   // ranking; quality floors live in release reject rules). Omit it.
   target?: WatchTarget;
+  // Group membership for a SINGLE add: subject pages pass their stable
+  // per-subject batch so one-by-one watches land in the same Watching-tab
+  // group a multi-select would create. Omit for an ungrouped track.
+  batch_id?: string;
+  batch_label?: string;
 }
 
 export function addWatch(req: AddWatchReq): Promise<{ ok: boolean }> {
@@ -1421,8 +1428,11 @@ export function addWatch(req: AddWatchReq): Promise<{ ok: boolean }> {
 
 // addWatches creates many watches in one request under a shared batch, so the
 // Watching tab groups them and shows their collective progress. Used by
-// "watch all missing for a performer" and Discover multi-select.
+// "watch all missing for a performer" and Discover multi-select. batch_id
+// pins the group id (subject pages pass "<kind>:<subject id>" so repeat
+// selections merge); omitted, the server generates a fresh one.
 export function addWatches(req: {
+  batch_id?: string;
   batch_label?: string;
   watches: AddWatchReq[];
 }): Promise<{ ok: boolean; batch_id: string; count: number }> {

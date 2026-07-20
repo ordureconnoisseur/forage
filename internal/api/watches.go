@@ -35,6 +35,12 @@ type addWatchRequest struct {
 	// Target resolution is vestigial (kept for request compatibility; the
 	// matcher no longer filters on it).
 	Target string `json:"target"`
+	// BatchID/BatchLabel let a single add join an existing group: the
+	// plugin's subject pages pass a stable per-subject id so scenes
+	// watched one by one land in the same Watching-tab group a
+	// multi-select would create. Optional; empty = ungrouped single.
+	BatchID    string `json:"batch_id,omitempty"`
+	BatchLabel string `json:"batch_label,omitempty"`
 }
 
 func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
@@ -81,6 +87,8 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 		PerformerID:   req.PerformerID,
 		Performers:    req.Performers,
 		Target:        target,
+		BatchID:       req.BatchID,
+		BatchLabel:    req.BatchLabel,
 	}); err != nil {
 		s.log.Error("watch add", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -441,6 +449,11 @@ func (s *Server) postWatchGrabCandidate(w http.ResponseWriter, r *http.Request) 
 // addWatchBatchRequest is the bulk-create body: many watches sharing a batch.
 // Used by "watch all missing for a performer" and Discover multi-select.
 type addWatchBatchRequest struct {
+	// BatchID: caller-chosen stable group id (the plugin's subject pages
+	// use "<kind>:<subject id>" so repeat selections from one performer
+	// or studio merge into a single group). Empty = a fresh generated id
+	// per request, the original behaviour.
+	BatchID    string            `json:"batch_id,omitempty"`
 	BatchLabel string            `json:"batch_label"`
 	Watches    []addWatchRequest `json:"watches"`
 }
@@ -460,7 +473,10 @@ func (s *Server) postWatchBatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "no watches")
 		return
 	}
-	batchID := fmt.Sprintf("b%d", time.Now().UnixNano())
+	batchID := req.BatchID
+	if batchID == "" {
+		batchID = fmt.Sprintf("b%d", time.Now().UnixNano())
+	}
 	ws := make([]watches.Watch, 0, len(req.Watches))
 	for _, it := range req.Watches {
 		if it.StashDBID == "" {

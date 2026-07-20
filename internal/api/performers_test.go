@@ -21,23 +21,22 @@ func seedCachedPerformer(t *testing.T, s *Server, stashID, name, gender string) 
 	}
 }
 
-// The Performers list honours the same deployment-configured content
-// filters as Discover: ?flt=<name> narrows to the named gender set, an
-// unknown/absent name returns everyone, and the configured filter names
-// ride along in the response for the UI's chips. Unconfigured
-// deployments stay dormant (no names, no narrowing).
-func TestGetPerformersContentFilter(t *testing.T) {
+// The Performers list ships what the plugin's in-memory content filter
+// needs: each performer's cached gender, plus the deployment's full
+// name→genders filter sets (the same config Discover uses). The server
+// never narrows; a chip toggle filters client-side without a refetch.
+// Unconfigured deployments stay dormant (no sets advertised).
+func TestGetPerformersContentFilterData(t *testing.T) {
 	s := newDeferTestServer(t)
 	seedCachedPerformer(t, s, "p1", "Alice", "FEMALE")
 	seedCachedPerformer(t, s, "p2", "Bella", "TRANSGENDER_FEMALE")
-	seedCachedPerformer(t, s, "p3", "Carl", "MALE")
 
-	get := func(url string) performersResponse {
+	get := func() performersResponse {
 		t.Helper()
 		rec := httptest.NewRecorder()
-		s.getPerformers(rec, httptest.NewRequest(http.MethodGet, url, nil))
+		s.getPerformers(rec, httptest.NewRequest(http.MethodGet, "/performers", nil))
 		if rec.Code != http.StatusOK {
-			t.Fatalf("GET %s = %d: %s", url, rec.Code, rec.Body.String())
+			t.Fatalf("GET /performers = %d: %s", rec.Code, rec.Body.String())
 		}
 		var out performersResponse
 		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
@@ -46,27 +45,27 @@ func TestGetPerformersContentFilter(t *testing.T) {
 		return out
 	}
 
-	// Dormant: no config → all performers, no filter names advertised.
-	out := get("/performers?flt=Trans")
-	if len(out.Performers) != 3 || out.Filters != nil {
+	// Dormant: no config → everyone listed, no filter sets advertised.
+	out := get()
+	if len(out.Performers) != 2 || out.Filters != nil {
 		t.Fatalf("dormant: got %d performers, filters %v", len(out.Performers), out.Filters)
+	}
+	genders := map[string]string{}
+	for _, p := range out.Performers {
+		genders[p.Name] = p.Gender
+	}
+	if genders["Alice"] != "FEMALE" || genders["Bella"] != "TRANSGENDER_FEMALE" {
+		t.Fatalf("genders = %v", genders)
 	}
 
 	s.pool.Reload(config.Config{DiscoverFilters: "Trans=TRANSGENDER_FEMALE,TRANSGENDER_MALE"})
 
-	out = get("/performers?flt=Trans")
-	if len(out.Performers) != 1 || out.Performers[0].Name != "Bella" {
-		t.Fatalf("flt=Trans kept %+v", out.Performers)
+	out = get()
+	if len(out.Performers) != 2 {
+		t.Fatalf("configured filters must not narrow the list, got %d", len(out.Performers))
 	}
-	if len(out.Filters) != 1 || out.Filters[0] != "Trans" {
-		t.Fatalf("filters = %v, want [Trans]", out.Filters)
-	}
-
-	// No flt param, and a stale/unknown name, both mean no narrowing.
-	if out = get("/performers"); len(out.Performers) != 3 {
-		t.Fatalf("unfiltered kept %d", len(out.Performers))
-	}
-	if out = get("/performers?flt=Nope"); len(out.Performers) != 3 {
-		t.Fatalf("unknown filter name kept %d, want all 3", len(out.Performers))
+	want := []string{"TRANSGENDER_FEMALE", "TRANSGENDER_MALE"}
+	if got := out.Filters["Trans"]; len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("filters = %v, want Trans=%v", out.Filters, want)
 	}
 }
