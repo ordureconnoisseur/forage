@@ -1015,6 +1015,9 @@ export interface Subscription {
   stashdb_id: string;
   kind: "performer" | "studio";
   name: string;
+  // LOCAL Stash id of the subject: navigation target for the card, and
+  // the id the daemon's image proxy serves portraits by.
+  local_id?: string;
   image_url?: string;
   auto_grab: boolean;
   created_at: number;
@@ -1030,9 +1033,13 @@ export function fetchSubscriptions(): Promise<{ subscriptions: Subscription[] }>
 }
 
 export function subscribe(sub: {
+  // The subject's StashDB cross-id (subject pages have it on
+  // data.subject.stashdb_id); the loop matches scenes by it, so a
+  // local id here would never fire. The server re-resolves defensively.
   stashdb_id: string;
   kind: "performer" | "studio";
   name: string;
+  local_id?: string;
   image_url?: string;
 }): Promise<{ ok: boolean }> {
   return postJSON<{ ok: boolean }>("/subscriptions", sub);

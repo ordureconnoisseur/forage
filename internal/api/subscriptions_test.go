@@ -471,3 +471,82 @@ func TestDiscoverContentFilters(t *testing.T) {
 		t.Fatalf("filter kept %v", got)
 	}
 }
+
+// Subscribing resolves whatever id the caller passed (the performer
+// page's LOCAL navigation id, or an actual cross-id) to the StashDB
+// cross-id the loop matches by, keeps the local id for the UI, and
+// refuses performers with no StashDB link outright.
+func TestPostSubscriptionResolvesPerformerIDs(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`
+		INSERT INTO performer_cache (stash_id, stashdb_id, name, refreshed_at)
+		VALUES ('77', 'uuid-abc-1', 'Linked', 1), ('88', '', 'Unlinked', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		s.postSubscription(rec, httptest.NewRequest(http.MethodPost, "/subscriptions", strings.NewReader(body)))
+		return rec
+	}
+
+	// Local id in: cross-id stored, local id kept.
+	if rec := post(`{"stashdb_id":"77","kind":"performer","name":"Linked"}`); rec.Code != http.StatusOK {
+		t.Fatalf("local-id subscribe = %d: %s", rec.Code, rec.Body.String())
+	}
+	subs, _ := s.subs.List(ctx)
+	if len(subs) != 1 || subs[0].StashDBID != "uuid-abc-1" || subs[0].LocalID != "77" {
+		t.Fatalf("stored sub = %+v, want cross-id key + local id", subs)
+	}
+
+	// Cross-id in: same row updated (upsert), local id backfilled.
+	if rec := post(`{"stashdb_id":"uuid-abc-1","kind":"performer","name":"Linked"}`); rec.Code != http.StatusOK {
+		t.Fatalf("cross-id subscribe = %d", rec.Code)
+	}
+	if subs, _ = s.subs.List(ctx); len(subs) != 1 || subs[0].LocalID != "77" {
+		t.Fatalf("cross-id subscribe must merge into the same row: %+v", subs)
+	}
+
+	// No StashDB link: refused, not stored as a dud that never fires.
+	if rec := post(`{"stashdb_id":"88","kind":"performer","name":"Unlinked"}`); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unlinked subscribe = %d, want 422", rec.Code)
+	}
+	if subs, _ = s.subs.List(ctx); len(subs) != 1 {
+		t.Fatalf("unlinked subscribe must not store: %+v", subs)
+	}
+}
+
+// The loop self-heals legacy performer subscriptions stored under a
+// LOCAL Stash id (they could never match aggregates or scenes): rekeyed
+// to the cross-id with the local id preserved, watermark intact.
+func TestSubscriptionTickRekeysLocalIDSubs(t *testing.T) {
+	s := newDeferTestServer(t)
+	ctx := context.Background()
+	if _, err := s.db.Exec(`
+		INSERT INTO performer_cache (stash_id, stashdb_id, name, refreshed_at)
+		VALUES ('1206', 'uuid-reina', 'Reina', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Legacy row: keyed by the local id, as old plugin builds subscribed.
+	if err := s.subs.Add(ctx, subscriptions.Subscription{
+		StashDBID: "1206", Kind: "performer", Name: "Reina Ohara",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := s.subs.List(ctx)
+
+	s.tickSubscriptions(ctx)
+
+	after, err := s.subs.List(ctx)
+	if err != nil || len(after) != 1 {
+		t.Fatalf("subs after tick: %v %v", after, err)
+	}
+	if after[0].StashDBID != "uuid-reina" || after[0].LocalID != "1206" {
+		t.Fatalf("sub not rekeyed: %+v", after[0])
+	}
+	if after[0].Watermark != before[0].Watermark {
+		t.Fatalf("rekey must preserve the watermark: %d != %d", after[0].Watermark, before[0].Watermark)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -76,6 +77,7 @@ func (s *Server) postSubscription(w http.ResponseWriter, r *http.Request) {
 		StashDBID string `json:"stashdb_id"`
 		Kind      string `json:"kind"`
 		Name      string `json:"name"`
+		LocalID   string `json:"local_id"`
 		ImageURL  string `json:"image_url"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -89,8 +91,24 @@ func (s *Server) postSubscription(w http.ResponseWriter, r *http.Request) {
 	if req.Kind != "studio" {
 		req.Kind = "performer"
 	}
+	// The loop reads aggregates and scene lists by StashDB cross-id, so a
+	// subscription keyed by anything else NEVER fires. Performer pages
+	// navigate by LOCAL Stash id, and an old plugin build subscribed with
+	// exactly that; resolve whatever we were given through the performer
+	// cache and refuse ids we can't resolve rather than store a dud.
+	if req.Kind == "performer" {
+		crossID, localID := s.resolvePerformerSubject(r.Context(), req.StashDBID)
+		if crossID == "" {
+			writeErr(w, http.StatusUnprocessableEntity,
+				"performer has no StashDB link; a subscription could never match their scenes")
+			return
+		}
+		req.StashDBID = crossID
+		req.LocalID = localID
+	}
 	if err := s.subs.Add(r.Context(), subscriptions.Subscription{
-		StashDBID: req.StashDBID, Kind: req.Kind, Name: req.Name, ImageURL: req.ImageURL,
+		StashDBID: req.StashDBID, Kind: req.Kind, Name: req.Name,
+		LocalID: req.LocalID, ImageURL: req.ImageURL,
 	}); err != nil {
 		s.log.Error("subscription add", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
@@ -98,6 +116,25 @@ func (s *Server) postSubscription(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("subscribed", "kind", req.Kind, "subject", req.Name, "stashdb_id", req.StashDBID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// resolvePerformerSubject maps whatever id the caller has (a LOCAL Stash
+// performer id or a StashDB cross-id) to the (crossID, localID) pair via
+// the performer cache. Empty crossID = unresolvable (unknown performer,
+// or one with no StashDB link).
+func (s *Server) resolvePerformerSubject(ctx context.Context, id string) (crossID, localID string) {
+	// Local id first: the plugin's performer pages navigate by it.
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(stashdb_id, ''), stash_id FROM performer_cache WHERE stash_id = ?`,
+		id).Scan(&crossID, &localID)
+	if crossID != "" {
+		return crossID, localID
+	}
+	crossID, localID = "", ""
+	_ = s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(stashdb_id, ''), stash_id FROM performer_cache WHERE stashdb_id = ?`,
+		id).Scan(&crossID, &localID)
+	return crossID, localID
 }
 
 func (s *Server) deleteSubscription(w http.ResponseWriter, r *http.Request) {
@@ -177,6 +214,36 @@ func (s *Server) tickSubscriptions(ctx context.Context) {
 	if err != nil || len(subs) == 0 {
 		return
 	}
+
+	// Self-heal performer subscriptions stored under a LOCAL Stash id
+	// (created by plugin builds that subscribed with the page's
+	// navigation id): rekeyed to the cross-id, they start firing;
+	// left alone, they silently never match anything. StashDB ids are
+	// UUIDs (always contain '-'), local Stash ids never do. The same
+	// pass backfills local_id on rows that predate the column.
+	for i := range subs {
+		sub := &subs[i]
+		if sub.Kind != "performer" ||
+			(strings.Contains(sub.StashDBID, "-") && sub.LocalID != "") {
+			continue
+		}
+		crossID, localID := s.resolvePerformerSubject(ctx, sub.StashDBID)
+		if crossID == "" {
+			s.log.Warn("subscription has no resolvable StashDB id; it can never fire",
+				"subject", sub.Name, "stored_id", sub.StashDBID)
+			continue
+		}
+		if err := s.subs.Rekey(ctx, sub.StashDBID, crossID, localID); err != nil {
+			s.log.Warn("subscription rekey", "subject", sub.Name, "err", err)
+			continue
+		}
+		if crossID != sub.StashDBID {
+			s.log.Info("subscription rekeyed to StashDB id",
+				"subject", sub.Name, "old", sub.StashDBID, "new", crossID)
+		}
+		sub.StashDBID, sub.LocalID = crossID, localID
+	}
+
 	wlist, werr := s.watches.List(ctx)
 	if werr != nil {
 		s.log.Warn("subscription tick: watch list unavailable", "err", werr)
@@ -278,7 +345,7 @@ func (s *Server) tickSubscriptions(ctx context.Context) {
 			// subs; the scene's first credited performer for studio subs.
 			if sub.Kind == "performer" {
 				wt.PerformerName = sub.Name
-				wt.PerformerID = sub.StashDBID
+				wt.PerformerID = sub.LocalID
 			} else if len(sc.Performers) > 0 {
 				wt.PerformerName = sc.Performers[0].Name
 			}
