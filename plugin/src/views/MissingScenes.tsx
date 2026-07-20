@@ -11,9 +11,11 @@ import {
   fetchSubscriptions,
   subscribe,
   unsubscribe,
+  setSubscriptionAutoGrab,
   createUpgradeWatches,
 } from "../api";
 import { humanSize } from "../format";
+import { BoltIcon } from "../icons";
 import WatchControl from "../WatchControl";
 import PerformerPacks from "./PerformerPacks";
 
@@ -72,23 +74,25 @@ export default function MissingScenes({
   // Subscription state for the header button: whether THIS subject has a
   // permanent watch. Loaded once per subject; toggled optimistically.
   const [subscribed, setSubscribed] = useState(false);
+  const [subAuto, setSubAuto] = useState(false);
   const [subBusy, setSubBusy] = useState(false);
   const [upgBusy, setUpgBusy] = useState(false);
   const [upgMsg, setUpgMsg] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
     setSubscribed(false);
+    setSubAuto(false);
     fetchSubscriptions()
       .then((r) => {
         if (cancelled) return;
         // subject.id is the page's navigation id: LOCAL Stash id for
         // performers, StashDB cross-id for studios. Subscriptions key on
         // the cross-id and carry local_id, so match either.
-        setSubscribed(
-          r.subscriptions.some(
-            (x) => x.stashdb_id === subject.id || x.local_id === subject.id,
-          ),
+        const match = r.subscriptions.find(
+          (x) => x.stashdb_id === subject.id || x.local_id === subject.id,
         );
+        setSubscribed(!!match);
+        setSubAuto(!!match?.auto_grab);
       })
       .catch(() => {});
     return () => {
@@ -275,13 +279,38 @@ export default function MissingScenes({
                       name: data.subject.name,
                       local_id: data.subject.local_id,
                     });
-                fn.then(() => setSubscribed(!subscribed))
+                fn.then(() => {
+                  setSubscribed(!subscribed);
+                  if (subscribed) setSubAuto(false);
+                })
                   .catch(() => {})
                   .finally(() => setSubBusy(false));
               }}
             >
               {subscribed ? "★ Subscribed" : "☆ Subscribe"}
             </button>
+            {subscribed && (
+              <button
+                className={"subscribe-btn auto" + (subAuto ? " on" : "")}
+                title={
+                  subAuto
+                    ? "Auto-grab ON: new releases are grabbed hands-free. Click to switch to pings."
+                    : "Auto-grab OFF: you get a notification with a Grab button for each new release. Click to grab hands-free."
+                }
+                onClick={() => {
+                  const next = !subAuto;
+                  setSubAuto(next);
+                  setSubscriptionAutoGrab(data.subject.stashdb_id, next).catch(
+                    () => setSubAuto(!next),
+                  );
+                }}
+              >
+                <span className="btn-ico">
+                  <BoltIcon size={11} />
+                </span>
+                Auto
+              </button>
+            )}
             <button
               className="subscribe-btn"
               disabled={upgBusy}
