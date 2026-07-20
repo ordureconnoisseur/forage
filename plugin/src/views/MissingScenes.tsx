@@ -81,7 +81,14 @@ export default function MissingScenes({
     fetchSubscriptions()
       .then((r) => {
         if (cancelled) return;
-        setSubscribed(r.subscriptions.some((x) => x.stashdb_id === subject.id));
+        // subject.id is the page's navigation id: LOCAL Stash id for
+        // performers, StashDB cross-id for studios. Subscriptions key on
+        // the cross-id and carry local_id, so match either.
+        setSubscribed(
+          r.subscriptions.some(
+            (x) => x.stashdb_id === subject.id || x.local_id === subject.id,
+          ),
+        );
       })
       .catch(() => {});
     return () => {
@@ -257,12 +264,16 @@ export default function MissingScenes({
               }
               onClick={() => {
                 setSubBusy(true);
+                // Subscriptions key on the StashDB cross-id (the loop
+                // matches scenes by it); the local id rides along for
+                // card navigation + the portrait image proxy.
                 const fn = subscribed
-                  ? unsubscribe(subject.id)
+                  ? unsubscribe(data.subject.stashdb_id)
                   : subscribe({
-                      stashdb_id: subject.id,
+                      stashdb_id: data.subject.stashdb_id,
                       kind: subject.kind,
                       name: data.subject.name,
+                      local_id: data.subject.local_id,
                     });
                 fn.then(() => setSubscribed(!subscribed))
                   .catch(() => {})
@@ -279,7 +290,7 @@ export default function MissingScenes({
                 setUpgBusy(true);
                 createUpgradeWatches({
                   kind: subject.kind,
-                  stashdb_id: subject.id,
+                  stashdb_id: data.subject.stashdb_id,
                   name: data.subject.name,
                   cutoff: 1080,
                 })

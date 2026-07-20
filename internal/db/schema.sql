@@ -356,6 +356,10 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   stashdb_id   TEXT PRIMARY KEY,
   kind         TEXT NOT NULL DEFAULT 'performer', -- 'performer' | 'studio'
   name         TEXT NOT NULL,
+  -- local_id: the subject's LOCAL Stash id. The loop works purely by
+  -- cross-id; the plugin navigates subject pages and proxies portrait
+  -- images by local id.
+  local_id     TEXT NOT NULL DEFAULT '',
   image_url    TEXT,
   auto_grab    INTEGER NOT NULL DEFAULT 0,
   created_at   INTEGER NOT NULL,

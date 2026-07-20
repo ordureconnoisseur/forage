@@ -335,6 +335,24 @@ func migrateGrabsColumns(db *sql.DB) error {
 		}
 	}
 
+	// 2026-07-20 subscriptions: local_id lets the plugin navigate and
+	// proxy images by local Stash id while the loop keys on the cross-id.
+	var subsExists int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='subscriptions'`).Scan(&subsExists); err != nil {
+		return err
+	}
+	if subsExists > 0 {
+		var has int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('subscriptions') WHERE name = 'local_id'`).Scan(&has); err != nil {
+			return err
+		}
+		if has == 0 {
+			if _, err := db.Exec(`ALTER TABLE subscriptions ADD COLUMN local_id TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("add subscriptions local_id column: %w", err)
+			}
+		}
+	}
+
 	// 2026-06-23 studios page: studio_cache gains the local stash_id +
 	// favorite/scene_count + the same total/owned/last_release aggregates
 	// performer_cache has, so it can drive the /studios list. The matcher only
