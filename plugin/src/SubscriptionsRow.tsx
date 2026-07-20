@@ -73,7 +73,10 @@ export default function SubscriptionsRow({ kind }: { kind: "performer" | "studio
       </div>
       <ul className="subs-cards">
         {subs.map((sub) => (
-          <li key={sub.stashdb_id} className="subs-card">
+          <li
+            key={sub.stashdb_id}
+            className={"subs-card" + (sub.auto_grab ? " auto-on" : "")}
+          >
             <button
               className="subs-card-body"
               onClick={() => openSubject(sub)}
@@ -107,7 +110,9 @@ export default function SubscriptionsRow({ kind }: { kind: "performer" | "studio
                   ⬇{sub.ready_count}
                 </span>
               )}
-              <span className="subs-card-name">{sub.name}</span>
+              <span className="subs-scrim">
+                <span className="subs-card-name">{sub.name}</span>
+              </span>
             </button>
             <div className="subs-card-actions">
               <button
