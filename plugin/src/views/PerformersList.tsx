@@ -16,6 +16,7 @@ const SORT_OPTIONS: { value: PerformerSort; label: string }[] = [
 ];
 
 const SORT_STORAGE_KEY = "forage.performers.sort";
+const FILTER_STORAGE_KEY = "forage.performers.filter";
 
 function loadSort(): PerformerSort {
   const stored = localStorage.getItem(SORT_STORAGE_KEY) as PerformerSort | null;
@@ -35,10 +36,19 @@ export default function PerformersList({
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<PerformerSort>(loadSort);
   const [refreshing, setRefreshing] = useState(false);
+  // Deployment-configured content filter ("" = all) — the same named
+  // gender sets as Discover, applied server-side. Persisted like sort.
+  const [contentFilter, setContentFilter] = useState<string>(
+    () => localStorage.getItem(FILTER_STORAGE_KEY) || "",
+  );
+  const [filterNames, setFilterNames] = useState<string[]>([]);
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
   }, [sort]);
+  useEffect(() => {
+    localStorage.setItem(FILTER_STORAGE_KEY, contentFilter);
+  }, [contentFilter]);
 
   // Re-fetch the cached performer list. Returns a promise so the manual
   // refresh can await it before clearing its spinner. loadSeq guards
@@ -51,9 +61,13 @@ export default function PerformersList({
       const seq = ++loadSeq.current;
       if (showSpinner) setLoading(true);
       try {
-        const r = await fetchPerformers({ sort });
+        const r = await fetchPerformers({
+          sort,
+          filter: contentFilter || undefined,
+        });
         if (seq !== loadSeq.current) return;
         setPerformers(r.performers);
+        setFilterNames(r.filters ?? []);
         setError(null);
       } catch (e) {
         if (seq !== loadSeq.current) return;
@@ -62,7 +76,7 @@ export default function PerformersList({
         if (showSpinner && seq === loadSeq.current) setLoading(false);
       }
     },
-    [sort],
+    [sort, contentFilter],
   );
 
   useEffect(() => {
@@ -132,6 +146,22 @@ export default function PerformersList({
           />
           Favourites only
         </label>
+        {filterNames.length > 0 && (
+          <span className="discover-filters">
+            {filterNames.map((f) => (
+              <button
+                key={f}
+                className={
+                  "grab-chip" + (contentFilter === f ? " active chip-any" : "")
+                }
+                title={`Only show ${f} performers (deployment filter)`}
+                onClick={() => setContentFilter(contentFilter === f ? "" : f)}
+              >
+                <span className="chip-label">{f}</span>
+              </button>
+            ))}
+          </span>
+        )}
         <span className="count">
           {filtered.length} / {performers.length}
         </span>

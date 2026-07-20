@@ -28,6 +28,10 @@ type performerOut struct {
 type performersResponse struct {
 	Performers  []performerOut `json:"performers"`
 	RefreshedAt int64          `json:"refreshed_at"`
+	// Filters is the deployment's configured content-filter names (the
+	// same named gender sets Discover uses); the UI renders selection
+	// chips only when non-empty.
+	Filters []string `json:"filters,omitempty"`
 }
 
 func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +48,18 @@ func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
 	favoriteOnly := r.URL.Query().Get("favorite_only") == "true"
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q)
+	// Deployment-configured content filter (same named gender sets as
+	// Discover; dormant when unconfigured): ?flt=<name> keeps performers
+	// whose cached gender is in the named set. An unknown name filters
+	// nothing rather than erroring — a stale chip in an old tab
+	// degrades to "all".
+	filters := parseDiscoverFilters(s.pool.Settings().DiscoverFilters)
+	var genders []string
+	if name := r.URL.Query().Get("flt"); name != "" {
+		genders = filters[name]
+	}
+
+	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q, genders)
 	out, err := readPerformers(r.Context(), s.db, rows, args)
 	if err != nil {
 		s.log.Error("getPerformers query", "err", err)
@@ -56,6 +71,7 @@ func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, performersResponse{
 		Performers:  out,
 		RefreshedAt: refreshedAt,
+		Filters:     filterNames(filters),
 	})
 }
 
@@ -78,7 +94,7 @@ func sortClause(sort string) (string, bool) {
 	return "", false
 }
 
-func buildPerformerQuery(orderBy string, favoriteOnly bool, q string) (string, []any) {
+func buildPerformerQuery(orderBy string, favoriteOnly bool, q string, genders []string) (string, []any) {
 	var where []string
 	var args []any
 	if favoriteOnly {
@@ -88,6 +104,13 @@ func buildPerformerQuery(orderBy string, favoriteOnly bool, q string) (string, [
 		where = append(where, "(LOWER(name) LIKE ? OR LOWER(aliases) LIKE ?)")
 		needle := "%" + strings.ToLower(q) + "%"
 		args = append(args, needle, needle)
+	}
+	if len(genders) > 0 {
+		ph := strings.Repeat("?,", len(genders))
+		where = append(where, "gender IN ("+ph[:len(ph)-1]+")")
+		for _, g := range genders {
+			args = append(args, g)
+		}
 	}
 	whereSQL := ""
 	if len(where) > 0 {
