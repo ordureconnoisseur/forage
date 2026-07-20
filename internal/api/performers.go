@@ -17,6 +17,10 @@ type performerOut struct {
 	Aliases    []string `json:"aliases"`
 	Favorite   bool     `json:"favorite"`
 	SceneCount int      `json:"scene_count"`
+	// Gender: Stash performer gender enum, cached for the configurable
+	// content filters (the UI filters in memory against the sets in
+	// performersResponse.Filters). Omitted when empty.
+	Gender string `json:"gender,omitempty"`
 	// Aggregates set by cache.RefreshSceneCache on the 12h ticker.
 	// Zero when the scene cache has never run, or when the performer
 	// has no StashDB cross-id (so we couldn't query their filmography).
@@ -28,10 +32,12 @@ type performerOut struct {
 type performersResponse struct {
 	Performers  []performerOut `json:"performers"`
 	RefreshedAt int64          `json:"refreshed_at"`
-	// Filters is the deployment's configured content-filter names (the
-	// same named gender sets Discover uses); the UI renders selection
-	// chips only when non-empty.
-	Filters []string `json:"filters,omitempty"`
+	// Filters is the deployment's configured content filters (the same
+	// named gender sets Discover uses), full name→genders mapping: the
+	// whole performer list ships in one response, so the UI applies the
+	// filter in memory (a chip toggle must not cost a refetch). Absent
+	// when unconfigured, which keeps the chips hidden.
+	Filters map[string][]string `json:"filters,omitempty"`
 }
 
 func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
@@ -48,18 +54,7 @@ func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
 	favoriteOnly := r.URL.Query().Get("favorite_only") == "true"
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	// Deployment-configured content filter (same named gender sets as
-	// Discover; dormant when unconfigured): ?flt=<name> keeps performers
-	// whose cached gender is in the named set. An unknown name filters
-	// nothing rather than erroring — a stale chip in an old tab
-	// degrades to "all".
-	filters := parseDiscoverFilters(s.pool.Settings().DiscoverFilters)
-	var genders []string
-	if name := r.URL.Query().Get("flt"); name != "" {
-		genders = filters[name]
-	}
-
-	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q, genders)
+	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q)
 	out, err := readPerformers(r.Context(), s.db, rows, args)
 	if err != nil {
 		s.log.Error("getPerformers query", "err", err)
@@ -68,10 +63,16 @@ func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refreshedAt, _ := cache.PerformerRefreshedAt(r.Context(), s.db)
+	// Configured content filters ride along as full name→genders sets
+	// (empty map → omitted → dormant chips).
+	var filters map[string][]string
+	if f := parseDiscoverFilters(s.pool.Settings().DiscoverFilters); len(f) > 0 {
+		filters = f
+	}
 	writeJSON(w, http.StatusOK, performersResponse{
 		Performers:  out,
 		RefreshedAt: refreshedAt,
-		Filters:     filterNames(filters),
+		Filters:     filters,
 	})
 }
 
@@ -94,7 +95,7 @@ func sortClause(sort string) (string, bool) {
 	return "", false
 }
 
-func buildPerformerQuery(orderBy string, favoriteOnly bool, q string, genders []string) (string, []any) {
+func buildPerformerQuery(orderBy string, favoriteOnly bool, q string) (string, []any) {
 	var where []string
 	var args []any
 	if favoriteOnly {
@@ -105,19 +106,12 @@ func buildPerformerQuery(orderBy string, favoriteOnly bool, q string, genders []
 		needle := "%" + strings.ToLower(q) + "%"
 		args = append(args, needle, needle)
 	}
-	if len(genders) > 0 {
-		ph := strings.Repeat("?,", len(genders))
-		where = append(where, "gender IN ("+ph[:len(ph)-1]+")")
-		for _, g := range genders {
-			args = append(args, g)
-		}
-	}
 	whereSQL := ""
 	if len(where) > 0 {
 		whereSQL = "WHERE " + strings.Join(where, " AND ")
 	}
 	return "SELECT stash_id, stashdb_id, name, aliases, favorite, scene_count, " +
-		"total_stashdb_scenes, owned_scenes_count, last_release_unix " +
+		"COALESCE(gender,''), total_stashdb_scenes, owned_scenes_count, last_release_unix " +
 		"FROM performer_cache " + whereSQL + " ORDER BY " + orderBy, args
 }
 
@@ -134,7 +128,7 @@ func readPerformers(ctx context.Context, db *sql.DB, query string, args []any) (
 		var aliasesJSON sql.NullString
 		var fav int
 		if err := rows.Scan(&p.StashID, &stashdbID, &p.Name, &aliasesJSON, &fav, &p.SceneCount,
-			&p.TotalStashDBScenes, &p.OwnedScenesCount, &p.LastReleaseUnix); err != nil {
+			&p.Gender, &p.TotalStashDBScenes, &p.OwnedScenesCount, &p.LastReleaseUnix); err != nil {
 			return nil, err
 		}
 		if stashdbID.Valid {

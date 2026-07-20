@@ -20,12 +20,17 @@ export default function WatchControl({
   scene,
   performerName,
   performerId,
+  batch,
   initialStatus = "",
   variant = "overlay",
 }: {
   scene: WatchScene;
   performerName?: string;
   performerId?: string;
+  // Stable group for this add: subject pages pass their per-subject
+  // batch so one-by-one watches join the same Watching-tab group a
+  // multi-select would create. Omitted = ungrouped single track.
+  batch?: { id: string; label?: string };
   initialStatus?: string;
   variant?: "overlay" | "inline";
 }) {
@@ -43,6 +48,8 @@ export default function WatchControl({
         image_url: scene.image_url,
         performer_name: performerName,
         performer_id: performerId,
+        batch_id: batch?.id,
+        batch_label: batch?.label,
       });
       setWatch("watching");
     } catch {

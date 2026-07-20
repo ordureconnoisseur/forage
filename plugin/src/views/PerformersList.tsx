@@ -37,11 +37,13 @@ export default function PerformersList({
   const [sort, setSort] = useState<PerformerSort>(loadSort);
   const [refreshing, setRefreshing] = useState(false);
   // Deployment-configured content filter ("" = all) — the same named
-  // gender sets as Discover, applied server-side. Persisted like sort.
+  // gender sets as Discover, applied in memory against each performer's
+  // cached gender (the full list is already loaded; a chip toggle must
+  // not cost a refetch). Persisted like sort.
   const [contentFilter, setContentFilter] = useState<string>(
     () => localStorage.getItem(FILTER_STORAGE_KEY) || "",
   );
-  const [filterNames, setFilterNames] = useState<string[]>([]);
+  const [filterSets, setFilterSets] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
@@ -61,13 +63,10 @@ export default function PerformersList({
       const seq = ++loadSeq.current;
       if (showSpinner) setLoading(true);
       try {
-        const r = await fetchPerformers({
-          sort,
-          filter: contentFilter || undefined,
-        });
+        const r = await fetchPerformers({ sort });
         if (seq !== loadSeq.current) return;
         setPerformers(r.performers);
-        setFilterNames(r.filters ?? []);
+        setFilterSets(r.filters ?? {});
         setError(null);
       } catch (e) {
         if (seq !== loadSeq.current) return;
@@ -76,7 +75,7 @@ export default function PerformersList({
         if (showSpinner && seq === loadSeq.current) setLoading(false);
       }
     },
-    [sort, contentFilter],
+    [sort],
   );
 
   useEffect(() => {
@@ -101,13 +100,17 @@ export default function PerformersList({
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
+    // A selected filter whose sets the server no longer advertises (a
+    // stale chip from an old config) narrows nothing.
+    const genders = contentFilter ? filterSets[contentFilter] : undefined;
     return performers.filter((p) => {
       if (favOnly && !p.favorite) return false;
+      if (genders && !genders.includes(p.gender || "")) return false;
       if (!needle) return true;
       if (p.name.toLowerCase().includes(needle)) return true;
       return (p.aliases || []).some((a) => a.toLowerCase().includes(needle));
     });
-  }, [performers, favOnly, q]);
+  }, [performers, favOnly, q, contentFilter, filterSets]);
 
   if (loading) return <div className="empty">Loading performers…</div>;
   // Full-screen error only when there's nothing to show — a failed
@@ -146,9 +149,9 @@ export default function PerformersList({
           />
           Favourites only
         </label>
-        {filterNames.length > 0 && (
+        {Object.keys(filterSets).length > 0 && (
           <span className="discover-filters">
-            {filterNames.map((f) => (
+            {Object.keys(filterSets).sort().map((f) => (
               <button
                 key={f}
                 className={

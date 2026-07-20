@@ -47,6 +47,17 @@ function groupWatches(watches: Watch[]): Group[] {
     if (arr) arr.push(w);
     else byBatch.set(id, [w]);
   }
+  // A "batch" of one is noise: a lone watch from a subject page (or a
+  // one-scene multi-select) reads better as a plain single track. The
+  // group header appears once a second watch joins the batch.
+  for (const [id, items] of [...byBatch]) {
+    if (id !== "" && items.length === 1) {
+      byBatch.delete(id);
+      const singles = byBatch.get("");
+      if (singles) singles.push(items[0]);
+      else byBatch.set("", items);
+    }
+  }
   const groups: Group[] = [];
   for (const [id, items] of byBatch) {
     items.sort((a, b) => order(a) - order(b) || b.created_at - a.created_at);
