@@ -3894,8 +3894,9 @@ code.grab-fact-v,
 
 /* ── Packs section (top of the collection view) ──────────────────── */
 .packs-section {
+  margin-top: 26px;
   margin-bottom: 22px;
-  padding: 14px 16px;
+  padding: 16px 18px;
   border: 1px solid var(--accent);
   border-radius: var(--radius-sm);
   background: color-mix(in srgb, var(--accent) 7%, var(--glass-bg));
@@ -3949,13 +3950,15 @@ code.grab-fact-v,
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  /* Same 12px rhythm as the app's other stacked card lists; 8px inside
+     the tinted section read as cards touching. */
+  gap: 12px;
 }
 .pack-card {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 10px 12px;
+  padding: 12px 14px;
   border: 1px solid var(--glass-border);
   border-radius: var(--radius-sm);
   background: var(--glass-bg);

@@ -1626,7 +1626,7 @@ function PackPerformerReviewer({
             {untagged.length} scene{untagged.length === 1 ? "" : "s"} Stash
             couldn&rsquo;t identify
             <span className="grab-pack-tag-sub">
-              {" — tag with "}
+              {": tag with "}
               <strong>{performerName}</strong>
               {!data.performer_resolvable &&
                 " (not in your Stash library — can't apply)"}
@@ -2255,7 +2255,7 @@ function GrabRow({
                   </span>
                   {dups.length} duplicate{dups.length === 1 ? "" : "s"} to review
                   <span className="grab-dups-sub">
-                    — scenes this pack delivered that you already have
+                    scenes this pack delivered that you already have
                   </span>
                 </div>
                 {dups.map((d) => (
