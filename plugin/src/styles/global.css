@@ -2103,6 +2103,23 @@ button {
   opacity: 0.85;
 }
 
+/* Icon-only content-filter chip (gender glyph instead of a text label):
+   a compact circle so it reads as a toggle, not a clumsy word pill. */
+.grab-chip.chip-icon {
+  padding: 0;
+  width: 26px;
+  height: 26px;
+  justify-content: center;
+  border-radius: 50%;
+}
+.grab-chip .chip-glyph {
+  font-size: 15px;
+  line-height: 1;
+  font-weight: 600;
+  /* Keep the glyph optically centred; ⚧/♀/♂ sit slightly high. */
+  transform: translateY(0.5px);
+}
+
 /* Active filter chip: thicker outline + chip's status colour. */
 .grab-chip.active {
   color: var(--text);
