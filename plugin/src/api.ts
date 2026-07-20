@@ -123,6 +123,9 @@ export interface Performer {
 export interface PerformersResponse {
   performers: Performer[];
   refreshed_at: number;
+  // Deployment-configured content-filter names (same sets as Discover);
+  // absent on unconfigured deployments, which keeps the chips hidden.
+  filters?: string[];
 }
 
 export type PerformerSort =
@@ -135,11 +138,13 @@ export function fetchPerformers(opts?: {
   sort?: PerformerSort;
   favoriteOnly?: boolean;
   q?: string;
+  filter?: string;
 }): Promise<PerformersResponse> {
   const params = new URLSearchParams();
   if (opts?.sort) params.set("sort", opts.sort);
   if (opts?.favoriteOnly) params.set("favorite_only", "true");
   if (opts?.q) params.set("q", opts.q);
+  if (opts?.filter) params.set("flt", opts.filter);
   return get<PerformersResponse>("/performers?" + params.toString());
 }
 
