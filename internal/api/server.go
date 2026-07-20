@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -31,6 +33,13 @@ import (
 
 //go:embed ui/index.html
 var indexHTML []byte
+
+// uiETag is the strong ETag for the embedded SPA, computed once at
+// init from its content so it changes exactly when the build does.
+var uiETag = func() string {
+	sum := sha256.Sum256(indexHTML)
+	return `"` + hex.EncodeToString(sum[:8]) + `"`
+}()
 
 // Server wires the HTTP layer over the daemon's shared state. After
 // the 2026-05-26 hot-swap refactor, clients live in the Pool — handlers
@@ -388,6 +397,18 @@ func (s *Server) releaseScorer() *scoring.Scorer {
 }
 
 func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
+	// The whole SPA is this one embedded file, served with NO explicit
+	// caching before 2026-07-21 — so browsers cached it heuristically
+	// and kept showing bundles from days-old deploys. no-cache makes
+	// every load revalidate; the ETag (per-build content hash) turns
+	// that revalidation into a 304 so the ~480KB body is sent only when
+	// the build actually changed.
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("ETag", uiETag)
+	if match := r.Header.Get("If-None-Match"); match != "" && match == uiETag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(indexHTML)
 }
