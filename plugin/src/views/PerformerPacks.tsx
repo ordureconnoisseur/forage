@@ -128,7 +128,7 @@ export default function PerformerPacks({
         Packs <span className="packs-count">{packs.length}</span>
       </div>
       <div className="packs-note muted">
-        Whole-performer collections — grabbing one downloads every scene, then
+        Whole-performer collections: grabbing one downloads every scene, then
         forage removes any you already own.
       </div>
       <ul className="packs-list">
