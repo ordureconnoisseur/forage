@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -53,9 +52,12 @@ type discoverResponse struct {
 	Days                int             `json:"days"`
 	RefreshedAt         int64           `json:"refreshed_at"`
 	TrendingRefreshedAt int64           `json:"trending_refreshed_at"`
-	// Filters is the deployment's configured content-filter names; the
-	// UI renders selection chips only when non-empty.
-	Filters []string `json:"filters,omitempty"`
+	// Filters is the deployment's configured content filters as a full
+	// name-to-genders mapping (same shape as /performers): the UI
+	// renders selection chips only when non-empty, and derives each
+	// chip's gender glyph from its set. Scene filtering itself stays
+	// server-side (?flt=), since trending performers may not be local.
+	Filters map[string][]string `json:"filters,omitempty"`
 }
 
 // getDiscover returns recent unowned StashDB scenes featuring ≥1 of
@@ -176,13 +178,17 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
 	trendingRefreshedAt, _ := cache.TrendingRefreshedAt(r.Context(), s.db)
+	outFilters := filters
+	if len(outFilters) == 0 {
+		outFilters = nil // omitempty: dormant deployments send no chips
+	}
 	writeJSON(w, http.StatusOK, discoverResponse{
 		Scenes:              scenes,
 		Trending:            trending,
 		Days:                days,
 		RefreshedAt:         refreshedAt,
 		TrendingRefreshedAt: trendingRefreshedAt,
-		Filters:             filterNames(filters),
+		Filters:             outFilters,
 	})
 }
 
@@ -209,18 +215,6 @@ func parseDiscoverFilters(raw string) map[string][]string {
 		}
 	}
 	return out
-}
-
-func filterNames(filters map[string][]string) []string {
-	if len(filters) == 0 {
-		return nil
-	}
-	names := make([]string, 0, len(filters))
-	for n := range filters {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // filterScenesByGender keeps scenes with at least one performer whose

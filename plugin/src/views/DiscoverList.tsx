@@ -10,6 +10,7 @@ import {
   type AddWatchReq,
 } from "../api";
 import WatchControl from "../WatchControl";
+import { filterGlyph } from "../format";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -281,20 +282,35 @@ export default function DiscoverList({
           />
           Favourites only
         </label>
-        {(data.filters ?? []).length > 0 && (
+        {Object.keys(data.filters ?? {}).length > 0 && (
           <span className="discover-filters">
-            {(data.filters ?? []).map((f) => (
-              <button
-                key={f}
-                className={
-                  "grab-chip" + (contentFilter === f ? " active chip-any" : "")
-                }
-                title={`Only show ${f} content (deployment filter)`}
-                onClick={() => setContentFilter(contentFilter === f ? "" : f)}
-              >
-                <span className="chip-label">{f}</span>
-              </button>
-            ))}
+            {Object.keys(data.filters ?? {})
+              .sort()
+              .map((f) => {
+                const glyph = filterGlyph(data.filters?.[f]);
+                return (
+                  <button
+                    key={f}
+                    className={
+                      "grab-chip" +
+                      (glyph ? " chip-icon" : "") +
+                      (contentFilter === f ? " active chip-any" : "")
+                    }
+                    title={`Only show ${f} content (deployment filter)`}
+                    onClick={() =>
+                      setContentFilter(contentFilter === f ? "" : f)
+                    }
+                  >
+                    {glyph ? (
+                      <span className="chip-glyph" aria-label={f}>
+                        {glyph}
+                      </span>
+                    ) : (
+                      <span className="chip-label">{f}</span>
+                    )}
+                  </button>
+                );
+              })}
           </span>
         )}
         <span className="count">

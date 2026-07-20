@@ -226,9 +226,11 @@ export interface DiscoverResponse {
   days: number;
   refreshed_at: number;
   trending_refreshed_at: number;
-  // Deployment-configured content-filter names; render selection chips
-  // only when present. Absent on unconfigured (public-default) daemons.
-  filters?: string[];
+  // Deployment-configured content filters as a full name-to-genders
+  // mapping (same shape as /performers); render selection chips only
+  // when present, glyphed from each set. Absent on unconfigured
+  // (public-default) daemons. Scene filtering stays server-side (flt=).
+  filters?: Record<string, string[]>;
 }
 
 export function fetchDiscover(opts?: {

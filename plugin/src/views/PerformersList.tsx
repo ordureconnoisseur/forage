@@ -1,5 +1,6 @@
 import SubscriptionsRow from "../SubscriptionsRow";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { filterGlyph } from "../format";
 import {
   fetchPerformers,
   PerformerSort,
@@ -151,18 +152,33 @@ export default function PerformersList({
         </label>
         {Object.keys(filterSets).length > 0 && (
           <span className="discover-filters">
-            {Object.keys(filterSets).sort().map((f) => (
-              <button
-                key={f}
-                className={
-                  "grab-chip" + (contentFilter === f ? " active chip-any" : "")
-                }
-                title={`Only show ${f} performers (deployment filter)`}
-                onClick={() => setContentFilter(contentFilter === f ? "" : f)}
-              >
-                <span className="chip-label">{f}</span>
-              </button>
-            ))}
+            {Object.keys(filterSets)
+              .sort()
+              .map((f) => {
+                const glyph = filterGlyph(filterSets[f]);
+                return (
+                  <button
+                    key={f}
+                    className={
+                      "grab-chip" +
+                      (glyph ? " chip-icon" : "") +
+                      (contentFilter === f ? " active chip-any" : "")
+                    }
+                    title={`Only show ${f} performers (deployment filter)`}
+                    onClick={() =>
+                      setContentFilter(contentFilter === f ? "" : f)
+                    }
+                  >
+                    {glyph ? (
+                      <span className="chip-glyph" aria-label={f}>
+                        {glyph}
+                      </span>
+                    ) : (
+                      <span className="chip-label">{f}</span>
+                    )}
+                  </button>
+                );
+              })}
           </span>
         )}
         <span className="count">
