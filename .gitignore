@@ -45,3 +45,6 @@ tools/matcher-bench/*.matcher.failures.csv
 
 # local analysis scratch (holds corpus copies with real scene ids)
 .claude-work/
+
+# Local matcher-bench build artefact (never belonged in git)
+.matcher-bench.local.bin
