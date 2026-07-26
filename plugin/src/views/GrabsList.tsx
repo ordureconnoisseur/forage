@@ -2787,7 +2787,7 @@ function DeletePreviewPanel({
   // so cap the list and say how many more there are — a truncated preview
   // must never look complete.
   const rows: { key: string; path: string; size?: number; tag: string }[] = [];
-  for (const sc of preview.scenes) {
+  for (const sc of preview.scenes ?? []) {
     for (const f of sc.files) {
       rows.push({ key: "s:" + f.path, path: f.path, size: f.size, tag: "stash scene + file" });
     }

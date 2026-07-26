@@ -1005,7 +1005,9 @@ export interface DeletePreviewKept {
   reason: string;
 }
 export interface GrabDeletePreview {
-  scenes: DeletePreviewScene[];
+  // Nullable defensively even though the daemon sends [] — an older daemon
+  // (or a proxy rewriting empty arrays) must not crash the delete flow.
+  scenes: DeletePreviewScene[] | null;
   kept?: DeletePreviewKept[];
   disk?: string[];
   client?: string;

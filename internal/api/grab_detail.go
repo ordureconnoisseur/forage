@@ -321,8 +321,14 @@ func (s *Server) getGrabDeletePreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sp := s.planGrabStash(r.Context(), g)
+	// Non-nil slices: "scenes": null would make a strictly-typed client
+	// iterate nil, and an empty list is the honest value.
+	approved := sp.Plan.Approved
+	if approved == nil {
+		approved = []destroy.Target{}
+	}
 	resp := map[string]any{
-		"scenes":      sp.Plan.Approved,
+		"scenes":      approved,
 		"kept":        sp.Plan.Refused,
 		"disk":        purgeDiskPaths(g, sp),
 		"grab_record": true,
