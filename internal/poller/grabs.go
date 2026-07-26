@@ -1291,6 +1291,27 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 		plan := destroy.Vet(destroy.FromRefs(refs, func(sceneID string) bool {
 			return want[sceneID] && !destroyed[sceneID]
 		}))
+		if keep == "log-only" {
+			// Dry run: the plan is logged — full file paths, refusals and
+			// all, the same record a real run would leave — and nothing is
+			// touched. Marking the scenes "destroyed" keeps the would-be
+			// count honest across shared cross-ids, exactly as a real run
+			// would have.
+			for _, t := range plan.Approved {
+				paths := make([]string, 0, len(t.Files))
+				for _, f := range t.Files {
+					paths = append(paths, f.Path)
+				}
+				p.log.Info("pack dedup DRY RUN: would destroy scene",
+					"id", g.ID, "scene", t.SceneID, "title", t.Title, "files", paths)
+				destroyed[t.SceneID] = true
+			}
+			for _, r := range plan.Refused {
+				p.log.Info("pack dedup DRY RUN: would refuse scene",
+					"id", g.ID, "scene", r.Target.SceneID, "why", r.Reason)
+			}
+			return
+		}
 		outcome := destroy.Execute(ctx, sc, plan, p.log.With("id", g.ID, "keep", keep), "pack dedup")
 		for _, t := range outcome.Destroyed {
 			destroyed[t.SceneID] = true
@@ -1339,7 +1360,8 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 			}
 			destroyScenes(refs, want)
 		default:
-			// "existing": keep the original, drop the pack copy.
+			// "existing" (and its dry run "log-only"): keep the original,
+			// drop the pack copy.
 			destroyScenes(refs, map[string]bool{ps.ID: true})
 		}
 	}

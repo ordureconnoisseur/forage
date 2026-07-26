@@ -396,6 +396,12 @@ func normalizePackKeep(v string) string {
 		return "both"
 	case "review":
 		return "review"
+	case "log-only":
+		// Dry run: plan the dedup and log exactly what WOULD be destroyed
+		// (full file paths), destroy nothing. The recommended first-week
+		// setting for a new install — the journal of would-be deletions is
+		// how you learn to trust the automatic mode before arming it.
+		return "log-only"
 	default:
 		return "existing"
 	}

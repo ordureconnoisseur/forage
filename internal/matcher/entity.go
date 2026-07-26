@@ -91,7 +91,14 @@ var tokenSplit = regexp.MustCompile("[._\\-\\s\\[\\]()!,@'\"&+⁄]+")
 // backtracks one letter and consumes it as the terminator (`SNOS233` →
 // [snos 233]), or falls to the single-uppercase alternative (`S01E02`
 // → [s 01 e 02]) — both now identical to their lowercase forms.
-var caseAndDigitSplit = regexp.MustCompile(`\p{Ll}+|\p{Lu}+(?:[^\p{Ll}\d]|$)|\p{Lu}\p{Ll}*|\p{Lo}+|\d+`)
+//
+// It excludes caseless letters (\p{Lo}) for the same reason, found by
+// FuzzTokenize: with them allowed as a terminator, an all-caps run
+// CONSUMED the first letter of a following CJK/Hangul/kana run
+// ("STARS配" fused into one token, and NFKD-decomposed Hangul shattered
+// unstably). A caseless letter after a caps run starts a new \p{Lo}+
+// token, exactly as a lowercase letter starts a new word.
+var caseAndDigitSplit = regexp.MustCompile(`\p{Ll}+|\p{Lu}+(?:[^\p{Ll}\p{Lo}\d]|$)|\p{Lu}\p{Ll}*|\p{Lo}+|\d+`)
 
 // Tokenize splits s on punctuation/whitespace, then further splits each
 // piece on case and letter-digit boundaries. Output is lowercase, in

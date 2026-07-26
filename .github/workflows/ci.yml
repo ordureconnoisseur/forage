@@ -43,8 +43,24 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test
-        run: go test ./...
+      # -race because the poller, client pool and session cache are
+      # genuinely concurrent, and nothing else proves them so. Roughly
+      # doubles test time; that is the right trade for a daemon whose
+      # failure mode is a user's media library.
+      - name: Test (race detector)
+        run: go test -race ./...
+
+      # Short fuzz pass over the hostile-input parsers (release names in
+      # any script/punctuation). The saved corpus under testdata/fuzz
+      # replays every past finding as a plain test above; this step spends
+      # a little time looking for NEW ones on every push. Nightly/local
+      # runs can go longer. FuzzTokenize found a real tokenizer bug
+      # (all-caps run fusing into a following CJK/Hangul token) in under a
+      # second of its first run.
+      - name: Fuzz (smoke)
+        run: |
+          go test ./internal/matcher/ -run='^$' -fuzz=FuzzTokenize -fuzztime=20s
+          go test ./internal/matcher/ -run='^$' -fuzz=FuzzExtractJAVCodes -fuzztime=20s
 
   plugin:
     name: Plugin (Vite)
