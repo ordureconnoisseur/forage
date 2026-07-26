@@ -27,7 +27,7 @@ func settledUnlinked(t *testing.T, r *rig, performer, fileName, predicted string
 		ReleaseTitle: fileName, Client: "qbit", ClientID: fileName + "hash",
 		Category: "forager", Status: "confirmed", PlacedPath: placed,
 		PerformerName: performer, Kind: "single",
-		Reason:        "in library (scanned)",
+		Reason: "in library (scanned)",
 		// no ActualStashDBID — that is the whole point
 		PredictedStashDBID: predicted,
 		CompletedAt:        now - 3600,
