@@ -197,3 +197,61 @@ func TestReconcileWindowExcludesStale(t *testing.T) {
 		t.Fatalf("out-of-window grab was reconciled (actual=%q); window not applied", g.ActualStashDBID)
 	}
 }
+
+// TestReconcileRecoversCorrectedMismatch: the user overrules a mismatch by
+// re-identifying the scene in Stash to the predicted id. The reconcile pass
+// must notice and confirm the grab — before it, mismatched grabs were out
+// of Active() and stayed mismatched forever, whatever the user did.
+func TestReconcileRecoversCorrectedMismatch(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	placed := filepath.Join(r.libRoot, "Fixed", "fixed_scene_1080.mp4")
+	if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "fixed scene", Client: "qbit", ClientID: "fixhash",
+		Category: "forager", Status: "mismatched", PlacedPath: placed,
+		PerformerName: "Fixed", Kind: "single",
+		PredictedStashDBID: "sdb-right", ActualStashDBID: "sdb-wrong",
+		Reason:      "stash phash → different scene than predicted",
+		CompletedAt: now - 3600, GrabbedAt: now - 7200,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// The user has since re-identified the scene in Stash to the PREDICTED id.
+	r.stash.set([]fakeScene{{id: "400", title: "Right", path: placed, stashDBID: "sdb-right"}})
+	forceReconcile(r)
+	r.tick(t)
+
+	g := r.get(t, id)
+	if g.Status != "confirmed" || g.ActualStashDBID != "sdb-right" {
+		t.Fatalf("status=%q actual=%q, want confirmed/sdb-right", g.Status, g.ActualStashDBID)
+	}
+
+	// Control: a scene re-identified to some THIRD id stays mismatched —
+	// that is still a question for the user, and forage doesn't guess.
+	id2, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "still wrong", Client: "qbit", ClientID: "stillhash",
+		Category: "forager", Status: "mismatched", PlacedPath: placed,
+		PerformerName: "Fixed", Kind: "single",
+		PredictedStashDBID: "sdb-expected", ActualStashDBID: "sdb-wrong",
+		CompletedAt: now - 3600, GrabbedAt: now - 7200,
+	})
+	if err != nil {
+		t.Fatalf("insert 2: %v", err)
+	}
+	r.stash.set([]fakeScene{{id: "401", title: "Third", path: placed, stashDBID: "sdb-third"}})
+	forceReconcile(r)
+	r.tick(t)
+	if g2 := r.get(t, id2); g2.Status != "mismatched" {
+		t.Fatalf("third-id case flipped to %q; must stay mismatched", g2.Status)
+	}
+}

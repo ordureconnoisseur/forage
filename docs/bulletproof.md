@@ -30,20 +30,20 @@ Status legend: ☐ todo · ◐ partial · ☑ done
 The multi-file-scene guard added 2026-07-26 covers three of five
 `SceneDestroy(delete_file=true)` call sites. Two remain unguarded:
 
-- ☐ **Pack purge** (`internal/api/grab_detail.go` ~230): purging a pack
+- ☑ **Pack purge** (`internal/api/grab_detail.go`): purging a pack
   enumerates every scene under its directory and destroys each. A scene
   holding a second file — including one that lives *outside* the pack —
   loses that file too. Fix: skip multi-file scenes exactly as the single
   path does; the disk sweep already removes the pack's own files, and Stash
   drops vanished files on its next scan.
-- ☐ **Poller auto-dedup** (`internal/poller/grabs.go` `dedupPack`
+- ☑ **Poller auto-dedup** (`internal/poller/grabs.go` `dedupPack`
   destroy closure): the only *automatic* destroy in the codebase — runs
   with no user action when `packDedupKeep` is `existing` or `pack` (the
   live setting on the reference instance is `existing`). It already holds
   one ref **per file** from `FindSceneRefsByStashID`, so the per-scene file
   count is in hand; refuse any scene with >1 and log why, same as the
   resolve endpoint.
-- ☐ One test per surface, plus a **meta-test**: grep the tree for
+- ☑ One test per surface, plus a **meta-test**: grep the tree for
   `SceneDestroy(` and assert every call site is in the audited list, so a
   sixth site can't appear unguarded (this is what turns "I fixed the ones I
   found" into "there are no others").
@@ -53,14 +53,14 @@ check; suite green; deployed to mini before the next pack grab runs.
 
 ## Phase 1 — one door for deletion
 
-- ☐ **`internal/librarian` (or similar): a single destroy façade.** All five
+- ☑ **`internal/destroy`: a single destroy façade.** All five
   surfaces call it instead of `stash.Client.SceneDestroy` / `os.RemoveAll`
   directly. It owns the invariants: multi-file refusal, "kept side must
   exist" (generalising the resolve endpoint's `keptAlive`), and
   path-inside-library validation for direct file removals. New call sites
   get the guards by construction. Enforce with a lint/CI check that the raw
   primitives are only imported by the façade.
-- ☐ **Destruction journal** (new table): surface, grab/scene ids, paths,
+- ☑ **Destruction journal** (`destruction_log` + GET /destructions): surface, grab/scene ids, paths,
   sizes, requested-by (user click vs poller), outcome — written *before*
   acting, finalised after. Answers "what did forage delete and why" without
   archaeology. Surfaced read-only in Settings.
@@ -71,7 +71,7 @@ check; suite green; deployed to mini before the next pack grab runs.
   Every forage deletion becomes reversible for a week. The 172-file class of
   incident becomes a restore, not a re-download. Fall back to current
   behaviour (with the journal entry saying so) when rename isn't possible.
-- ☐ **Dry-run mode** for the automatic path: `packDedupKeep` gains a
+- ☑ **Dry-run mode** for the automatic path: `packDedupKeep` gained the
   `log-only` value that journals what dedup *would* destroy without acting.
   Recommended default for new installs' first week.
 
@@ -83,9 +83,8 @@ a soak week.
 ## Phase 2 — adversarial verification
 
 - ◐ CI runs gofmt + vet + full suite. Add:
-  - ☐ `go test -race ./...` (the poller, pool, and session cache are
-    concurrent; nothing currently proves them).
-  - ☐ **Native fuzzing** for the parsing surfaces that eat hostile input:
+  - ☑ `go test -race ./...` in CI (verified green in a Linux container).
+  - ☑ **Native fuzzing** for the parsing surfaces that eat hostile input:
     `Tokenize`, `ExtractJAVCodes`, the date reader, `pathmap`. Seed corpora
     from real release names; short fuzz in CI, long fuzz nightly.
   - ☐ **Matcher regression gate**: a small *synthetic* corpus committed to
@@ -108,7 +107,9 @@ guard regression (mutation test on the destroy façade) fails the build.
 
 ## Phase 3 — runtime self-defense
 
-- ☐ **DB backups**: nightly SQLite snapshot + one before every schema
+- ☑ **DB backups**: nightly + at-boot snapshot of the PRECIOUS tables only
+  (`BackupPrecious`; 19 MB vs the 738 MB full DB), three generations,
+  restorability tested. Originally scoped as full-file snapshots + one before every schema
   migration (`db.Open` runs migrations; snapshot first), rotate N. The
   config store already has rotating `.bak`s — the grabs/watches DB, which
   holds the irreplaceable state, has none. Document restore.
@@ -118,8 +119,10 @@ guard regression (mutation test on the destroy façade) fails the build.
   sweep* and badge the UI. This is the structural defence against the
   mount-outage → "everything looks deleted" class that made metadataClean
   too dangerous to adopt.
-- ☐ **Fix the four residual risks** in error-handling.md: size-equality
-  reclaim on CIFS; `mismatched` has no recovery path (extend the reconcile
+- ◐ **Fix the four residual risks** in error-handling.md: `mismatched`
+  recovery SHIPPED (the reconcile pass confirms a mismatch the user
+  corrected in Stash back to the predicted id; a third-id re-identify stays
+  mismatched on purpose). Remaining: size-equality reclaim on CIFS (extend the reconcile
   pass — it already re-checks settled grabs — to notice a mismatched grab
   whose scene now carries the predicted id); premature-heal `RemoveAll`
   clearing `PlacedPath` on failure; awaited shutdown.

@@ -268,6 +268,26 @@ func (r *Repo) ConfirmedUnlinked(ctx context.Context, since int64, limit, offset
 		LIMIT ? OFFSET ?`, since, limit, offset)
 }
 
+// MismatchedRecent returns mismatched single grabs inside the reconcile
+// window. A mismatch is the machine's verdict, but the USER can overrule it
+// in Stash — re-identify the scene to the predicted id — and until the
+// reconcile pass learned to look, nothing ever noticed: mismatched grabs
+// are out of Active() and stayed mismatched forever (the "no recovery
+// path" residual in docs/error-handling.md).
+func (r *Repo) MismatchedRecent(ctx context.Context, since int64, limit int) ([]Grab, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'mismatched'
+		  AND COALESCE(kind, 'single') != 'pack'
+		  AND COALESCE(placed_path, '') != ''
+		  AND updated_at >= ?
+		ORDER BY updated_at DESC
+		LIMIT ?`, since, limit)
+}
+
 // CountConfirmedUnlinked counts what ConfirmedUnlinked would return across
 // every page, so the reconcile cursor knows when it has wrapped.
 func (r *Repo) CountConfirmedUnlinked(ctx context.Context, since int64) (int, error) {
