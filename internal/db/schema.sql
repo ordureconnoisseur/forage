@@ -317,6 +317,25 @@ CREATE TABLE IF NOT EXISTS rss_sync_state (
 -- UI compares pack vs existing (resolution/size/path) so the user keeps the
 -- better file. UNIQUE(grab_id, stashdb_id) makes detection idempotent — a
 -- re-tick upserts rather than duplicating.
+-- Destruction journal: one row per scene destruction forage attempts,
+-- WRITTEN BEFORE the destroy runs (outcome 'intent', finalised to
+-- 'destroyed'/'failed' after), plus one row per refusal. The answer to
+-- "what did forage delete, when, and why" without log archaeology — and if
+-- the process dies mid-destroy, the intent row is the evidence of what was
+-- in flight. files is a JSON array [{path,size}] snapshotting the complete
+-- blast radius at decision time.
+CREATE TABLE IF NOT EXISTS destruction_log (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  reason     TEXT NOT NULL,                 -- surface: 'grab purge', 'pack dedup', …
+  scene_id   TEXT NOT NULL DEFAULT '',
+  title      TEXT NOT NULL DEFAULT '',
+  files      TEXT NOT NULL DEFAULT '[]',    -- JSON [{path,size}]
+  outcome    TEXT NOT NULL DEFAULT 'intent',-- intent | destroyed | failed | refused
+  detail     TEXT NOT NULL DEFAULT '',      -- error text / refusal reason
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_destruction_log_created ON destruction_log(created_at);
+
 CREATE TABLE IF NOT EXISTS pack_duplicate (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   grab_id         INTEGER NOT NULL,

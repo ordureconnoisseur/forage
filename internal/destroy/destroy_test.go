@@ -82,7 +82,7 @@ func TestExecuteTouchesOnlyApproved(t *testing.T) {
 		{SceneID: "ok", Files: []File{{Path: "/lib/a.mp4"}}},
 		{SceneID: "guarded", Files: []File{{Path: "/lib/b.mp4"}, {Path: "/lib/c.mp4"}}},
 	})
-	out := Execute(context.Background(), f, p, discard(), "test")
+	out := Execute(context.Background(), f, p, nil, discard(), "test")
 	if len(f.calls) != 1 || f.calls[0] != "ok" {
 		t.Fatalf("stash saw %v, want only the approved scene", f.calls)
 	}
@@ -100,7 +100,7 @@ func TestExecuteReportsFailuresAndContinues(t *testing.T) {
 		{SceneID: "bad", Files: []File{{Path: "/lib/x.mp4"}}},
 		{SceneID: "good", Files: []File{{Path: "/lib/y.mp4"}}},
 	})
-	out := Execute(context.Background(), f, p, discard(), "test")
+	out := Execute(context.Background(), f, p, nil, discard(), "test")
 	if len(out.Destroyed) != 1 || out.Destroyed[0].SceneID != "good" {
 		t.Fatalf("destroyed = %+v, want good to proceed past bad's failure", out.Destroyed)
 	}
@@ -119,5 +119,74 @@ func TestPlanFilesListsEverything(t *testing.T) {
 	files := p.Files()
 	if len(files) != 2 || files[0].Path != "/lib/a.mp4" || files[1].Path != "/lib/b.mp4" {
 		t.Fatalf("files = %+v", files)
+	}
+}
+
+// fakeRecorder captures journal writes so the record-before-acting contract
+// is a tested property.
+type fakeRecorder struct {
+	entries []struct {
+		id      int64
+		reason  string
+		scene   string
+		outcome string
+		detail  string
+	}
+	finals map[int64][2]string // id -> outcome, detail
+}
+
+func (f *fakeRecorder) JournalDestruction(_ context.Context, reason string, t Target, outcome, detail string) (int64, error) {
+	id := int64(len(f.entries) + 1)
+	f.entries = append(f.entries, struct {
+		id      int64
+		reason  string
+		scene   string
+		outcome string
+		detail  string
+	}{id, reason, t.SceneID, outcome, detail})
+	return id, nil
+}
+
+func (f *fakeRecorder) FinalizeDestruction(_ context.Context, id int64, outcome, detail string) error {
+	if f.finals == nil {
+		f.finals = map[int64][2]string{}
+	}
+	f.finals[id] = [2]string{outcome, detail}
+	return nil
+}
+
+// TestExecuteJournals pins the journal contract: an 'intent' row exists
+// before each destroy and is finalised with the real outcome; refusals are
+// recorded outright. This is the crash evidence — if the process dies
+// mid-destroy, the intent row says what was in flight.
+func TestExecuteJournals(t *testing.T) {
+	f := &fakeDestroyer{fail: map[string]bool{"bad": true}}
+	rec := &fakeRecorder{}
+	p := Vet([]Target{
+		{SceneID: "ok", Files: []File{{Path: "/lib/a.mp4"}}},
+		{SceneID: "bad", Files: []File{{Path: "/lib/x.mp4"}}},
+		{SceneID: "multi", Files: []File{{Path: "/lib/m1.mp4"}, {Path: "/lib/m2.mp4"}}},
+	})
+	Execute(context.Background(), f, p, rec, discard(), "test surface")
+
+	byScene := map[string]string{}
+	for _, e := range rec.entries {
+		byScene[e.scene] = e.outcome
+		if e.reason != "test surface" {
+			t.Errorf("entry for %s carries reason %q", e.scene, e.reason)
+		}
+	}
+	if byScene["ok"] != "intent" || byScene["bad"] != "intent" {
+		t.Fatalf("destroys must journal as intent first, got %v", byScene)
+	}
+	if byScene["multi"] != "refused" {
+		t.Fatalf("refusal not journalled, got %v", byScene)
+	}
+	// Finalisation: ok -> destroyed, bad -> failed with the error kept.
+	if got := rec.finals[1]; got[0] != "destroyed" {
+		t.Errorf("ok finalised as %v, want destroyed", got)
+	}
+	if got := rec.finals[2]; got[0] != "failed" || got[1] == "" {
+		t.Errorf("bad finalised as %v, want failed with the error", got)
 	}
 }

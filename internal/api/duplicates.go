@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/destroy"
@@ -216,7 +217,7 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				"scene %s: %s; sort that scene out in Stash first",
 				ref.Target.SceneID, ref.Reason))
 		}
-		outcome := destroy.Execute(r.Context(), sc, plan, s.log, "duplicate resolve keep="+req.Keep)
+		outcome := destroy.Execute(r.Context(), sc, plan, s.grabs, s.log, "duplicate resolve keep="+req.Keep)
 		for _, f := range outcome.Failed {
 			out.Errors = append(out.Errors, "scene "+f.Target.SceneID+": "+f.Err.Error())
 		}
@@ -301,11 +302,33 @@ func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	outcome := destroy.Execute(r.Context(), sc, plan, s.log, "performer-page duplicate cleanup")
+	outcome := destroy.Execute(r.Context(), sc, plan, s.grabs, s.log, "performer-page duplicate cleanup")
 	if len(outcome.Failed) > 0 {
 		writeErr(w, http.StatusBadGateway, "stash: "+outcome.Failed[0].Err.Error())
 		return
 	}
 	s.invalidateOwned()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": outcome.Destroyed})
+}
+
+// getDestructions returns the destruction journal, newest first — every
+// scene destroy forage attempted (intent/destroyed/failed) or refused, with
+// the complete file list snapshotted at decision time.
+//
+//	GET /destructions?limit=100
+//
+// The audit answer to "what did forage delete and why" without log
+// archaeology.
+func (s *Server) getDestructions(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	entries, err := s.grabs.ListDestructions(r.Context(), limit)
+	if err != nil {
+		s.log.Error("destruction journal list", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	if entries == nil {
+		entries = []grabs.DestructionEntry{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"destructions": entries})
 }

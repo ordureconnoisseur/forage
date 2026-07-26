@@ -365,7 +365,7 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 	}
 	stashHandled := false
 	if !sp.Plan.Empty() || len(sp.Plan.Refused) > 0 {
-		outcome := destroy.Execute(ctx, s.pool.Stash(), sp.Plan, s.log, "grab purge")
+		outcome := destroy.Execute(ctx, s.pool.Stash(), sp.Plan, s.grabs, s.log, "grab purge")
 		for _, f := range outcome.Failed {
 			addErr("stash scene "+f.Target.SceneID, f.Err)
 		}

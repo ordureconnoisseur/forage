@@ -142,6 +142,20 @@ type SceneDestroyer interface {
 	SceneDestroy(ctx context.Context, id string, deleteFile, deleteGenerated bool) error
 }
 
+// Recorder journals destructions durably (the destruction_log table;
+// satisfied by *grabs.Repo). Execute writes an 'intent' row BEFORE each
+// destroy — so a crash mid-destroy still leaves evidence of what was in
+// flight — finalises it with the outcome after, and records refusals
+// outright.
+//
+// A journal failure is logged loudly but never blocks the destruction: the
+// user asked for a deletion, and a full disk must not quietly wedge every
+// purge and dedup behind an audit write.
+type Recorder interface {
+	JournalDestruction(ctx context.Context, reason string, t Target, outcome, detail string) (int64, error)
+	FinalizeDestruction(ctx context.Context, id int64, outcome, detail string) error
+}
+
 // Failure is one approved target Stash refused to destroy.
 type Failure struct {
 	Target Target
@@ -154,16 +168,37 @@ type Outcome struct {
 	Failed    []Failure
 }
 
-// Execute destroys every approved target in the plan, logging each with
-// its full file paths BEFORE acting so the record exists even if the
-// process dies mid-destroy. Refused targets are never touched. Best-effort
-// across targets: one failure doesn't stop the rest (matching every
-// caller's existing semantics), and the outcome says exactly which went
-// through.
+// Execute destroys every approved target in the plan, journalling and
+// logging each with its full file paths BEFORE acting so the record exists
+// even if the process dies mid-destroy. Refused targets are never touched
+// (and are journalled as such). Best-effort across targets: one failure
+// doesn't stop the rest (matching every caller's existing semantics), and
+// the outcome says exactly which went through.
 //
-// reason names the surface for the log ("grab purge", "pack dedup
-// keep=existing", …) so a destruction is always attributable.
-func Execute(ctx context.Context, sc SceneDestroyer, p Plan, log *slog.Logger, reason string) Outcome {
+// reason names the surface ("grab purge", "pack dedup", …) so a
+// destruction is always attributable. rec may be nil (tests); log may be
+// nil.
+func Execute(ctx context.Context, sc SceneDestroyer, p Plan, rec Recorder, log *slog.Logger, reason string) Outcome {
+	journal := func(t Target, outcome, detail string) int64 {
+		if rec == nil {
+			return 0
+		}
+		id, err := rec.JournalDestruction(ctx, reason, t, outcome, detail)
+		if err != nil && log != nil {
+			log.Warn("destruction journal write failed", "reason", reason,
+				"scene", t.SceneID, "err", err)
+		}
+		return id
+	}
+	finalize := func(id int64, outcome, detail string) {
+		if rec == nil || id == 0 {
+			return
+		}
+		if err := rec.FinalizeDestruction(ctx, id, outcome, detail); err != nil && log != nil {
+			log.Warn("destruction journal finalize failed", "id", id, "err", err)
+		}
+	}
+
 	var out Outcome
 	for _, t := range p.Approved {
 		paths := make([]string, 0, len(t.Files))
@@ -174,20 +209,24 @@ func Execute(ctx context.Context, sc SceneDestroyer, p Plan, log *slog.Logger, r
 			log.Info("destroying scene", "reason", reason,
 				"scene", t.SceneID, "title", t.Title, "files", paths)
 		}
+		jid := journal(t, "intent", "")
 		if err := sc.SceneDestroy(ctx, t.SceneID, true, true); err != nil {
 			if log != nil {
 				log.Warn("scene destroy failed", "reason", reason, "scene", t.SceneID, "err", err)
 			}
+			finalize(jid, "failed", err.Error())
 			out.Failed = append(out.Failed, Failure{Target: t, Err: err})
 			continue
 		}
+		finalize(jid, "destroyed", "")
 		out.Destroyed = append(out.Destroyed, t)
 	}
-	if log != nil {
-		for _, r := range p.Refused {
+	for _, r := range p.Refused {
+		if log != nil {
 			log.Info("scene destroy refused", "reason", reason,
 				"scene", r.Target.SceneID, "why", r.Reason, "files", len(r.Target.Files))
 		}
+		journal(r.Target, "refused", r.Reason)
 	}
 	return out
 }

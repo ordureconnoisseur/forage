@@ -253,6 +253,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/{id}/retry", s.postGrabRetry)
 		r.Delete("/grabs/{id}", s.deleteGrab)
 		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
+		r.Get("/destructions", s.getDestructions)
 		r.Post("/watches", s.postWatch)
 		r.Post("/watches/batch", s.postWatchBatch)
 		r.Post("/watches/search-now", s.postWatchSearchNow)

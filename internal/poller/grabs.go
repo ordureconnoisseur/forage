@@ -1312,7 +1312,7 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 			}
 			return
 		}
-		outcome := destroy.Execute(ctx, sc, plan, p.log.With("id", g.ID, "keep", keep), "pack dedup")
+		outcome := destroy.Execute(ctx, sc, plan, p.repo, p.log.With("id", g.ID, "keep", keep), "pack dedup")
 		for _, t := range outcome.Destroyed {
 			destroyed[t.SceneID] = true
 			deduped++
