@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 )
 
@@ -121,14 +122,8 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		alive := map[string]bool{}
-		// refs is one entry per FILE, so counting them per scene gives the
-		// file count for free — no extra Stash call. Needed because
-		// sceneDestroy(delete_file) takes every file on a scene, so a target
-		// holding two would destroy more than the copy being resolved.
-		files := map[string]int{}
 		for _, ref := range refs {
 			alive[ref.SceneID] = true
-			files[ref.SceneID]++
 		}
 
 		// Build the destroy set from the chosen side, and the kept set from
@@ -171,8 +166,20 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusBadGateway, "stash: "+serr.Error())
 				return
 			}
+			// Merge the sweep's refs, not just its aliveness: refs are one
+			// entry per FILE, and the destroy plan below counts files from
+			// them. A scene known only via the sweep used to enter with an
+			// implicit count of zero — which disabled the multi-file guard on
+			// exactly the copies the endpoint-scoped lookup couldn't see.
+			seen := map[string]bool{}
+			for _, ref := range refs {
+				seen[ref.SceneID] = true
+			}
 			for _, ref := range sweep[dup.StashDBID] {
 				alive[ref.SceneID] = true
+				if !seen[ref.SceneID] {
+					refs = append(refs, ref)
+				}
 			}
 		}
 		keptAlive := false
@@ -187,31 +194,34 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				"the copy you chose to keep no longer exists in Stash — refusing to delete the other side; dismiss with keep=\"both\" if this review is stale")
 			return
 		}
+		// Build the vetted destroy plan from the refs (one per FILE, so the
+		// plan sees every scene's true blast radius). A target that isn't
+		// alive is absent from refs and so simply isn't planned — already
+		// destroyed via another surface, nothing to do.
+		targetSet := map[string]bool{}
 		for _, sid := range targets {
-			if sid == "" {
-				continue
+			if sid != "" {
+				targetSet[sid] = true
 			}
-			if !alive[sid] {
-				// Already gone (destroyed via another surface) — nothing to do.
-				continue
-			}
-			if files[sid] > 1 {
-				// Destroying this side would delete files beyond the copy under
-				// review. Refuse and leave the item pending (the error below
-				// blocks the resolve) rather than over-delete.
-				s.log.Warn("duplicate resolve refused: multi-file scene",
-					"dup", id, "scene", sid, "files", files[sid], "keep", req.Keep)
-				out.Errors = append(out.Errors, fmt.Sprintf(
-					"scene %s has %d files attached and deleting it removes all of them; "+
-						"sort that scene out in Stash first", sid, files[sid]))
-				continue
-			}
-			if derr := sc.SceneDestroy(r.Context(), sid, true, true); derr != nil {
-				s.log.Warn("duplicate resolve destroy", "dup", id, "scene", sid, "keep", req.Keep, "err", derr)
-				out.Errors = append(out.Errors, "scene "+sid+": "+derr.Error())
-				continue
-			}
-			out.Removed = append(out.Removed, "scene "+sid)
+		}
+		plan := destroy.Vet(destroy.FromRefs(refs, func(sceneID string) bool {
+			return targetSet[sceneID]
+		}))
+		for _, ref := range plan.Refused {
+			// Refuse and leave the item pending (the error below blocks the
+			// resolve) rather than over-delete.
+			s.log.Warn("duplicate resolve refused", "dup", id,
+				"scene", ref.Target.SceneID, "why", ref.Reason, "keep", req.Keep)
+			out.Errors = append(out.Errors, fmt.Sprintf(
+				"scene %s: %s; sort that scene out in Stash first",
+				ref.Target.SceneID, ref.Reason))
+		}
+		outcome := destroy.Execute(r.Context(), sc, plan, s.log, "duplicate resolve keep="+req.Keep)
+		for _, f := range outcome.Failed {
+			out.Errors = append(out.Errors, "scene "+f.Target.SceneID+": "+f.Err.Error())
+		}
+		for _, t := range outcome.Destroyed {
+			out.Removed = append(out.Removed, "scene "+t.SceneID)
 		}
 		if len(out.Removed) > 0 {
 			// Same as postDestroyScene: the performer page's owned/duplicates
@@ -259,36 +269,43 @@ func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
 		return
 	}
-	// A scene can hold several FILES — Stash attaches a re-download whose
-	// fingerprint matches as an extra file on the existing scene rather than
-	// as a new scene. sceneDestroy(delete_file) deletes every one of them,
-	// so "remove the copy I don't want" would silently take the copy the user
-	// is keeping, along with the scene's tags, o-counter and markers.
-	//
-	// Refuse instead. Deleting a single file out of a scene is a different
-	// operation that forage doesn't have, and guessing is how a dedup sweep
-	// turns into mass deletion. A lookup failure is NOT treated as safe: with
-	// an unknown file count we don't destroy.
-	n, ferr := sc.SceneFileCount(r.Context(), id)
+	// Resolve the scene's full file list and vet it through the destroy
+	// plan. A lookup failure is NOT treated as safe: with an unknown blast
+	// radius we don't destroy.
+	info, ferr := sc.SceneFiles(r.Context(), id)
 	if ferr != nil {
-		s.log.Warn("destroy scene: file count", "scene", id, "err", ferr)
-		writeErr(w, http.StatusBadGateway, "stash: couldn't check how many files this scene has: "+ferr.Error())
+		s.log.Warn("destroy scene: files lookup", "scene", id, "err", ferr)
+		writeErr(w, http.StatusBadGateway, "stash: couldn't check what files this scene has: "+ferr.Error())
 		return
 	}
-	if n > 1 {
-		s.log.Warn("destroy scene refused: multi-file scene", "scene", id, "files", n)
-		writeErr(w, http.StatusConflict, fmt.Sprintf(
-			"scene %s has %d files attached, and deleting the scene deletes all of them. "+
-				"Stash filed these as one scene (matching fingerprints), so there is no "+
-				"single copy here to remove — sort the extra file out in Stash directly.", id, n))
+	target := destroy.Target{SceneID: info.ID, Title: info.Title}
+	for _, f := range info.Files {
+		target.Files = append(target.Files, destroy.File{Path: f.Path, Size: f.Size})
+	}
+	plan := destroy.Vet([]destroy.Target{target})
+	if plan.Empty() {
+		// Refused: a scene holding several files — Stash attaches a
+		// matching-fingerprint re-download as an extra FILE, and destroying
+		// the scene deletes all of them plus the record (tags, o-counter,
+		// markers). Return the file list so the user sees exactly what
+		// refusing protected.
+		ref := plan.Refused[0]
+		s.log.Warn("destroy scene refused", "scene", id, "why", ref.Reason)
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": fmt.Sprintf(
+				"scene %s has %d files attached, and deleting the scene deletes all of them. "+
+					"Stash filed these as one scene (matching fingerprints), so there is no "+
+					"single copy here to remove — sort the extra file out in Stash directly.",
+				id, len(ref.Target.Files)),
+			"kept": ref,
+		})
 		return
 	}
-	if err := sc.SceneDestroy(r.Context(), id, true, true); err != nil {
-		s.log.Warn("destroy scene", "scene", id, "err", err)
-		writeErr(w, http.StatusBadGateway, "stash: "+err.Error())
+	outcome := destroy.Execute(r.Context(), sc, plan, s.log, "performer-page duplicate cleanup")
+	if len(outcome.Failed) > 0 {
+		writeErr(w, http.StatusBadGateway, "stash: "+outcome.Failed[0].Err.Error())
 		return
 	}
 	s.invalidateOwned()
-	s.log.Info("scene destroyed (duplicate cleanup)", "scene", id)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": outcome.Destroyed})
 }

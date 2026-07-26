@@ -114,6 +114,7 @@ type fakeScene struct {
 type fakeStash struct {
 	mu        sync.Mutex
 	scenes    []fakeScene
+	destroyed []string   // scene ids sceneDestroy was called with
 	reqs      int        // total GraphQL requests served (lets a test prove a code path made no calls)
 	generated int        // metadataGenerate calls served (proves deferred preview/sprite generation fired)
 	scanned   int        // metadataScan calls served (proves a (re-)scan fired)
@@ -163,6 +164,12 @@ func (f *fakeStash) reqCount() int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.reqs
+}
+
+func (f *fakeStash) destroys() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string{}, f.destroyed...)
 }
 
 func (f *fakeStash) generateCount() int {
@@ -223,6 +230,19 @@ func (f *fakeStash) handler() http.Handler {
 				return
 			}
 			writeRaw(w, `{"data":{"configuration":{"general":{"stashBoxes":[{"endpoint":"`+stashDBEndpoint+`"}]}}}}`)
+		case strings.Contains(q, "sceneDestroy"):
+			var req struct {
+				Variables struct {
+					Input struct {
+						ID string `json:"id"`
+					} `json:"input"`
+				} `json:"variables"`
+			}
+			_ = json.Unmarshal(body, &req)
+			f.mu.Lock()
+			f.destroyed = append(f.destroyed, req.Variables.Input.ID)
+			f.mu.Unlock()
+			writeRaw(w, `{"data":{"sceneDestroy":true}}`)
 		case strings.Contains(q, "findScenes"):
 			f.mu.Lock()
 			scenes := f.scenes

@@ -505,6 +505,10 @@ type SceneMatch struct {
 	// scene. sceneDestroy(delete_file) deletes ALL of them, so callers that
 	// destroy need to know before they act.
 	FileCount int
+	// FilePaths is every attached file's path (FileCount == len). The
+	// destroy package builds its plans from these, so a deletion preview
+	// can show the user the complete list rather than just the first.
+	FilePaths []string
 	StashDBID string
 }
 
@@ -589,6 +593,9 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 		// it was simply being discarded.
 		FileCount: len(s.Files),
 	}
+	for _, f := range s.Files {
+		out.FilePaths = append(out.FilePaths, f.Path)
+	}
 	if len(s.Files) > 0 {
 		out.FilePath = s.Files[0].Path
 	}
@@ -650,7 +657,11 @@ func (c *Client) FindScenesUnderPath(ctx context.Context, needle string) ([]Scen
 	err := pagedQuery(ctx, c, "findScenes under path", findScenesUnderPathQuery,
 		map[string]any{"value": pattern}, 1000, func(r resp) (int, bool) {
 			for _, s := range r.FindScenes.Scenes {
-				m := SceneMatch{ID: s.ID, Title: s.Title, Date: s.Date, StashDBID: PickStashDBID(s.StashIDs)}
+				m := SceneMatch{ID: s.ID, Title: s.Title, Date: s.Date,
+					StashDBID: PickStashDBID(s.StashIDs), FileCount: len(s.Files)}
+				for _, f := range s.Files {
+					m.FilePaths = append(m.FilePaths, f.Path)
+				}
 				if len(s.Files) > 0 {
 					m.FilePath = s.Files[0].Path
 				}
@@ -955,33 +966,65 @@ func (c *Client) MetadataGenerate(ctx context.Context, sceneIDs []string) (strin
 	return resp.MetadataGenerate, nil
 }
 
-// SceneFileCount returns how many files Stash has attached to a scene, by
-// LOCAL scene id. Its whole purpose is to be checked before a destroy:
+// SceneFile is one media file attached to a scene, as SceneFiles reports it.
+type SceneFile struct {
+	Path string
+	Size int64
+}
+
+// SceneFilesInfo is a scene resolved by LOCAL id with its complete file
+// list — the full blast radius of destroying it. This is what the destroy
+// package's plans are built from when the caller starts from a scene id.
+type SceneFilesInfo struct {
+	ID    string
+	Title string
+	Files []SceneFile
+}
+
+// SceneFiles returns a scene's title and every file Stash has attached, by
+// LOCAL scene id. Its whole purpose is to be consulted before a destroy:
 // sceneDestroy(delete_file) removes EVERY file on the scene, so a caller
-// that means "delete this copy" needs to know when the scene actually holds
-// several. Returns 0 with clienterr.ErrNotFound when the scene is gone.
-func (c *Client) SceneFileCount(ctx context.Context, id string) (int, error) {
+// that means "delete this copy" needs the real list, both to refuse
+// multi-file scenes and to show the user exactly what will be removed.
+// Returns clienterr.ErrNotFound when the scene is gone.
+func (c *Client) SceneFiles(ctx context.Context, id string) (*SceneFilesInfo, error) {
 	if id == "" {
-		return 0, fmt.Errorf("scene id is empty")
+		return nil, fmt.Errorf("scene id is empty")
 	}
 	q := `query ForagerSceneFiles($id: ID!) {
-  findScene(id: $id) { id files { path } }
+  findScene(id: $id) { id title files { path size } }
 }`
 	var resp struct {
 		FindScene *struct {
 			ID    string `json:"id"`
+			Title string `json:"title"`
 			Files []struct {
 				Path string `json:"path"`
+				Size int64  `json:"size"`
 			} `json:"files"`
 		} `json:"findScene"`
 	}
 	if err := c.do(ctx, q, map[string]any{"id": id}, &resp); err != nil {
-		return 0, fmt.Errorf("findScene files: %w", err)
+		return nil, fmt.Errorf("findScene files: %w", err)
 	}
 	if resp.FindScene == nil {
-		return 0, clienterr.ErrNotFound
+		return nil, clienterr.ErrNotFound
 	}
-	return len(resp.FindScene.Files), nil
+	out := &SceneFilesInfo{ID: resp.FindScene.ID, Title: resp.FindScene.Title}
+	for _, f := range resp.FindScene.Files {
+		out.Files = append(out.Files, SceneFile{Path: f.Path, Size: f.Size})
+	}
+	return out, nil
+}
+
+// SceneFileCount is SceneFiles reduced to the count, kept for callers that
+// only gate on it.
+func (c *Client) SceneFileCount(ctx context.Context, id string) (int, error) {
+	info, err := c.SceneFiles(ctx, id)
+	if err != nil {
+		return 0, err
+	}
+	return len(info.Files), nil
 }
 
 // SceneDestroy removes a scene from Stash. deleteFile also unlinks the

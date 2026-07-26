@@ -244,6 +244,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/adopt", s.postAdopt)
 		r.Post("/grabs/retry-failed", s.postRetryAllFailed)
 		r.Get("/grabs/{id}/detail", s.getGrabDetail)
+		r.Get("/grabs/{id}/delete-preview", s.getGrabDeletePreview)
 		r.Get("/grabs/{id}/pack-scenes", s.getPackScenes)
 		r.Post("/grabs/{id}/apply-performer", s.postApplyPerformer)
 		r.Get("/grabs/{id}/match-candidates", s.getGrabMatchCandidates)

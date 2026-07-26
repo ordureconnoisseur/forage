@@ -986,6 +986,37 @@ export function applyPackPerformer(
   return postJSON(`/grabs/${grabId}/apply-performer`, { scene_ids: sceneIds });
 }
 
+// GrabDeletePreview is exactly the plan DELETE /grabs/{id} will execute,
+// resolved server-side: which Stash scenes (with every file path) go, which
+// were refused and why, what the disk sweep removes, and what happens at the
+// download client. Shown under the armed delete button so confirming is
+// informed consent, not a reflex.
+export interface DeletePreviewFile {
+  path: string;
+  size?: number;
+}
+export interface DeletePreviewScene {
+  scene_id: string;
+  title?: string;
+  files: DeletePreviewFile[];
+}
+export interface DeletePreviewKept {
+  target: DeletePreviewScene;
+  reason: string;
+}
+export interface GrabDeletePreview {
+  scenes: DeletePreviewScene[];
+  kept?: DeletePreviewKept[];
+  disk?: string[];
+  client?: string;
+  notes?: string[];
+  grab_record: boolean;
+}
+
+export function fetchGrabDeletePreview(id: number): Promise<GrabDeletePreview> {
+  return get<GrabDeletePreview>(`/grabs/${id}/delete-preview`);
+}
+
 export interface DeleteGrabResult {
   ok: boolean;
   removed: string[];

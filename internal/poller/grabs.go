@@ -22,6 +22,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
+	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
@@ -1279,18 +1280,25 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 
 	deduped := 0
 	recorded := 0
+	// This is the only UNATTENDED destroy in the codebase, so it routes
+	// through the destroy package like every interactive surface: the plan
+	// is vetted (a scene holding several files is refused — destroying it
+	// would take copies beyond the duplicate, see destroy.Vet) and every
+	// destruction is logged with its full file paths before it runs, which
+	// is the automatic path's equivalent of the UI's deletion preview.
 	destroyed := map[string]bool{}
-	destroy := func(sceneID string) {
-		if sceneID == "" || destroyed[sceneID] {
-			return
+	destroyScenes := func(refs []stash.SceneRef, want map[string]bool) {
+		plan := destroy.Vet(destroy.FromRefs(refs, func(sceneID string) bool {
+			return want[sceneID] && !destroyed[sceneID]
+		}))
+		outcome := destroy.Execute(ctx, sc, plan, p.log.With("id", g.ID, "keep", keep), "pack dedup")
+		for _, t := range outcome.Destroyed {
+			destroyed[t.SceneID] = true
+			deduped++
 		}
-		if err := sc.SceneDestroy(ctx, sceneID, true, true); err != nil {
-			p.log.Warn("pack dedup destroy", "id", g.ID, "scene", sceneID, "err", err)
-			return
-		}
-		destroyed[sceneID] = true
-		deduped++
-		p.log.Info("pack dedup removed duplicate", "id", g.ID, "scene", sceneID, "keep", keep)
+		// Failures and refusals are logged by Execute; a refusal simply
+		// leaves the duplicate unreconciled, exactly like the pre-existing
+		// coverage-unverified skip above.
 	}
 	for _, ps := range packScenes {
 		if ps.StashDBID == "" {
@@ -1324,11 +1332,15 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 				recorded++
 			}
 		case "pack":
+			// Keep the pack copy, drop the originals.
+			want := make(map[string]bool, len(externalIDs))
 			for _, eid := range externalIDs {
-				destroy(eid) // keep the pack copy, drop the originals
+				want[eid] = true
 			}
+			destroyScenes(refs, want)
 		default:
-			destroy(ps.ID) // "existing": keep the original, drop the pack copy
+			// "existing": keep the original, drop the pack copy.
+			destroyScenes(refs, map[string]bool{ps.ID: true})
 		}
 	}
 	return deduped, recorded, nil

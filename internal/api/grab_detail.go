@@ -11,8 +11,10 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/config"
+	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
 // grabDetailResponse enriches a single grab with the StashDB scene it
@@ -192,12 +194,156 @@ func (s *Server) deleteGrab(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// grabPurgeStash is the resolved Stash half of a purge: which scenes will
+// be destroyed, which were refused (with why and what that protects), and
+// any resolution problems worth surfacing. Built once by planGrabStash and
+// consumed BOTH by the delete-preview endpoint and by purgeGrab itself —
+// one value, so what the user is shown is literally what runs.
+type grabPurgeStash struct {
+	Plan destroy.Plan
+	// ResolutionErrs are labelled problems from looking the scenes up (Stash
+	// unreachable, over-matched basename). They surface in the purge
+	// response's Errors and the preview's notes.
+	ResolutionErrs []string
+}
+
+// planGrabStash resolves which Stash scenes purging this grab would
+// destroy. A single grab placed one file → one scene, matched by basename;
+// a pack placed a directory of many scenes, enumerated wholesale.
+//
+// Refusals (never destroyed, always reported):
+//   - a basename match living in a DIFFERENT directory — a generic name
+//     ("video.mp4") can resolve to a same-named file under another
+//     performer's folder, and destroying that deletes an unrelated scene;
+//   - any scene with more than one file — Stash attaches a matching-
+//     fingerprint re-download as an extra FILE on the existing scene, and
+//     sceneDestroy(delete_file) takes every file plus the scene record
+//     (tags, o-counter, markers). The disk sweep still removes this grab's
+//     own file; the scene survives with its remaining file(s) and Stash
+//     drops the vanished one on its next scan.
+//
+// A pack with no path mapping resolves to nothing on the Stash side on
+// purpose: a bare basename over-matches unrelated scenes, so the disk sweep
+// alone removes the files and Stash reconciles on its next scan.
+func (s *Server) planGrabStash(ctx context.Context, g *grabs.Grab) grabPurgeStash {
+	var out grabPurgeStash
+	sc := s.pool.Stash()
+	if g.PlacedPath == "" || sc == nil {
+		return out
+	}
+
+	if g.Kind == "pack" {
+		needle := pathmap.Translate(g.PlacedPath, s.pool.Settings().StashPathMapping)
+		if needle == "" {
+			return out
+		}
+		scenes, err := sc.FindScenesUnderPath(ctx, needle)
+		if err != nil {
+			out.ResolutionErrs = append(out.ResolutionErrs, "find pack scenes: "+err.Error())
+			return out
+		}
+		targets := make([]destroy.Target, 0, len(scenes))
+		for _, sm := range scenes {
+			targets = append(targets, targetFromMatch(sm))
+		}
+		out.Plan = destroy.Vet(targets)
+		return out
+	}
+
+	scene, err := sc.FindSceneByPathContains(ctx, filepath.Base(g.PlacedPath))
+	if err != nil && !errors.Is(err, clienterr.ErrNotFound) {
+		out.ResolutionErrs = append(out.ResolutionErrs, "find stash scene: "+err.Error())
+		return out
+	}
+	if scene == nil {
+		return out
+	}
+	if !sameParentDir(scene.FilePath, g.PlacedPath) {
+		out.Plan.Refused = append(out.Plan.Refused, destroy.Refusal{
+			Target: targetFromMatch(*scene),
+			Reason: fmt.Sprintf(
+				"basename matched a scene in a different directory (%s) — not this grab's file",
+				scene.FilePath),
+		})
+		return out
+	}
+	out.Plan = destroy.Vet([]destroy.Target{targetFromMatch(*scene)})
+	return out
+}
+
+// targetFromMatch adapts a path-lookup SceneMatch (which carries every
+// attached file path) into a destroy target.
+func targetFromMatch(sm stash.SceneMatch) destroy.Target {
+	t := destroy.Target{SceneID: sm.ID, Title: sm.Title}
+	for _, p := range sm.FilePaths {
+		t.Files = append(t.Files, destroy.File{Path: p})
+	}
+	return t
+}
+
+// purgeDiskPaths reports what the purge's disk sweep would remove: the
+// placed path, when the grab is a pack (always swept — it may hold files
+// Stash never indexed) or when no approved Stash destroy will delete the
+// file for us.
+func purgeDiskPaths(g *grabs.Grab, sp grabPurgeStash) []string {
+	if g.PlacedPath == "" {
+		return nil
+	}
+	if g.Kind == "pack" || sp.Plan.Empty() {
+		return []string{g.PlacedPath}
+	}
+	return nil
+}
+
+// purgeClientDesc names what the purge removes from the download client.
+func purgeClientDesc(g *grabs.Grab) string {
+	if g.ClientID == "" {
+		return ""
+	}
+	switch g.Client {
+	case "qbit":
+		return "qBittorrent torrent + its downloaded files"
+	case "sabnzbd":
+		return "SABnzbd history entry + its downloaded files"
+	}
+	return ""
+}
+
+// getGrabDeletePreview answers "what exactly would deleting this grab
+// remove?" — the same plan purgeGrab will execute, serialised. The UI shows
+// it under the armed delete button, so confirmation is informed consent
+// rather than a reflex.
+//
+//	GET /grabs/{id}/delete-preview
+func (s *Server) getGrabDeletePreview(w http.ResponseWriter, r *http.Request) {
+	g, ok := s.grabByID(w, r)
+	if !ok {
+		return
+	}
+	sp := s.planGrabStash(r.Context(), g)
+	resp := map[string]any{
+		"scenes":      sp.Plan.Approved,
+		"kept":        sp.Plan.Refused,
+		"disk":        purgeDiskPaths(g, sp),
+		"grab_record": true,
+	}
+	if c := purgeClientDesc(g); c != "" {
+		resp["client"] = c
+	}
+	if len(sp.ResolutionErrs) > 0 {
+		resp["notes"] = sp.ResolutionErrs
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // purgeGrab tears down a grab and every trace of its download, returning
 // which teardown steps ran (so callers can surface partial failures). It is
 // shared by DELETE /grabs/{id} and the watch "find another" flow, which
 // re-searches a scene after discarding a bad grab. Best-effort per step (a
 // failure in one doesn't block the rest); the grab row is always removed
 // last so a partial failure can't strand it.
+//
+// The Stash half executes the same plan getGrabDeletePreview shows.
 func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabResponse {
 	id := g.ID
 	out := deleteGrabResponse{}
@@ -206,77 +352,31 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 		out.Errors = append(out.Errors, label+": "+err.Error())
 	}
 
-	// 1. Stash scene(s) + media file(s). A single grab placed one file →
-	// one scene (matched by basename); a pack placed a directory of many
-	// scenes, so enumerate the whole directory. SceneDestroy(delete_file)
-	// unlinks the library-side file(s).
+	// 1. Stash scene(s) + media file(s), per the vetted plan.
+	sp := s.planGrabStash(ctx, g)
+	for _, e := range sp.ResolutionErrs {
+		out.Errors = append(out.Errors, e)
+	}
 	stashHandled := false
-	if g.PlacedPath != "" {
-		sc := s.pool.Stash()
+	if !sp.Plan.Empty() || len(sp.Plan.Refused) > 0 {
+		outcome := destroy.Execute(ctx, s.pool.Stash(), sp.Plan, s.log, "grab purge")
+		for _, f := range outcome.Failed {
+			addErr("stash scene "+f.Target.SceneID, f.Err)
+		}
+		for _, ref := range sp.Plan.Refused {
+			// Informational, not a failure — but it must be visible, so the
+			// user knows why a scene survived their delete.
+			out.Errors = append(out.Errors, fmt.Sprintf(
+				"kept scene %s: %s; removing only this grab's own files",
+				ref.Target.SceneID, ref.Reason))
+		}
 		switch {
-		case g.Kind == "pack" && sc != nil:
-			// Resolve the Stash-side directory and destroy every scene
-			// under it. Without a path mapping we can't match Stash scenes
-			// by path safely (a bare basename over-matches unrelated
-			// scenes), so we skip the Stash destroys and let the disk sweep
-			// below remove the files — Stash drops the now-missing scenes
-			// on its next scan.
-			if needle := pathmap.Translate(g.PlacedPath, s.pool.Settings().StashPathMapping); needle != "" {
-				if scenes, ferr := sc.FindScenesUnderPath(ctx, needle); ferr != nil {
-					addErr("find pack scenes", ferr)
-				} else {
-					n := 0
-					for _, sm := range scenes {
-						if derr := sc.SceneDestroy(ctx, sm.ID, true, true); derr != nil {
-							addErr("stash scene "+sm.ID, derr)
-							continue
-						}
-						n++
-					}
-					if n > 0 {
-						out.Removed = append(out.Removed, fmt.Sprintf("%d pack scenes + files", n))
-					}
-					stashHandled = true
-				}
-			}
-		case sc != nil:
-			scene, ferr := sc.FindSceneByPathContains(ctx, filepath.Base(g.PlacedPath))
-			if ferr != nil && !errors.Is(ferr, clienterr.ErrNotFound) {
-				addErr("find stash scene", ferr)
-			} else if scene != nil && !sameParentDir(scene.FilePath, g.PlacedPath) {
-				// The lookup is keyed on basename, and even segment-anchored
-				// a generic name ("video.mp4") can resolve to a same-named
-				// file under ANOTHER performer's folder — destroying that
-				// would delete an unrelated scene's media. Skip the Stash
-				// destroy; the disk sweep below still removes the grab's own
-				// file and Stash drops the scene on its next scan.
-				addErr("find stash scene", fmt.Errorf(
-					"basename matched scene %s in a different directory (%s), refusing to destroy it",
-					scene.ID, scene.FilePath))
-			} else if scene != nil && scene.FileCount > 1 {
-				// Several files hang off this one scene — Stash attaches a
-				// re-download whose fingerprint matches as an extra FILE rather
-				// than a new scene. sceneDestroy(delete_file) deletes every one
-				// of them and the scene record with it (tags, o-counter, markers,
-				// watch history), so purging one grab would take the copy another
-				// grab placed. The sameParentDir guard above can't catch this: it
-				// compares parent-directory basenames, and both files live under
-				// the same performer folder.
-				//
-				// Delete only this grab's own file instead, via the disk sweep
-				// below — the scene survives with its remaining file(s), and Stash
-				// drops the vanished one on its next scan.
-				addErr("stash scene", fmt.Errorf(
-					"scene %s has %d files; destroying it would delete the others too, "+
-						"removing only this grab's file", scene.ID, scene.FileCount))
-			} else if scene != nil {
-				if derr := sc.SceneDestroy(ctx, scene.ID, true, true); derr != nil {
-					addErr("stash scene", derr)
-				} else {
-					stashHandled = true
-					out.Removed = append(out.Removed, "stash scene + file")
-				}
-			}
+		case g.Kind == "pack" && len(outcome.Destroyed) > 0:
+			out.Removed = append(out.Removed,
+				fmt.Sprintf("%d pack scenes + files", len(outcome.Destroyed)))
+		case g.Kind != "pack" && len(outcome.Destroyed) > 0:
+			out.Removed = append(out.Removed, "stash scene + file")
+			stashHandled = true
 		}
 	}
 

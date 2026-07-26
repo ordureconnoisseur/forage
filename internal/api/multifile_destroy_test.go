@@ -73,12 +73,16 @@ func (f *stashStub) handler() http.Handler {
 				io.WriteString(w, `{"data":{"findScene":null}}`)
 				return
 			}
+			// Echo the requested id — the handler destroys the scene id
+			// Stash REPORTS, not the one it asked about, so a stub that
+			// answers with a fixed id would test the wrong thing.
+			reqID, _ := body.Variables["id"].(string)
 			files := make([]map[string]any, 0, n)
 			for i := 0; i < n; i++ {
 				files = append(files, map[string]any{"path": "/lib/P/f.mp4"})
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"data": map[string]any{"findScene": map[string]any{"id": "1", "files": files}},
+				"data": map[string]any{"findScene": map[string]any{"id": reqID, "files": files}},
 			})
 		case strings.Contains(body.Query, "ForagerFindSceneByPath"):
 			f.mu.Lock()

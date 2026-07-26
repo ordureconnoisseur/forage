@@ -16,6 +16,8 @@ import {
   DeleteGrabResult,
   fetchGrabDetail,
   fetchGrabs,
+  fetchGrabDeletePreview,
+  type GrabDeletePreview,
   Grab,
   GrabDetail,
   grabTorrentFile,
@@ -1962,6 +1964,10 @@ function GrabRow({
   const [detail, setDetail] = useState<GrabDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // What deleting this grab will actually remove — the server-resolved plan,
+  // fetched when the button arms so the confirm click is informed consent.
+  const [delPreview, setDelPreview] = useState<GrabDeletePreview | null>(null);
+  const [delPreviewErr, setDelPreviewErr] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
   const [matchVal, setMatchVal] = useState("");
@@ -2155,17 +2161,27 @@ function GrabRow({
   }, []);
 
   async function handleDelete() {
-    // Two-step: first click arms, second click within 4s commits.
+    // Two-step: first click arms and loads the deletion preview; second
+    // click commits. The window is longer than the plain arm used to be
+    // because there is now a file list to read.
     if (!confirmDelete) {
       setConfirmDelete(true);
-      confirmTimer.current = window.setTimeout(
-        () => setConfirmDelete(false),
-        4000,
-      );
+      setDelPreview(null);
+      setDelPreviewErr(null);
+      fetchGrabDeletePreview(g.id)
+        .then(setDelPreview)
+        .catch((e) => setDelPreviewErr((e as Error).message));
+      confirmTimer.current = window.setTimeout(() => {
+        setConfirmDelete(false);
+        setDelPreview(null);
+        setDelPreviewErr(null);
+      }, 12000);
       return;
     }
     if (confirmTimer.current) clearTimeout(confirmTimer.current);
     setConfirmDelete(false);
+    setDelPreview(null);
+    setDelPreviewErr(null);
     setDeleting(true);
     setDeleteErr(null);
     try {
@@ -2730,9 +2746,99 @@ function GrabRow({
               </button>
             </div>
           </div>
+          {confirmDelete && (
+            <DeletePreviewPanel preview={delPreview} err={delPreviewErr} />
+          )}
         </div>
       )}
     </li>
+  );
+}
+
+// DeletePreviewPanel renders, under the armed Delete button, exactly what
+// confirming will remove — the server-resolved plan the purge itself
+// executes, so this list cannot drift from the action. Refusals ("kept")
+// are shown too: knowing what a delete will NOT touch is half the safety.
+function DeletePreviewPanel({
+  preview,
+  err,
+}: {
+  preview: GrabDeletePreview | null;
+  err: string | null;
+}) {
+  if (err) {
+    return (
+      <div className="grab-del-preview">
+        <div className="gdp-err">
+          Couldn&rsquo;t load the deletion preview ({err}). Confirming still
+          deletes this grab&rsquo;s own file, download and record.
+        </div>
+      </div>
+    );
+  }
+  if (!preview) {
+    return (
+      <div className="grab-del-preview">
+        <div className="gdp-loading">Checking what this will delete…</div>
+      </div>
+    );
+  }
+  // Flatten to displayable rows; a pack can resolve to hundreds of files,
+  // so cap the list and say how many more there are — a truncated preview
+  // must never look complete.
+  const rows: { key: string; path: string; size?: number; tag: string }[] = [];
+  for (const sc of preview.scenes) {
+    for (const f of sc.files) {
+      rows.push({ key: "s:" + f.path, path: f.path, size: f.size, tag: "stash scene + file" });
+    }
+  }
+  for (const p of preview.disk ?? []) {
+    rows.push({ key: "d:" + p, path: p, tag: "disk" });
+  }
+  const MAX = 12;
+  const shown = rows.slice(0, MAX);
+  const more = rows.length - shown.length;
+  return (
+    <div className="grab-del-preview">
+      <div className="gdp-title">This will permanently delete:</div>
+      <ul className="gdp-list">
+        {shown.map((r) => (
+          <li key={r.key}>
+            <code className="gdp-path" title={r.path}>
+              {r.path}
+            </code>
+            {r.size ? <span className="gdp-size">{humanSize(r.size)}</span> : null}
+            <span className="gdp-tag">{r.tag}</span>
+          </li>
+        ))}
+        {more > 0 && (
+          <li className="gdp-more">…and {more} more file{more === 1 ? "" : "s"}</li>
+        )}
+        {preview.client && (
+          <li>
+            <span className="gdp-clientline">{preview.client}</span>
+          </li>
+        )}
+        <li>
+          <span className="gdp-clientline">this grab&rsquo;s record in forage</span>
+        </li>
+      </ul>
+      {(preview.kept ?? []).length > 0 && (
+        <div className="gdp-kept">
+          {(preview.kept ?? []).map((k) => (
+            <div key={k.target.scene_id}>
+              <strong>Not</strong> deleting scene {k.target.scene_id}:{" "}
+              {k.reason}.
+            </div>
+          ))}
+        </div>
+      )}
+      {(preview.notes ?? []).map((n, i) => (
+        <div className="gdp-note" key={i}>
+          {n}
+        </div>
+      ))}
+    </div>
   );
 }
 
