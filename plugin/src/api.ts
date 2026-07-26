@@ -1246,7 +1246,11 @@ export interface ConfigPatch {
 
 export interface ProbeResult {
   ok: boolean;
+  // Written for a human: what went wrong and what to check.
   message?: string;
+  // The raw client error behind it. Shown on demand, so a failure stays
+  // diagnosable without the setup screen reading like a stack trace.
+  detail?: string;
 }
 
 export interface SaveConfigResponse {

@@ -1294,7 +1294,7 @@ function ProbeChip({ result }: { result: ProbeResult }) {
   return (
     <span
       className={"probe-chip " + (result.ok ? "ok" : "err")}
-      title={result.message || ""}
+      title={[result.message, result.detail].filter(Boolean).join(" — ")}
     >
       {result.ok ? "✓" : "✗"}
     </span>
