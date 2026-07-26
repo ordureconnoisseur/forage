@@ -65,6 +65,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"sabUrl":              {Value: cfg.SabURL, Source: sources["sabUrl"]},
 		"sabApiKey":           secretField(cfg.SabAPIKey, sources["sabApiKey"]),
 		"sabCategory":         {Value: cfg.SabCategory, Source: sources["sabCategory"]},
+		"downloadRoot":        {Value: cfg.DownloadRoot, Source: sources["downloadRoot"]},
 		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
 		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
@@ -224,10 +225,63 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	// Create (or repoint) the forage category in whichever download clients
+	// are configured, so the user never has to go and do it by hand. This is
+	// after the Pool reload so the clients are built from the just-saved
+	// credentials.
+	catResults := s.ensureDownloadCategories(r.Context(), newCfg)
+
+	out := map[string]any{
 		"ok":      true,
 		"results": results,
-	})
+	}
+	if len(catResults) > 0 {
+		out["categories"] = catResults
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ensureDownloadCategories points each configured download client's forage
+// category at the download folder, creating it if it isn't there.
+//
+// Setting that category up by hand was the one cross-app step the setup wizard
+// had to hand back to the user — "go into qBittorrent, make a category, set its
+// save path, come back and type the name here" — and getting it wrong puts
+// finished downloads outside the filesystem forage hardlinks from, which is the
+// most confusing possible failure: everything appears configured, downloads
+// complete, and nothing ever lands in the library.
+//
+// Best-effort and non-fatal: the config is already saved, and a client that
+// refuses (older qBit, a read-only SAB config) still works if the user makes
+// the category themselves. Results are reported so the UI can say what
+// happened rather than leaving it invisible.
+//
+// Skipped entirely when no download folder is set, since the category's whole
+// purpose here is to point somewhere specific.
+func (s *Server) ensureDownloadCategories(ctx context.Context, cfg config.Config) map[string]string {
+	if strings.TrimSpace(cfg.DownloadRoot) == "" {
+		return nil
+	}
+	out := map[string]string{}
+	if qb := s.pool.Qbit(); qb != nil && cfg.QbitCategory != "" {
+		if err := qb.EnsureCategory(ctx, cfg.QbitCategory, cfg.DownloadRoot); err != nil {
+			s.log.Warn("ensure qbit category", "category", cfg.QbitCategory, "err", err)
+			out["qbit"] = "failed: " + err.Error()
+		} else {
+			s.log.Info("qbit category ready", "category", cfg.QbitCategory, "path", cfg.DownloadRoot)
+			out["qbit"] = "ready"
+		}
+	}
+	if sb := s.pool.Sab(); sb != nil && cfg.SabCategory != "" {
+		if err := sb.EnsureCategory(ctx, cfg.SabCategory, cfg.DownloadRoot); err != nil {
+			s.log.Warn("ensure sab category", "category", cfg.SabCategory, "err", err)
+			out["sab"] = "failed: " + err.Error()
+		} else {
+			s.log.Info("sab category ready", "category", cfg.SabCategory, "path", cfg.DownloadRoot)
+			out["sab"] = "ready"
+		}
+	}
+	return out
 }
 
 func (s *Server) postConfigTest(w http.ResponseWriter, r *http.Request) {

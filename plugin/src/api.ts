@@ -1195,6 +1195,10 @@ export interface ConfigPatch {
   sabUrl?: string;
   sabApiKey?: string;
   sabCategory?: string;
+  // Where the download clients put finished files. forage creates the
+  // forage category in qBit/SAB pointing here, so the client never has to
+  // be configured by hand.
+  downloadRoot?: string;
   libraryRoot?: string;
   stashPathMapping?: string;
   sabDeleteAfterPlace?: boolean;

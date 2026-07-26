@@ -332,6 +332,44 @@ func (c *Client) Categories(ctx context.Context) ([]Category, error) {
 	return out, nil
 }
 
+// EnsureCategory creates the category with the given folder, or repoints an
+// existing one at it. Idempotent, so it's safe to call on every settings save.
+//
+// This removes the one cross-app step setup used to hand back to the user
+// ("go into SABnzbd, add a category, set its folder, come back"). forage holds
+// both values already.
+//
+// SAB has no dedicated create call: categories are config, written through
+// mode=set_config with section=categories, and writing a keyword that doesn't
+// exist yet creates it. Passing dir="" would blank an existing category's
+// folder, so an empty folder is refused rather than silently destructive.
+func (c *Client) EnsureCategory(ctx context.Context, name, dir string) error {
+	if name == "" {
+		return fmt.Errorf("category name is empty")
+	}
+	if dir == "" {
+		return fmt.Errorf("category folder is empty")
+	}
+	q := url.Values{}
+	q.Set("mode", "set_config")
+	q.Set("section", "categories")
+	q.Set("keyword", name)
+	q.Set("dir", dir)
+	body, err := c.get(ctx, q)
+	if err != nil {
+		return err
+	}
+	// SAB answers 200 with {"status": false} on a rejected config write, so a
+	// transport-level success is not enough to conclude it took.
+	var resp struct {
+		Status *bool `json:"status"`
+	}
+	if jerr := json.Unmarshal(body, &resp); jerr == nil && resp.Status != nil && !*resp.Status {
+		return fmt.Errorf("sab refused the category write for %q", name)
+	}
+	return nil
+}
+
 func (c *Client) get(ctx context.Context, q url.Values) ([]byte, error) {
 	return c.doGet(ctx, c.http, q)
 }

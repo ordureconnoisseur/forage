@@ -686,6 +686,21 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           onToggle={() => setOpen((o) => ({ ...o, library: !o.library }))}
           probe={probes["placement"]}
         >
+          <Field label="Download folder">
+            <input
+              type="text"
+              value={displayValue("downloadRoot", data?.fields["downloadRoot"])}
+              onChange={(e) => setField("downloadRoot", e.target.value)}
+              placeholder="/data/media/downloads/complete"
+              spellCheck={false}
+            />
+            <SourceBadge field={data?.fields["downloadRoot"]} />
+          </Field>
+          <p className="settings-tip">
+            Where your download client writes finished files. Saving creates
+            the forage category in qBittorrent/SABnzbd pointing here, so you
+            don&rsquo;t have to set it up in the client yourself.
+          </p>
           <Field label="Library root">
             <input
               type="text"

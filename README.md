@@ -276,10 +276,10 @@ wizard takes it from there: Stash + StashDB keys, then Prowlarr, a download
 client, and the library path, each with a **Test** button. When it's done you
 can browse → search → grab.
 
-> **One manual cross-app step:** in qBittorrent/SABnzbd, create a category
-> (e.g. `forage`) whose save path is your download folder above, and enter
-> that category name in the wizard's download-client step. forage downloads
-> under that category so it knows which finished files are its to place.
+You don't have to configure your download client. Give forage the download
+folder and it creates the `forage` category in qBittorrent/SABnzbd pointing
+at it — and repoints it if it already exists somewhere else. forage downloads
+under that category so it knows which finished files are its to place.
 
 ### Reaching it from another device (optional)
 

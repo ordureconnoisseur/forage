@@ -695,6 +695,43 @@ func (c *Client) postForm(ctx context.Context, path string, form url.Values) err
 	return nil
 }
 
+// EnsureCategory creates the category with the given save path, or points an
+// existing one at that path. Idempotent: safe to call on every save.
+//
+// This is the one cross-app step setup used to push onto the user ("go into
+// qBittorrent, make a category, set its save path, come back and type the
+// name"). forage already knows both values, so it does it instead.
+//
+// qBit answers 409 when the category already exists, which is not an error
+// here — the point is that it exists and points at savePath, so fall through
+// to editCategory rather than failing.
+func (c *Client) EnsureCategory(ctx context.Context, name, savePath string) error {
+	if name == "" {
+		return fmt.Errorf("category name is empty")
+	}
+	form := url.Values{}
+	form.Set("category", name)
+	form.Set("savePath", savePath)
+	createErr := c.postForm(ctx, "/api/v2/torrents/createCategory", form)
+	if createErr == nil {
+		return nil
+	}
+	// createCategory fails when the category already exists (409). Rather than
+	// matching on the status — which would mean parsing it back out of the
+	// error string — just try editCategory, which is the right call in that
+	// case anyway: an existing category pointing somewhere ELSE is the subtler
+	// version of the same misconfiguration, and leaving it is how downloads
+	// end up outside the hardlink filesystem.
+	//
+	// If both fail the cause is something else entirely (unreachable, bad
+	// credentials), so report the original create error, which is the more
+	// descriptive of the two.
+	if editErr := c.postForm(ctx, "/api/v2/torrents/editCategory", form); editErr == nil {
+		return nil
+	}
+	return createErr
+}
+
 // SetCategory moves a torrent into the given category.
 func (c *Client) SetCategory(ctx context.Context, hash, category string) error {
 	if hash == "" {

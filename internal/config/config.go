@@ -43,7 +43,13 @@ type Config struct {
 	SabURL             string
 	SabAPIKey          string
 	SabCategory        string
-	LibraryRoot        string
+	// DownloadRoot is where the download clients put finished files. forage
+	// uses it to CREATE the forage category in qBit/SAB pointing at that
+	// folder, so the user never has to configure the client by hand. One
+	// field covers both clients: the hardlink requirement already pushes
+	// every setup toward a single completed-downloads folder.
+	DownloadRoot string
+	LibraryRoot  string
 	// StashPathMapping translates forager-container paths to Stash's
 	// view of the same files, for scoped metadataScan calls after
 	// placement. Format: "<forager-prefix>:<stash-prefix>" (e.g.
@@ -179,6 +185,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SabURL = strings.TrimRight(b.envOr("FORAGER_SAB_URL", "", "sabUrl"), "/")
 	b.SabAPIKey = b.envOr("FORAGER_SAB_API_KEY", "", "sabApiKey")
 	b.SabCategory = b.envOr("FORAGER_SAB_CATEGORY", "forage", "sabCategory")
+	b.DownloadRoot = strings.TrimRight(b.envOr("FORAGER_DOWNLOAD_ROOT", "", "downloadRoot"), "/")
 	b.LibraryRoot = strings.TrimRight(b.envOr("FORAGER_LIBRARY_ROOT", "", "libraryRoot"), "/")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
@@ -279,6 +286,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SabURL = str("sabUrl", stored.SabURL, b.SabURL, "")
 	out.SabAPIKey = str("sabApiKey", stored.SabAPIKey, b.SabAPIKey, "")
 	out.SabCategory = str("sabCategory", stored.SabCategory, b.SabCategory, "forage")
+	out.DownloadRoot = str("downloadRoot", stored.DownloadRoot, b.DownloadRoot, "")
 	out.LibraryRoot = str("libraryRoot", stored.LibraryRoot, b.LibraryRoot, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
