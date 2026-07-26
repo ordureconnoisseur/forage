@@ -49,9 +49,12 @@ jobs:
             VERSION=${{ github.ref_name }}
 
   release:
-    name: Plugin bundle + GitHub Release
+    name: Binaries + plugin bundle + GitHub Release
     runs-on: ubuntu-latest
-    needs: image
+    # Deliberately NOT `needs: image`. The binaries and the plugin bundle are
+    # what someone actually downloads to try forage; a registry problem (an
+    # expired token, a package still linked to another repo, GHCR being down)
+    # must not stop them being published. The image is a parallel convenience.
     steps:
       - uses: actions/checkout@v4
 
