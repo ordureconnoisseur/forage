@@ -108,6 +108,17 @@ func main() {
 		cfg.PollInterval, cfg.OrphanAfter, pendingAdds)
 	launch(func() { p.Run(ctx) })
 
+	// Nightly (and at-boot) backup of the tables that can't be rebuilt —
+	// grabs, watches, subscriptions, reviews, the destruction journal, the
+	// session key. Deliberately NOT the whole 700 MB database: the caches
+	// re-sync themselves, and the precious set is a few MB. Written beside
+	// the DB, three generations kept.
+	launch(func() {
+		db.RunPeriodicBackups(ctx, database, bootstrap.DBPath+".precious.bak", func(err error) {
+			log.Error("precious-table backup failed", "err", err)
+		})
+	})
+
 	watchesRepo := watches.NewRepo(database)
 
 	server := api.New(api.Options{
