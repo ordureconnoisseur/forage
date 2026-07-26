@@ -711,6 +711,13 @@ export type GrabStatus =
   | "orphaned"
   | "failed";
 
+// GrabFilter is what the Grabs list can filter BY, which is a superset of the
+// statuses a grab can be IN. "unmatched" is a pseudo-status the daemon
+// resolves server-side: a grab that settled 'confirmed' without ever being
+// linked to a StashDB scene. It splits the confirmed rows rather than adding a
+// status, so totals.confirmed + totals.unmatched still covers them all.
+export type GrabFilter = GrabStatus | "any" | "unmatched";
+
 export interface Grab {
   id: number;
   predicted_stashdb_id?: string;
@@ -771,7 +778,10 @@ export interface Grab {
 
 export interface GrabsResponse {
   grabs: Grab[];
-  totals: Partial<Record<GrabStatus, number>>;
+  // Keyed by GrabFilter, not GrabStatus: the daemon reports "unmatched"
+  // alongside the real statuses, with those rows deducted from "confirmed" so
+  // summing every value still gives the grand total.
+  totals: Partial<Record<GrabFilter, number>>;
   // How many grabs match the current status+q filter across the WHOLE table
   // (not just this page). Lets the view show a result count and know when
   // "load more" has reached the end. Absent on older daemons → treat as
@@ -804,7 +814,7 @@ export function retryFailedGrabs(): Promise<{
 }
 
 export function fetchGrabs(opts?: {
-  status?: GrabStatus | "any";
+  status?: GrabFilter;
   q?: string;
   limit?: number;
   offset?: number;

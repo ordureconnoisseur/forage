@@ -253,6 +253,22 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 				addErr("find stash scene", fmt.Errorf(
 					"basename matched scene %s in a different directory (%s), refusing to destroy it",
 					scene.ID, scene.FilePath))
+			} else if scene != nil && scene.FileCount > 1 {
+				// Several files hang off this one scene — Stash attaches a
+				// re-download whose fingerprint matches as an extra FILE rather
+				// than a new scene. sceneDestroy(delete_file) deletes every one
+				// of them and the scene record with it (tags, o-counter, markers,
+				// watch history), so purging one grab would take the copy another
+				// grab placed. The sameParentDir guard above can't catch this: it
+				// compares parent-directory basenames, and both files live under
+				// the same performer folder.
+				//
+				// Delete only this grab's own file instead, via the disk sweep
+				// below — the scene survives with its remaining file(s), and Stash
+				// drops the vanished one on its next scan.
+				addErr("stash scene", fmt.Errorf(
+					"scene %s has %d files; destroying it would delete the others too, "+
+						"removing only this grab's file", scene.ID, scene.FileCount))
 			} else if scene != nil {
 				if derr := sc.SceneDestroy(ctx, scene.ID, true, true); derr != nil {
 					addErr("stash scene", derr)

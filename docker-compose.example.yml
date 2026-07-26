@@ -12,6 +12,12 @@
 
 services:
   forager:
+    # Builds from this checkout. To skip the build and pull the released
+    # image instead (faster, no Go/Node toolchain pulled), delete the three
+    # `build:` lines and point `image:` at the registry:
+    #
+    #   image: ghcr.io/ordureconnoisseur/forage:v0.1.0
+    #
     build:
       context: .
       args:
@@ -21,8 +27,15 @@ services:
     restart: unless-stopped
     ports:
       - "7979:7979"
+    # Optional: the wizard configures everything in the browser, so a fresh
+    # install has no .env at all. Without `required: false` Compose refuses to
+    # start ("env file .env not found") — which is exactly what following the
+    # README's "no .env needed" quickstart used to produce. Needs Compose
+    # 2.24+ (Feb 2024); on anything older, either create an empty .env or drop
+    # these three lines.
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       # SQLite DB + config.json + backups. Stays in the repo dir.
       - ./data:/data

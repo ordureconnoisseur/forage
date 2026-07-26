@@ -1806,6 +1806,15 @@ button {
      distinct from failed's red (it is NOT dead) */
   --status-deferred: #fb923c;
   --status-deferred-bg: rgba(251, 146, 60, 0.18);
+  /* unmatched: confirmed, but nothing on StashDB was ever linked to the
+     file. Amber, matching the "NOT IDENTIFIED" hero the expanded card
+     already shows for this exact state (.grab-match-hero.unidentified) —
+     one state, one colour, at both zoom levels. Deliberately NOT the
+     slate of the ADOPTED pill, which sits right beside it on the row an
+     adopted grab produces (adopted singles are the ones that settle
+     "in library (scanned)", so that pairing is the common case). */
+  --status-unmatched: var(--amber);
+  --status-unmatched-bg: rgba(212, 161, 74, 0.16);
 }
 
 /* Filter strip laid out as the state machine: a leading "all" toggle,
@@ -2065,6 +2074,10 @@ button {
   flex: none;
 }
 .chip-confirmed .chip-dot  { background: var(--status-confirmed); }
+/* Pseudo-status: confirmed-but-never-linked. Amber, matching the row badge
+   and the NOT IDENTIFIED hero, so the chip and the rows it filters to look
+   like the same thing. */
+.chip-unmatched .chip-dot  { background: var(--status-unmatched); }
 .chip-mismatched .chip-dot { background: var(--status-mismatched); }
 .chip-orphaned .chip-dot   { background: var(--status-orphaned); }
 .chip-failed .chip-dot     { background: var(--status-failed); }
@@ -2132,6 +2145,7 @@ button {
 .grab-chip.chip-placed.active     { border-color: var(--status-placed);     background: var(--status-placed-bg);     color: var(--status-placed); }
 .grab-chip.chip-scanned.active    { border-color: var(--status-scanned);    background: var(--status-scanned-bg);    color: var(--status-scanned); }
 .grab-chip.chip-confirmed.active  { border-color: var(--status-confirmed);  background: var(--status-confirmed-bg);  color: var(--status-confirmed); }
+.grab-chip.chip-unmatched.active  { border-color: var(--status-unmatched);  background: var(--status-unmatched-bg);  color: var(--status-unmatched); }
 .grab-chip.chip-mismatched.active { border-color: var(--status-mismatched); background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-chip.chip-orphaned.active   { border-color: var(--status-orphaned);   background: var(--status-orphaned-bg);   color: var(--status-orphaned); }
 .grab-chip.chip-failed.active     { border-color: var(--status-failed);     background: var(--status-failed-bg);     color: var(--status-failed); }
@@ -2180,6 +2194,9 @@ button {
 .grab-row.status-tagging::before    { background: var(--status-tagging); box-shadow: 0 0 10px rgba(20, 184, 166, 0.4); }
 .grab-row.status-distributing::before { background: var(--status-distributing); box-shadow: 0 0 10px rgba(167, 139, 250, 0.4); }
 .grab-row.status-confirmed::before  { background: linear-gradient(180deg, var(--accent-bright), var(--accent)); box-shadow: 0 0 10px rgba(var(--accent-rgb), 0.6); }
+/* Confirmed but never linked to a StashDB scene: flat amber stripe, no
+   glow — the accent glow is reserved for grabs that actually matched. */
+.grab-row.status-confirmed.unmatched::before { background: var(--status-unmatched); box-shadow: none; }
 .grab-row.status-mismatched::before { background: var(--status-mismatched); }
 .grab-row.status-orphaned::before   { background: var(--status-orphaned); }
 .grab-row.status-failed::before     { background: var(--status-failed); }
@@ -2229,6 +2246,7 @@ button {
 .grab-status-badge.chip-tagging    { background: var(--status-tagging-bg);   color: var(--status-tagging); }
 .grab-status-badge.chip-distributing { background: var(--status-distributing-bg); color: var(--status-distributing); }
 .grab-status-badge.chip-confirmed  { background: var(--status-confirmed-bg); color: var(--status-confirmed); }
+.grab-status-badge.chip-confirmed.unmatched { background: var(--status-unmatched-bg); color: var(--status-unmatched); }
 .grab-status-badge.chip-mismatched { background: var(--status-mismatched-bg); color: var(--status-mismatched); }
 .grab-status-badge.chip-orphaned   { background: var(--status-orphaned-bg);  color: var(--status-orphaned); }
 .grab-status-badge.chip-failed     { background: var(--status-failed-bg);    color: var(--status-failed); }
@@ -2444,6 +2462,9 @@ button {
 .grab-poster-badge.chip-confirmed {
   color: var(--status-confirmed);
 }
+.grab-poster-badge.chip-confirmed.unmatched {
+  color: var(--status-unmatched);
+}
 .grab-poster-badge.chip-mismatched {
   color: var(--status-mismatched);
 }
@@ -2618,6 +2639,19 @@ button {
 }
 .grab-pipe-step.tone-failed.done .grab-pipe-label {
   color: var(--status-failed);
+}
+/* "In library" terminal — landed, but no StashDB scene was linked. Grey,
+   so the stepper doesn't end on the same accent node a real match does. */
+.grab-pipe-step.tone-unmatched.done .grab-pipe-node {
+  background: var(--status-unmatched);
+  border-color: var(--status-unmatched);
+  box-shadow: 0 0 0 4px rgba(212, 161, 74, 0.15);
+}
+.grab-pipe-step.tone-unmatched.linked::before {
+  background: var(--status-unmatched);
+}
+.grab-pipe-step.tone-unmatched.done .grab-pipe-label {
+  color: var(--status-unmatched);
 }
 
 /* The record — full-width labelled cards (label left, value right),
@@ -6019,6 +6053,27 @@ code.grab-fact-v,
   color: #aebfd4;
 }
 
+/* NO MATCH badge — confirmed, in the library, but no StashDB scene was
+   ever linked. Same pill family as ADOPTED/STALLED; dashed border and a
+   flat grey so it reads as "incomplete", not as a failure. */
+.grab-nomatch-badge {
+  flex: none;
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: rgba(212, 161, 74, 0.12);
+  /* Dashed, unlike every other pill in the family — "incomplete", and it
+     keeps the badge legible beside the solid slate ADOPTED pill even for
+     someone reading the row by shape rather than colour. */
+  border: 1px dashed rgba(212, 161, 74, 0.55);
+  color: #e0b84e;
+}
+
 /* Place-failing badge — downloaded but can't get into the library.
    Same pill family as ADOPTED/STALLED, danger-toned (the file's stuck). */
 .grab-placefail-badge {
@@ -6413,7 +6468,12 @@ code.grab-fact-v,
 }
 .grab-dup-tag {
   flex: none;
-  width: 44px;
+  /* Fixed column so the res/size/path columns line up across the two
+     rows. 56px fits the widest tag word rendered here (EXISTING measures
+     51.3px at this size/tracking) — the old 44px was cut for YOURS/PACK
+     and let EXISTING overflow into the 8px gap, so it touched "1080p".
+     Keep .grab-dup-more's indent (below) at this + the 8px gap. */
+  width: 56px;
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
@@ -6442,7 +6502,8 @@ code.grab-fact-v,
 .grab-dup-more {
   font-size: 11px;
   color: var(--text-muted);
-  padding-left: 52px;
+  /* Aligns with the res column: .grab-dup-tag width + the row's 8px gap. */
+  padding-left: 64px;
 }
 .grab-dup-actions {
   display: flex;

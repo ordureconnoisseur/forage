@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -120,8 +121,14 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		alive := map[string]bool{}
+		// refs is one entry per FILE, so counting them per scene gives the
+		// file count for free — no extra Stash call. Needed because
+		// sceneDestroy(delete_file) takes every file on a scene, so a target
+		// holding two would destroy more than the copy being resolved.
+		files := map[string]int{}
 		for _, ref := range refs {
 			alive[ref.SceneID] = true
+			files[ref.SceneID]++
 		}
 
 		// Build the destroy set from the chosen side, and the kept set from
@@ -188,6 +195,17 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				// Already gone (destroyed via another surface) — nothing to do.
 				continue
 			}
+			if files[sid] > 1 {
+				// Destroying this side would delete files beyond the copy under
+				// review. Refuse and leave the item pending (the error below
+				// blocks the resolve) rather than over-delete.
+				s.log.Warn("duplicate resolve refused: multi-file scene",
+					"dup", id, "scene", sid, "files", files[sid], "keep", req.Keep)
+				out.Errors = append(out.Errors, fmt.Sprintf(
+					"scene %s has %d files attached and deleting it removes all of them; "+
+						"sort that scene out in Stash first", sid, files[sid]))
+				continue
+			}
 			if derr := sc.SceneDestroy(r.Context(), sid, true, true); derr != nil {
 				s.log.Warn("duplicate resolve destroy", "dup", id, "scene", sid, "keep", req.Keep, "err", derr)
 				out.Errors = append(out.Errors, "scene "+sid+": "+derr.Error())
@@ -239,6 +257,30 @@ func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
 	sc := s.pool.Stash()
 	if sc == nil {
 		writeErr(w, http.StatusServiceUnavailable, "stash not configured (see Settings)")
+		return
+	}
+	// A scene can hold several FILES — Stash attaches a re-download whose
+	// fingerprint matches as an extra file on the existing scene rather than
+	// as a new scene. sceneDestroy(delete_file) deletes every one of them,
+	// so "remove the copy I don't want" would silently take the copy the user
+	// is keeping, along with the scene's tags, o-counter and markers.
+	//
+	// Refuse instead. Deleting a single file out of a scene is a different
+	// operation that forage doesn't have, and guessing is how a dedup sweep
+	// turns into mass deletion. A lookup failure is NOT treated as safe: with
+	// an unknown file count we don't destroy.
+	n, ferr := sc.SceneFileCount(r.Context(), id)
+	if ferr != nil {
+		s.log.Warn("destroy scene: file count", "scene", id, "err", ferr)
+		writeErr(w, http.StatusBadGateway, "stash: couldn't check how many files this scene has: "+ferr.Error())
+		return
+	}
+	if n > 1 {
+		s.log.Warn("destroy scene refused: multi-file scene", "scene", id, "files", n)
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"scene %s has %d files attached, and deleting the scene deletes all of them. "+
+				"Stash filed these as one scene (matching fingerprints), so there is no "+
+				"single copy here to remove — sort the extra file out in Stash directly.", id, n))
 		return
 	}
 	if err := sc.SceneDestroy(r.Context(), id, true, true); err != nil {

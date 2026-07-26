@@ -336,6 +336,23 @@ CREATE TABLE IF NOT EXISTS pack_duplicate (
 CREATE INDEX IF NOT EXISTS idx_pack_dup_status ON pack_duplicate(status);
 CREATE INDEX IF NOT EXISTS idx_pack_dup_grab   ON pack_duplicate(grab_id);
 
+-- Dismiss review items with no existing side. Nothing can be done with one:
+-- the UI renders "?" where the other copy's resolution/size/path belong,
+-- "keep existing" can only 409 (the side it would keep isn't in Stash), and
+-- "keep new" destroys nothing yet marks itself resolved.
+--
+-- They came from counting FILES as copies: FindSceneRefsByStashID emits one
+-- ref per file, and Stash files a matching-fingerprint re-download as a
+-- second file on the SAME scene, so a lone scene looked like two copies and
+-- every ref landed on the pack side. Both the detector and the writer now
+-- refuse the case, so this only ever clears the backlog — but it runs on
+-- every open (schema.sql is re-executed), which keeps it self-healing and
+-- costs nothing once the set is empty.
+UPDATE pack_duplicate
+   SET status = 'resolved', resolution = 'both', resolved_at = strftime('%s', 'now')
+ WHERE status = 'pending'
+   AND TRIM(COALESCE(existing_copies, '')) IN ('', '[]', 'null');
+
 
 -- Subscriptions: permanent performer/studio watches ("subscribe to
 -- Kenzie Reeves"). Where a scene watch tracks ONE scene and a

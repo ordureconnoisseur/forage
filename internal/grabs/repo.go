@@ -236,6 +236,52 @@ func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 		ORDER BY grabbed_at ASC`)
 }
 
+// ConfirmedUnlinked returns settled single grabs that hold a placed file but
+// no StashDB cross-id — the ones the poller's reconcile pass re-checks.
+//
+// These left Active() for good (it excludes 'confirmed'), yet their link can
+// still arrive afterwards: Stash's identify is a serial queued job that
+// routinely lands after the settle grace expires, and the user can identify a
+// scene by hand at any time. Nothing would ever notice, so the grab keeps
+// claiming it was never matched.
+//
+// Scoped to `since` (a confirm-time floor, falling back to updated_at for
+// rows predating the ConfirmedAt stamp) because a file still unlinked after
+// weeks genuinely isn't on StashDB, and re-querying it forever costs a Stash
+// round-trip per pass for nothing. Packs are excluded: they carry no single
+// cross-id, and advancePackConfirm owns their per-scene identify state.
+//
+// Newest-first with limit/offset so the caller can rotate through a large
+// backlog a bounded batch at a time.
+func (r *Repo) ConfirmedUnlinked(ctx context.Context, since int64, limit, offset int) ([]Grab, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'confirmed'
+		  AND COALESCE(kind, 'single') != 'pack'
+		  AND COALESCE(placed_path, '') != ''
+		  AND COALESCE(actual_stashdb_id, '') = ''
+		  AND COALESCE(NULLIF(confirmed_at, 0), updated_at) >= ?
+		ORDER BY COALESCE(NULLIF(confirmed_at, 0), updated_at) DESC
+		LIMIT ? OFFSET ?`, since, limit, offset)
+}
+
+// CountConfirmedUnlinked counts what ConfirmedUnlinked would return across
+// every page, so the reconcile cursor knows when it has wrapped.
+func (r *Repo) CountConfirmedUnlinked(ctx context.Context, since int64) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM grabs
+		WHERE status = 'confirmed'
+		  AND COALESCE(kind, 'single') != 'pack'
+		  AND COALESCE(placed_path, '') != ''
+		  AND COALESCE(actual_stashdb_id, '') = ''
+		  AND COALESCE(NULLIF(confirmed_at, 0), updated_at) >= ?`, since).Scan(&n)
+	return n, err
+}
+
 // StatusByStashDBID returns a map of StashDB scene id → grab status for
 // every grab that resolves to a StashDB id, so the missing-scenes view
 // can mark scenes already grabbed/in-flight. Keyed by the actual cross-id
@@ -414,7 +460,21 @@ func (r *Repo) CountFiltered(ctx context.Context, status, q string) (int, error)
 func grabFilter(status, q string) (string, []any) {
 	var conds []string
 	var args []any
-	if status != "" && status != "any" {
+	switch {
+	case status == "" || status == "any":
+		// whole table
+	case status == unmatchedFilter:
+		// Pseudo-status: a grab that settled 'confirmed' without ever being
+		// linked to a StashDB scene ("in library (scanned)" / "in library; no
+		// StashDB match"). Not a column value, so it splits the confirmed
+		// rows rather than adding a new status. Mirrors Totals below and the
+		// UI's isUnmatched, so the chip count and the filtered list agree.
+		conds = append(conds, unmatchedCond)
+	case status == "confirmed":
+		// The complement, so confirmed + unmatched partition the confirmed
+		// rows exactly and the two chip counts still sum to the old total.
+		conds = append(conds, "status = 'confirmed' AND NOT ("+unmatchedCond+")")
+	default:
 		conds = append(conds, "status = ?")
 		args = append(args, status)
 	}
@@ -440,7 +500,25 @@ func (r *Repo) CountRecentFailed(ctx context.Context, since int64) (int, error) 
 	return n, err
 }
 
+// unmatchedFilter is the pseudo-status for a grab that settled 'confirmed'
+// with no StashDB cross-id, and unmatchedCond is the SQL that identifies one.
+// Shared by grabFilter and Totals so a chip's count can never disagree with
+// the list that chip filters to. Packs are excluded: they carry no single
+// cross-id (advancePackConfirm tracks their scenes individually), so a pack
+// is not "unmatched" for having an empty actual_stashdb_id.
+const (
+	unmatchedFilter = "unmatched"
+	unmatchedCond   = `status = 'confirmed'
+		  AND COALESCE(kind, 'single') != 'pack'
+		  AND COALESCE(actual_stashdb_id, '') = ''`
+)
+
 // Totals returns a status → count map for the UI's top-of-page strip.
+//
+// 'confirmed' is reported SPLIT: the returned "confirmed" counts only grabs
+// actually linked to a StashDB scene, and the rest land under "unmatched".
+// The two partition the confirmed rows, so summing every value still gives
+// the true grand total — which is what the UI's "all" chip does.
 func (r *Repo) Totals(ctx context.Context) (map[string]int, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM grabs GROUP BY status`)
 	if err != nil {
@@ -455,6 +533,23 @@ func (r *Repo) Totals(ctx context.Context) (map[string]int, error) {
 			return nil, err
 		}
 		out[s] = n
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	var unmatched int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM grabs WHERE `+unmatchedCond).Scan(&unmatched); err != nil {
+		return nil, err
+	}
+	if unmatched > 0 {
+		out[unmatchedFilter] = unmatched
+		// Take them out of 'confirmed' rather than double-counting.
+		if out["confirmed"] >= unmatched {
+			out["confirmed"] -= unmatched
+		} else {
+			out["confirmed"] = 0
+		}
 	}
 	return out, rows.Err()
 }
@@ -474,21 +569,50 @@ func (r *Repo) ByDownloadURL(ctx context.Context, url string) (*Grab, error) {
 	return &g, nil
 }
 
-// LiveByRelease finds a non-failed grab for the same release, matching by
-// exact download URL OR by (release title + indexer). Prowlarr download
-// URLs embed a rotating encrypted `link` parameter, so the same release
-// gets a fresh URL on every search — URL equality alone misses re-offers.
-// The (title, indexer) pair is the stable identity an indexer gives a
-// release. Returns (nil, nil) when nothing live matches.
+// LiveByRelease finds a non-failed grab for the same release. Three
+// identities, widening in order:
+//
+//  1. exact download URL — but Prowlarr URLs embed a rotating encrypted
+//     `link` parameter, so the same release gets a fresh URL on every
+//     search and this alone misses re-offers;
+//  2. (release title + indexer) — the stable identity one indexer gives a
+//     release, which catches those re-offers;
+//  3. release title alone, but ONLY against a grab whose file is already on
+//     disk (placed_path set).
+//
+// Rule 3 exists because a release cross-posted to several indexers is the
+// same content under the same title, and rules 1-2 both miss it: forage
+// re-downloaded Bang.YNGR.26.07.10.Liora.Vane.XXX.1080p.MP4-WRB from
+// NZBFinder 14 days after taking the identical file from NZBgeek, wasting
+// the transfer and leaving two byte-identical copies in the library.
+//
+// It is deliberately gated on placed_path rather than simply dropping the
+// indexer from rule 2, because "same title, different indexer" is also the
+// standard RECOVERY move: when one indexer's Usenet post is incomplete or
+// unrepairable, fetching the same release from another is exactly what you
+// want to do. Requiring the earlier grab to have landed separates the two
+// cases cleanly — an in-flight, stalled or dead attempt (no placed file)
+// never blocks a second source, while content that's already on disk is
+// never fetched twice. Nothing is gained by re-downloading a file you have.
+//
+// Returns (nil, nil) when nothing live matches.
 func (r *Repo) LiveByRelease(ctx context.Context, url, title, indexer string) (*Grab, error) {
-	if url == "" && (title == "" || indexer == "") {
+	// A bare title is enough now (rule 3 needs no indexer), so only the
+	// everything-empty case is unanswerable.
+	if url == "" && title == "" {
 		return nil, nil
 	}
 	grabs, err := r.query(ctx, `
 		SELECT * FROM grabs
 		WHERE status != 'failed'
-		  AND (download_url = ? OR (release_title = ? AND release_indexer = ? AND ? != ''))
-		ORDER BY grabbed_at DESC LIMIT 1`, url, title, indexer, title)
+		  AND (
+		        download_url = ?
+		     OR (
+		          release_title = ? AND ? != ''
+		          AND (release_indexer = ? OR COALESCE(placed_path, '') != '')
+		        )
+		      )
+		ORDER BY grabbed_at DESC LIMIT 1`, url, title, title, indexer)
 	if err != nil || len(grabs) == 0 {
 		return nil, err
 	}

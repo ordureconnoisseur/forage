@@ -1,8 +1,16 @@
 # forage
 
-**Performer-driven scene grabbing for Stash.**
+**It finds the scene, then does the Stash work for you.**
 
-forage is a self-hosted web app for [Stash](https://stashapp.cc) users, backed by a small Go daemon. You browse a performer's StashDB filmography against your own library, find releases for the scenes you're missing, grab them through qBittorrent or SABnzbd, and forage drops the finished files into a per-performer folder — then confirms, by perceptual hash, that what landed is actually what you wanted. The daemon serves the app at its own URL (like an *arr); an optional Stash plugin adds a launcher button to Stash's navbar.
+forage is a self-hosted app for [Stash](https://stashapp.cc) users: one binary, no dependencies. Browse a performer's or studio's StashDB filmography against your own library, pick something you're missing, and it goes and finds it — then hardlinks the finished file into the right performer folder, scans it, identifies it against StashDB, generates previews, and checks by perceptual hash that what landed is what you asked for.
+
+Two things it does differently:
+
+**Finding.** Most tools read the release name and hope it parses into title/performer/studio/date. Release names have no grammar, so that fails constantly. forage identifies a release from *evidence* instead — the performers and studios it knows from your library, every plausible reading of the date, scene codes, title tokens, and how much of the candidate scene's real StashDB cast is named. Two independent search tracks gather candidates and five signals score them, so nothing rests on a single clue. Names that would be ambiguous in your library disable themselves, so a one-word performer can't fire on someone else's release.
+
+**Finishing.** The download lands and there's nothing left for you to do in Stash. No manual rescan, no hunting for why a scene didn't identify, no adding the performer by hand, no missing previews. If forage's prediction and Stash's hash disagree, it tells you, with both scene ids, instead of quietly polluting your library.
+
+The daemon serves the app at its own URL (like an *arr); an optional Stash plugin adds a launcher button to Stash's navbar.
 
 > **Naming:** *forage* is the product — the app and the experience. *forager* is the daemon that backs it (and the name of this repo, the container, and the `FORAGER_*` environment variables). When you read "forager" below, it's the service; "forage" is the thing you open.
 
@@ -48,15 +56,9 @@ flowchart LR
     class API,Matcher,Cache,Poller,Placer daemon
 ```
 
-> **Status:** early (v0). The core flow — browse → search → match → grab → place → confirm — is solid and used daily, but some paths (large pack grabs, the watchlist's grab step) are lightly exercised. It's built for a single self-hosted user on a trusted network. See [Security & access](#security--access) before exposing it anywhere.
+> **Status:** early (v0), and looking for testers. The core loop — browse → search → match → grab → place → confirm — runs daily against a library of a few thousand scenes, but it has had exactly one user, so expect to be the first person to hit whatever breaks next. Some paths (large pack grabs, the watchlist's grab step) are lightly exercised. It's built for a single self-hosted user on a trusted network — see [Security & access](#security--access) before exposing it anywhere. Bug reports are the most useful thing you can send.
 
 ---
-
-## The problem this solves
-
-Whisparr matches releases *backwards*: it parses an arbitrary release name like `Vixen.22.05.31.Hazel.Moore.XXX.1080p...` into title/performer/studio/date fields, then tries to line those up against what it knows. Release names don't follow a grammar, so that fails constantly.
-
-forage inverts it. It already knows what's in your library — your performers and studios, with their StashDB cross-IDs — and projects those *known entities* onto release strings. Tokenization handles CamelCase, digit-splits, and stopwords; multi-phase Prowlarr queries break through the per-indexer result cap; and after the download lands, Stash's perceptual hash confirms (or contradicts) the prediction, so a wrong match surfaces instead of silently polluting your library.
 
 ## How it works
 
@@ -70,7 +72,35 @@ forage inverts it. It already knows what's in your library — your performers a
 | **Confirm** | After Stash scans the placed file, forager matches its phash against StashDB and labels the grab `confirmed` / `mismatched` / `orphaned`, so failures are visible rather than silent. |
 | **Watch** | No release yet? Track the scene at a target quality. A background loop re-searches on a cadence spread over 24h and tells you when a matching release appears — you decide whether to grab it. It never grabs on its own. |
 
----
+## How the matching works
+
+A name-parser reads the label on the box. forage works out what's in the box from evidence. Given one release string:
+
+1. **Tokenize.** Fold accents (`Renée` → `renee`, because release names strip them), decompose fullwidth characters (JAV titles use `ＳＴＡＲＳ－６２９`), then split on punctuation and on case/digit boundaries. Both your library's names and the release string go through the same function, which is what makes them comparable — `SNOS-233`, `snos233` and `SNOS.233` all land on the same tokens.
+2. **Recognise entities.** Find performers and studios from your library inside those tokens, matched as exact contiguous token runs. Any name that's ambiguous *anywhere in your corpus* switches itself off, so `Cherry` never fires on the wrong person and single-word studio names stay usable.
+3. **Extract dates** — every plausible reading, because `26.07.10` is three different dates.
+4. **Extract scene codes** — JAV identifiers normalised to canonical form.
+5. **Gather candidates on two tracks, in parallel.** Track A fires several structured StashDB queries: performer+studio, one per date reading, plus a performer-only broad fallback (StashDB often files a scene under a sub-studio, and an exact studio AND would silently miss it). Track B runs a full-text search on the tokens. A failure in one doesn't discard the others' candidates.
+6. **Score on five independent signals** — performer overlap, studio, date proximity, title overlap, and how many of the candidate scene's *actual StashDB cast* the release names. Anything found by both tracks gets a corroboration bonus.
+7. **Verify** through a separate gate, not a score threshold, including a date veto that disqualifies a candidate whose date is confidently far off however well it scored.
+8. **Filter the lookalikes** — multi-scene packs, image sets and streaming-link spam all score well precisely because they're related to the scene, so they're explicitly un-verified.
+
+Then the file lands and Stash's perceptual hash checks the answer independently.
+
+## What happens after the grab
+
+This is the half that saves the most time day to day.
+
+| | |
+|---|---|
+| **Placement** | Hardlinked into `<library>/<performer>/` — the performer page you grabbed from, no "primary performer" guessing. The original stays put, so torrents keep seeding and no space is duplicated. |
+| **Scan** | Only the placed path is scanned, not your whole library. |
+| **Identify** | Fired against your configured stash-box, retried until the cross-id lands, because Stash's job queue is serial and can run it much later. |
+| **Generate** | Previews and sprites, queued *after* identify so they can't block it. |
+| **Tagging** | Pack grabs get their performer added to every scene in the pack, additively — identified scenes keep the performers they already had. |
+| **Verify** | Stash's phash result is compared to what forage predicted before downloading. Agreement → `confirmed`. Disagreement → `mismatched`, showing both scene ids. |
+| **Repair** | If something never matched, one click writes the StashDB scene onto it: cross-id, title, date, studio, performers linked to your local ones, and the cover art Stash couldn't fetch without a hash match. |
+
 
 ## Features
 
@@ -175,52 +205,83 @@ Every credential and connection setting is editable from the plugin's Settings p
 
 ## Install
 
-forage configures itself in the browser. You don't edit any config files to
-get started — you start the daemon, open it, and a **first-run wizard** walks
-you through connecting Stash, StashDB, Prowlarr, your download client, and the
-library folder, testing each one before it continues. The only thing the
-wizard *can't* do for you is decide where files live on disk (that's the host's
-job, below).
+Download one file and run it. Everything else is done in the browser: a
+**first-run wizard** connects Stash, StashDB, Prowlarr, your download client
+and the library folder, testing each one before it continues. There is no
+config file to edit.
 
-### 1. Start the daemon
+### Option A — single binary (simplest)
 
-**Docker (most common):**
+Grab the file for your machine from the
+[latest release](../../releases/latest):
+
+| | |
+|---|---|
+| Windows | `forage-windows-amd64.exe` |
+| macOS (Apple silicon) | `forage-darwin-arm64` |
+| macOS (Intel) | `forage-darwin-amd64` |
+| Linux | `forage-linux-amd64` · `forage-linux-arm64` |
+
+```bash
+chmod +x forage-linux-amd64      # macOS/Linux only
+./forage-linux-amd64
+```
+
+Then open **<http://127.0.0.1:7979>**. That's it — no runtime, no
+dependencies, nothing to install. The app is compiled into the binary and it
+creates its own database in the folder you run it from.
+
+To reach it from another device on your network, listen on all interfaces:
+`FORAGER_LISTEN_ADDR=0.0.0.0:7979 ./forage-linux-amd64` (and read
+[Security & access](#security--access) first).
+
+### Option B — Docker
 
 ```bash
 cp docker-compose.example.yml docker-compose.yml   # edit the one volume line — see below
-docker compose up -d --build
+docker compose up -d
 ```
 
-The single thing you must get right is the **volume mount** — forage places
-finished downloads by *hardlinking* them into your library, which only works
-when the download folder and the library folder are on the **same filesystem**.
-So bind-mount one media disk at one path, with both inside it:
+The template builds from source; to skip that and pull the released image,
+follow the comment at the top of the `forager:` service. Docker is the better
+choice when your download clients are already containerised, since it makes
+sharing one filesystem straightforward.
 
-```
-/data/media/downloads/complete/   ← your download client writes here
-/data/media/library/              ← forage hardlinks here; Stash scans this
-```
-
-(If they're on different disks forage still works — it falls back to copying —
-but you lose the no-extra-space benefit of hardlinks.)
+With Docker the one thing to get right is the **volume mount**: bind-mount a
+single media disk at a single path, with both the download folder and the
+library folder inside it, so they land on the same filesystem (see below).
 
 No `.env` needed — every credential and path is set in the wizard. (`.env` exists
 for unattended/immutable deploys; see [Configuration reference](#configuration-reference).)
 
-### 2. Open forage
+### The one thing to get right: same filesystem
 
-Browse to **`http://<host>:7979/`**. The first-run wizard takes it from
-there — Stash + StashDB keys, then Prowlarr, a download client, and the library
-path, each with a **Test** button. When it's done you can browse → search →
-grab. No build step, no plugin.
+forage places finished downloads by **hardlinking** them into your library,
+which only works when the download folder and the library folder live on the
+same filesystem:
+
+```
+…/downloads/complete/   ← your download client writes here
+…/library/              ← forage hardlinks here; Stash scans this
+```
+
+The original stays where the download client put it, so torrents keep seeding
+and the file isn't stored twice. If the two are on different disks forage
+still works — it falls back to copying — but you lose that.
+
+### First run
+
+Open **<http://127.0.0.1:7979>** (or `http://<host>:7979` for Docker). The
+wizard takes it from there: Stash + StashDB keys, then Prowlarr, a download
+client, and the library path, each with a **Test** button. When it's done you
+can browse → search → grab.
 
 > **One manual cross-app step:** in qBittorrent/SABnzbd, create a category
-> (e.g. `forage`) whose save path is your download folder above
-> (`/data/media/downloads/complete`), and enter that category name in the
-> wizard's download-client step. forage downloads under that category so it
-> knows which finished files are its to place.
+> (e.g. `forage`) whose save path is your download folder above, and enter
+> that category name in the wizard's download-client step. forage downloads
+> under that category so it knows which finished files are its to place.
 
-### 3. (Optional) HTTPS
+### Reaching it from another device (optional)
 
 To reach forage from another device — or from an HTTPS Stash page (browsers
 block HTTP calls from an HTTPS origin) — front it with Tailscale Serve, a

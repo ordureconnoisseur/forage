@@ -132,6 +132,14 @@ type Poller struct {
 	// Pruned in tickOnce alongside identifyJob.
 	scanJobMu sync.Mutex
 	scanJob   map[int64]string
+
+	// Late-identify reconcile state (see reconcile.go). lastReconcile gates
+	// the slow cadence; reconcileCursor rotates through settled-but-unlinked
+	// grabs a batch at a time, because the never-identified ones stay in that
+	// set forever and would otherwise soak up every pass. Both are owned by
+	// the single-goroutine tick, so they need no lock.
+	lastReconcile   time.Time
+	reconcileCursor int
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -307,6 +315,18 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 	p.scanJobMu.Unlock()
+
+	// Catch up on grabs Stash identified only AFTER they settled as
+	// confirmed-without-a-link (see reconcile.go). Deliberately ABOVE the
+	// nothing-active early return: those grabs are terminal, so an idle
+	// library is exactly when this is the only work left to do — hanging it
+	// off the end of the tick meant it never ran on a quiet daemon. Its own
+	// slow cadence and bounded batch keep the cost off the advance path.
+	if time.Since(p.lastReconcile) >= reconcileInterval {
+		p.lastReconcile = time.Now()
+		p.reconcileConfirmed(ctx)
+	}
+
 	if len(active) == 0 {
 		return nil
 	}
@@ -1343,6 +1363,16 @@ func (p *Poller) recordReviewDuplicate(ctx context.Context, g *grabs.Grab, ps st
 	if pack.SceneID == "" {
 		return false, nil
 	}
+	// No other scene holds this cross-id, so there is nothing to compare
+	// against and nothing the user could keep or destroy. Writing the row
+	// anyway produced a review item showing "?" for the missing side, whose
+	// "keep existing" can only 409 (the kept side doesn't exist) and whose
+	// "keep new" destroys nothing while marking itself resolved. Happens when
+	// every ref collapses onto one scene — Stash filing a matching-fingerprint
+	// re-download as a second FILE on the same scene.
+	if len(existing) == 0 {
+		return false, nil
+	}
 	title := pack.Title
 	if title == "" {
 		if ps.Title != "" {
@@ -1378,12 +1408,32 @@ func (p *Poller) maybeRecordSingleDuplicate(ctx context.Context, sc *stash.Clien
 		return
 	}
 	refs, err := sc.FindSceneRefsByStashID(ctx, endpoint, scene.StashDBID)
-	if err != nil || len(refs) < 2 {
-		return // sole copy: nothing to review
+	if err != nil {
+		return
+	}
+	// Count distinct SCENES, not refs. FindSceneRefsByStashID emits one ref
+	// per FILE, and Stash attaches a re-download with a matching fingerprint
+	// as a second file on the SAME scene. Counting refs read that as "two
+	// copies to review", but there is only one scene: every ref then matched
+	// packIDs, so the review row was written with an empty existing side and
+	// showed "?" where the old file should be — and nothing about it was
+	// actionable, since both files live under the one scene id the keep/destroy
+	// works on. (Destroying that scene would take BOTH files, which is exactly
+	// the multi-file hazard the resolve endpoint's keptAlive guard refuses.)
+	//
+	// A same-scene extra file is a real waste of disk, but it needs
+	// file-level deletion rather than this scene-level review, so it is not
+	// this queue's business.
+	scenes := map[string]bool{}
+	for _, ref := range refs {
+		scenes[ref.SceneID] = true
+	}
+	if len(scenes) < 2 {
+		return // one scene: nothing this review can act on
 	}
 	if _, rerr := p.recordReviewDuplicate(ctx, g, *scene, refs, map[string]bool{scene.ID: true}); rerr == nil {
 		p.log.Info("single grab landed beside existing copies; queued for review",
-			"id", g.ID, "scene", scene.StashDBID, "copies", len(refs))
+			"id", g.ID, "scene", scene.StashDBID, "scenes", len(scenes), "files", len(refs))
 	}
 }
 

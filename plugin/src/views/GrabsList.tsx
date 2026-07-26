@@ -35,6 +35,7 @@ import {
   applyPackPerformer,
   type PackScenes,
   GrabStatus,
+  type GrabFilter,
   isActiveStatus,
   proxiedImageURL,
   performerImageURL,
@@ -89,13 +90,38 @@ function retryEta(at?: number): string {
   return `· retries in ~${Math.round(secs / 3600)}h`;
 }
 
-const OUTCOME: GrabStatus[] = [
+// "unmatched" rides here as a pseudo-status resolved server-side: it splits
+// the confirmed rows into the ones Stash actually linked to a StashDB scene
+// and the ones that merely landed. Sitting next to confirmed makes the pair
+// read as the two ways a grab can end up in the library, and gives the amber
+// NO MATCH rows a way to be listed on their own.
+const OUTCOME: GrabFilter[] = [
   "confirmed",
+  "unmatched",
   "mismatched",
   "orphaned",
   "deferred",
   "failed",
 ];
+
+// A grab reaches the terminal "confirmed" status two very different ways:
+// Stash's phash linked the file to a StashDB scene (a real match, actual id
+// set), or the file merely landed in the library and no cross-id ever
+// arrived — the daemon settles those as confirmed too, with reason
+// "in library (scanned)" / "in library; no StashDB match". Both are
+// status=confirmed, so without this the two render as the same green chip
+// and you can't tell a matched scene from an unidentified one.
+//
+// Packs are excluded: a pack is many scenes and never carries a single
+// actual id — its identify progress is the n/m counter on the row.
+//
+// Note this reads the GRAB's record, which is what the list has. If you
+// identify the file by hand in Stash afterwards the grab is already
+// terminal and never learns about it — the expanded card's IdentifyBlock
+// checks the live Stash cross-id and will say "Identified in Stash".
+function isUnmatched(g: Grab): boolean {
+  return g.status === "confirmed" && g.kind !== "pack" && !g.actual_stashdb_id;
+}
 
 export default function GrabsList({
   onPickScene,
@@ -106,7 +132,7 @@ export default function GrabsList({
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
   const [grabs, setGrabs] = useState<Grab[]>([]);
-  const [totals, setTotals] = useState<Partial<Record<GrabStatus, number>>>({});
+  const [totals, setTotals] = useState<Partial<Record<GrabFilter, number>>>({});
   // Total grabs matching the current status+q filter across the whole table
   // (from the daemon). Drives the result count and "load more" end-detection;
   // undefined until the first response (or on an older daemon that omits it).
@@ -114,7 +140,7 @@ export default function GrabsList({
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<GrabStatus | "any">("any");
+  const [filter, setFilter] = useState<GrabFilter>("any");
   const [q, setQ] = useState("");
   // Debounced copy of q — the server query runs off this so each keystroke
   // doesn't fire a request.
@@ -698,7 +724,7 @@ function FilterChip({
   onClick,
   dot,
 }: {
-  status: GrabStatus;
+  status: GrabFilter;
   count: number;
   active: boolean;
   onClick: () => void;
@@ -746,7 +772,12 @@ function Pipeline({ g }: { g: Grab }) {
   let terminal: Step;
   switch (g.status) {
     case "confirmed":
-      terminal = { label: "Confirmed", at: confirmedAt, done: true, tone: "confirmed" };
+      // Landed-but-never-matched ends the pipeline in a neutral "In
+      // library", not a green "Confirmed" — the file is filed, but no
+      // StashDB scene was ever linked to it.
+      terminal = isUnmatched(g)
+        ? { label: "In library", at: confirmedAt, done: true, tone: "unmatched" }
+        : { label: "Confirmed", at: confirmedAt, done: true, tone: "confirmed" };
       break;
     case "mismatched":
       terminal = { label: "Mismatched", at: confirmedAt, done: true, tone: "mismatched" };
@@ -1092,6 +1123,41 @@ function MatchBlock({ g }: { g: Grab }) {
     );
   }
 
+  // Predicted, but Stash never linked the file to any StashDB scene. When
+  // the grab has already settled as confirmed that's the FINAL answer, not
+  // a wait — say so rather than promising a confirmation that will never
+  // come. Give it the same "not identified" hero the adopted path uses so
+  // the outcome reads at a glance, with the prediction kept as the lead
+  // the Find-matches tool below can act on.
+  if (g.status === "confirmed") {
+    return (
+      <div className="grab-match-hero unidentified">
+        <svg className="grab-match-glyph" viewBox="0 0 40 40" aria-hidden="true">
+          <circle className="ring" cx="20" cy="20" r="17" />
+          <text className="qmark" x="20" y="28" textAnchor="middle">
+            ?
+          </text>
+        </svg>
+        <div className="grab-match-hero-body">
+          <div className="grab-match-hero-title">No StashDB match</div>
+          <div className="grab-match-hero-sub">
+            In your library, but Stash never linked it to a scene. forage
+            predicted{" "}
+            <a
+              href={stashdbScene(predicted)}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {predicted}
+            </a>
+            {conf && <span className="grab-match-badge dim">{conf}</span>} — use
+            Find matches below to apply it or pick another.
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="grab-fact pending">
       <span className="grab-fact-k">Predicted</span>
@@ -1311,20 +1377,31 @@ function groupGrabsByScene(grabs: Grab[]): GrabListItem[] {
   return items;
 }
 
-// liveOutcome buckets a status into the three the summary line counts:
-// "live" (still in flight), "done" (landed in the library), or "dead"
-// (failed / abandoned / didn't match). Mirrors IN_FLIGHT / OUTCOME.
-function attemptTally(grabs: Grab[]): { live: number; done: number; dead: number } {
+// liveOutcome buckets a status into what the summary line counts: "live"
+// (still in flight), "done" (landed AND matched to a StashDB scene),
+// "unmatched" (landed but never linked — confirmed with no scene id), or
+// "dead" (failed / abandoned / matched the wrong scene). Mirrors
+// IN_FLIGHT / OUTCOME, with confirmed split by isUnmatched so a group
+// header doesn't claim an unidentified file as a clean result.
+function attemptTally(grabs: Grab[]): {
+  live: number;
+  done: number;
+  unmatched: number;
+  dead: number;
+} {
   let live = 0;
   let done = 0;
+  let unmatched = 0;
   let dead = 0;
   for (const g of grabs) {
-    if (g.status === "confirmed") done++;
-    else if (isActiveStatus(g.status) || g.status === "deferred") live++;
+    if (g.status === "confirmed") {
+      if (isUnmatched(g)) unmatched++;
+      else done++;
+    } else if (isActiveStatus(g.status) || g.status === "deferred") live++;
     // deferred is live: parked for automatic retry, not an outcome.
     else dead++; // mismatched / orphaned / failed
   }
-  return { live, done, dead };
+  return { live, done, unmatched, dead };
 }
 
 // SceneGroup is the attempt-stack card: one bordered block per scene with a
@@ -1347,7 +1424,8 @@ function SceneGroup({
   const n = group.grabs.length;
   const parts: string[] = [];
   if (tally.live) parts.push(`${tally.live} in flight`);
-  if (tally.done) parts.push(`${tally.done} in library`);
+  if (tally.done) parts.push(`${tally.done} matched`);
+  if (tally.unmatched) parts.push(`${tally.unmatched} unmatched`);
   if (tally.dead) parts.push(`${tally.dead} dead`);
   return (
     <li className={"grab-scene-group" + (open ? " open" : "")}>
@@ -1714,29 +1792,70 @@ function DupCopyRow({ tag, copy }: { tag: string; copy?: SceneCopy }) {
   );
 }
 
-// DupCard is one scene the pack duplicated. "yours" is the pre-existing
-// library copy (the highest-resolution one when several exist); "pack" is
-// what this download delivered. Keep yours drops the pack's copy; Keep pack
-// drops the original(s); Keep both leaves everything and dismisses the item.
+// dupWords supplies the duplicate-review copy for the grab's kind. The
+// daemon runs BOTH cases through the pack machinery — a single grab that
+// confirms into a scene you already have is recorded with the same schema
+// and the same keep:"pack" wire value, where "the pack's copy" is just
+// this download's file (see maybeRecordSingleDuplicate). The wire contract
+// stays as-is; only what the user reads changes, so a lone scene isn't
+// described as something a pack delivered.
+function dupWords(isPack: boolean) {
+  return isPack
+    ? {
+        // What this grab's copy is called, everywhere it's referred to.
+        newTag: "pack",
+        keepNew: "Keep pack",
+        keepExisting: "Keep yours",
+        existingTag: "yours",
+        armNew: "Delete pack copy?",
+        sub: "scenes this pack delivered that you already have",
+        badgeHint:
+          "This pack delivered scenes you already have — open to choose which copy to keep",
+        keptNew: "Kept the pack copy, removed the original",
+        keptExisting: "Kept your copy, removed the pack's",
+      }
+    : {
+        newTag: "new",
+        keepNew: "Keep new",
+        keepExisting: "Keep existing",
+        existingTag: "existing",
+        armNew: "Delete the new file?",
+        sub: "this download is a scene your library already had",
+        badgeHint:
+          "This download is a scene you already have — open to choose which copy to keep",
+        keptNew: "Kept the new copy, removed the original",
+        keptExisting: "Kept the existing copy, removed the new one",
+      };
+}
+
+// DupCard is one scene this grab duplicated. The "existing" side is the
+// pre-existing library copy (the highest-resolution one when several
+// exist); the "new" side is what this download delivered — a pack's file
+// or a single grab's, worded by dupWords. Keeping one destroys the other;
+// Keep both leaves everything and dismisses the item.
 function DupCard({
   dup,
+  isPack,
   busy,
   disabled,
   onResolve,
 }: {
   dup: DuplicateReview;
+  isPack: boolean;
   busy: boolean;
   disabled: boolean;
   onResolve: (keep: "existing" | "pack" | "both") => void;
 }) {
+  const w = dupWords(isPack);
   // Representative existing copy = highest resolution, so "yours" reflects the
   // best file the user already holds.
   const best = [...dup.existing].sort(
     (a, b) => (b.height ?? 0) - (a.height ?? 0),
   )[0];
   const others = dup.existing.length - 1;
-  // "Keep yours" destroys the pack's copy and "Keep pack" destroys your
-  // original(s) — both irreversible (file deleted server-side), so they use
+  // Keeping the existing copy destroys the new file, and keeping the new
+  // file destroys the original(s) — both irreversible (file deleted
+  // server-side), so they use
   // the same two-step arm as the grab delete button: first click flips the
   // label to spell out what gets deleted, second click within 4s commits.
   // "Keep both" destroys nothing and stays one click.
@@ -1764,8 +1883,8 @@ function DupCard({
         {dup.scene_title || dup.stashdb_id}
       </div>
       <div className="grab-dup-compare">
-        <DupCopyRow tag="yours" copy={best} />
-        <DupCopyRow tag="pack" copy={dup.pack} />
+        <DupCopyRow tag={w.existingTag} copy={best} />
+        <DupCopyRow tag={w.newTag} copy={dup.pack} />
         {others > 0 && (
           <div className="grab-dup-more">
             + {others} other cop{others === 1 ? "y" : "ies"} already in your
@@ -1781,11 +1900,7 @@ function DupCard({
           disabled={disabled}
           onClick={() => resolveArmed("existing")}
         >
-          {busy
-            ? "…"
-            : armed === "existing"
-              ? "Delete pack copy?"
-              : "Keep yours"}
+          {busy ? "…" : armed === "existing" ? w.armNew : w.keepExisting}
         </button>
         <button
           className={
@@ -1796,7 +1911,7 @@ function DupCard({
         >
           {armed === "pack"
             ? `Delete your original${others > 0 ? "s" : ""}?`
-            : "Keep pack"}
+            : w.keepNew}
         </button>
         <button
           className="grab-action ghost"
@@ -1955,12 +2070,13 @@ function GrabRow({
         throw new Error((res.errors ?? []).join("; ") || "resolve failed");
       }
       setResolvedDups((s) => new Set(s).add(dupId));
+      const w = dupWords(g.kind === "pack");
       onResolvedDuplicate(
         keep === "both"
           ? "Kept both copies"
           : keep === "pack"
-            ? "Kept the pack copy, removed the original"
-            : "Kept your copy, removed the pack's",
+            ? w.keptNew
+            : w.keptExisting,
       );
     } catch (e) {
       setDupErr((e as Error).message);
@@ -2010,6 +2126,10 @@ function GrabRow({
   const canMatch =
     !!g.placed_path && (g.status === "mismatched" || !g.actual_stashdb_id);
 
+  // Confirmed, but nothing on StashDB was ever linked to it — toned apart
+  // from a real match everywhere the row shows its status.
+  const unmatched = isUnmatched(g);
+
   // Fetch the rich detail (scene thumbnail/title/performers + local
   // Stash link) the first time the row opens, exactly once. A ref
   // guards the one-shot — deliberately NOT detailLoading state in the
@@ -2058,10 +2178,31 @@ function GrabRow({
   }
 
   return (
-    <li className={"grab-row status-" + g.status + (expanded ? " open" : "")}>
+    <li
+      className={
+        "grab-row status-" +
+        g.status +
+        (unmatched ? " unmatched" : "") +
+        (expanded ? " open" : "")
+      }
+    >
       <button className="grab-row-head" onClick={onToggle}>
         <div className="grab-row-badges">
-          <span className={"grab-status-badge chip-" + g.status}>{g.status}</span>
+          <span
+            className={
+              "grab-status-badge chip-" + g.status + (unmatched ? " unmatched" : "")
+            }
+          >
+            {g.status}
+          </span>
+          {unmatched && (
+            <span
+              className="grab-nomatch-badge"
+              title="In your library, but no StashDB scene was ever linked to it — open the row and use Find matches to link it"
+            >
+              NO MATCH
+            </span>
+          )}
           {g.stalled && (
             <span
               className="grab-stalled-badge"
@@ -2087,7 +2228,7 @@ function GrabRow({
           {(g.pending_duplicates ?? 0) > 0 && (
             <span
               className="grab-dups-badge"
-              title="This pack delivered scenes you already have — open to choose which copy to keep"
+              title={dupWords(g.kind === "pack").badgeHint}
             >
               {g.pending_duplicates} TO REVIEW
             </span>
@@ -2187,8 +2328,14 @@ function GrabRow({
                       {detailLoading ? "" : initials(g.performer_name)}
                     </span>
                   )}
-                  <span className={"grab-poster-badge chip-" + g.status}>
-                    {g.status}
+                  <span
+                    className={
+                      "grab-poster-badge chip-" +
+                      g.status +
+                      (unmatched ? " unmatched" : "")
+                    }
+                  >
+                    {unmatched ? "no match" : g.status}
                   </span>
                   {/* Name caption only on the performer-portrait (pack /
                       monogram) view — a scene thumbnail names itself via
@@ -2255,13 +2402,14 @@ function GrabRow({
                   </span>
                   {dups.length} duplicate{dups.length === 1 ? "" : "s"} to review
                   <span className="grab-dups-sub">
-                    scenes this pack delivered that you already have
+                    {dupWords(g.kind === "pack").sub}
                   </span>
                 </div>
                 {dups.map((d) => (
                   <DupCard
                     key={d.id}
                     dup={d}
+                    isPack={g.kind === "pack"}
                     busy={dupBusy === d.id}
                     disabled={dupBusy != null}
                     onResolve={(keep) => resolveDup(d.id, keep)}

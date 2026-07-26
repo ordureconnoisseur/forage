@@ -492,10 +492,19 @@ func (c *Client) FindSceneRefsByStashID(ctx context.Context, endpoint, stashID s
 // FilePath is the first file's path on the Stash side; StashDBID is
 // the cross-id we compare against the matcher's prediction.
 type SceneMatch struct {
-	ID        string
-	Title     string
-	Date      string
-	FilePath  string
+	ID    string
+	Title string
+	Date  string
+	// FilePath is Files[0] — the scene's FIRST file, which is not
+	// necessarily the one whose path matched the lookup. Anything deciding
+	// whether to DESTROY this scene must read FileCount, not this.
+	FilePath string
+	// FileCount is how many files Stash has attached to the scene. One
+	// scene can hold several: Stash files a re-download whose fingerprint
+	// matches as an extra file on the existing scene rather than as a new
+	// scene. sceneDestroy(delete_file) deletes ALL of them, so callers that
+	// destroy need to know before they act.
+	FileCount int
 	StashDBID string
 }
 
@@ -576,6 +585,9 @@ func (c *Client) FindSceneByPathContains(ctx context.Context, needle string) (*S
 		Title:     s.Title,
 		Date:      s.Date,
 		StashDBID: PickStashDBID(s.StashIDs),
+		// The query already asks for every file, so this costs nothing —
+		// it was simply being discarded.
+		FileCount: len(s.Files),
 	}
 	if len(s.Files) > 0 {
 		out.FilePath = s.Files[0].Path
@@ -941,6 +953,35 @@ func (c *Client) MetadataGenerate(ctx context.Context, sceneIDs []string) (strin
 		return "", fmt.Errorf("metadataGenerate: %w", err)
 	}
 	return resp.MetadataGenerate, nil
+}
+
+// SceneFileCount returns how many files Stash has attached to a scene, by
+// LOCAL scene id. Its whole purpose is to be checked before a destroy:
+// sceneDestroy(delete_file) removes EVERY file on the scene, so a caller
+// that means "delete this copy" needs to know when the scene actually holds
+// several. Returns 0 with clienterr.ErrNotFound when the scene is gone.
+func (c *Client) SceneFileCount(ctx context.Context, id string) (int, error) {
+	if id == "" {
+		return 0, fmt.Errorf("scene id is empty")
+	}
+	q := `query ForagerSceneFiles($id: ID!) {
+  findScene(id: $id) { id files { path } }
+}`
+	var resp struct {
+		FindScene *struct {
+			ID    string `json:"id"`
+			Files []struct {
+				Path string `json:"path"`
+			} `json:"files"`
+		} `json:"findScene"`
+	}
+	if err := c.do(ctx, q, map[string]any{"id": id}, &resp); err != nil {
+		return 0, fmt.Errorf("findScene files: %w", err)
+	}
+	if resp.FindScene == nil {
+		return 0, clienterr.ErrNotFound
+	}
+	return len(resp.FindScene.Files), nil
 }
 
 // SceneDestroy removes a scene from Stash. deleteFile also unlinks the

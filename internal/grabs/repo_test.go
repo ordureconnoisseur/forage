@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/ordureconnoisseur/forager/internal/db"
@@ -117,9 +118,12 @@ func TestListFilter(t *testing.T) {
 	r := newTestRepo(t)
 	ctx := context.Background()
 
-	// grabbed_at ascending so newest-first ordering is deterministic.
-	seedGrab(t, r, Grab{ReleaseTitle: "Ninounini DOG SHIT", PerformerName: "Ninounini", ReleaseIndexer: "empornium", Status: "confirmed", GrabbedAt: 100})
-	seedGrab(t, r, Grab{ReleaseTitle: "Emma Vai Pack", PerformerName: "Emma Vai", ReleaseIndexer: "pornbay", Status: "confirmed", GrabbedAt: 200})
+	// grabbed_at ascending so newest-first ordering is deterministic. The
+	// confirmed rows carry a cross-id because 'confirmed' now means "landed
+	// AND linked to a StashDB scene" — without one they'd fall under the
+	// 'unmatched' half of the split, which is a different test's subject.
+	seedGrab(t, r, Grab{ReleaseTitle: "Ninounini DOG SHIT", PerformerName: "Ninounini", ReleaseIndexer: "empornium", Status: "confirmed", ActualStashDBID: "sdb-nin", GrabbedAt: 100})
+	seedGrab(t, r, Grab{ReleaseTitle: "Emma Vai Pack", PerformerName: "Emma Vai", ReleaseIndexer: "pornbay", Status: "confirmed", ActualStashDBID: "sdb-emma", GrabbedAt: 200})
 	seedGrab(t, r, Grab{ReleaseTitle: "Random Studio Scene", PerformerName: "Someone", ReleaseIndexer: "empornium", Status: "failed", GrabbedAt: 300, ClientName: "ninou_bonus.mp4"})
 
 	all, err := r.List(ctx, "", "", 0, 0)
@@ -175,7 +179,10 @@ func TestCountFilteredMatchesFilter(t *testing.T) {
 		if i%5 == 0 {
 			status = "failed"
 		}
-		seedGrab(t, r, Grab{ReleaseTitle: "Scene", PerformerName: "Perf", Status: status, GrabbedAt: int64(i + 1)})
+		// Cross-id on the confirmed rows: see TestListFilter — a confirmed
+		// grab without one counts as 'unmatched' under the split.
+		seedGrab(t, r, Grab{ReleaseTitle: "Scene", PerformerName: "Perf", Status: status,
+			ActualStashDBID: "sdb-" + strconv.Itoa(i), GrabbedAt: int64(i + 1)})
 	}
 
 	if n, _ := r.CountFiltered(ctx, "", ""); n != 250 {

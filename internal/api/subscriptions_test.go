@@ -358,16 +358,16 @@ func TestUpgradeWatchFloorGate(t *testing.T) {
 			Verified: true, DownloadURL: "http://x/1080"},
 	}
 	// Floor 720: only the 1080p qualifies.
-	got := s.bestWatchMatch(cands, nil, 720)
+	got := s.bestWatchMatch(cands, nil, 720, 0)
 	if got == nil || got.DownloadURL != "http://x/1080" {
 		t.Fatalf("floor 720: want the 1080p release, got %+v", got)
 	}
 	// Floor 1080: nothing beats it.
-	if got := s.bestWatchMatch(cands, nil, 1080); got != nil {
+	if got := s.bestWatchMatch(cands, nil, 1080, 0); got != nil {
 		t.Fatalf("floor 1080: want no match, got %+v", got)
 	}
 	// Floor 0 (acquire watch): best release wins as before.
-	if got := s.bestWatchMatch(cands, nil, 0); got == nil {
+	if got := s.bestWatchMatch(cands, nil, 0, 0); got == nil {
 		t.Fatal("acquire watch must still match")
 	}
 }

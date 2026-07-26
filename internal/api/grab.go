@@ -106,10 +106,20 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 	// pair has a tiny residual window, acceptable vs a download_url unique
 	// index that would forbid post-failure re-grabs.)
 	if s.grabs != nil {
-		if existing, err := s.grabs.ByDownloadURL(ctx, req.DownloadURL); err == nil &&
+		// LiveByRelease, not ByDownloadURL: an exact-URL check catches a
+		// double-click and almost nothing else, because Prowlarr re-issues a
+		// fresh URL for the same release on every search. It also shares the
+		// watch loop's cross-post rule, so clicking grab on a release whose
+		// identical file is already in the library returns that grab instead
+		// of fetching it twice. Recovery is unaffected: the cross-indexer
+		// arm only matches a grab that has already landed, so re-grabbing
+		// from another indexer after a dead or stalled attempt still works.
+		if existing, err := s.grabs.LiveByRelease(ctx, req.DownloadURL, req.ReleaseTitle, req.ReleaseIndexer); err == nil &&
 			existing != nil && existing.Status != "failed" {
-			s.log.Info("grab deduped: non-failed grab for this URL exists",
-				"grab_id", existing.ID, "status", existing.Status, "release", req.ReleaseTitle)
+			s.log.Info("grab deduped: non-failed grab for this release exists",
+				"grab_id", existing.ID, "status", existing.Status, "release", req.ReleaseTitle,
+				"existing_indexer", existing.ReleaseIndexer, "requested_indexer", req.ReleaseIndexer,
+				"placed", existing.PlacedPath != "")
 			return grabResponse{
 				OK: true, Client: existing.Client, Category: existing.Category,
 				GrabID: existing.ID, ClientID: existing.ClientID,

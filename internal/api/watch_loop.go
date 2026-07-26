@@ -171,6 +171,19 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 			}
 			return
 		}
+		// The scene arrived by some route forage didn't grab (the transcode
+		// pipeline, a manual import, another performer's pack). The watch's
+		// whole job is done, so stop searching rather than fetch a second copy.
+		// If the copy is later removed, the reconcile reverse pass resumes the
+		// hunt exactly as it does for the covered case above.
+		if s.watchSatisfiedByLibrary(ctx, w.StashDBID) {
+			if err := s.watches.MarkGrabbed(ctx, w.StashDBID,
+				w.FoundTitle, w.FoundURL, w.FoundIndexer, w.FoundProtocol, w.FoundSize); err == nil {
+				s.log.Info("watch done — the library already holds this scene",
+					"scene", w.StashDBID, "title", w.Title)
+			}
+			return
+		}
 	}
 	m, err := s.Matcher(ctx)
 	if err != nil {
@@ -256,7 +269,14 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	// whatever its resolution (no quality target; the stored candidate list
 	// lets the user pick a different one, and quality floors live in the
 	// release reject rules the scorer already applies).
-	best := s.bestWatchMatch(cands, w.IgnoredURLs, w.UpgradeFloor)
+	// An upgrade watch's own floor already encodes what's owned (and demands
+	// better), so the downgrade guard would be redundant there — pass 0 and
+	// leave that logic in one place.
+	ownedFloor := 0
+	if w.UpgradeFloor == 0 {
+		ownedFloor = s.ownedBestHeight(ctx, w.StashDBID)
+	}
+	best := s.bestWatchMatch(cands, w.IgnoredURLs, w.UpgradeFloor, ownedFloor)
 	if best == nil {
 		return
 	}
@@ -334,7 +354,65 @@ func (s *Server) dropAlreadyGrabbed(ctx context.Context, cands []sceneRelease) [
 	return kept
 }
 
-func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string, upgradeFloor int) *sceneRelease {
+// watchSatisfiedByLibrary reports whether the library already holds a copy of
+// the scene, in which case an ordinary (non-upgrade) watch has nothing left to
+// fetch and should go quiet.
+//
+// checkWatch used to hold a watch only when a GRAB existed for the scene, not
+// when the scene was simply already owned. Ownership is filtered when a watch
+// is CREATED (it comes off the missing list), so a scene that becomes owned
+// afterwards — by the HEVC transcode pipeline, a manual import, another
+// performer's pack — left its watch live, and the next rotation searched and
+// grabbed a redundant copy. That is how a 400p release of a scene held in
+// 1080p for nine days got downloaded.
+//
+// Only identified copies count: the map is keyed by the StashDB cross-id Stash
+// holds, so an unidentified file never closes a watch. A lookup failure
+// returns false — an unknown library must never silence a watch.
+func (s *Server) watchSatisfiedByLibrary(ctx context.Context, stashDBID string) bool {
+	owned, err := s.ownedSceneCopies(ctx)
+	if err != nil {
+		return false
+	}
+	return len(owned[stashDBID]) > 0
+}
+
+// ownedBestHeight returns the tallest height among the copies already in the
+// library for a scene, or 0 when nothing is owned (or Stash didn't report a
+// height). Reads the memoised owned-copies map, so calling it per watch costs
+// nothing beyond the first load in a TTL.
+func (s *Server) ownedBestHeight(ctx context.Context, stashDBID string) int {
+	owned, err := s.ownedSceneCopies(ctx)
+	if err != nil {
+		return 0 // unknown: never let a lookup failure block a grab
+	}
+	best := 0
+	for _, c := range owned[stashDBID] {
+		if c.Height > best {
+			best = c.Height
+		}
+	}
+	return best
+}
+
+// bestWatchMatch picks the release to surface for a watch.
+//
+// upgradeFloor applies to UPGRADE watches: the find must BEAT the owned copy,
+// so equal-or-worse is skipped. ownedFloor applies to every watch and is the
+// weaker, opposite-direction rule: never auto-grab a release that is strictly
+// WORSE than a copy already in the library.
+//
+// That second floor exists because forage grabbed a 400p release of a scene it
+// had held in 1080p for nine days — the ownership signal that should have
+// stopped it didn't, and the download was pure waste. A quality floor is a
+// second line of defence that doesn't depend on ownership detection being
+// right: whatever put the watch there, taking a worse copy than the one on
+// disk is never the answer.
+//
+// Equal heights are allowed through, deliberately. A same-height release can
+// be a better encode, and the cross-post rule in LiveByRelease already stops
+// the same release being fetched twice. Only a strict downgrade is refused.
+func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string, upgradeFloor, ownedFloor int) *sceneRelease {
 	ignoredSet := make(map[string]bool, len(ignored))
 	for _, u := range ignored {
 		ignoredSet[u] = true
@@ -363,6 +441,14 @@ func (s *Server) bestWatchMatch(cands []sceneRelease, ignored []string, upgradeF
 		// Upgrade watches only care about releases that BEAT the owned
 		// copy; an equal-or-worse find is not an upgrade.
 		if upgradeFloor > 0 && scoring.ResolutionHeight(c.Title) <= upgradeFloor {
+			continue
+		}
+		// Never auto-grab a strict downgrade on what's already on disk.
+		// ResolutionHeight returns 0 for a title it can't parse, and an
+		// unreadable title must NOT read as "0p, therefore a downgrade" — that
+		// would silently block every release whose name doesn't carry a
+		// resolution. Unknown means allow.
+		if h := scoring.ResolutionHeight(c.Title); ownedFloor > 0 && h > 0 && h < ownedFloor {
 			continue
 		}
 		if bestIdx == -1 || betterRelease(cands[i], cands[bestIdx]) {

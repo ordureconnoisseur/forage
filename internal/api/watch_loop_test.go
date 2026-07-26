@@ -18,16 +18,16 @@ func TestBestWatchMatch(t *testing.T) {
 		{Title: "E 4k dead", DownloadURL: "e", Verified: true, Score: 200, Protocol: "torrent", Seeders: 0},
 	}
 
-	best := s.bestWatchMatch(cands, nil, 0)
+	best := s.bestWatchMatch(cands, nil, 0, 0)
 	if best == nil || best.DownloadURL != "b" {
 		t.Fatalf("want B (top grabbable verified by score), got %+v", best)
 	}
 	// Ignoring B falls through to A (next grabbable verified), NOT the dead E.
-	if best := s.bestWatchMatch(cands, []string{"b"}, 0); best == nil || best.DownloadURL != "a" {
+	if best := s.bestWatchMatch(cands, []string{"b"}, 0, 0); best == nil || best.DownloadURL != "a" {
 		t.Fatalf("with B ignored want A, got %+v", best)
 	}
 	// Nothing verified → nil (watch stays watching).
-	if s.bestWatchMatch([]sceneRelease{{DownloadURL: "x", Verified: false, Score: 999}}, nil, 0) != nil {
+	if s.bestWatchMatch([]sceneRelease{{DownloadURL: "x", Verified: false, Score: 999}}, nil, 0, 0) != nil {
 		t.Error("no verified release should yield nil")
 	}
 }
@@ -46,7 +46,7 @@ func TestBestWatchMatchConfidenceWithinTier(t *testing.T) {
 		{Title: "Bang.26.06.29.Angela.White.XXX.1080p", DownloadURL: "dated",
 			Verified: true, Score: 135, Protocol: "usenet", Confidence: 0.90},
 	}
-	if best := s.bestWatchMatch(cands, nil, 0); best == nil || best.DownloadURL != "dated" {
+	if best := s.bestWatchMatch(cands, nil, 0, 0); best == nil || best.DownloadURL != "dated" {
 		t.Fatalf("same-resolution: higher-confidence (dated) must beat higher-score, got %+v", best)
 	}
 	// But a genuine resolution difference still defers to the user's score: a
@@ -55,7 +55,7 @@ func TestBestWatchMatchConfidenceWithinTier(t *testing.T) {
 		{Title: "Scene 1080p", DownloadURL: "hd", Verified: true, Score: 100, Protocol: "usenet", Confidence: 0.95},
 		{Title: "Scene 2160p", DownloadURL: "uhd", Verified: true, Score: 60, Protocol: "usenet", Confidence: 0.50},
 	}
-	if best := s.bestWatchMatch(cross, nil, 0); best == nil || best.DownloadURL != "hd" {
+	if best := s.bestWatchMatch(cross, nil, 0, 0); best == nil || best.DownloadURL != "hd" {
 		t.Fatalf("cross-resolution: user score (1080p>4K) must decide, not confidence, got %+v", best)
 	}
 }
