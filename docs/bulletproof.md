@@ -132,7 +132,9 @@ guard regression (mutation test on the destroy façade) fails the build.
   clearing `PlacedPath` on failure; awaited shutdown.
 - ☑ **/healthz depth**: poller block with lastTickAt/lastTickMs +
   libraryOk (+ libraryError), so a wedged daemon or dropped mount is
-  visible remotely. Journal counts remain open.
+  visible remotely. Journal tallies shipped too: a `destructions` block
+  with per-outcome counts (all-time + last 24h; counts only — the endpoint
+  is unauthenticated).
 - ☐ **StashDB request budget** with backoff — protect the upstream that
   everything depends on from forage's own fan-out on big libraries.
 
@@ -142,16 +144,20 @@ and the journal/DB explain what happened.
 
 ## Phase 4 — survive other people's machines
 
-- ☐ **Windows-native path audit**: the binary ships for Windows now;
-  placer/pathmap are exercised on Linux paths daily but Windows separators,
-  drive letters and UNC paths only incidentally. Table-driven tests across
-  both separators for placer, pathmap, packNeedle, sameParentDir.
+- ☑ **Windows-native path audit**: table-driven tests across both
+  separators for placer, pathmap, packNeedle, sameParentDir. Found and
+  fixed a real one: `Translate` rejected every file under a correctly
+  matched Windows-native prefix (backslash never accepted as the path
+  boundary), silently degrading scoped scans to full-library scans on the
+  shipped .exe. Also verified live: daemon run on the Windows PC against
+  real Stash, NTFS probes, backups.
 - ☐ **Version matrix**: contract tests from recorded fixtures for Stash
   0.26→0.31, qBit 4.x/5.x (the Resume rename is already handled — that's
   the pattern), SAB 3.x/4.x. Document the supported floor in the README.
 - ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
   scopes) so `docker pull` works.
-- ☐ **Bug-report ergonomics**: issue templates; a `/healthz?diag=1`
+- ◐ **Bug-report ergonomics**: issue templates SHIPPED (version/install/
+  healthz/logs/journal-rows prompts). Remaining: a `/healthz?diag=1`
   redacted diagnostics bundle (versions, config sources with secrets
   masked, last errors) a tester can paste; FAQ for the three setup
   mistakes (wrong container path, different filesystems, category save

@@ -79,6 +79,31 @@ SELECT id, reason, scene_id, title, files, outcome, detail, created_at
 	return &e, nil
 }
 
+// CountDestructionsByOutcome tallies journal rows per outcome, optionally
+// restricted to rows created at/after since (0 = all time). Feeds the
+// /healthz destructions block: a bug report should show at a glance whether
+// the daemon has been deleting, refusing, or neither — without shipping the
+// journal itself.
+func (r *Repo) CountDestructionsByOutcome(ctx context.Context, since int64) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT outcome, COUNT(*) FROM destruction_log
+ WHERE created_at >= ? GROUP BY outcome`, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var outcome string
+		var n int64
+		if err := rows.Scan(&outcome, &n); err != nil {
+			return nil, err
+		}
+		out[outcome] = n
+	}
+	return out, rows.Err()
+}
+
 // ListDestructions returns the newest journal rows, for the audit view.
 func (r *Repo) ListDestructions(ctx context.Context, limit int) ([]DestructionEntry, error) {
 	if limit <= 0 || limit > 500 {

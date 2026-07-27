@@ -769,6 +769,24 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             pack's copy" deletes your originals automatically, so it only acts
             once a pack has fully scanned.
           </p>
+          <Field label="Trash retention (days)">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={durationToDays(
+                String(displayValue("trashTtl", data?.fields["trashTtl"]) ?? ""),
+              )}
+              onChange={(e) => setField("trashTtl", daysToDuration(e.target.value))}
+            />
+            <SourceBadge field={data?.fields["trashTtl"]} />
+          </Field>
+          <p className="settings-tip">
+            Deleted files are moved to a <code>.forage-trash</code> folder
+            beside the library and kept restorable (Deletions page) for this
+            many days before the sweep removes them for good. 0 turns the
+            trash off entirely — every delete is immediate and permanent.
+          </p>
           <div className="settings-actions inline">
             <button
               className="settings-test"

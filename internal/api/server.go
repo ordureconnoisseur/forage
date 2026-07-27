@@ -512,6 +512,14 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	if s.pollerHealth != nil {
 		payload["poller"] = s.pollerHealth()
 	}
+	// Destruction-journal tallies (counts only — no titles or paths, this
+	// endpoint is unauthenticated): whether the daemon has been deleting,
+	// trashing, or refusing, all-time and in the last 24h. The first thing
+	// to look at when triaging "where did my file go".
+	if all, err := s.grabs.CountDestructionsByOutcome(r.Context(), 0); err == nil {
+		day, _ := s.grabs.CountDestructionsByOutcome(r.Context(), time.Now().Add(-24*time.Hour).Unix())
+		payload["destructions"] = map[string]any{"total": all, "last24h": day}
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
