@@ -93,6 +93,8 @@ Then the file lands and Stash's perceptual hash checks the answer independently.
 
 This is the half that saves the most time day to day.
 
+![An expanded grab — the life-cycle pipeline, the MATCH CONFIRMED verdict comparing forage's prediction against Stash's perceptual hash, and one-click performer re-filing (media blurred)](docs/assets/grab-dossier.png)
+
 | | |
 |---|---|
 | **Placement** | Hardlinked into `<library>/<performer>/` — the performer page you grabbed from, no "primary performer" guessing. The original stays put, so torrents keep seeding and no space is duplicated. |
@@ -102,6 +104,43 @@ This is the half that saves the most time day to day.
 | **Tagging** | Pack grabs get their performer added to every scene in the pack, additively — identified scenes keep the performers they already had. |
 | **Verify** | Stash's phash result is compared to what forage predicted before downloading. Agreement → `confirmed`. Disagreement → `mismatched`, showing both scene ids. |
 | **Repair** | If something never matched, one click writes the StashDB scene onto it: cross-id, title, date, studio, performers linked to your local ones, and the cover art Stash couldn't fetch without a hash match. |
+
+## Deleting things without fear
+
+Destruction is where media managers earn distrust, so forage treats it as a
+first-class subsystem rather than a button:
+
+- **Every delete shows its plan first.** Arming the Delete button fetches
+  the exact file list the purge will execute — full paths, what the
+  download client loses, and equally what will *not* be deleted and why
+  (e.g. a scene holding a second file another grab placed is refused, not
+  destroyed).
+- **Trash, not unlink.** Deletions move files to a trash beside the library
+  (same filesystem — a free rename, and hardlinks mean zero extra space
+  while the torrent still seeds) and stay restorable for 7 days
+  (`FORAGER_TRASH_TTL`; 0 restores permanent deletion). One click puts a
+  deletion back and re-indexes it.
+- **Everything is journalled.** The Deletions page records every
+  destruction forage performed *or refused* — intent written before the
+  act, outcome after, file lists snapshotted — so "what did it delete and
+  why" is a page, not log archaeology.
+- **Outage latch.** If the library mount drops, placement pauses and
+  destruction refuses outright, because "file missing" during an outage is
+  not evidence of anything.
+
+![The deletion journal — every removal or refusal, with restore buttons on trashed entries (paths blurred)](docs/assets/deletions.png)
+
+### Seeding management
+
+Completed torrents retire automatically once they've earned it — a seeding
+ratio or age, whichever comes first (defaults 1.0 / 7 days; both
+configurable, 0 disables). The client's copy is deleted; the library's
+hardlink is untouched, and forage verifies the library copy exists on disk
+before every cull. Per-indexer overrides live in **Settings → Seeding** as
+a table over your actual Prowlarr indexers — private trackers are badged,
+and a longer age or higher ratio there protects their ratio economy. forage
+only ever culls torrents it grabbed itself; anything else in the category
+is never touched.
 
 ## Why not Whisparr?
 
@@ -131,6 +170,8 @@ folder".
 ## Features
 
 ### Performer-driven discovery
+
+![The performer grid — subscriptions up top, every card carrying its owned count and how many scenes you're missing](docs/assets/performers.png)
 
 The **Performers** tab is your library, sortable four ways:
 
