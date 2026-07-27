@@ -20,6 +20,17 @@ func New(baseURL, apiKey string) *Client {
 	return &Client{gql: gqlclient.New(baseURL, apiKey, "stashdb"), pacer: newPacer()}
 }
 
+// NewUnpaced is New without the request budget — for tests driving a
+// local fake where pacing only slows the suite. Production callers use
+// New: the budget exists to protect the real, shared stashdb.org.
+func NewUnpaced(baseURL, apiKey string) *Client {
+	c := New(baseURL, apiKey)
+	c.pacer.rate = 1e9
+	c.pacer.burst = 1e9
+	c.pacer.tokens = 1e9
+	return c
+}
+
 // do funnels every StashDB query through the request budget (see pacer):
 // wait for a slot, run, feed the outcome back for the back-off. A context
 // that dies in the queue is classified transient like any other timeout —

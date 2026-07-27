@@ -89,11 +89,15 @@ a soak week.
   - ☑ **Native fuzzing** for the parsing surfaces that eat hostile input:
     `Tokenize`, `ExtractJAVCodes`, the date reader, `pathmap`. Seed corpora
     from real release names; short fuzz in CI, long fuzz nightly.
-  - ☐ **Matcher regression gate**: a small *synthetic* corpus committed to
-    the repo (the real one stays private per policy), bench in CI, fail on
-    P@1 drop beyond an epsilon. The private-corpus run on mini remains the
-    release gate (existing rule: run matcher-bench + --verify after any
-    matcher change).
+  - ☑ **Matcher pipeline gate in CI**: pipeline_smoke_test.go runs the
+    FULL Match path (tokenize → entity scan → StashDB fan-out → score →
+    rank) against a synthetic corpus + fake StashDB GraphQL server, and
+    pins that canonical release shapes rank their scene first. Scoped
+    deliberately as a wiring gate, not an accuracy gate: a statistically
+    meaningful P@1 epsilon needs a realistic corpus, and the realistic
+    corpus stays private — so the accuracy gate remains the private-corpus
+    matcher-bench on the live instance, codified in CONTRIBUTING's
+    release checklist.
 - ☑ **Fault injection on the lifecycle rig.** chaos_test.go wraps every
   fake client with seeded faults (500s, garbage-with-200, truncated bodies,
   dropped connections; 14 seeds in CI) and asserts: every observed change is
