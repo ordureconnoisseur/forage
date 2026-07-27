@@ -1,0 +1,59 @@
+name: Bug report
+description: Something broke, matched wrong, or deleted wrong
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes:
+      label: forage version
+      description: From http://<host>:7979/healthz — the "version" field.
+      placeholder: v0.3.0
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How is it running?
+      options:
+        - Single binary (Windows)
+        - Single binary (macOS)
+        - Single binary (Linux)
+        - Docker
+        - Built from source
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: >-
+        What you did, what you expected, what happened instead. If a release
+        matched to the wrong scene, include the release title and the
+        StashDB ids of the wrong and right scenes.
+    validations:
+      required: true
+  - type: textarea
+    id: healthz
+    attributes:
+      label: /healthz output
+      description: >-
+        Paste the JSON from http://<host>:7979/healthz — it carries the
+        version, client reachability, and poller state, and it contains no
+        secrets or library paths.
+      render: json
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: >-
+        Daemon output around the problem (docker logs forager, or the
+        terminal the binary runs in). Redact anything you consider private —
+        release names in logs are the usual thing to check.
+      render: shell
+  - type: markdown
+    attributes:
+      value: >-
+        **If files were deleted or trashed unexpectedly:** the deletion
+        journal is the evidence — paste the relevant rows from
+        `/destructions` (or the Deletions page). Trashed entries are
+        restorable from that page for 7 days.

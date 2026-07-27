@@ -12,6 +12,8 @@ Two things it does differently:
 
 The daemon serves the app at its own URL (like an *arr); an optional Stash plugin adds a launcher button to Stash's navbar.
 
+![The Grabs pipeline — every download tracked through queued → downloading → placed → confirmed, with the outcomes filterable](docs/assets/grabs-header.png)
+
 > **Naming:** *forage* is the product — the app and the experience. *forager* is the daemon that backs it (and the name of this repo, the container, and the `FORAGER_*` environment variables). When you read "forager" below, it's the service; "forage" is the thing you open.
 
 ```mermaid
@@ -101,6 +103,30 @@ This is the half that saves the most time day to day.
 | **Verify** | Stash's phash result is compared to what forage predicted before downloading. Agreement → `confirmed`. Disagreement → `mismatched`, showing both scene ids. |
 | **Repair** | If something never matched, one click writes the StashDB scene onto it: cross-id, title, date, studio, performers linked to your local ones, and the cover art Stash couldn't fetch without a hash match. |
 
+## Why not Whisparr?
+
+Fair question — Whisparr v3 (Eros) uses StashDB for metadata too. Three
+differences decide it:
+
+- **Whisparr doesn't talk to your Stash.** It keeps its own library
+  database, which is why Stasharr, StashSeer and whisparr-bridge exist just
+  to glue the two together. forage reads Stash directly: what you own, what's
+  missing, where files go — one library, no second database to keep in sync.
+- **Matching runs the other way.** Whisparr parses a release name into
+  title/performer/studio/date fields and hopes they line up — and adult
+  release names have no grammar, so that fails constantly. forage searches
+  wide on purpose and identifies every result against the scene it's after,
+  from evidence: the performers and studios in your library, dates, scene
+  codes, cast overlap. The release title never has to contain anything you
+  could have searched for.
+- **It verifies.** After the download lands, Stash's perceptual hash
+  confirms forage's prediction — or flags the mismatch, with both scene ids
+  shown. A name-parser that's wrong is just silently wrong.
+
+If your library isn't in Stash, forage isn't for you — that's the honest
+boundary. If it is, forage finishes the job Whisparr leaves at "file in a
+folder".
+
 
 ## Features
 
@@ -163,17 +189,6 @@ stateDiagram-v2
 ```
 
 Polls every 5s while grabs are in flight, slows to 30s when settled. With `FORAGER_LIBRARY_ROOT` unset, `completed` goes straight to `confirmed`/`mismatched`/`orphaned` (placement skipped — files stay in the client's complete dir).
-
-### Placement
-
-forage owns final file placement — a deliberate choice; the arr-stack's "tag at client, sort-via-arr" handoff has too many failure points. When a download finishes:
-
-1. The source path comes from qBit's `content_path` or SAB's history `path`.
-2. forage builds `<library_root>/<sanitised-performer>/<release-filename>` (single files use the basename; packs mirror their tree). Performer names are sanitised and release filenames can't traverse out of the library root.
-3. `os.Link` (instant, keeps torrents seedable); falls back to a streamed copy across filesystems.
-4. The grab flips to `placed`, then to `confirmed`/`mismatched`/`orphaned` once Stash scans it.
-
-The performer folder is whichever performer page you grabbed from — predictable, no "primary performer" guessing.
 
 ### First-run setup
 

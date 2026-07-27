@@ -55,13 +55,23 @@ func Translate(foragerPath, mapping string) string {
 	// nonexistent Stash paths, silently mis-scoping scans and the purge
 	// path's scene lookups instead of falling back via the documented
 	// empty return.
-	if suffix != "" && suffix[0] != '/' {
+	// Both separators are path boundaries: a WINDOWS-NATIVE daemon's
+	// forager-side paths use backslashes (UNC shares, drive letters), and
+	// accepting only '/' here made Translate return "" for every file under
+	// a correctly-matched Windows prefix — scoped scans silently degraded
+	// to full-library scans on the shipped .exe. (Found by the UNC path
+	// audit for the Windows binary.)
+	if suffix != "" && suffix[0] != '/' && suffix[0] != '\\' {
 		return ""
 	}
 	if strings.ContainsRune(stashPrefix, '\\') {
 		// Windows-style target — flip forward slashes in the suffix to
 		// backslashes so the joined path is well-formed.
 		suffix = strings.ReplaceAll(suffix, "/", `\`)
+	} else if strings.ContainsRune(stashPrefix, '/') {
+		// POSIX-style target fed from a Windows-native daemon: flip the
+		// suffix's backslashes the other way.
+		suffix = strings.ReplaceAll(suffix, `\`, "/")
 	}
 	return stashPrefix + suffix
 }

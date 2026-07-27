@@ -147,3 +147,43 @@ func TestReverseCaseInsensitiveWindowsPrefix(t *testing.T) {
 		t.Errorf("posix prefix matched case-insensitively: %q", got)
 	}
 }
+
+// TestUNCPaths: a Windows-native daemon pointed at a NAS commonly uses UNC
+// paths (\nas\media\...) rather than drive letters — the shape the shipped
+// .exe meets in the wild. Translate/Reverse/Base/Parent must all treat them
+// as ordinary Windows paths.
+func TestUNCPaths(t *testing.T) {
+	const mapping = `\nas\media\Library:Z:\Media`
+	if got := Translate(`\nas\media\Library`, mapping); got != `Z:\Media` {
+		t.Errorf("Translate(root) = %q", got)
+	}
+	// Boundary: a sibling share must not translate.
+	if got := Translate(`\nas\media\Library2\x.mp4`, mapping); got != "" {
+		t.Errorf("sibling translated: %q", got)
+	}
+	if got := Reverse(`Z:\Media\P\x.mp4`, mapping); got != `\nas\media\Library\P\x.mp4` {
+		t.Errorf("Reverse = %q", got)
+	}
+	if got := Base(`\nas\media\Library\P\x.mp4`); got != "x.mp4" {
+		t.Errorf("Base = %q", got)
+	}
+	if got := Parent(`\nas\media\Library\P\x.mp4`); got != "P" {
+		t.Errorf("Parent = %q", got)
+	}
+}
+
+// TestUNCTranslateFiles pins the case the first UNC test missed: a FILE
+// under a Windows-native prefix, whose suffix starts with a backslash. The
+// '/'-only boundary check returned "" here, silently degrading every scoped
+// scan on a Windows-native daemon to a full-library scan.
+func TestUNCTranslateFiles(t *testing.T) {
+	const mapping = `\nas\media\Library:Z:\Media`
+	if got := Translate(`\nas\media\Library\P\x.mp4`, mapping); got != `Z:\Media\P\x.mp4` {
+		t.Errorf("Translate(file) = %q", got)
+	}
+	// Cross-OS: Windows-native daemon, POSIX-side Stash — the suffix's
+	// backslashes must flip forward.
+	if got := Translate(`\nas\media\Library\P\x.mp4`, `\nas\media\Library:/mnt/media`); got != "/mnt/media/P/x.mp4" {
+		t.Errorf("Translate(win to posix) = %q", got)
+	}
+}
