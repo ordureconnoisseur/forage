@@ -31,6 +31,7 @@ package destroy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -251,6 +252,18 @@ func (e Executor) Execute(ctx context.Context, p Plan, reason string) Outcome {
 				movesJSON, _ := json.Marshal(moves)
 				finalize(jid, "trashed", string(movesJSON))
 				out.Destroyed = append(out.Destroyed, t)
+				continue
+			}
+			if errors.Is(terr, ErrLibraryUnavailable) {
+				// The mount is gone, not the file. Refuse rather than
+				// degrade: a permanent Stash-side delete during an outage
+				// would destroy files that are merely invisible right now.
+				if e.Log != nil {
+					e.Log.Warn("destroy refused: library unavailable",
+						"reason", reason, "scene", t.SceneID, "err", terr)
+				}
+				finalize(jid, "failed", terr.Error())
+				out.Failed = append(out.Failed, Failure{Target: t, Err: terr})
 				continue
 			}
 			// Disclosed downgrade: fall through to the permanent path with

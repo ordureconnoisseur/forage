@@ -122,16 +122,17 @@ func main() {
 	watchesRepo := watches.NewRepo(database)
 
 	server := api.New(api.Options{
-		DB:          database,
-		Pool:        pool,
-		Bootstrap:   bootstrap,
-		Store:       store,
-		Grabs:       grabsRepo,
-		Watches:     watchesRepo,
-		Log:         log.With("component", "api"),
-		Version:     Version,
-		AdoptNow:    p.AdoptNow,
-		PendingAdds: pendingAdds,
+		DB:           database,
+		Pool:         pool,
+		Bootstrap:    bootstrap,
+		Store:        store,
+		Grabs:        grabsRepo,
+		Watches:      watchesRepo,
+		PollerHealth: p.Health,
+		Log:          log.With("component", "api"),
+		Version:      Version,
+		AdoptNow:     p.AdoptNow,
+		PendingAdds:  pendingAdds,
 	})
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-

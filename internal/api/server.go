@@ -47,17 +47,18 @@ var uiETag = func() string {
 // read fresh references via pool.X() on every request rather than
 // holding stale ones across config saves.
 type Server struct {
-	db        *sql.DB
-	pool      *clientpool.Pool
-	bootstrap config.BootstrapConfig
-	store     *configstore.Store
-	grabs     *grabs.Repo         // never nil
-	watches   *watches.Repo       // never nil
-	subs      *subscriptions.Repo // never nil; permanent performer/studio watches
-	rss       *rss.Repo           // never nil; RSS-sync watermark store
-	log       *slog.Logger
-	version   string
-	adoptNow  func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
+	db           *sql.DB
+	pool         *clientpool.Pool
+	bootstrap    config.BootstrapConfig
+	store        *configstore.Store
+	grabs        *grabs.Repo         // never nil
+	watches      *watches.Repo       // never nil
+	subs         *subscriptions.Repo // never nil; permanent performer/studio watches
+	rss          *rss.Repo           // never nil; RSS-sync watermark store
+	log          *slog.Logger
+	version      string
+	adoptNow     func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
+	pollerHealth func() map[string]any            // poller telemetry for /healthz; may be nil
 
 	// torrentGate spaces out .torrent fetches (addTorrentAsync) so a bulk
 	// grab or bulk-retry doesn't burst the indexer into HTTP 429s. Zero value
@@ -174,6 +175,10 @@ type Options struct {
 	// PendingAdds is the in-flight async-add registry shared with the
 	// poller (see Server.pendingAdds). May be nil (tests).
 	PendingAdds *grabs.PendingAdds
+	// PollerHealth returns the poller's telemetry snapshot (last tick
+	// time/duration, library-mount health) for /healthz. May be nil (tests),
+	// in which case healthz simply omits the block.
+	PollerHealth func() map[string]any
 }
 
 // destroyExecutor assembles the one-door destruction machinery for a
@@ -192,19 +197,20 @@ func (s *Server) destroyExecutor(sc *stash.Client) destroy.Executor {
 
 func New(opts Options) *Server {
 	s := &Server{
-		db:          opts.DB,
-		pool:        opts.Pool,
-		bootstrap:   opts.Bootstrap,
-		store:       opts.Store,
-		grabs:       opts.Grabs,
-		watches:     opts.Watches,
-		subs:        subscriptions.NewRepo(opts.DB),
-		rss:         rss.NewRepo(opts.DB),
-		log:         opts.Log,
-		version:     opts.Version,
-		adoptNow:    opts.AdoptNow,
-		pendingAdds: opts.PendingAdds,
-		sessionKey:  loadOrCreateSessionKey(opts.DB, opts.Log),
+		db:           opts.DB,
+		pool:         opts.Pool,
+		bootstrap:    opts.Bootstrap,
+		store:        opts.Store,
+		grabs:        opts.Grabs,
+		watches:      opts.Watches,
+		subs:         subscriptions.NewRepo(opts.DB),
+		rss:          rss.NewRepo(opts.DB),
+		log:          opts.Log,
+		version:      opts.Version,
+		adoptNow:     opts.AdoptNow,
+		pollerHealth: opts.PollerHealth,
+		pendingAdds:  opts.PendingAdds,
+		sessionKey:   loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
 	s.resolveFailover = s.resolveFailoverRelease
 	s.subScenes = s.defaultSubScenes
@@ -465,7 +471,7 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	payload := map[string]any{
 		"ok":                   true,
 		"version":              s.version,
 		"performerCount":       perfCount,
@@ -499,7 +505,14 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		// username+password (the default) vs the API-key fallback for a
 		// token-only daemon.
 		"passwordSet": s.effectivePasswordHash() != "",
-	})
+	}
+	// Poller telemetry: is the tick loop alive, and can the daemon see the
+	// library mount. What lets an external health check catch a wedged
+	// daemon or a dropped mount instead of a mysteriously idle Grabs tab.
+	if s.pollerHealth != nil {
+		payload["poller"] = s.pollerHealth()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 // composedConfig recomputes the current config (bootstrap overlaid

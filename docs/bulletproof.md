@@ -94,15 +94,16 @@ a soak week.
     P@1 drop beyond an epsilon. The private-corpus run on mini remains the
     release gate (existing rule: run matcher-bench + --verify after any
     matcher change).
-- ☐ **Fault injection on the lifecycle rig.** The fake Stash/qBit/SAB
-  already exist; add a chaos wrapper that randomly injects 5xx, timeouts,
-  truncated JSON, and empty lists mid-lifecycle, then asserts the
-  invariants: no grab lost or duplicated, no double placement, zero destroy
-  calls, every grab ends in a legal state. Run N seeds in CI, more nightly.
-- ☐ **State-machine invariant test**: enumerate legal status transitions
-  once (the comment in GrabsList.tsx is the spec); assert the poller and
-  API can produce no others. Catches the "settled state stops being
-  maintained" class (the 808-unmatched bug) structurally.
+- ☑ **Fault injection on the lifecycle rig.** chaos_test.go wraps every
+  fake client with seeded faults (500s, garbage-with-200, truncated bodies,
+  dropped connections; 14 seeds in CI) and asserts: every observed change is
+  inside the transitive closure of the state machine, the row never
+  vanishes, ZERO destroys, and — sharpest — CONVERGENCE: faults are
+  transport-level and every transport failure is guarded, so once the storm
+  stops the grab must end confirmed. Anything else is a hole in a guard.
+- ☑ **State-machine invariant checker**: legalSteps in chaos_test.go is
+  the enumerated spec (poller-scoped), checked as a transitive closure on
+  every chaos tick. Extending it to the API surfaces remains open.
 
 Acceptance: race + fuzz + chaos green in CI; a deliberately-introduced
 guard regression (mutation test on the destroy façade) fails the build.
@@ -115,12 +116,13 @@ guard regression (mutation test on the destroy façade) fails the build.
   migration (`db.Open` runs migrations; snapshot first), rotate N. The
   config store already has rotating `.bak`s — the grabs/watches DB, which
   holds the irreplaceable state, has none. Document restore.
-- ☐ **Library-health latch**: startup + periodic preflight (library root
-  mounted, writable, staging visible; the write-probe already exists —
-  reuse it). While unhealthy, *pause placement, dedup, purges and the trash
-  sweep* and badge the UI. This is the structural defence against the
-  mount-outage → "everything looks deleted" class that made metadataClean
-  too dangerous to adopt.
+- ☑ **Library-health latch**: the poller stats the library root every tick
+  — placement pauses while it's gone (placing onto a missing mount writes
+  into the bare mount point, shadowed when the real mount returns), and the
+  destroy path refuses OUTRIGHT on ErrLibraryUnavailable rather than
+  falling back to a permanent Stash-side delete, because during an outage
+  "file missing" stops being evidence of anything. Surfaced in /healthz as
+  poller.libraryOk. UI badge remains open.
 - ◐ **Fix the four residual risks** in error-handling.md: `mismatched`
   recovery SHIPPED (the reconcile pass confirms a mismatch the user
   corrected in Stash back to the predicted id; a third-id re-identify stays
@@ -128,9 +130,9 @@ guard regression (mutation test on the destroy façade) fails the build.
   pass — it already re-checks settled grabs — to notice a mismatched grab
   whose scene now carries the predicted id); premature-heal `RemoveAll`
   clearing `PlacedPath` on failure; awaited shutdown.
-- ☐ **/healthz depth**: last poller tick time + duration, reconcile stats,
-  journal counts, so a wedged daemon is visible remotely (the mini
-  health-check cron can then alert on it).
+- ☑ **/healthz depth**: poller block with lastTickAt/lastTickMs +
+  libraryOk (+ libraryError), so a wedged daemon or dropped mount is
+  visible remotely. Journal counts remain open.
 - ☐ **StashDB request budget** with backoff — protect the upstream that
   everything depends on from forage's own fan-out on big libraries.
 

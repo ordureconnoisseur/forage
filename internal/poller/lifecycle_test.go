@@ -340,6 +340,12 @@ func (f *fakeSab) handler() http.Handler {
 // servers. qbitCategory enables (non-empty) or disables (empty) orphan
 // adoption.
 func newRig(t *testing.T, qbitCategory string) *rig {
+	return newRigWith(t, qbitCategory, nil)
+}
+
+// newRigWith is newRig with an optional middleware wrapped around every
+// fake client's handler — the chaos harness injects faults through it.
+func newRigWith(t *testing.T, qbitCategory string, wrap func(http.Handler) http.Handler) *rig {
 	t.Helper()
 
 	dbh, err := db.Open(filepath.Join(t.TempDir(), "forager.db"))
@@ -352,9 +358,13 @@ func newRig(t *testing.T, qbitCategory string) *rig {
 	fq := &fakeQbit{files: map[string][]qbit.TorrentFile{}}
 	fsab := &fakeSab{}
 	fs := &fakeStash{}
-	qSrv := httptest.NewServer(fq.handler())
-	sabSrv := httptest.NewServer(fsab.handler())
-	sSrv := httptest.NewServer(fs.handler())
+	mw := wrap
+	if mw == nil {
+		mw = func(h http.Handler) http.Handler { return h }
+	}
+	qSrv := httptest.NewServer(mw(fq.handler()))
+	sabSrv := httptest.NewServer(mw(fsab.handler()))
+	sSrv := httptest.NewServer(mw(fs.handler()))
 	t.Cleanup(qSrv.Close)
 	t.Cleanup(sabSrv.Close)
 	t.Cleanup(sSrv.Close)

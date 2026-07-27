@@ -145,6 +145,63 @@ type Poller struct {
 	// lastTrashSweep gates the daily trash-retention sweep (see
 	// destroy.SweepTrash). Owned by the single-goroutine tick.
 	lastTrashSweep time.Time
+
+	// Health telemetry, read by /healthz from request goroutines while the
+	// tick goroutine writes it — hence its own lock, unlike the tick-owned
+	// state above. libraryOK is also the placement gate: placing onto a
+	// missing mount writes into the bare mount POINT, leaving files that
+	// are shadowed (effectively lost) when the real mount returns.
+	healthMu     sync.Mutex
+	lastTickAt   time.Time
+	lastTickDur  time.Duration
+	libraryOK    bool
+	libraryError string
+}
+
+// Health is the poller's telemetry snapshot for /healthz: is the tick loop
+// alive, how long is it taking, and can the daemon actually see the
+// library. A wedged daemon or a dropped mount becomes visible remotely
+// instead of discovered via a mysteriously idle Grabs tab.
+func (p *Poller) Health() map[string]any {
+	p.healthMu.Lock()
+	defer p.healthMu.Unlock()
+	out := map[string]any{
+		"libraryOk": p.libraryOK,
+	}
+	if !p.lastTickAt.IsZero() {
+		out["lastTickAt"] = p.lastTickAt.Unix()
+		out["lastTickMs"] = p.lastTickDur.Milliseconds()
+	}
+	if p.libraryError != "" {
+		out["libraryError"] = p.libraryError
+	}
+	return out
+}
+
+// libraryHealthy reads the latch checkLibrary set this tick.
+func (p *Poller) libraryHealthy() bool {
+	p.healthMu.Lock()
+	defer p.healthMu.Unlock()
+	return p.libraryOK
+}
+
+// checkLibrary stats the library root once per tick. True also when no
+// library is configured (placement off — nothing to be unhealthy about).
+func (p *Poller) checkLibrary() bool {
+	root := p.pool.Settings().LibraryRoot
+	ok := true
+	errText := ""
+	if root != "" {
+		if _, err := os.Stat(root); err != nil {
+			ok = false
+			errText = err.Error()
+		}
+	}
+	p.healthMu.Lock()
+	p.libraryOK = ok
+	p.libraryError = errText
+	p.healthMu.Unlock()
+	return ok
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -267,6 +324,17 @@ func (p *Poller) safeTick(ctx context.Context) {
 // not in Stash after `orphan_after`, mark orphaned.
 func (p *Poller) tickOnce(ctx context.Context) error {
 	t0 := time.Now()
+	defer func() {
+		p.healthMu.Lock()
+		p.lastTickAt = time.Now()
+		p.lastTickDur = time.Since(t0)
+		p.healthMu.Unlock()
+	}()
+	libraryOK := p.checkLibrary()
+	if !libraryOK {
+		p.log.Warn("library mount unavailable — placement paused this tick",
+			"root", p.pool.Settings().LibraryRoot)
+	}
 	// Adopt any forager-category qBit torrents we aren't tracking yet,
 	// before loading active grabs so a freshly-adopted one is processed
 	// this same tick.
@@ -540,7 +608,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 	// confirmation works against that location instead.
 	pl := p.pool.Placer()
 	if g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" &&
-		p.grabStillExists(ctx, g.ID) {
+		p.libraryHealthy() && p.grabStillExists(ctx, g.ID) {
 		// grabStillExists is re-checked immediately before the side-effecting
 		// place: a concurrent delete during the tick's earlier I/O would
 		// otherwise have us hardlink a file into the library for a grab being

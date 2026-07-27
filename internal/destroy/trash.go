@@ -3,6 +3,7 @@ package destroy
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,7 +32,19 @@ type TrashConfig struct {
 	// Empty is fine when both sides share one mount: paths then pass
 	// through verbatim.
 	Mapping string
+	// LibraryRoot is the daemon-side library directory — the health canary.
+	// When it can't be stat'd the MOUNT is gone, and "file missing" stops
+	// being evidence of anything: falling back to a permanent Stash-side
+	// delete during an outage would convert every recoverable deletion into
+	// a real one (Stash is often another machine whose own mount is fine).
+	// Destroys are refused outright instead, until the mount returns.
+	LibraryRoot string
 }
+
+// ErrLibraryUnavailable marks a destroy refused because the library mount
+// itself is unreachable — retry when it returns; never degrade to a
+// permanent delete.
+var ErrLibraryUnavailable = errors.New("library mount unavailable")
 
 // DefaultTrashRoot derives the trash location from the library root: a
 // SIBLING (".forage-trash" next to the library directory), same filesystem
@@ -57,7 +70,7 @@ func TrashFromSettings(libraryRoot, mapping string, ttl time.Duration) *TrashCon
 	if root == "" {
 		return nil
 	}
-	return &TrashConfig{Root: root, Mapping: mapping}
+	return &TrashConfig{Root: root, Mapping: mapping, LibraryRoot: strings.TrimRight(libraryRoot, `/\`)}
 }
 
 // daemonPath resolves a (possibly Stash-reported) file path into one the
@@ -95,6 +108,16 @@ type trashMove struct {
 //
 // Returns the executed moves, or an error with everything rolled back.
 func (t *TrashConfig) trashTargetFiles(target Target, now time.Time) ([]trashMove, error) {
+	// Library-health latch: with the mount itself gone, every per-file stat
+	// below would fail and read as "file missing" — the legitimate
+	// permanent-fallback signal — when the truth is "nothing is visible
+	// right now". Refuse instead; the caller surfaces the failure and the
+	// delete can be retried when the mount returns.
+	if t.LibraryRoot != "" {
+		if _, err := os.Stat(t.LibraryRoot); err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrLibraryUnavailable, err)
+		}
+	}
 	type planned struct{ from, to string }
 	var plan []planned
 	destDir := filepath.Join(t.Root, now.Format("2006-01-02"), sanitizeSegment(target.SceneID))

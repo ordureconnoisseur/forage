@@ -169,3 +169,35 @@ func TestDefaultTrashRootIsSibling(t *testing.T) {
 		t.Fatal("empty library root must disable trash")
 	}
 }
+
+// TestExecuteRefusesWhenLibraryUnavailable is the outage latch: when the
+// library MOUNT is gone (not just one file), the permanent fallback must
+// not fire — Stash is often a different machine whose own mount is fine,
+// and "delete permanently because I can't see anything" would convert an
+// outage into data loss. The destroy fails, retryable when the mount
+// returns.
+func TestExecuteRefusesWhenLibraryUnavailable(t *testing.T) {
+	lib, tc := trashRig(t)
+	file := filepath.Join(lib, "P", "s.mp4")
+	mustWrite(t, file, "x")
+	// Simulate the mount dropping: the library root vanishes wholesale.
+	if err := os.RemoveAll(lib); err != nil {
+		t.Fatal(err)
+	}
+
+	f := &fakeDestroyer{}
+	rec := &fakeRecorder{}
+	plan := Vet([]Target{{SceneID: "5", Files: []File{{Path: file}}}})
+	out := Executor{Stash: f, Rec: rec, Log: discard(), Trash: tc}.
+		Execute(context.Background(), plan, "test")
+
+	if len(out.Failed) != 1 {
+		t.Fatalf("outcome = %+v, want a refusal surfaced as failure", out)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("stash saw %v — NOTHING may be destroyed during a mount outage", f.calls)
+	}
+	if final := rec.finals[1]; final[0] != "failed" {
+		t.Fatalf("journal = %v, want failed", final)
+	}
+}
