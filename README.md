@@ -171,7 +171,7 @@ folder".
 
 ### Performer-driven discovery
 
-![The performer grid — subscriptions up top, every card carrying its owned count and how many scenes you're missing](docs/assets/performers.png)
+![The performer grid sorted by last release — subscriptions up top, every card carrying its latest release date and how many scenes you're missing](docs/assets/performers.png)
 
 The **Performers** tab is your library, sortable four ways:
 
