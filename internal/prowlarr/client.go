@@ -302,6 +302,11 @@ type Indexer struct {
 	Name     string `json:"name"`
 	Protocol string `json:"protocol"` // "torrent" | "usenet"
 	Enable   bool   `json:"enable"`
+	// Privacy is Prowlarr's classification: "public" | "private" |
+	// "semiPrivate". The seeding-override UI badges private trackers with
+	// it, since those are the ones whose ratio economy the overrides exist
+	// to protect.
+	Privacy string `json:"privacy"`
 }
 
 // Indexers lists the configured indexers (GET /api/v1/indexer), so

@@ -13,6 +13,10 @@ type indexerOut struct {
 	Name     string `json:"name"`
 	Protocol string `json:"protocol"`
 	Enabled  bool   `json:"enabled"`
+	// Privacy ("public" | "private" | "semiPrivate") lets the seeding
+	// section badge private trackers — the ones per-indexer overrides
+	// exist to protect.
+	Privacy string `json:"privacy,omitempty"`
 }
 
 // getIndexers lists the user's configured Prowlarr indexers for the
@@ -35,7 +39,7 @@ func (s *Server) getIndexers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, i := range idx {
-		out = append(out, indexerOut{Name: i.Name, Protocol: i.Protocol, Enabled: i.Enable})
+		out = append(out, indexerOut{Name: i.Name, Protocol: i.Protocol, Enabled: i.Enable, Privacy: i.Privacy})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"indexers": out})
 }

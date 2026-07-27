@@ -7366,3 +7366,58 @@ code.grab-fact-v,
 .gdp-err {
   color: #f3a3a3;
 }
+
+/* Seeding overrides — the per-indexer retire table in Settings. */
+.seed-overrides {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.seed-row {
+  display: grid;
+  grid-template-columns: 1fr 90px 90px;
+  gap: 10px;
+  align-items: center;
+}
+.seed-row input {
+  padding: 6px 10px;
+  background: var(--glass-bg);
+  color: var(--text);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  min-width: 0;
+}
+.seed-head {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.seed-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.seed-private {
+  flex: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(212, 161, 74, 0.5);
+  color: #e0b84e;
+}
+.seed-gone {
+  flex: none;
+  font-size: 9.5px;
+  color: var(--text-muted);
+  font-style: italic;
+}

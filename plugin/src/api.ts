@@ -1175,6 +1175,9 @@ export interface IndexerInfo {
   name: string;
   protocol: string; // "torrent" | "usenet"
   enabled: boolean;
+  // "public" | "private" | "semiPrivate" — the seeding section badges
+  // private trackers, the ones per-indexer overrides exist to protect.
+  privacy?: string;
 }
 
 // fetchIndexers lists the user's Prowlarr indexers for the friendly
@@ -1236,6 +1239,13 @@ export interface ConfigPatch {
   // forage category in qBit/SAB pointing here, so the client never has to
   // be configured by hand.
   downloadRoot?: string;
+  // Seeding management (see the Settings Seeding section): retire limits as
+  // Go duration / ratio strings, plus the per-indexer overrides JSON the
+  // editor writes so users never hand-author it.
+  trashTtl?: string;
+  seedMaxAge?: string;
+  seedRatio?: string;
+  seedOverrides?: string;
   libraryRoot?: string;
   stashPathMapping?: string;
   sabDeleteAfterPlace?: boolean;

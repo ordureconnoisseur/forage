@@ -48,6 +48,7 @@ type SectionKey =
   | "connection"
   | "stash"
   | "indexer"
+  | "seeding"
   | "downloads"
   | "library"
   | "releases"
@@ -115,6 +116,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
     indexer: false,
     downloads: false,
     library: false,
+    seeding: false,
     releases: false,
     filtering: false,
     notifications: false,
@@ -778,6 +780,47 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          title="Seeding"
+          isOpen={open.seeding}
+          onToggle={() => setOpen((o) => ({ ...o, seeding: !o.seeding }))}
+        >
+          <Field label="Retire after (days)">
+            <input
+              type="number"
+              min={0}
+              step={1}
+              value={durationToDays(
+                String(displayValue("seedMaxAge", data?.fields["seedMaxAge"]) ?? ""),
+              )}
+              onChange={(e) =>
+                setField("seedMaxAge", daysToDuration(e.target.value))
+              }
+            />
+            <SourceBadge field={data?.fields["seedMaxAge"]} />
+          </Field>
+          <Field label="Target ratio">
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              value={String(displayValue("seedRatio", data?.fields["seedRatio"]) ?? "")}
+              onChange={(e) => setField("seedRatio", e.target.value)}
+            />
+            <SourceBadge field={data?.fields["seedRatio"]} />
+          </Field>
+          <p className="settings-tip">
+            A finished torrent is removed from qBittorrent — files included;
+            the library keeps its own hardlink — once either limit is met,
+            whichever comes first. 0 disables a rule. Per-indexer rows below
+            override the defaults; blank inherits them.
+          </p>
+          <SeedingOverridesEditor
+            value={String(displayValue("seedOverrides", data?.fields["seedOverrides"]) ?? "")}
+            onChange={(json) => setField("seedOverrides", json)}
+          />
+        </Section>
+
+        <Section
           title="Release preferences"
           isOpen={open.releases}
           onToggle={() => setOpen((o) => ({ ...o, releases: !o.releases }))}
@@ -1300,3 +1343,165 @@ function ProbeChip({ result }: { result: ProbeResult }) {
     </span>
   );
 }
+
+// ── Seeding helpers ─────────────────────────────────────────────────
+
+// durationToDays renders a Go duration string ("168h0m0s") as whole days
+// for the friendly input; anything unparsable renders empty rather than
+// lying.
+function durationToDays(dur: string): string {
+  const m = /^(\d+(?:\.\d+)?)h/.exec(dur.trim());
+  if (dur.trim() === "0s" || dur.trim() === "0") return "0";
+  if (!m) return "";
+  const days = parseFloat(m[1]) / 24;
+  return Number.isInteger(days) ? String(days) : days.toFixed(1);
+}
+
+// daysToDuration serialises the days input back to a Go duration.
+function daysToDuration(days: string): string {
+  const n = parseFloat(days);
+  if (!Number.isFinite(n) || n < 0) return "";
+  return `${Math.round(n * 24)}h`;
+}
+
+interface SeedOverrideRow {
+  indexer: string;
+  maxAge?: string;
+  ratio?: number;
+}
+
+function parseOverrides(raw: string): SeedOverrideRow[] {
+  if (!raw.trim()) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? (v as SeedOverrideRow[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+// SeedingOverridesEditor renders per-indexer retire limits as a table over
+// the indexers Prowlarr actually has — nobody hand-writes JSON. Blank cells
+// inherit the defaults above; 0 disables that rule for the indexer. The
+// JSON stays the storage format underneath, so env-configured overrides
+// round-trip unchanged.
+function SeedingOverridesEditor({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (json: string) => void;
+}) {
+  const [indexers, setIndexers] = useState<IndexerInfo[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    fetchIndexers()
+      .then((r) => {
+        if (!cancelled) setIndexers(r.filter((i) => i.protocol === "torrent"));
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const rows = parseOverrides(value);
+  const byName = new Map(rows.map((r) => [r.indexer.toLowerCase(), r]));
+
+  // Overrides for indexers Prowlarr no longer lists still count (the cull
+  // matches by the GRAB's indexer, which outlives Prowlarr config), so show
+  // them too rather than silently dropping their protection.
+  const names = indexers.map((i) => i.name);
+  for (const r of rows) {
+    if (!names.some((n) => n.toLowerCase() === r.indexer.toLowerCase())) {
+      names.push(r.indexer);
+    }
+  }
+
+  const update = (indexer: string, patch: Partial<SeedOverrideRow>) => {
+    const key = indexer.toLowerCase();
+    const cur = byName.get(key) ?? { indexer };
+    const next: SeedOverrideRow = { ...cur, ...patch };
+    const rest = rows.filter((r) => r.indexer.toLowerCase() !== key);
+    const kept =
+      next.maxAge !== undefined || next.ratio !== undefined
+        ? [...rest, next]
+        : rest;
+    onChange(kept.length > 0 ? JSON.stringify(kept) : "");
+  };
+
+  if (!loaded) return <p className="settings-tip">Loading indexers…</p>;
+  if (names.length === 0) {
+    return (
+      <p className="settings-tip">
+        No torrent indexers in Prowlarr yet — the defaults above apply to
+        everything.
+      </p>
+    );
+  }
+  return (
+    <div className="seed-overrides">
+      <div className="seed-row seed-head">
+        <span>Indexer</span>
+        <span>Days</span>
+        <span>Ratio</span>
+      </div>
+      {names.map((name) => {
+        const info = indexers.find((i) => i.name === name);
+        const row = byName.get(name.toLowerCase());
+        return (
+          <div className="seed-row" key={name}>
+            <span className="seed-name">
+              {name}
+              {info?.privacy === "private" && (
+                <span className="seed-private" title="Private tracker — ratio economy applies">
+                  PRIVATE
+                </span>
+              )}
+              {!info && (
+                <span className="seed-gone" title="No longer configured in Prowlarr; the override still protects existing grabs">
+                  not in Prowlarr
+                </span>
+              )}
+            </span>
+            <input
+              type="number"
+              min={0}
+              step={1}
+              placeholder="default"
+              value={row?.maxAge !== undefined ? durationToDays(row.maxAge) : ""}
+              onChange={(e) =>
+                update(name, {
+                  maxAge:
+                    e.target.value === "" ? undefined : daysToDuration(e.target.value),
+                })
+              }
+            />
+            <input
+              type="number"
+              min={0}
+              step={0.1}
+              placeholder="default"
+              value={row?.ratio !== undefined ? String(row.ratio) : ""}
+              onChange={(e) =>
+                update(name, {
+                  ratio:
+                    e.target.value === "" ? undefined : parseFloat(e.target.value),
+                })
+              }
+            />
+          </div>
+        );
+      })}
+      <p className="settings-tip">
+        Blank inherits the defaults above. 0 days = never retire by age; 0
+        ratio = ignore ratio. Private trackers are the ones worth protecting.
+      </p>
+    </div>
+  );
+}
+
