@@ -60,6 +60,13 @@ func TestOneDoor(t *testing.T) {
 				// tracked in docs/error-handling.md: a failed RemoveAll
 				// here still clears PlacedPath.)
 				"internal/poller/grabs.go": true,
+				// Managed-Prowlarr installer: removes only forage's OWN
+				// install dirs under <data>/managed/prowlarr (the stale app
+				// dir and the .new staging dir of the atomic swap) — never
+				// user media, never anything outside the managed root.
+				// (Flagged by this test on the feature's first full-suite
+				// run, exactly as designed.)
+				"internal/managed/prowlarr.go": true,
 			},
 		},
 	}
