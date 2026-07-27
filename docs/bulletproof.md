@@ -159,13 +159,14 @@ and the journal/DB explain what happened.
   the pattern), SAB 3.x/4.x. Document the supported floor in the README.
 - ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
   scopes) so `docker pull` works.
-- ◐ **Bug-report ergonomics**: issue templates SHIPPED (version/install/
-  diag/logs/journal-rows prompts). Diagnostics bundle SHIPPED as
-  authenticated `GET /diag` (versions, config field sources through the
-  same masking as /config — one place to keep the secrets rule — client
-  reachability, poller health, grab totals, journal tallies, last panic
-  with stack). Remaining: FAQ for the three setup mistakes (wrong
-  container path, different filesystems, category save path).
+- ☑ **Bug-report ergonomics**: issue templates (version/install/diag/
+  logs/journal-rows prompts); diagnostics bundle as authenticated
+  `GET /diag` (versions, config field sources through the same masking as
+  /config — one place to keep the secrets rule — client reachability,
+  poller health, grab totals, journal tallies, last panic with stack);
+  docs/troubleshooting.md covering the three setup mistakes (wrong
+  container path, different filesystems, category save path), linked from
+  README and the issue template.
 - ◐ **Panic surfacing**: every recover site (poller tick, api background
   loops, main.go cache refreshers) now persists the panic to the meta
   table (paniclog; part of the precious backup set). /healthz carries
@@ -174,14 +175,16 @@ and the journal/DB explain what happened.
 
 ## Phase 5 — the standard that keeps it true
 
-- ☐ **Two-keys rule, codified**: any irreversible action requires two
-  *independent* confirmations of state (e.g. file-count + kept-side-alive),
-  documented in CONTRIBUTING and enforced at the façade.
-- ☐ **Definition of done** for anything touching files or destroys: journal
-  coverage, an invariant test, a chaos run, and the meta-test list updated.
-- ☐ **Release checklist**: suite + race + fuzz + bench green → deploy to
-  mini → soak ≥3 days with journal review → tag. No same-day
-  code-and-release.
+- ☑ **Two-keys rule, codified**: CONTRIBUTING.md documents the rule with
+  the three enforced examples (destroy plan+stat, cull ownership+placed
+  stat, sweep dated-dir+TTL) as the pattern to copy; the façade and
+  meta-test enforce the single door.
+- ☑ **Definition of done** for anything touching files or destroys:
+  CONTRIBUTING.md — journal coverage, an invariant test, a chaos run, and
+  the meta-test list updated as part of the same PR.
+- ☑ **Release checklist**: CONTRIBUTING.md — suite + race + fuzz green,
+  matcher bench on any matcher change, deploy to the live instance, soak
+  ≥3 days with journal review, then tag. No same-day code-and-release.
 
 ---
 

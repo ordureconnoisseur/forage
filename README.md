@@ -336,6 +336,11 @@ wizard takes it from there: Stash + StashDB keys, then Prowlarr, a download
 client, and the library path, each with a **Test** button. When it's done you
 can browse → search → grab.
 
+If something doesn't work, [docs/troubleshooting.md](docs/troubleshooting.md)
+covers the three setup mistakes behind nearly every "configured but nothing
+lands in the library" report, and `GET /diag` gives you a paste-able
+diagnostics bundle.
+
 You don't have to configure your download client. Give forage the download
 folder and it creates the `forage` category in qBittorrent/SABnzbd pointing
 at it — and repoints it if it already exists somewhere else. forage downloads

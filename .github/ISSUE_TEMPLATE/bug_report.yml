@@ -61,3 +61,8 @@ body:
         journal is the evidence — paste the relevant rows from
         `/destructions` (or the Deletions page). Trashed entries are
         restorable from that page for 7 days.
+
+
+        **If downloads finish but nothing lands in the library:** see
+        [docs/troubleshooting.md](../blob/main/docs/troubleshooting.md) —
+        it covers the three setup mistakes behind nearly all such reports.
