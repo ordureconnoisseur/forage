@@ -146,6 +146,10 @@ type Poller struct {
 	// destroy.SweepTrash). Owned by the single-goroutine tick.
 	lastTrashSweep time.Time
 
+	// lastSeedCull gates the hourly seeding cull (see cull.go). Owned by
+	// the single-goroutine tick.
+	lastSeedCull time.Time
+
 	// Health telemetry, read by /healthz from request goroutines while the
 	// tick goroutine writes it — hence its own lock, unlike the tick-owned
 	// state above. libraryOK is also the placement gate: placing onto a
@@ -447,6 +451,18 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 
+	// Hourly seeding cull — retire torrents that have earned it (see
+	// cull.go). Above the nothing-active early return like the other
+	// housekeeping: a fully idle library is when the seed backlog is the
+	// only work left. (The first placement of this block anchored it BELOW
+	// the return — the third time this session that early return has tried
+	// to eat a housekeeping pass.)
+	phase("seedCull")
+	if time.Since(p.lastSeedCull) >= cullInterval {
+		p.lastSeedCull = time.Now()
+		p.cullSeededTorrents(ctx)
+	}
+
 	if len(active) == 0 {
 		return nil
 	}
@@ -534,8 +550,20 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 
 	phase("advance")
 	for i := range active {
+		// Per-status attribution inside the advance loop: the aggregate
+		// "advance" number said 128s of a 166s tick without naming a
+		// culprit, and per-grab wall time is the difference between
+		// guessing and knowing.
+		aStart := time.Now()
+		status := active[i].Status
 		if err := p.advance(ctx, &active[i], qbitTorrents, qbitByHash, qbitListOK, claimed, sabQueue, sabHistory, sabListsOK); err != nil {
 			p.log.Warn("advance grab", "id", active[i].ID, "err", err)
+		}
+		took := time.Since(aStart)
+		phases["advance."+status] += took.Milliseconds()
+		if took > time.Second {
+			p.log.Info("slow advance", "id", active[i].ID, "status", status,
+				"kind", active[i].Kind, "ms", took.Milliseconds())
 		}
 	}
 

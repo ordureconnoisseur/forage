@@ -487,6 +487,14 @@ type Torrent struct {
 	Eta         int64   `json:"eta"`      // seconds; 8640000 = unknown/infinity
 	AddedOn     int64   `json:"added_on"`
 	ContentPath string  `json:"content_path"`
+	// Seeding-cull inputs. Ratio is total uploaded/downloaded;
+	// CompletionOn is the unix time the download finished (0/-1 while
+	// incomplete); SeedingTime is qBit's own active-seeding counter in
+	// seconds, preferred over now-CompletionOn because it doesn't count
+	// time the client was off.
+	Ratio        float64 `json:"ratio"`
+	CompletionOn int64   `json:"completion_on"`
+	SeedingTime  int64   `json:"seeding_time"`
 }
 
 // ListOpts maps to /api/v2/torrents/info query params. Zero-values

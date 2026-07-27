@@ -54,6 +54,13 @@ type Config struct {
 	// before the sweep unlinks them for real. 0 disables the trash and
 	// restores permanent deletion.
 	TrashTTL time.Duration
+	// Seeding cull: a placed torrent is removed from qBit (with its files —
+	// the library keeps its own hardlink) once EITHER threshold is met,
+	// whichever comes first. SeedMaxAge 0 disables the age rule, SeedRatio 0
+	// the ratio rule; both 0 disables culling entirely. Defaults satisfy the
+	// common private-tracker hit-and-run rules (≥72h or 1.0).
+	SeedMaxAge time.Duration
+	SeedRatio  float64
 	// StashPathMapping translates forager-container paths to Stash's
 	// view of the same files, for scoped metadataScan calls after
 	// placement. Format: "<forager-prefix>:<stash-prefix>" (e.g.
@@ -192,6 +199,8 @@ func LoadBootstrap() BootstrapConfig {
 	b.DownloadRoot = strings.TrimRight(b.envOr("FORAGER_DOWNLOAD_ROOT", "", "downloadRoot"), "/")
 	b.LibraryRoot = strings.TrimRight(b.envOr("FORAGER_LIBRARY_ROOT", "", "libraryRoot"), "/")
 	b.TrashTTL = b.envDuration("FORAGER_TRASH_TTL", 7*24*time.Hour, "trashTtl")
+	b.SeedMaxAge = b.envDuration("FORAGER_SEED_MAX_AGE", 7*24*time.Hour, "seedMaxAge")
+	b.SeedRatio = b.envFloat("FORAGER_SEED_RATIO", 1.0, "seedRatio")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
@@ -253,6 +262,21 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 		return defaultVal
 	}
 
+	flt := func(field string, stored *string, envVal, defaultVal float64) float64 {
+		if stored != nil && *stored != "" {
+			if f, err := strconv.ParseFloat(*stored, 64); err == nil {
+				src[field] = SourceJSON
+				return f
+			}
+		}
+		if b.set[field] {
+			src[field] = SourceEnv
+			return envVal
+		}
+		src[field] = SourceDefault
+		return defaultVal
+	}
+
 	dur := func(field string, stored *string, envVal, defaultVal time.Duration) time.Duration {
 		if stored != nil && *stored != "" {
 			if d, err := time.ParseDuration(*stored); err == nil {
@@ -294,6 +318,8 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.DownloadRoot = str("downloadRoot", stored.DownloadRoot, b.DownloadRoot, "")
 	out.LibraryRoot = str("libraryRoot", stored.LibraryRoot, b.LibraryRoot, "")
 	out.TrashTTL = dur("trashTtl", stored.TrashTTL, b.TrashTTL, 7*24*time.Hour)
+	out.SeedMaxAge = dur("seedMaxAge", stored.SeedMaxAge, b.SeedMaxAge, 7*24*time.Hour)
+	out.SeedRatio = flt("seedRatio", stored.SeedRatio, b.SeedRatio, 1.0)
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
@@ -361,6 +387,19 @@ func (b *BootstrapConfig) envOr(key, def, field string) string {
 		return v
 	}
 	return def
+}
+
+func (b *BootstrapConfig) envFloat(key string, def float64, field string) float64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	b.set[field] = true
+	return f
 }
 
 func (b *BootstrapConfig) envDuration(key string, def time.Duration, field string) time.Duration {

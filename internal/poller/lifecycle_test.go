@@ -54,6 +54,16 @@ type fakeQbit struct {
 	torrents []qbit.Torrent
 	files    map[string][]qbit.TorrentFile // info_hash → file list
 	resumed  []string                      // hashes sent to /torrents/start|resume, in order
+	// deleted records /torrents/delete calls as "hash:deleteFiles" — the
+	// seeding-cull tests assert exactly which torrents were removed and
+	// that their files went with them.
+	deleted []string
+}
+
+func (f *fakeQbit) deletedCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.deleted...)
 }
 
 func (f *fakeQbit) set(ts []qbit.Torrent) {
@@ -96,6 +106,13 @@ func (f *fakeQbit) handler() http.Handler {
 	}
 	mux.HandleFunc("/api/v2/torrents/start", recordResume)
 	mux.HandleFunc("/api/v2/torrents/resume", recordResume)
+	mux.HandleFunc("/api/v2/torrents/delete", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		f.mu.Lock()
+		f.deleted = append(f.deleted, r.Form.Get("hashes")+":"+r.Form.Get("deleteFiles"))
+		f.mu.Unlock()
+		io.WriteString(w, "")
+	})
 	return mux
 }
 

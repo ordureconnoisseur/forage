@@ -640,6 +640,25 @@ func (r *Repo) LiveByRelease(ctx context.Context, url, title, indexer string) (*
 	return &g, nil
 }
 
+// ByClientID returns the newest grab for a download-client item (qBit
+// info-hash / SAB nzo id), or (nil, nil) when forage doesn't track it —
+// the seeding cull's ownership check: an untracked torrent is NEVER
+// forage's to delete, whatever category it sits in.
+func (r *Repo) ByClientID(ctx context.Context, client, clientID string) (*Grab, error) {
+	if client == "" || clientID == "" {
+		return nil, nil
+	}
+	rows, err := r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE client = ? AND LOWER(client_id) = LOWER(?)
+		ORDER BY grabbed_at DESC LIMIT 1`, client, clientID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	g := rows[0]
+	return &g, nil
+}
+
 // Get returns a single grab by id, or (nil, nil) when not found.
 func (r *Repo) Get(ctx context.Context, id int64) (*Grab, error) {
 	grabs, err := r.query(ctx, `SELECT * FROM grabs WHERE id = ? LIMIT 1`, id)
