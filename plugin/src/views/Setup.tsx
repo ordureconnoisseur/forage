@@ -15,6 +15,7 @@ import {
   testSection,
 } from "../api";
 import AcornIcon from "../AcornIcon";
+import ManagedProwlarrCard from "../ManagedProwlarr";
 
 // First-run setup wizard — the guided alternative to dropping a new user
 // into the full Settings form. Modelled on Hearth's onboarding: a step
@@ -745,6 +746,7 @@ export default function Setup({
               />
             ) : (
               <>
+                <ManagedProwlarrCard onReady={refreshHealth} />
                 <label className="setup-field">
                   <span>Prowlarr URL</span>
                   <input

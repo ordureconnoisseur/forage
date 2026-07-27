@@ -1171,6 +1171,35 @@ export function fetchHealth(): Promise<Health> {
   return get<Health>("/healthz");
 }
 
+// ManagedProwlarrStatus mirrors the daemon's managed.Status: the install/
+// supervision state machine for the Prowlarr instance forage can install
+// and run itself.
+export interface ManagedProwlarrStatus {
+  supported: boolean;
+  installed: boolean;
+  state:
+    | "absent"
+    | "downloading"
+    | "installing"
+    | "starting"
+    | "running"
+    | "stopped"
+    | "error";
+  detail?: string;
+  doneBytes?: number;
+  totalBytes?: number;
+  version?: string;
+  url?: string;
+}
+
+export function fetchManagedProwlarr(): Promise<ManagedProwlarrStatus> {
+  return get<ManagedProwlarrStatus>("/managed/prowlarr");
+}
+
+export function installManagedProwlarr(): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>("/managed/prowlarr/install", {});
+}
+
 // IndexerInfo is one configured Prowlarr indexer, as the friendly
 // release-prefs editor needs it: a name to rank/block, a protocol badge,
 // and whether it's enabled.

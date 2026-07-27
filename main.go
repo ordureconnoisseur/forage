@@ -22,6 +22,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/poller"
 	"github.com/ordureconnoisseur/forager/internal/watches"
@@ -123,19 +124,32 @@ func main() {
 
 	watchesRepo := watches.NewRepo(database)
 
+	// Managed-Prowlarr manager: only on native (non-container) platforms
+	// with an official Prowlarr build. Lives next to the DB; supervision
+	// starts in RunManagedProwlarr below.
+	var managedProwlarr *managed.Prowlarr
+	if managed.Supported() {
+		managedProwlarr = managed.NewProwlarr(filepath.Dir(bootstrap.DBPath), log.With("component", "managed"))
+	}
+
 	server := api.New(api.Options{
-		DB:           database,
-		Pool:         pool,
-		Bootstrap:    bootstrap,
-		Store:        store,
-		Grabs:        grabsRepo,
-		Watches:      watchesRepo,
-		PollerHealth: p.Health,
-		Log:          log.With("component", "api"),
-		Version:      Version,
-		AdoptNow:     p.AdoptNow,
-		PendingAdds:  pendingAdds,
+		DB:              database,
+		Pool:            pool,
+		Bootstrap:       bootstrap,
+		Store:           store,
+		Grabs:           grabsRepo,
+		Watches:         watchesRepo,
+		PollerHealth:    p.Health,
+		Log:             log.With("component", "api"),
+		Version:         Version,
+		AdoptNow:        p.AdoptNow,
+		PendingAdds:     pendingAdds,
+		ManagedProwlarr: managedProwlarr,
 	})
+
+	// Boot-start (and shutdown-stop) the managed Prowlarr if one is
+	// installed; also retains the lifetime ctx for wizard installs.
+	launch(func() { server.RunManagedProwlarr(ctx) })
 
 	// Watchlist re-search loop — re-checks tracked scenes on a spread-
 	// over-24h cadence and flips them to "available" (never grabs).

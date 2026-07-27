@@ -1441,6 +1441,47 @@ button {
 .banner-dismiss:hover {
   opacity: 1;
 }
+
+/* Managed-Prowlarr install card (setup wizard + Settings) */
+.managed-card {
+  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.06);
+  border-radius: var(--radius, 10px);
+  padding: 12px 14px;
+  margin: 0 0 14px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.managed-line {
+  line-height: 1.5;
+  width: 100%;
+}
+.managed-line.ok {
+  color: var(--accent-bright, #6ee7a0);
+}
+.managed-line a {
+  color: var(--accent-bright, #6ee7a0);
+}
+.managed-err {
+  color: var(--red, #ef4444);
+  font-size: 12px;
+}
+.managed-progress {
+  margin-top: 6px;
+  height: 6px;
+  width: 100%;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.managed-progress-fill {
+  height: 100%;
+  background: var(--accent, #22c55e);
+  transition: width 0.4s ease;
+}
 .banner-setup {
   background: rgba(var(--accent-rgb), 0.10);
   color: var(--accent-bright);

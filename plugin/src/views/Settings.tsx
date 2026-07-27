@@ -19,6 +19,7 @@ import {
   testSection,
 } from "../api";
 import { compileRules, parsePrefs } from "../releasePrefs";
+import ManagedProwlarrCard from "../ManagedProwlarr";
 import ReleaseRulesEditor from "./ReleaseRulesEditor";
 import ReleasePrefsEditor from "./ReleasePrefsEditor";
 
@@ -506,6 +507,13 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           onToggle={() => setOpen((o) => ({ ...o, indexer: !o.indexer }))}
           probe={probes["prowlarr"]}
         >
+          <ManagedProwlarrCard
+            onReady={() => {
+              // The daemon wrote the managed instance's URL + key into the
+              // stored config; re-pull so the fields below show them.
+              fetchConfig().then(setData).catch(() => undefined);
+            }}
+          />
           <Field label="Prowlarr URL">
             <input
               type="url"

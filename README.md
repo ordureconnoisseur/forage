@@ -259,7 +259,7 @@ Every credential and connection setting is editable from the plugin's Settings p
 
 - **Stash** with an API key (any modern version; tested against 0.31).
 - **StashDB account** + API key — forage pulls scene metadata to compute "missing scenes."
-- **Prowlarr** for release discovery (optional — the daemon boots without it, but search returns 503).
+- **Prowlarr** for release discovery — and if you don't have it, **forage installs and runs it for you**: one click in the wizard downloads the official build, configures it, and manages it from then on (native installs; on Docker use the compose stack). You just add your indexers.
 - **qBittorrent** and/or **SABnzbd** (optional — grabs route by the release's protocol). Contract-tested against API recordings from qBittorrent 4.6 and 5.2 and SABnzbd 3.7, 4.5 and 5.0 — including the 5.x endpoint/state renames on the qBit side.
 - A **library directory** writable by the daemon, on the same filesystem as your download clients' complete dir (so hardlinks work — it falls back to copy if cross-device).
 
@@ -345,6 +345,14 @@ You don't have to configure your download client. Give forage the download
 folder and it creates the `forage` category in qBittorrent/SABnzbd pointing
 at it — and repoints it if it already exists somewhere else. forage downloads
 under that category so it knows which finished files are its to place.
+
+**No Prowlarr?** The wizard's indexer step has an **Install Prowlarr for
+me** button: forage downloads the official release (checksum recorded),
+runs it as a managed process bound to localhost, generates its API key,
+and wires the connection into its own config. The Prowlarr UI is served
+at `/prowlarr/` behind forage's own login — open it once to add your
+indexers, and forage supervises the process (restarts, upgrades) from
+then on.
 
 ### Reaching it from another device (optional)
 
