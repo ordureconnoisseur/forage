@@ -135,8 +135,11 @@ guard regression (mutation test on the destroy façade) fails the build.
   visible remotely. Journal tallies shipped too: a `destructions` block
   with per-outcome counts (all-time + last 24h; counts only — the endpoint
   is unauthenticated).
-- ☐ **StashDB request budget** with backoff — protect the upstream that
-  everything depends on from forage's own fan-out on big libraries.
+- ☑ **StashDB request budget** with backoff: every query funnels through a
+  token bucket (4 req/s steady, burst 4) plus a cool-down that doubles on
+  transient failures, jumps to 30s on an explicit 429, caps at 5min, and
+  clears on the first success. Queue waits killed by the caller's context
+  classify transient, so nothing terminal can be concluded from them.
 
 Acceptance: kill -9 mid-tick, unmount the library mid-place, and corrupt a
 response in each client — in all three cases the daemon recovers on its own

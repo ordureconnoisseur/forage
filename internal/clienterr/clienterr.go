@@ -48,7 +48,9 @@ func Transport(label string, err error) error {
 // Status classifies a non-2xx HTTP response, returning nil for 2xx. label and
 // body build a human-readable message; the wrapped sentinel makes the class
 // matchable with errors.Is. 404 -> ErrNotFound; 408/429/5xx -> ErrTransient;
-// any other non-2xx -> ErrRejected.
+// any other non-2xx -> ErrRejected. The original status code stays readable
+// via Code, for callers whose reaction depends on WHICH transient failure it
+// was (a 429 asks for a much longer back-off than a flaky 502).
 func Status(label string, code int, body []byte) error {
 	if code >= 200 && code < 300 {
 		return nil
@@ -60,7 +62,30 @@ func Status(label string, code int, body []byte) error {
 	case code == http.StatusRequestTimeout, code == http.StatusTooManyRequests, code >= 500:
 		sentinel = ErrTransient
 	}
-	return fmt.Errorf("%s %d: %s (%w)", label, code, truncate(body), sentinel)
+	return &statusErr{code: code, msg: fmt.Sprintf("%s %d: %s", label, code, truncate(body)), sentinel: sentinel}
+}
+
+// statusErr carries the HTTP status code alongside the classification
+// sentinel. Error text and errors.Is behaviour are identical to the plain
+// wrapped error Status used to return.
+type statusErr struct {
+	code     int
+	msg      string
+	sentinel error
+}
+
+func (e *statusErr) Error() string { return fmt.Sprintf("%s (%v)", e.msg, e.sentinel) }
+func (e *statusErr) Unwrap() error { return e.sentinel }
+
+// Code returns the HTTP status code carried by an error produced by Status,
+// walking wrap chains; 0 when the error didn't come from an HTTP status
+// (transport failures, semantic errors, nil).
+func Code(err error) int {
+	var se *statusErr
+	if errors.As(err, &se) {
+		return se.code
+	}
+	return 0
 }
 
 // truncate bounds an error body so a giant HTML/JSON error page can't bloat the

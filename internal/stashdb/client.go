@@ -12,15 +12,25 @@ import (
 
 // Client talks to a StashDB endpoint (default https://stashdb.org).
 type Client struct {
-	gql *gqlclient.Client
+	gql   *gqlclient.Client
+	pacer *pacer
 }
 
 func New(baseURL, apiKey string) *Client {
-	return &Client{gql: gqlclient.New(baseURL, apiKey, "stashdb")}
+	return &Client{gql: gqlclient.New(baseURL, apiKey, "stashdb"), pacer: newPacer()}
 }
 
+// do funnels every StashDB query through the request budget (see pacer):
+// wait for a slot, run, feed the outcome back for the back-off. A context
+// that dies in the queue is classified transient like any other timeout —
+// a caller must retry later, never conclude anything terminal from it.
 func (c *Client) do(ctx context.Context, query string, vars map[string]any, out any) error {
-	return c.gql.Do(ctx, query, vars, out)
+	if err := c.pacer.wait(ctx); err != nil {
+		return clienterr.Transport("stashdb budget", err)
+	}
+	err := c.gql.Do(ctx, query, vars, out)
+	c.pacer.observe(err)
+	return err
 }
 
 // Me returns the authenticated user's name. Used as a low-cost auth
