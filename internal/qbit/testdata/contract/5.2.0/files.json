@@ -1,0 +1,15 @@
+[
+ {
+  "availability": 0,
+  "index": 0,
+  "is_seed": false,
+  "name": "forage-contract-test.txt",
+  "piece_range": [
+   0,
+   0
+  ],
+  "priority": 1,
+  "progress": 0,
+  "size": 5
+ }
+]

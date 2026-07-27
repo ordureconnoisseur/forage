@@ -1,0 +1,11 @@
+{
+ "forage-contract": {
+  "download_path": null,
+  "inactive_seeding_time_limit": -2,
+  "name": "forage-contract",
+  "ratio_limit": -2,
+  "savePath": "/tmp/forage-dl2",
+  "seeding_time_limit": -2,
+  "share_limit_action": "Default"
+ }
+}

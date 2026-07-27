@@ -1,0 +1,15 @@
+{
+ "config": {
+  "categories": [
+   {
+    "name": "forage-contract",
+    "order": 0,
+    "pp": "",
+    "script": "",
+    "dir": "/tmp/forage-dl",
+    "newzbin": "",
+    "priority": -100
+   }
+  ]
+ }
+}

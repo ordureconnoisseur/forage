@@ -1,0 +1,17 @@
+{
+ "appVersion": "v4.6.7",
+ "webapiVersion": "2.9.3",
+ "recorded": "2026-07-27 against lscr.io/linuxserver/qbittorrent:4.6.7",
+ "status": {
+  "create_fresh": 200,
+  "create_duplicate_same_path": 409,
+  "create_duplicate_other_path": 409,
+  "edit_changed": 200,
+  "edit_unchanged": 409,
+  "edit_missing": 409,
+  "add": 200,
+  "start": 404,
+  "resume": 200,
+  "delete": 200
+ }
+}

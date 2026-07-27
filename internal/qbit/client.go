@@ -730,15 +730,30 @@ func (c *Client) EnsureCategory(ctx context.Context, name, savePath string) erro
 	// case anyway: an existing category pointing somewhere ELSE is the subtler
 	// version of the same misconfiguration, and leaving it is how downloads
 	// end up outside the hardlink filesystem.
-	//
-	// If both fail the cause is something else entirely (unreachable, bad
-	// credentials), so report the original create error, which is the more
-	// descriptive of the two.
 	if editErr := c.postForm(ctx, "/api/v2/torrents/editCategory", form); editErr == nil {
 		return nil
 	}
+	// Both refused. On qBit 4.x that's still the happy path: editCategory
+	// answers 409 when the savePath is UNCHANGED (5.x answers 200), so the
+	// idempotent re-save — category already exists, already pointing at
+	// savePath — fails both calls on a correctly configured client. (Found
+	// by the version-matrix recording against a real 4.6.7.) Don't
+	// interpret the ambiguous statuses; ask qBit for the actual state, and
+	// if the desired state already holds, this call did its job.
+	if cats, catErr := c.Categories(ctx); catErr == nil {
+		if got, ok := cats[name]; ok && trimSep(got.SavePath) == trimSep(savePath) {
+			return nil
+		}
+	}
+	// The category is genuinely absent or mispointed (unreachable, bad
+	// credentials, refused edit) — report the original create error, the
+	// more descriptive of the two.
 	return createErr
 }
+
+// trimSep normalises a save path for equality: trailing separators are
+// presentation, not location.
+func trimSep(p string) string { return strings.TrimRight(p, `/\`) }
 
 // SetCategory moves a torrent into the given category.
 func (c *Client) SetCategory(ctx context.Context, hash, category string) error {

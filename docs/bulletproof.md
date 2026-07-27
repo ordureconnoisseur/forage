@@ -158,9 +158,18 @@ and the journal/DB explain what happened.
   boundary), silently degrading scoped scans to full-library scans on the
   shipped .exe. Also verified live: daemon run on the Windows PC against
   real Stash, NTFS probes, backups.
-- ☐ **Version matrix**: contract tests from recorded fixtures for Stash
-  0.26→0.31, qBit 4.x/5.x (the Resume rename is already handled — that's
-  the pattern), SAB 3.x/4.x. Document the supported floor in the README.
+- ◐ **Version matrix**: download clients DONE — contract tests from
+  fixtures recorded against real containers (qBit 4.6.7 + 5.2.0, SAB
+  3.7.2 + 4.5.1 + 5.0.4; testdata/contract/ in each client package, with
+  the recording rig documented in the test headers). The recording
+  IMMEDIATELY found a real bug: qBit 4.x answers 409 to editCategory when
+  the savePath is unchanged, so EnsureCategory's idempotent re-save
+  failed on 4.x — fixed with a read-back verification of the desired
+  state. Also pinned: the 5.x start/resume rename, pausedDL→stoppedDL,
+  completion_on 0 vs -1 for incomplete, SAB 5.x UUID nzo_ids, and SAB's
+  status-less set_config success echo. Supported floor in the README.
+  Remaining: the Stash GraphQL matrix (0.26→0.31) — needs per-version
+  instances with the setup mutation driven, a separate session's work.
 - ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
   scopes) so `docker pull` works.
 - ☑ **Bug-report ergonomics**: issue templates (version/install/diag/

@@ -260,7 +260,7 @@ Every credential and connection setting is editable from the plugin's Settings p
 - **Stash** with an API key (any modern version; tested against 0.31).
 - **StashDB account** + API key — forage pulls scene metadata to compute "missing scenes."
 - **Prowlarr** for release discovery (optional — the daemon boots without it, but search returns 503).
-- **qBittorrent** and/or **SABnzbd** (optional — grabs route by the release's protocol).
+- **qBittorrent** and/or **SABnzbd** (optional — grabs route by the release's protocol). Contract-tested against API recordings from qBittorrent 4.6 and 5.2 and SABnzbd 3.7, 4.5 and 5.0 — including the 5.x endpoint/state renames on the qBit side.
 - A **library directory** writable by the daemon, on the same filesystem as your download clients' complete dir (so hardlinks work — it falls back to copy if cross-device).
 
 ## Install
