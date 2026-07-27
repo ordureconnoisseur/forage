@@ -1457,9 +1457,12 @@ function SeedingOverridesEditor({
           <div className="seed-row" key={name}>
             <span className="seed-name">
               {name}
-              {info?.privacy === "private" && (
-                <span className="seed-private" title="Private tracker — ratio economy applies">
-                  PRIVATE
+              {(info?.privacy === "private" || info?.privacy === "semiPrivate") && (
+                <span
+                  className="seed-private"
+                  title="Account-gated tracker — ratio economy applies"
+                >
+                  {info.privacy === "private" ? "PRIVATE" : "SEMI-PRIVATE"}
                 </span>
               )}
               {!info && (
