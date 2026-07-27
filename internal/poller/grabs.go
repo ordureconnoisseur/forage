@@ -1012,6 +1012,20 @@ func (p *Poller) advancePackTag(ctx context.Context, g *grabs.Grab) (bool, error
 		p.graceClear(g.ID)
 		return true, nil
 	}
+	// Durable timeout FIRST, before the expensive path query. The in-memory
+	// grace clock below restarts on every daemon restart, so a pack whose
+	// rescan never surfaces could sit in "tagging" indefinitely across
+	// deploys — two did, for 21 hours against a 30-minute budget, each
+	// paying a ~60s library-wide path query EVERY TICK (121s of a 166s
+	// tick). updated_at is stamped when the grab entered "tagging" and this
+	// path doesn't rewrite it while waiting, so it anchors a restart-proof
+	// deadline.
+	if g.UpdatedAt > 0 && time.Since(time.Unix(g.UpdatedAt, 0)) > packTagTimeout {
+		g.Status = "confirmed"
+		g.Reason = "re-filed; re-index timed out, tag from the grab card"
+		p.graceClear(g.ID)
+		return true, nil
+	}
 	scenes, err := sc.FindScenesUnderPath(ctx, needle)
 	if err != nil {
 		return false, nil // transient Stash error — retry next tick without churning state

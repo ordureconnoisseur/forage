@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
@@ -98,5 +99,51 @@ func TestDedupPackRefusesMultiFilePackCopy(t *testing.T) {
 	}
 	if deduped != 0 {
 		t.Fatalf("deduped = %d, want 0", deduped)
+	}
+}
+
+// TestPackTagTimeoutSurvivesRestart: the tagging timeout must anchor on the
+// PERSISTED clock, not the in-memory grace map — that map resets on every
+// daemon restart, and two packs sat in "tagging" for 21 hours against a
+// 30-minute budget because a day of deploys kept restarting their clock,
+// each paying a library-wide path query every tick. A freshly-started
+// poller (grace map empty, as after any restart) must settle an old
+// tagging pack on its first look.
+func TestPackTagTimeoutSurvivesRestart(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Old Tagging Pack", Client: "qbit", ClientID: "taghash",
+		Category: "forager", Status: "tagging", Kind: "pack",
+		PerformerName: "Someone", PlacedPath: "/lib/Someone/pack",
+		GrabbedAt: 1,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Age the row: updated_at is what anchors the durable deadline. Insert
+	// stamps it "now", so push it past packTagTimeout directly.
+	past := time.Now().Add(-2 * packTagTimeout).Unix()
+	if _, err := r.poller.db.ExecContext(ctx,
+		`UPDATE grabs SET updated_at = ? WHERE id = ?`, past, id); err != nil {
+		t.Fatalf("age row: %v", err)
+	}
+
+	g, err := r.repo.Get(ctx, id)
+	if err != nil || g == nil {
+		t.Fatalf("get: %v", err)
+	}
+	changed, err := r.poller.advancePackTag(ctx, g)
+	if err != nil || !changed {
+		t.Fatalf("advancePackTag = (%v, %v), want a settle", changed, err)
+	}
+	if g.Status != "confirmed" {
+		t.Fatalf("status = %q, want confirmed via the durable timeout", g.Status)
+	}
+	// And crucially: settling must not have needed the expensive path query
+	// — zero Stash requests on this call.
+	if n := r.stash.reqCount(); n != 0 {
+		t.Fatalf("made %d Stash request(s); the timeout must fire before the path query", n)
 	}
 }
