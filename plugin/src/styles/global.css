@@ -7421,3 +7421,37 @@ code.grab-fact-v,
   color: var(--text-muted);
   font-style: italic;
 }
+
+.seed-expand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.seed-expand:hover {
+  border-color: var(--glass-border-bright);
+}
+.seed-count {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.seed-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.seed-chip {
+  font-size: 11.5px;
+  color: var(--text);
+  border: 1px solid rgba(212, 161, 74, 0.4);
+  border-radius: var(--radius-pill);
+  padding: 2px 9px;
+}

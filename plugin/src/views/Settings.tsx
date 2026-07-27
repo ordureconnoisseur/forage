@@ -1394,6 +1394,10 @@ function SeedingOverridesEditor({
 }) {
   const [indexers, setIndexers] = useState<IndexerInfo[]>([]);
   const [loaded, setLoaded] = useState(false);
+  // The full table is 20+ rows on a real Prowlarr — a wall inside Settings.
+  // Collapsed by default behind a count, with the configured overrides
+  // summarised so the state is visible without expanding.
+  const [expanded, setExpanded] = useState(false);
   useEffect(() => {
     let cancelled = false;
     fetchIndexers()
@@ -1443,8 +1447,44 @@ function SeedingOverridesEditor({
       </p>
     );
   }
+  if (!expanded) {
+    return (
+      <div className="seed-overrides">
+        <button
+          type="button"
+          className="seed-expand"
+          onClick={() => setExpanded(true)}
+        >
+          ▸ Per-indexer overrides
+          <span className="seed-count">
+            {rows.length > 0 ? `${rows.length} set` : "none set"} ·{" "}
+            {names.length} indexers
+          </span>
+        </button>
+        {rows.length > 0 && (
+          <div className="seed-summary">
+            {rows.map((r) => (
+              <span className="seed-chip" key={r.indexer}>
+                {r.indexer}
+                {r.maxAge !== undefined && ` · ${durationToDays(r.maxAge)}d`}
+                {r.ratio !== undefined && ` · ratio ${r.ratio}`}
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
   return (
     <div className="seed-overrides">
+      <button
+        type="button"
+        className="seed-expand"
+        onClick={() => setExpanded(false)}
+      >
+        ▾ Per-indexer overrides
+        <span className="seed-count">collapse</span>
+      </button>
       <div className="seed-row seed-head">
         <span>Indexer</span>
         <span>Days</span>
