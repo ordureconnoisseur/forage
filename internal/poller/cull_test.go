@@ -195,3 +195,92 @@ func TestCullPassCap(t *testing.T) {
 		t.Fatalf("deletes = %d, want the cap (%d)", len(got), cullPassCap)
 	}
 }
+
+// TestCullPerIndexerOverride: a PornoLab override at ratio 2.0 / 30 days
+// must protect a PornoLab torrent that the GLOBAL thresholds would retire,
+// while an identical torrent from a non-overridden indexer retires as
+// usual. Matching is case-insensitive (Prowlarr's spelling varies).
+func TestCullPerIndexerOverride(t *testing.T) {
+	r, _, placed := cullRig(t)
+	ctx := context.Background()
+	r.setConfig(func(c *config.Config) {
+		c.SeedOverrides = `[{"indexer":"PornoLab","maxAge":"720h","ratio":2.0}]`
+	})
+
+	protected := seededTorrent(1.2, int64((10 * 24 * time.Hour).Seconds()))
+	protected.Hash = "protectedhash"
+	plain := seededTorrent(1.2, int64((10 * 24 * time.Hour).Seconds()))
+	plain.Hash = "plainhash"
+	r.qbit.set([]qbit.Torrent{protected, plain})
+	for _, row := range []struct{ hash, indexer string }{
+		{"protectedhash", "pornolab"}, // deliberately lowercased vs the override
+		{"plainhash", "NZBgeek"},
+	} {
+		if _, err := r.repo.Insert(ctx, grabs.Grab{
+			ReleaseTitle: "t-" + row.hash, Client: "qbit", ClientID: row.hash,
+			ReleaseIndexer: row.indexer, Category: "forager",
+			Status: "confirmed", PlacedPath: placed, Kind: "single", GrabbedAt: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r.poller.cullSeededTorrents(ctx)
+
+	got := r.qbit.deletedCalls()
+	if len(got) != 1 || got[0] != "plainhash:true" {
+		t.Fatalf("deletes = %v, want only the non-overridden torrent", got)
+	}
+}
+
+// TestCullOverrideExplicitZeroDisablesRule: {"maxAge":"0"} means "seed this
+// tracker's torrents forever unless the ratio rule fires" — an old
+// low-ratio torrent survives, but the same tracker's ratio-met torrent
+// still retires (the ratio field was omitted, so it inherits the global).
+func TestCullOverrideExplicitZeroDisablesRule(t *testing.T) {
+	r, _, placed := cullRig(t)
+	ctx := context.Background()
+	r.setConfig(func(c *config.Config) {
+		c.SeedOverrides = `[{"indexer":"empornium","maxAge":"0"}]`
+	})
+
+	oldLowRatio := seededTorrent(0.2, int64((90 * 24 * time.Hour).Seconds()))
+	oldLowRatio.Hash = "oldlow"
+	ratioMet := seededTorrent(1.5, int64((1 * 24 * time.Hour).Seconds()))
+	ratioMet.Hash = "ratiomet"
+	r.qbit.set([]qbit.Torrent{oldLowRatio, ratioMet})
+	for _, h := range []string{"oldlow", "ratiomet"} {
+		if _, err := r.repo.Insert(ctx, grabs.Grab{
+			ReleaseTitle: "t-" + h, Client: "qbit", ClientID: h,
+			ReleaseIndexer: "empornium", Category: "forager",
+			Status: "confirmed", PlacedPath: placed, Kind: "single", GrabbedAt: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	r.poller.cullSeededTorrents(ctx)
+
+	got := r.qbit.deletedCalls()
+	if len(got) != 1 || got[0] != "ratiomet:true" {
+		t.Fatalf("deletes = %v, want only the ratio-met torrent (age rule disabled)", got)
+	}
+}
+
+// TestCullMalformedOverridesPausesEverything is the safety direction:
+// overrides exist to PROTECT trackers, so a typo must pause the whole cull
+// — falling back to globals would retire exactly the torrents the user was
+// trying to shield.
+func TestCullMalformedOverridesPausesEverything(t *testing.T) {
+	r, _, _ := cullRig(t)
+	r.setConfig(func(c *config.Config) {
+		c.SeedOverrides = `[{"indexer":"PornoLab","maxAge":"one week"}]` // not a duration
+	})
+	r.qbit.set([]qbit.Torrent{seededTorrent(9.9, int64((99 * 24 * time.Hour).Seconds()))})
+
+	r.poller.cullSeededTorrents(context.Background())
+
+	if got := r.qbit.deletedCalls(); len(got) != 0 {
+		t.Fatalf("deletes = %v — malformed overrides must pause the cull entirely", got)
+	}
+}

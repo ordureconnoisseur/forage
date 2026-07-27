@@ -61,6 +61,12 @@ type Config struct {
 	// common private-tracker hit-and-run rules (≥72h or 1.0).
 	SeedMaxAge time.Duration
 	SeedRatio  float64
+	// SeedOverrides is a JSON array of per-indexer cull thresholds, e.g.
+	// [{"indexer":"PornoLab","maxAge":"720h","ratio":2.0}]. A field omitted
+	// in an override inherits the global; an explicit zero disables that
+	// rule for the indexer. Matching is case-insensitive on the grab's
+	// release_indexer; adopted grabs (no indexer) use the globals.
+	SeedOverrides string
 	// StashPathMapping translates forager-container paths to Stash's
 	// view of the same files, for scoped metadataScan calls after
 	// placement. Format: "<forager-prefix>:<stash-prefix>" (e.g.
@@ -201,6 +207,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.TrashTTL = b.envDuration("FORAGER_TRASH_TTL", 7*24*time.Hour, "trashTtl")
 	b.SeedMaxAge = b.envDuration("FORAGER_SEED_MAX_AGE", 7*24*time.Hour, "seedMaxAge")
 	b.SeedRatio = b.envFloat("FORAGER_SEED_RATIO", 1.0, "seedRatio")
+	b.SeedOverrides = b.envOr("FORAGER_SEED_OVERRIDES", "", "seedOverrides")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
@@ -320,6 +327,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.TrashTTL = dur("trashTtl", stored.TrashTTL, b.TrashTTL, 7*24*time.Hour)
 	out.SeedMaxAge = dur("seedMaxAge", stored.SeedMaxAge, b.SeedMaxAge, 7*24*time.Hour)
 	out.SeedRatio = flt("seedRatio", stored.SeedRatio, b.SeedRatio, 1.0)
+	out.SeedOverrides = str("seedOverrides", stored.SeedOverrides, b.SeedOverrides, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))

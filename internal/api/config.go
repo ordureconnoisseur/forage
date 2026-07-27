@@ -69,6 +69,7 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"trashTtl":            {Value: cfg.TrashTTL.String(), Source: sources["trashTtl"]},
 		"seedMaxAge":          {Value: cfg.SeedMaxAge.String(), Source: sources["seedMaxAge"]},
 		"seedRatio":           {Value: cfg.SeedRatio, Source: sources["seedRatio"]},
+		"seedOverrides":       {Value: cfg.SeedOverrides, Source: sources["seedOverrides"]},
 		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
 		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
 		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},

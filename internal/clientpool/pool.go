@@ -92,6 +92,8 @@ type Settings struct {
 	// both zero disables culling.
 	SeedMaxAge time.Duration
 	SeedRatio  float64
+	// SeedOverrides: per-indexer threshold JSON (see config.SeedOverrides).
+	SeedOverrides string
 	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
 	// lives in the snapshot because the CORS middleware reads it on EVERY
 	// request — composing the full config per request was the alternative.
@@ -168,6 +170,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		TrashTTL:            cfg.TrashTTL,
 		SeedMaxAge:          cfg.SeedMaxAge,
 		SeedRatio:           cfg.SeedRatio,
+		SeedOverrides:       cfg.SeedOverrides,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 		DiscoverFilters:     cfg.DiscoverFilters,

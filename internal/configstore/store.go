@@ -49,6 +49,7 @@ type StoredConfig struct {
 	TrashTTL           *string `json:"trashTtl,omitempty"`
 	SeedMaxAge         *string `json:"seedMaxAge,omitempty"`
 	SeedRatio          *string `json:"seedRatio,omitempty"`
+	SeedOverrides      *string `json:"seedOverrides,omitempty"`
 	SabURL             *string `json:"sabUrl,omitempty"`
 	SabAPIKey          *string `json:"sabApiKey,omitempty"`
 	SabCategory        *string `json:"sabCategory,omitempty"`
@@ -321,6 +322,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.SeedRatio != nil {
 		base.SeedRatio = patch.SeedRatio
+	}
+	if patch.SeedOverrides != nil {
+		base.SeedOverrides = patch.SeedOverrides
 	}
 	if patch.QbitCategory != nil {
 		base.QbitCategory = patch.QbitCategory

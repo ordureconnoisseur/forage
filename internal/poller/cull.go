@@ -2,8 +2,10 @@ package poller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/destroy"
@@ -47,6 +49,62 @@ const cullPassCap = 25
 // cullInterval is how often the pass runs. Ratios and ages move slowly;
 // hourly is prompt without adding client load worth noticing.
 const cullInterval = time.Hour
+
+// seedOverride is one per-indexer threshold entry from the SeedOverrides
+// JSON. Pointer fields distinguish "omitted → inherit the global" from an
+// explicit zero, which disables that rule for the indexer — the natural
+// spelling for "seed my private-tracker torrents forever".
+type seedOverride struct {
+	Indexer string   `json:"indexer"`
+	MaxAge  *string  `json:"maxAge,omitempty"` // Go duration string, e.g. "720h"
+	Ratio   *float64 `json:"ratio,omitempty"`
+}
+
+// cullThresholds are the resolved (global or overridden) limits for one
+// torrent.
+type cullThresholds struct {
+	maxAge time.Duration
+	ratio  float64
+}
+
+// parseSeedOverrides builds the case-insensitive indexer → thresholds map.
+// An error here PAUSES the cull rather than falling back to globals: the
+// whole point of an override is to PROTECT specific trackers' torrents, and
+// culling exactly those because of a typo in the config would be the worst
+// possible reading of it.
+func parseSeedOverrides(raw string, global cullThresholds) (map[string]cullThresholds, error) {
+	out := map[string]cullThresholds{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return out, nil
+	}
+	var entries []seedOverride
+	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+		return nil, fmt.Errorf("seedOverrides is not valid JSON: %w", err)
+	}
+	for i, e := range entries {
+		name := strings.ToLower(strings.TrimSpace(e.Indexer))
+		if name == "" {
+			return nil, fmt.Errorf("seedOverrides[%d] has no indexer name", i)
+		}
+		th := global
+		if e.MaxAge != nil {
+			d, err := time.ParseDuration(*e.MaxAge)
+			if err != nil || d < 0 {
+				return nil, fmt.Errorf("seedOverrides[%d] (%s): bad maxAge %q", i, e.Indexer, *e.MaxAge)
+			}
+			th.maxAge = d
+		}
+		if e.Ratio != nil {
+			if *e.Ratio < 0 {
+				return nil, fmt.Errorf("seedOverrides[%d] (%s): negative ratio", i, e.Indexer)
+			}
+			th.ratio = *e.Ratio
+		}
+		out[name] = th
+	}
+	return out, nil
+}
 
 // cullDue reports whether a completed torrent has met either retirement
 // threshold, and which. Zero-valued thresholds disable their rule.
@@ -94,6 +152,15 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 		return
 	}
 
+	global := cullThresholds{maxAge: cfg.SeedMaxAge, ratio: cfg.SeedRatio}
+	overrides, oerr := parseSeedOverrides(cfg.SeedOverrides, global)
+	if oerr != nil {
+		// Pause, don't fall back: overrides exist to PROTECT trackers, and
+		// globals would cull exactly the torrents the user tried to shield.
+		p.log.Error("seeding cull PAUSED: fix seedOverrides", "err", oerr)
+		return
+	}
+
 	now := time.Now()
 	culled := 0
 	for _, t := range torrents {
@@ -102,10 +169,12 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 				"cap", cullPassCap, "candidates_remaining", len(torrents))
 			break
 		}
-		due, why := cullDue(t, cfg.SeedMaxAge, cfg.SeedRatio, now)
-		if !due {
+		if t.Progress < 1 {
 			continue
 		}
+		// Ownership before verdict: the thresholds can depend on the grab's
+		// indexer, so the lookup comes first. Sub-millisecond against the
+		// local DB; the hourly pass over a few hundred rows doesn't notice.
 		g, gerr := p.repo.ByClientID(ctx, "qbit", t.Hash)
 		if gerr != nil {
 			p.log.Warn("seeding cull: grab lookup", "hash", t.Hash, "err", gerr)
@@ -113,6 +182,14 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 		}
 		if g == nil {
 			continue // not forage's torrent — never touch it
+		}
+		th := global
+		if o, ok := overrides[strings.ToLower(strings.TrimSpace(g.ReleaseIndexer))]; ok && g.ReleaseIndexer != "" {
+			th = o
+		}
+		due, why := cullDue(t, th.maxAge, th.ratio, now)
+		if !due {
+			continue
 		}
 		if g.PlacedPath == "" {
 			continue // never placed: the client copy may be the only copy
