@@ -1162,6 +1162,9 @@ export interface Health {
   // form; false (with adminAuthRequired) means a token-only daemon, so the
   // UI falls back to the API-key field.
   passwordSet: boolean;
+  // The most recent recovered background panic, if any ever happened:
+  // unix seconds + which loop. The full stack lives behind auth in /diag.
+  lastPanic?: { at: number; in: string };
 }
 
 export function fetchHealth(): Promise<Health> {

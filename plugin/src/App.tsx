@@ -25,6 +25,20 @@ import {
   verifyToken,
 } from "./api";
 
+// Panic banner: only a crash from the last 48h is worth interrupting for
+// (older ones are still in /diag), and a dismiss remembers the dismissed
+// panic's timestamp so only a NEW crash re-raises it.
+const PANIC_DISMISS_KEY = "forage.panicDismissedAt";
+const PANIC_BANNER_WINDOW_SEC = 48 * 3600;
+
+// panicAge renders a unix timestamp as a rough "how long ago" phrase.
+function panicAge(at: number): string {
+  const h = Math.floor((Date.now() / 1000 - at) / 3600);
+  if (h < 1) return "less than an hour ago";
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
 // URL-hash routes, parsed by parseRoute. The scene route carries the
 // performer name in a query string so /grab can tell the placer which
 // folder to use (forage owns final file placement now). The grabs
@@ -105,6 +119,12 @@ export default function App() {
   // false = no/invalid token → show the Login gate. Irrelevant (left at
   // true) when the daemon doesn't require auth.
   const [authOk, setAuthOk] = useState<boolean | null>(null);
+  // The panic banner nags per-panic, not forever: dismissing remembers the
+  // dismissed panic's timestamp, so the same crash stays hidden but a NEW
+  // one (different timestamp) re-raises the banner.
+  const [dismissedPanicAt, setDismissedPanicAt] = useState<number>(() =>
+    Number(localStorage.getItem(PANIC_DISMISS_KEY) ?? 0),
+  );
   // foragerBase() is read once per render; useEffect below re-runs
   // when settings open/close so a Save updates the URL → triggers a
   // fresh health probe.
@@ -419,6 +439,28 @@ export default function App() {
           ))}
         </div>
       )}
+      {health?.lastPanic &&
+        health.lastPanic.at > dismissedPanicAt &&
+        Date.now() / 1000 - health.lastPanic.at < PANIC_BANNER_WINDOW_SEC && (
+          <div className="banner banner-warn" role="alert">
+            ⚠ A background task crashed and recovered {panicAge(health.lastPanic.at)}{" "}
+            (in <code>{health.lastPanic.in}</code>). The daemon is fine, but
+            please report it — <code>/diag</code> has the details.{" "}
+            <button
+              className="banner-dismiss"
+              onClick={() => {
+                localStorage.setItem(
+                  PANIC_DISMISS_KEY,
+                  String(health.lastPanic!.at),
+                );
+                setDismissedPanicAt(health.lastPanic!.at);
+              }}
+              title="Hide until a new crash happens"
+            >
+              ×
+            </button>
+          </div>
+        )}
       <main className="app-main">
         {ready && route.kind === "performers" && (
           <PerformersList onPick={goPerformer} />

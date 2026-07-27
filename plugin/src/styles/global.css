@@ -1423,6 +1423,24 @@ button {
   font-weight: 400;
   opacity: 0.9;
 }
+.banner-warn code {
+  font-family: var(--mono, ui-monospace, monospace);
+  opacity: 0.9;
+}
+.banner-dismiss {
+  float: right;
+  background: none;
+  border: 0;
+  color: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.7;
+  padding: 0 2px;
+}
+.banner-dismiss:hover {
+  opacity: 1;
+}
 .banner-setup {
   background: rgba(var(--accent-rgb), 0.10);
   color: var(--accent-bright);
