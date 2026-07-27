@@ -156,6 +156,9 @@ type Poller struct {
 	lastTickDur  time.Duration
 	libraryOK    bool
 	libraryError string
+	// lastPhases: per-phase durations of the last tick (ms), for /healthz —
+	// so "the tick is slow" comes with WHICH PART is slow attached.
+	lastPhases map[string]int64
 }
 
 // Health is the poller's telemetry snapshot for /healthz: is the tick loop
@@ -171,6 +174,13 @@ func (p *Poller) Health() map[string]any {
 	if !p.lastTickAt.IsZero() {
 		out["lastTickAt"] = p.lastTickAt.Unix()
 		out["lastTickMs"] = p.lastTickDur.Milliseconds()
+	}
+	if len(p.lastPhases) > 0 {
+		phases := make(map[string]int64, len(p.lastPhases))
+		for k, v := range p.lastPhases {
+			phases[k] = v
+		}
+		out["phasesMs"] = phases
 	}
 	if p.libraryError != "" {
 		out["libraryError"] = p.libraryError
@@ -335,10 +345,30 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		p.log.Warn("library mount unavailable — placement paused this tick",
 			"root", p.pool.Settings().LibraryRoot)
 	}
+	// Per-phase stopwatch, published via Health() so a slow tick names its
+	// slow part. phase() closes the previous phase and opens the next.
+	phases := map[string]int64{}
+	phaseStart := time.Now()
+	current := ""
+	phase := func(name string) {
+		if current != "" {
+			phases[current] += time.Since(phaseStart).Milliseconds()
+		}
+		current = name
+		phaseStart = time.Now()
+	}
+	defer func() {
+		phase("")
+		p.healthMu.Lock()
+		p.lastPhases = phases
+		p.healthMu.Unlock()
+	}()
+	phase("adopt")
 	// Adopt any forager-category qBit torrents we aren't tracking yet,
 	// before loading active grabs so a freshly-adopted one is processed
 	// this same tick.
 	p.adoptOrphans(ctx, adoptionGrace)
+	phase("db")
 	active, err := p.repo.Active(ctx)
 	if err != nil {
 		return err
@@ -395,11 +425,13 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	// library is exactly when this is the only work left to do — hanging it
 	// off the end of the tick meant it never ran on a quiet daemon. Its own
 	// slow cadence and bounded batch keep the cost off the advance path.
+	phase("reconcile")
 	if time.Since(p.lastReconcile) >= reconcileInterval {
 		p.lastReconcile = time.Now()
 		p.reconcileConfirmed(ctx)
 	}
 
+	phase("trashSweep")
 	// Daily trash-retention sweep — also above the early return, for the
 	// same reason as the reconcile: an idle library is precisely when
 	// housekeeping is the only work left.
@@ -436,6 +468,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 			break
 		}
 	}
+	phase("qbitList")
 	var qbitTorrents []qbit.Torrent
 	qbitByHash := map[string]*qbit.Torrent{}
 	qbitListOK := false
@@ -460,6 +493,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	// grab, so a transient fetch error (SAB restarting, network blip) must
 	// skip the SAB refresh for the tick rather than hand advanceSab empty
 	// lists that misread every live grab as gone.
+	phase("sabList")
 	var sabQueue, sabHistory []sabnzbd.Item
 	sabListsOK := false
 	hasSabActive := false
@@ -498,6 +532,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		}
 	}
 
+	phase("advance")
 	for i := range active {
 		if err := p.advance(ctx, &active[i], qbitTorrents, qbitByHash, qbitListOK, claimed, sabQueue, sabHistory, sabListsOK); err != nil {
 			p.log.Warn("advance grab", "id", active[i].ID, "err", err)
