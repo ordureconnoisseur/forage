@@ -1597,3 +1597,38 @@ export function redoWatch(
 ): Promise<{ ok: boolean; purged?: string[] }> {
   return postJSON(`/watches/${encodeURIComponent(stashDBID)}/redo`, {});
 }
+// ── Destruction journal ─────────────────────────────────────────────
+
+// DestructionEntry is one journal row: something forage destroyed, trashed,
+// refused or restored, with the complete file list snapshotted at decision
+// time. outcome "trashed" entries are restorable until the TTL sweep runs.
+export interface DestructionEntry {
+  id: number;
+  reason: string;
+  scene_id?: string;
+  title?: string;
+  files: { path: string; size?: number }[];
+  outcome: "intent" | "destroyed" | "trashed" | "refused" | "failed" | "restored";
+  detail?: string;
+  created_at: number;
+}
+
+export function fetchDestructions(limit = 100): Promise<DestructionEntry[]> {
+  return get<{ destructions: DestructionEntry[] }>(
+    `/destructions?limit=${limit}`,
+  ).then((r) => r.destructions);
+}
+
+export async function restoreDestruction(id: number): Promise<void> {
+  const r = await fetch(foragerBase() + `/destructions/${id}/restore`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!r.ok) {
+    const body = await r.json().catch(() => ({}) as { error?: string });
+    throw new Error(
+      (body as { error?: string }).error || `restore failed (${r.status})`,
+    );
+  }
+}
+

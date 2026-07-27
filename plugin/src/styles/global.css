@@ -7455,3 +7455,75 @@ code.grab-fact-v,
   border-radius: var(--radius-pill);
   padding: 2px 9px;
 }
+
+/* Deletion journal */
+.del-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.del-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md, 10px);
+  background: var(--glass-bg);
+}
+.del-badge {
+  flex: none;
+  margin-top: 2px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+.del-badge.outcome-trashed  { border-color: rgba(212, 161, 74, 0.5);  color: #e0b84e; }
+.del-badge.outcome-destroyed{ border-color: rgba(239, 68, 68, 0.5);   color: #f3a3a3; }
+.del-badge.outcome-failed   { border-color: rgba(239, 68, 68, 0.35);  color: var(--text-muted); }
+.del-badge.outcome-restored { border-color: rgba(34, 197, 94, 0.5);   color: #6ee7a0; }
+.del-badge.outcome-refused  { border-color: rgba(59, 130, 246, 0.45); color: #93c5fd; }
+.del-body { min-width: 0; flex: 1; }
+.del-title {
+  font-size: 13.5px;
+  font-weight: 500;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+.del-reason {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.del-meta {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.del-path {
+  font-family: var(--mono, ui-monospace, monospace);
+  max-width: 46ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.del-detail {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: #e0b84e;
+}
+.del-time { margin-left: auto; }

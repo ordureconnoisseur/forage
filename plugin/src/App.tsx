@@ -4,6 +4,7 @@ import StudiosList from "./views/StudiosList";
 import MissingScenes from "./views/MissingScenes";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
+import DeletionsList from "./views/DeletionsList";
 import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
 import Setup from "./views/Setup";
@@ -37,7 +38,8 @@ type Route =
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "watching" }
-  | { kind: "grabs" };
+  | { kind: "grabs" }
+  | { kind: "deletions" };
 
 function parseRoute(hash: string): Route {
   const raw = hash.replace(/^#\/?/, "");
@@ -64,6 +66,9 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "grabs") {
     return { kind: "grabs" };
+  }
+  if (parts[0] === "deletions") {
+    return { kind: "deletions" };
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
@@ -451,6 +456,7 @@ export default function App() {
         {ready && route.kind === "grabs" && (
           <GrabsList onPickScene={goScene} />
         )}
+        {ready && route.kind === "deletions" && <DeletionsList />}
         {loading && (
           <div className="app-loading" role="status" aria-live="polite">
             <span className="coll-spinner" />

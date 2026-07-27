@@ -632,6 +632,13 @@ export default function GrabsList({
               {retryingAll ? "Retrying…" : `↻ Retry ${totals.failed} failed`}
             </button>
           )}
+          <a
+            className="grab-adopt-btn"
+            href="#/deletions"
+            title="The deletion journal — everything forage removed or refused, with restore for trashed items"
+          >
+            Deletions ↗
+          </a>
           {/* Force-adopt torrents added to the client manually, right now. */}
           <button
             className="grab-adopt-btn"
