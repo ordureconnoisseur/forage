@@ -167,11 +167,12 @@ and the journal/DB explain what happened.
   docs/troubleshooting.md covering the three setup mistakes (wrong
   container path, different filesystems, category save path), linked from
   README and the issue template.
-- ◐ **Panic surfacing**: every recover site (poller tick, api background
-  loops, main.go cache refreshers) now persists the panic to the meta
-  table (paniclog; part of the precious backup set). /healthz carries
-  `lastPanic` {at, in} — value/stack stay behind auth in /diag. Remaining:
-  a UI badge off the healthz field.
+- ☑ **Panic surfacing**: every recover site (poller tick, api background
+  loops, main.go cache refreshers) persists the panic to the meta table
+  (paniclog; part of the precious backup set). /healthz carries
+  `lastPanic` {at, in} — value/stack stay behind auth in /diag — and the
+  UI raises a dismissible banner for crashes newer than 48h (dismiss is
+  per-panic, so a new crash re-raises it).
 
 ## Phase 5 — the standard that keeps it true
 
