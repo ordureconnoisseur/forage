@@ -33,13 +33,17 @@ body:
     validations:
       required: true
   - type: textarea
-    id: healthz
+    id: diag
     attributes:
-      label: /healthz output
+      label: Diagnostics bundle
       description: >-
-        Paste the JSON from http://<host>:7979/healthz — it carries the
-        version, client reachability, and poller state, and it contains no
-        secrets or library paths.
+        Paste the JSON from http://<host>:7979/diag (log in first — it's the
+        same auth as the UI). It carries versions, which settings are
+        configured and where each came from, client reachability, poller
+        state, and the last recovered crash. Secrets are masked; it does
+        include your library paths and service URLs, so skim before posting
+        if those are private. Fallback if you can't reach /diag: the
+        unauthenticated /healthz.
       render: json
   - type: textarea
     id: logs

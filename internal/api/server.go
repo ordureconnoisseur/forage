@@ -24,6 +24,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
+	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/rss"
 	"github.com/ordureconnoisseur/forager/internal/scoring"
 	"github.com/ordureconnoisseur/forager/internal/stash"
@@ -59,6 +60,7 @@ type Server struct {
 	version      string
 	adoptNow     func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
 	pollerHealth func() map[string]any            // poller telemetry for /healthz; may be nil
+	startedAt    time.Time                        // process start, for /diag uptime
 
 	// torrentGate spaces out .torrent fetches (addTorrentAsync) so a bulk
 	// grab or bulk-retry doesn't burst the indexer into HTTP 429s. Zero value
@@ -209,6 +211,7 @@ func New(opts Options) *Server {
 		version:      opts.Version,
 		adoptNow:     opts.AdoptNow,
 		pollerHealth: opts.PollerHealth,
+		startedAt:    time.Now(),
 		pendingAdds:  opts.PendingAdds,
 		sessionKey:   loadOrCreateSessionKey(opts.DB, opts.Log),
 	}
@@ -310,6 +313,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/img/studio/{id}", s.getStudioImage)
 		r.Get("/img/scene/{id}/screenshot", s.getSceneScreenshot)
 		r.Get("/config", s.getConfig)
+		r.Get("/diag", s.getDiag)
 		r.Post("/config", s.postConfig)
 		r.Post("/config/test/{section}", s.postConfigTest)
 		r.Post("/config/stashdb-from-stash", s.postStashDBFromStash)
@@ -519,6 +523,13 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	if all, err := s.grabs.CountDestructionsByOutcome(r.Context(), 0); err == nil {
 		day, _ := s.grabs.CountDestructionsByOutcome(r.Context(), time.Now().Add(-24*time.Hour).Unix())
 		payload["destructions"] = map[string]any{"total": all, "last24h": day}
+	}
+	// The last recovered background panic: when and in which loop, so a
+	// silent crash-loop is visible to any health check. Timestamp + label
+	// only — the panic value and stack can carry filesystem paths, which
+	// stay behind auth (the /diag bundle).
+	if pe := paniclog.Last(s.db); pe != nil {
+		payload["lastPanic"] = map[string]any{"at": pe.At, "in": pe.In}
 	}
 	writeJSON(w, http.StatusOK, payload)
 }

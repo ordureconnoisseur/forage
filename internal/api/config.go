@@ -49,8 +49,25 @@ var sensitiveFields = map[string]bool{
 }
 
 func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, configFieldsResponse{
+		Fields: s.configFields(),
+		Section: map[string]bool{
+			"stash":     s.pool.Stash() != nil,
+			"stashdb":   s.pool.StashDB() != nil,
+			"prowlarr":  s.pool.Prowlarr() != nil,
+			"qbit":      s.pool.Qbit() != nil,
+			"sab":       s.pool.Sab() != nil,
+			"placement": s.pool.Placer().Configured(),
+		},
+	})
+}
+
+// configFields renders the composed config as the masked field map — the
+// single place secret masking happens, shared by GET /config and the /diag
+// bundle so a new secret can't leak from one while masked in the other.
+func (s *Server) configFields() map[string]configField {
 	cfg, sources := config.Compose(s.bootstrap, s.store.Get())
-	fields := map[string]configField{
+	return map[string]configField{
 		"stashUrl":            {Value: cfg.StashURL, Source: sources["stashUrl"]},
 		"stashApiKey":         secretField(cfg.StashAPIKey, sources["stashApiKey"]),
 		"stashdbUrl":          {Value: cfg.StashDBURL, Source: sources["stashdbUrl"]},
@@ -94,17 +111,6 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 		"notifyWebhookUrl": {Value: cfg.NotifyWebhookURL, Source: sources["notifyWebhookUrl"]},
 		"stashPublicUrl":   {Value: cfg.StashPublicURL, Source: sources["stashPublicUrl"]},
 	}
-	writeJSON(w, http.StatusOK, configFieldsResponse{
-		Fields: fields,
-		Section: map[string]bool{
-			"stash":     s.pool.Stash() != nil,
-			"stashdb":   s.pool.StashDB() != nil,
-			"prowlarr":  s.pool.Prowlarr() != nil,
-			"qbit":      s.pool.Qbit() != nil,
-			"sab":       s.pool.Sab() != nil,
-			"placement": s.pool.Placer().Configured(),
-		},
-	})
 }
 
 // secretField returns a masked view of a sensitive value. Returns an

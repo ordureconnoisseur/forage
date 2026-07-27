@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -21,6 +22,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/poller"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -265,15 +267,17 @@ func logBootProbes(ctx context.Context, pool *clientpool.Pool, log *slog.Logger)
 	}
 }
 
-// recoverTo logs a panic instead of crashing the daemon. The cache
-// refreshers run as bare goroutines and chew Stash/StashDB responses
+// recoverTo logs and persists a panic instead of crashing the daemon. The
+// cache refreshers run as bare goroutines and chew Stash/StashDB responses
 // whose shapes we don't control; a panic should cost one refresh pass,
 // not the process. (The api and poller packages carry their own
 // equivalents for their loops.)
-func recoverTo(log *slog.Logger, label string) {
+func recoverTo(log *slog.Logger, database *sql.DB, label string) {
 	if r := recover(); r != nil {
+		stack := debug.Stack()
 		log.Error("panic in background goroutine",
-			"in", label, "panic", r, "stack", string(debug.Stack()))
+			"in", label, "panic", r, "stack", string(stack))
+		paniclog.Record(database, label, fmt.Sprint(r), stack)
 	}
 }
 
@@ -282,7 +286,7 @@ func recoverTo(log *slog.Logger, label string) {
 // interval. Scenes piggy-back on the same interval; if it gets too
 // slow we can split it into its own cadence later.
 func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sql.DB, log *slog.Logger, interval time.Duration) {
-	defer recoverTo(log, "boot cache refresh")
+	defer recoverTo(log, database, "boot cache refresh")
 	sc := pool.Stash()
 	if sc == nil {
 		return // daemon is unconfigured — refresh will retry on next interval tick
@@ -321,7 +325,7 @@ func maybeRefreshOnBoot(ctx context.Context, pool *clientpool.Pool, database *sq
 func runTrendingTicker(ctx context.Context, pool *clientpool.Pool, database *sql.DB, log *slog.Logger) {
 	const interval = 1 * time.Hour
 	tick := func() {
-		defer recoverTo(log, "trending refresh")
+		defer recoverTo(log, database, "trending refresh")
 		sdb := pool.StashDB()
 		if sdb == nil {
 			return
@@ -356,7 +360,7 @@ func runRefreshTicker(ctx context.Context, pool *clientpool.Pool, database *sql.
 			return
 		case <-ticker.C:
 			func() {
-				defer recoverTo(log, "ticker cache refresh")
+				defer recoverTo(log, database, "ticker cache refresh")
 				sc := pool.Stash()
 				if sc == nil {
 					return

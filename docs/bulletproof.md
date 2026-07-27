@@ -160,14 +160,17 @@ and the journal/DB explain what happened.
 - ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
   scopes) so `docker pull` works.
 - ◐ **Bug-report ergonomics**: issue templates SHIPPED (version/install/
-  healthz/logs/journal-rows prompts). Remaining: a `/healthz?diag=1`
-  redacted diagnostics bundle (versions, config sources with secrets
-  masked, last errors) a tester can paste; FAQ for the three setup
-  mistakes (wrong container path, different filesystems, category save
-  path).
-- ☐ **Panic surfacing**: poller panics are recovered and logged; persist
-  the last one and badge it in the UI so a silent nightly crash-loop is
-  visible.
+  diag/logs/journal-rows prompts). Diagnostics bundle SHIPPED as
+  authenticated `GET /diag` (versions, config field sources through the
+  same masking as /config — one place to keep the secrets rule — client
+  reachability, poller health, grab totals, journal tallies, last panic
+  with stack). Remaining: FAQ for the three setup mistakes (wrong
+  container path, different filesystems, category save path).
+- ◐ **Panic surfacing**: every recover site (poller tick, api background
+  loops, main.go cache refreshers) now persists the panic to the meta
+  table (paniclog; part of the precious backup set). /healthz carries
+  `lastPanic` {at, in} — value/stack stay behind auth in /diag. Remaining:
+  a UI badge off the healthz field.
 
 ## Phase 5 — the standard that keeps it true
 

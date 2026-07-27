@@ -411,7 +411,8 @@ All routes except `GET /` and `GET /healthz` require the admin token (as `Author
 
 | Method | Path | Purpose |
 |---|---|---|
-| `GET` | `/healthz` | Liveness, per-section configured flags, `adminAuthRequired` |
+| `GET` | `/healthz` | Liveness, per-section configured flags, poller health, deletion tallies, `adminAuthRequired` |
+| `GET` | `/diag` | Diagnostics bundle for bug reports — versions, config sources (secrets masked), client reachability, last recovered panic |
 | `GET` | `/performers` | Cached performer list. `?sort=`, `?favorite_only=`, `?q=` |
 | `GET` | `/missing-scenes?performer=<id>` | StashDB scenes for a performer not in your library |
 | `GET` | `/scenes/{id}/releases` | Prowlarr releases for a scene, scored + verified. `?lean=1`, `?p=`, `?alias=` |

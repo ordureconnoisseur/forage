@@ -24,6 +24,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
 	"github.com/ordureconnoisseur/forager/internal/sabnzbd"
@@ -313,7 +314,9 @@ func (p *Poller) Run(ctx context.Context) {
 func (p *Poller) safeTick(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			p.log.Error("panic in poller tick", "panic", r, "stack", string(debug.Stack()))
+			stack := debug.Stack()
+			p.log.Error("panic in poller tick", "panic", r, "stack", string(stack))
+			paniclog.Record(p.db, "poller tick", fmt.Sprint(r), stack)
 		}
 	}()
 	if err := p.tickOnce(ctx); err != nil {

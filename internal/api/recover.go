@@ -1,6 +1,11 @@
 package api
 
-import "runtime/debug"
+import (
+	"fmt"
+	"runtime/debug"
+
+	"github.com/ordureconnoisseur/forager/internal/paniclog"
+)
 
 // recoverPanic logs a panic from a background goroutine instead of letting
 // it kill the daemon. chi's Recoverer covers HTTP handlers only; the job
@@ -10,13 +15,19 @@ import "runtime/debug"
 // fail that one unit of work, not take down the HTTP server, poller, and
 // every other loop with it.
 //
+// The panic is also persisted (paniclog) so a recurring crash in a
+// nightly loop shows up in /healthz and the diagnostics bundle instead of
+// only in logs nobody reads.
+//
 //	go func() {
 //		defer s.recoverPanic("label")
 //		...
 //	}()
 func (s *Server) recoverPanic(label string) {
 	if r := recover(); r != nil {
+		stack := debug.Stack()
 		s.log.Error("panic in background goroutine",
-			"in", label, "panic", r, "stack", string(debug.Stack()))
+			"in", label, "panic", r, "stack", string(stack))
+		paniclog.Record(s.db, label, fmt.Sprint(r), stack)
 	}
 }
