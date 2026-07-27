@@ -46,6 +46,7 @@ type StoredConfig struct {
 	QbitPassword       *string `json:"qbitPassword,omitempty"`
 	QbitCategory       *string `json:"qbitCategory,omitempty"`
 	DownloadRoot       *string `json:"downloadRoot,omitempty"`
+	TrashTTL           *string `json:"trashTtl,omitempty"`
 	SabURL             *string `json:"sabUrl,omitempty"`
 	SabAPIKey          *string `json:"sabApiKey,omitempty"`
 	SabCategory        *string `json:"sabCategory,omitempty"`
@@ -309,6 +310,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.DownloadRoot != nil {
 		base.DownloadRoot = patch.DownloadRoot
+	}
+	if patch.TrashTTL != nil {
+		base.TrashTTL = patch.TrashTTL
 	}
 	if patch.QbitCategory != nil {
 		base.QbitCategory = patch.QbitCategory

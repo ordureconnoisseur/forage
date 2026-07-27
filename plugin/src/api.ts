@@ -1005,6 +1005,10 @@ export interface DeletePreviewKept {
   reason: string;
 }
 export interface GrabDeletePreview {
+  // Present when deletions are recoverable: files move to forage's trash
+  // and are kept for kept_days before the sweep unlinks them. Absent =
+  // permanent deletion (FORAGER_TRASH_TTL=0 escape hatch, or no library).
+  trash?: { enabled: boolean; kept_days: number };
   // Nullable defensively even though the daemon sends [] — an older daemon
   // (or a proxy rewriting empty arrays) must not crash the delete flow.
   scenes: DeletePreviewScene[] | null;

@@ -121,3 +121,29 @@ func TestParent(t *testing.T) {
 		}
 	}
 }
+
+// TestReverseCaseInsensitiveWindowsPrefix: NTFS/SMB paths are
+// case-insensitive and Stash's reported casing can differ from the
+// configured mapping. A sensitive compare silently failed the reverse
+// mapping — which, for the trash flow, demotes a recoverable delete to a
+// permanent one. POSIX prefixes stay case-sensitive.
+func TestReverseCaseInsensitiveWindowsPrefix(t *testing.T) {
+	const mapping = `/data/porn/Media:Z:\Media`
+	for _, tc := range []struct{ in, want string }{
+		{`z:\media\Chloe Cherry\x.mp4`, "/data/porn/Media/Chloe Cherry/x.mp4"},
+		{`Z:\MEDIA\a\b.mp4`, "/data/porn/Media/a/b.mp4"},
+		{`Z:\Media\a\b.mp4`, "/data/porn/Media/a/b.mp4"},
+		// Boundary still enforced whatever the case: a sibling must not map.
+		{`Z:\Media2\a.mp4`, ""},
+		{`z:\mediakit\a.mp4`, ""},
+	} {
+		if got := Reverse(tc.in, mapping); got != tc.want {
+			t.Errorf("Reverse(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	// POSIX prefixes remain case-sensitive — the STASH side of this mapping
+	// is /mnt/media, so a case-mangled /MNT must not reverse.
+	if got := Reverse("/MNT/media/x.mp4", "/data/media:/mnt/media"); got != "" {
+		t.Errorf("posix prefix matched case-insensitively: %q", got)
+	}
+}

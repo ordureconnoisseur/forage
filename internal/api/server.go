@@ -21,6 +21,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/rss"
@@ -175,6 +176,20 @@ type Options struct {
 	PendingAdds *grabs.PendingAdds
 }
 
+// destroyExecutor assembles the one-door destruction machinery for a
+// request: the live Stash client, the journal, and the trash configuration
+// from current settings (nil Trash = permanent deletes, the FORAGER_TRASH_TTL=0
+// escape hatch).
+func (s *Server) destroyExecutor(sc *stash.Client) destroy.Executor {
+	cfg := s.pool.Settings()
+	return destroy.Executor{
+		Stash: sc,
+		Rec:   s.grabs,
+		Log:   s.log,
+		Trash: destroy.TrashFromSettings(cfg.LibraryRoot, cfg.StashPathMapping, cfg.TrashTTL),
+	}
+}
+
 func New(opts Options) *Server {
 	s := &Server{
 		db:          opts.DB,
@@ -254,6 +269,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/grabs/{id}", s.deleteGrab)
 		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
 		r.Get("/destructions", s.getDestructions)
+		r.Post("/destructions/{id}/restore", s.postRestoreDestruction)
 		r.Post("/watches", s.postWatch)
 		r.Post("/watches/batch", s.postWatchBatch)
 		r.Post("/watches/search-now", s.postWatchSearchNow)

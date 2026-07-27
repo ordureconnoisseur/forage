@@ -18,6 +18,7 @@ package clientpool
 import (
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/notify"
@@ -80,9 +81,13 @@ type Settings struct {
 	// SabDeleteAfterPlace tells the poller to delete a SAB download
 	// (history + files) once it's been placed into the library.
 	SabDeleteAfterPlace bool
-	// PackDedupKeep: "existing" | "pack" | "review" | "both" — which copy survives
-	// when a pack scene duplicates one already in the library.
+	// PackDedupKeep: "existing" | "pack" | "review" | "both" | "log-only" —
+	// which copy survives when a pack scene duplicates one already in the
+	// library ("log-only" plans and journals without destroying).
 	PackDedupKeep string
+	// TrashTTL: how long deleted files stay recoverable in the trash before
+	// the sweep unlinks them. 0 = trash disabled (permanent deletes).
+	TrashTTL time.Duration
 	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
 	// lives in the snapshot because the CORS middleware reads it on EVERY
 	// request — composing the full config per request was the alternative.
@@ -156,6 +161,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		StashPathMapping:    cfg.StashPathMapping,
 		SabDeleteAfterPlace: cfg.SabDeleteAfterPlace,
 		PackDedupKeep:       cfg.PackDedupKeep,
+		TrashTTL:            cfg.TrashTTL,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 		DiscoverFilters:     cfg.DiscoverFilters,

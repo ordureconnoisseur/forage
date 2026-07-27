@@ -64,13 +64,15 @@ check; suite green; deployed to mini before the next pack grab runs.
   sizes, requested-by (user click vs poller), outcome — written *before*
   acting, finalised after. Answers "what did forage delete and why" without
   archaeology. Surfaced read-only in Settings.
-- ☐ **Trash, not unlink.** Where the library filesystem allows a same-device
-  rename, deletion becomes: destroy the Stash scene with
-  `delete_file=false`, move the file(s) to `<library>/.forage-trash/<date>/`,
-  and let a TTL sweep (default 7 days, configurable) do the real unlink.
-  Every forage deletion becomes reversible for a week. The 172-file class of
-  incident becomes a restore, not a re-download. Fall back to current
-  behaviour (with the journal entry saying so) when rename isn't possible.
+- ☑ **Trash, not unlink.** Deletion is now: reverse-map + stat every file
+  (any miss → disclosed permanent fallback), RENAME into the trash
+  (rollback on any failure), THEN destroy the scene metadata — every step
+  before the Stash write is undoable. Trash lives BESIDE the library
+  (`<parent>/.forage-trash/<date>/…`), same filesystem, outside Stash's
+  scan. Daily TTL sweep (default 7d, `FORAGER_TRASH_TTL`, 0 disables),
+  every final unlink journalled. `POST /destructions/{id}/restore` reverses
+  a trashed entry's exact moves and rescans. The 172-file class of incident
+  is now one API call per entry.
 - ☑ **Dry-run mode** for the automatic path: `packDedupKeep` gained the
   `log-only` value that journals what dedup *would* destroy without acting.
   Recommended default for new installs' first week.

@@ -141,6 +141,10 @@ type Poller struct {
 	// the single-goroutine tick, so they need no lock.
 	lastReconcile   time.Time
 	reconcileCursor int
+
+	// lastTrashSweep gates the daily trash-retention sweep (see
+	// destroy.SweepTrash). Owned by the single-goroutine tick.
+	lastTrashSweep time.Time
 }
 
 // packScanState is the high-water count of indexed pack scenes and the
@@ -326,6 +330,21 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	if time.Since(p.lastReconcile) >= reconcileInterval {
 		p.lastReconcile = time.Now()
 		p.reconcileConfirmed(ctx)
+	}
+
+	// Daily trash-retention sweep — also above the early return, for the
+	// same reason as the reconcile: an idle library is precisely when
+	// housekeeping is the only work left.
+	if time.Since(p.lastTrashSweep) >= 24*time.Hour {
+		p.lastTrashSweep = time.Now()
+		cfg := p.pool.Settings()
+		if tc := destroy.TrashFromSettings(cfg.LibraryRoot, cfg.StashPathMapping, cfg.TrashTTL); tc != nil {
+			if n, err := destroy.SweepTrash(ctx, tc.Root, cfg.TrashTTL, p.repo, time.Now()); err != nil {
+				p.log.Warn("trash sweep", "err", err)
+			} else if n > 0 {
+				p.log.Info("trash sweep removed expired files", "files", n, "ttl", cfg.TrashTTL)
+			}
+		}
 	}
 
 	if len(active) == 0 {
@@ -784,6 +803,19 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		}
 	}
 	return confirmErr
+}
+
+// destroyExecutor assembles the one-door destruction machinery for the
+// automatic dedup path — same journal and trash semantics as every
+// interactive surface.
+func (p *Poller) destroyExecutor(sc *stash.Client, grabID int64, keep string) destroy.Executor {
+	cfg := p.pool.Settings()
+	return destroy.Executor{
+		Stash: sc,
+		Rec:   p.repo,
+		Log:   p.log.With("id", grabID, "keep", keep),
+		Trash: destroy.TrashFromSettings(cfg.LibraryRoot, cfg.StashPathMapping, cfg.TrashTTL),
+	}
 }
 
 // packTagTimeout bounds how long a re-filed pack waits for its rescan to
@@ -1312,7 +1344,7 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 			}
 			return
 		}
-		outcome := destroy.Execute(ctx, sc, plan, p.repo, p.log.With("id", g.ID, "keep", keep), "pack dedup")
+		outcome := p.destroyExecutor(sc, g.ID, keep).Execute(ctx, plan, "pack dedup")
 		for _, t := range outcome.Destroyed {
 			destroyed[t.SceneID] = true
 			deduped++

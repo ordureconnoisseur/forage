@@ -2,12 +2,14 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/config"
@@ -333,6 +335,17 @@ func (s *Server) getGrabDeletePreview(w http.ResponseWriter, r *http.Request) {
 		"disk":        purgeDiskPaths(g, sp),
 		"grab_record": true,
 	}
+	// Disclose the deletion mode so the confirm step is honest about
+	// reversibility: trashed-and-kept-N-days, or permanent. Files the
+	// daemon can't reach still fall back to permanent at execution time —
+	// journalled — so trash is described as the default, not a promise.
+	cfg := s.pool.Settings()
+	if tc := destroy.TrashFromSettings(cfg.LibraryRoot, cfg.StashPathMapping, cfg.TrashTTL); tc != nil {
+		resp["trash"] = map[string]any{
+			"enabled":   true,
+			"kept_days": int(cfg.TrashTTL.Hours() / 24),
+		}
+	}
 	if c := purgeClientDesc(g); c != "" {
 		resp["client"] = c
 	}
@@ -365,7 +378,7 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 	}
 	stashHandled := false
 	if !sp.Plan.Empty() || len(sp.Plan.Refused) > 0 {
-		outcome := destroy.Execute(ctx, s.pool.Stash(), sp.Plan, s.grabs, s.log, "grab purge")
+		outcome := s.destroyExecutor(s.pool.Stash()).Execute(ctx, sp.Plan, "grab purge")
 		for _, f := range outcome.Failed {
 			addErr("stash scene "+f.Target.SceneID, f.Err)
 		}
@@ -390,13 +403,46 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 	// Stash scene deleted the file for us; a pack ALWAYS sweeps its placed
 	// directory — it may hold files Stash never indexed, plus (with no path
 	// mapping) the scenes we couldn't match above.
+	//
+	// With trash enabled the sweep MOVES rather than unlinks — the placed
+	// path is daemon-side already, so no reverse mapping is involved — and
+	// journals the move so it's restorable. A move failure falls back to
+	// the permanent unlink, journalled as such.
 	if g.PlacedPath != "" && (g.Kind == "pack" || !stashHandled) {
-		if rerr := os.RemoveAll(g.PlacedPath); rerr != nil {
-			addErr("placed file", rerr)
-		} else if g.Kind == "pack" {
-			out.Removed = append(out.Removed, "pack directory")
-		} else {
-			out.Removed = append(out.Removed, "placed file")
+		what := "placed file"
+		if g.Kind == "pack" {
+			what = "pack directory"
+		}
+		cfg := s.pool.Settings()
+		tc := destroy.TrashFromSettings(cfg.LibraryRoot, cfg.StashPathMapping, cfg.TrashTTL)
+		trashed := false
+		if tc != nil {
+			if moves, terr := tc.TrashLocal([]string{g.PlacedPath},
+				fmt.Sprintf("grab-%d", g.ID), time.Now()); terr == nil {
+				movesJSON, _ := json.Marshal(moves)
+				if _, jerr := s.grabs.JournalDestruction(ctx, "grab purge disk",
+					destroy.Target{Files: []destroy.File{{Path: g.PlacedPath}}},
+					"trashed", string(movesJSON)); jerr != nil {
+					s.log.Warn("purge disk journal failed", "id", id, "err", jerr)
+				}
+				out.Removed = append(out.Removed, what+" → trash")
+				trashed = true
+			} else {
+				s.log.Warn("purge disk trash unavailable; deleting permanently",
+					"id", id, "err", terr)
+			}
+		}
+		if !trashed {
+			if rerr := os.RemoveAll(g.PlacedPath); rerr != nil {
+				addErr(what, rerr)
+			} else {
+				if _, jerr := s.grabs.JournalDestruction(ctx, "grab purge disk",
+					destroy.Target{Files: []destroy.File{{Path: g.PlacedPath}}},
+					"destroyed", ""); jerr != nil {
+					s.log.Warn("purge disk journal failed", "id", id, "err", jerr)
+				}
+				out.Removed = append(out.Removed, what)
+			}
 		}
 	}
 

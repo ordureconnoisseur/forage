@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 )
 
 // dupView is the wire shape for one pending review-mode duplicate. Pack vs
@@ -217,7 +219,7 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				"scene %s: %s; sort that scene out in Stash first",
 				ref.Target.SceneID, ref.Reason))
 		}
-		outcome := destroy.Execute(r.Context(), sc, plan, s.grabs, s.log, "duplicate resolve keep="+req.Keep)
+		outcome := s.destroyExecutor(sc).Execute(r.Context(), plan, "duplicate resolve keep="+req.Keep)
 		for _, f := range outcome.Failed {
 			out.Errors = append(out.Errors, "scene "+f.Target.SceneID+": "+f.Err.Error())
 		}
@@ -302,7 +304,7 @@ func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	outcome := destroy.Execute(r.Context(), sc, plan, s.grabs, s.log, "performer-page duplicate cleanup")
+	outcome := s.destroyExecutor(sc).Execute(r.Context(), plan, "performer-page duplicate cleanup")
 	if len(outcome.Failed) > 0 {
 		writeErr(w, http.StatusBadGateway, "stash: "+outcome.Failed[0].Err.Error())
 		return
@@ -331,4 +333,63 @@ func (s *Server) getDestructions(w http.ResponseWriter, r *http.Request) {
 		entries = []grabs.DestructionEntry{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"destructions": entries})
+}
+
+// postRestoreDestruction puts a trashed deletion back.
+//
+//	POST /destructions/{id}/restore
+//
+// Only entries whose outcome is "trashed" qualify — their detail carries
+// the exact renames that were made, and restore is those renames reversed.
+// After the files are back, a scoped Stash scan re-indexes them
+// (best-effort; the daily scan would catch up regardless). The entry is
+// finalised to "restored" so a second click is a clean 409 instead of a
+// double-move.
+func (s *Server) postRestoreDestruction(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+	entry, err := s.grabs.GetDestruction(r.Context(), id)
+	if err != nil {
+		s.log.Error("destruction get", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	if entry == nil {
+		writeErr(w, http.StatusNotFound, "journal entry not found")
+		return
+	}
+	if entry.Outcome != "trashed" {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"entry %d is %q — only trashed deletions can be restored", id, entry.Outcome))
+		return
+	}
+	if err := destroy.Restore(entry.Detail); err != nil {
+		s.log.Warn("destruction restore", "id", id, "err", err)
+		writeErr(w, http.StatusInternalServerError, "restore: "+err.Error())
+		return
+	}
+	if ferr := s.grabs.FinalizeDestruction(r.Context(), id, "restored", entry.Detail); ferr != nil {
+		s.log.Warn("destruction restore finalize", "id", id, "err", ferr)
+	}
+	// Re-index the restored files so Stash sees them again without waiting
+	// for the next full scan. Best-effort: translate the first restored
+	// path's directory into Stash's view and fire a scoped scan.
+	if moves, merr := destroy.MovesFromDetail(entry.Detail); merr == nil && len(moves) > 0 {
+		if sc := s.pool.Stash(); sc != nil {
+			mapping := s.pool.Settings().StashPathMapping
+			dir := moves[0].From
+			if i := strings.LastIndexAny(dir, `/\`); i > 0 {
+				dir = dir[:i]
+			}
+			if stashDir := pathmap.Translate(dir, mapping); stashDir != "" {
+				if _, serr := sc.MetadataScan(r.Context(), []string{stashDir}); serr != nil {
+					s.log.Warn("restore rescan", "id", id, "err", serr)
+				}
+			}
+		}
+	}
+	s.log.Info("destruction restored", "id", id)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "restored": entry.Files})
 }

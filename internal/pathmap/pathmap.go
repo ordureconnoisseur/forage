@@ -86,7 +86,18 @@ func Reverse(stashPath, mapping string) string {
 	if foragerPrefix == "" || stashPrefix == "" {
 		return ""
 	}
-	if !strings.HasPrefix(stashPath, stashPrefix) {
+	// Windows-style Stash prefixes match case-insensitively: NTFS/SMB paths
+	// are case-insensitive, and Stash can report "z:\media\…" against a
+	// configured "Z:\Media" — a sensitive compare would silently fail the
+	// reverse mapping (for the trash path that demotes a recoverable delete
+	// to a permanent one; for pack distribution it skips the file). POSIX
+	// prefixes stay case-sensitive, because those filesystems are.
+	if strings.ContainsRune(stashPrefix, '\\') {
+		if len(stashPath) < len(stashPrefix) ||
+			!strings.EqualFold(stashPath[:len(stashPrefix)], stashPrefix) {
+			return ""
+		}
+	} else if !strings.HasPrefix(stashPath, stashPrefix) {
 		return ""
 	}
 	suffix := stashPath[len(stashPrefix):]

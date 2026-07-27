@@ -46,6 +46,12 @@ func TestOneDoor(t *testing.T) {
 				// Performer re-file: removes the OLD path after the placer
 				// has re-placed the files under the new performer folder.
 				"internal/api/grab_performer.go": true,
+				// The trash TTL sweep's final unlink: scoped to dated
+				// directories directly under the trash root, journalled per
+				// file before removal. (This very test flagged it when the
+				// sweep was written — the allowlist discipline applies to the
+				// destroy package itself.)
+				"internal/destroy/trash.go": true,
 				// Premature-placement heal: removes a PARTIAL file forage
 				// itself placed from a download that later turned out
 				// unfinished — never a library copy. (Found by this very

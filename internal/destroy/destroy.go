@@ -30,8 +30,10 @@ package destroy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
@@ -168,34 +170,50 @@ type Outcome struct {
 	Failed    []Failure
 }
 
+// Executor carries everything a destruction needs: the Stash client, the
+// journal, the log, and — when enabled — the trash configuration that turns
+// permanent deletion into a recoverable move.
+type Executor struct {
+	Stash SceneDestroyer
+	Rec   Recorder     // may be nil (tests)
+	Log   *slog.Logger // may be nil
+	Trash *TrashConfig // nil = permanent deletes (sceneDestroy delete_file=true)
+}
+
 // Execute destroys every approved target in the plan, journalling and
 // logging each with its full file paths BEFORE acting so the record exists
 // even if the process dies mid-destroy. Refused targets are never touched
 // (and are journalled as such). Best-effort across targets: one failure
-// doesn't stop the rest (matching every caller's existing semantics), and
-// the outcome says exactly which went through.
+// doesn't stop the rest, and the outcome says exactly which went through.
+//
+// With Trash configured, a target's files are RENAMED into the trash and
+// only the scene's metadata is destroyed — sequenced moves-first so every
+// step before the Stash write is undone on failure (files renamed back).
+// A target whose files can't be reached from the daemon (mapping gap,
+// already-gone file) falls back to the permanent path, and the journal
+// entry says so: a delete the user asked for must not be refused over a
+// mapping, but it must never be silently downgraded either.
 //
 // reason names the surface ("grab purge", "pack dedup", …) so a
-// destruction is always attributable. rec may be nil (tests); log may be
-// nil.
-func Execute(ctx context.Context, sc SceneDestroyer, p Plan, rec Recorder, log *slog.Logger, reason string) Outcome {
+// destruction is always attributable.
+func (e Executor) Execute(ctx context.Context, p Plan, reason string) Outcome {
 	journal := func(t Target, outcome, detail string) int64 {
-		if rec == nil {
+		if e.Rec == nil {
 			return 0
 		}
-		id, err := rec.JournalDestruction(ctx, reason, t, outcome, detail)
-		if err != nil && log != nil {
-			log.Warn("destruction journal write failed", "reason", reason,
+		id, err := e.Rec.JournalDestruction(ctx, reason, t, outcome, detail)
+		if err != nil && e.Log != nil {
+			e.Log.Warn("destruction journal write failed", "reason", reason,
 				"scene", t.SceneID, "err", err)
 		}
 		return id
 	}
 	finalize := func(id int64, outcome, detail string) {
-		if rec == nil || id == 0 {
+		if e.Rec == nil || id == 0 {
 			return
 		}
-		if err := rec.FinalizeDestruction(ctx, id, outcome, detail); err != nil && log != nil {
-			log.Warn("destruction journal finalize failed", "id", id, "err", err)
+		if err := e.Rec.FinalizeDestruction(ctx, id, outcome, detail); err != nil && e.Log != nil {
+			e.Log.Warn("destruction journal finalize failed", "id", id, "err", err)
 		}
 	}
 
@@ -205,25 +223,59 @@ func Execute(ctx context.Context, sc SceneDestroyer, p Plan, rec Recorder, log *
 		for _, f := range t.Files {
 			paths = append(paths, f.Path)
 		}
-		if log != nil {
-			log.Info("destroying scene", "reason", reason,
-				"scene", t.SceneID, "title", t.Title, "files", paths)
+		if e.Log != nil {
+			e.Log.Info("destroying scene", "reason", reason,
+				"scene", t.SceneID, "title", t.Title, "files", paths, "trash", e.Trash != nil)
 		}
 		jid := journal(t, "intent", "")
-		if err := sc.SceneDestroy(ctx, t.SceneID, true, true); err != nil {
-			if log != nil {
-				log.Warn("scene destroy failed", "reason", reason, "scene", t.SceneID, "err", err)
+
+		permanentWhy := ""
+		if e.Trash != nil {
+			moves, terr := e.Trash.trashTargetFiles(t, time.Now())
+			if terr == nil {
+				// Files are safely in trash; now drop the scene record. On
+				// failure the moves are undone, leaving the world exactly as
+				// it was.
+				if err := e.Stash.SceneDestroy(ctx, t.SceneID, false, true); err != nil {
+					if rerr := restoreMoves(moves); rerr != nil && e.Log != nil {
+						e.Log.Error("trash rollback failed — files left in trash",
+							"scene", t.SceneID, "err", rerr)
+					}
+					if e.Log != nil {
+						e.Log.Warn("scene destroy failed", "reason", reason, "scene", t.SceneID, "err", err)
+					}
+					finalize(jid, "failed", err.Error())
+					out.Failed = append(out.Failed, Failure{Target: t, Err: err})
+					continue
+				}
+				movesJSON, _ := json.Marshal(moves)
+				finalize(jid, "trashed", string(movesJSON))
+				out.Destroyed = append(out.Destroyed, t)
+				continue
+			}
+			// Disclosed downgrade: fall through to the permanent path with
+			// the reason kept for the journal.
+			permanentWhy = "trash unavailable: " + terr.Error()
+			if e.Log != nil {
+				e.Log.Warn("trash unavailable; deleting permanently",
+					"reason", reason, "scene", t.SceneID, "why", terr)
+			}
+		}
+
+		if err := e.Stash.SceneDestroy(ctx, t.SceneID, true, true); err != nil {
+			if e.Log != nil {
+				e.Log.Warn("scene destroy failed", "reason", reason, "scene", t.SceneID, "err", err)
 			}
 			finalize(jid, "failed", err.Error())
 			out.Failed = append(out.Failed, Failure{Target: t, Err: err})
 			continue
 		}
-		finalize(jid, "destroyed", "")
+		finalize(jid, "destroyed", permanentWhy)
 		out.Destroyed = append(out.Destroyed, t)
 	}
 	for _, r := range p.Refused {
-		if log != nil {
-			log.Info("scene destroy refused", "reason", reason,
+		if e.Log != nil {
+			e.Log.Info("scene destroy refused", "reason", reason,
 				"scene", r.Target.SceneID, "why", r.Reason, "files", len(r.Target.Files))
 		}
 		journal(r.Target, "refused", r.Reason)

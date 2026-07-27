@@ -2798,9 +2798,14 @@ function DeletePreviewPanel({
   const MAX = 12;
   const shown = rows.slice(0, MAX);
   const more = rows.length - shown.length;
+  const trashDays = preview.trash?.enabled ? preview.trash.kept_days : 0;
   return (
     <div className="grab-del-preview">
-      <div className="gdp-title">This will permanently delete:</div>
+      <div className="gdp-title">
+        {trashDays > 0
+          ? `This will move to forage's trash (recoverable for ${trashDays} days):`
+          : "This will permanently delete:"}
+      </div>
       <ul className="gdp-list">
         {shown.map((r) => (
           <li key={r.key}>
@@ -2838,6 +2843,12 @@ function DeletePreviewPanel({
           {n}
         </div>
       ))}
+      {trashDays > 0 && (
+        <div className="gdp-note">
+          Files the daemon can&rsquo;t reach are deleted permanently instead
+          (recorded in the journal either way).
+        </div>
+      )}
     </div>
   );
 }

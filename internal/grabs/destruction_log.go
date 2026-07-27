@@ -55,6 +55,30 @@ UPDATE destruction_log SET outcome = ?, detail = ? WHERE id = ?`, outcome, detai
 	return err
 }
 
+// GetDestruction loads one journal row by id, or (nil, nil) when absent.
+func (r *Repo) GetDestruction(ctx context.Context, id int64) (*DestructionEntry, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, reason, scene_id, title, files, outcome, detail, created_at
+  FROM destruction_log WHERE id = ?`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, rows.Err()
+	}
+	var e DestructionEntry
+	var filesJSON string
+	if err := rows.Scan(&e.ID, &e.Reason, &e.SceneID, &e.Title,
+		&filesJSON, &e.Outcome, &e.Detail, &e.CreatedAt); err != nil {
+		return nil, err
+	}
+	if filesJSON != "" {
+		_ = json.Unmarshal([]byte(filesJSON), &e.Files)
+	}
+	return &e, nil
+}
+
 // ListDestructions returns the newest journal rows, for the audit view.
 func (r *Repo) ListDestructions(ctx context.Context, limit int) ([]DestructionEntry, error) {
 	if limit <= 0 || limit > 500 {

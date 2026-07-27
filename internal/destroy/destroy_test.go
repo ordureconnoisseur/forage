@@ -14,13 +14,17 @@ import (
 // selected scenes.
 type fakeDestroyer struct {
 	calls []string
-	fail  map[string]bool
+	// deleteFileArgs records the delete_file flag per call — the trash
+	// tests assert metadata-only destroys, the permanent tests the opposite.
+	deleteFileArgs []bool
+	fail           map[string]bool
 }
 
 func (f *fakeDestroyer) SceneDestroy(_ context.Context, id string, deleteFile, deleteGenerated bool) error {
 	f.calls = append(f.calls, id)
-	if !deleteFile || !deleteGenerated {
-		return errors.New("test expects delete_file and delete_generated")
+	f.deleteFileArgs = append(f.deleteFileArgs, deleteFile)
+	if !deleteGenerated {
+		return errors.New("test expects delete_generated")
 	}
 	if f.fail[id] {
 		return errors.New("stash said no")
@@ -82,7 +86,7 @@ func TestExecuteTouchesOnlyApproved(t *testing.T) {
 		{SceneID: "ok", Files: []File{{Path: "/lib/a.mp4"}}},
 		{SceneID: "guarded", Files: []File{{Path: "/lib/b.mp4"}, {Path: "/lib/c.mp4"}}},
 	})
-	out := Execute(context.Background(), f, p, nil, discard(), "test")
+	out := Executor{Stash: f, Log: discard()}.Execute(context.Background(), p, "test")
 	if len(f.calls) != 1 || f.calls[0] != "ok" {
 		t.Fatalf("stash saw %v, want only the approved scene", f.calls)
 	}
@@ -100,7 +104,7 @@ func TestExecuteReportsFailuresAndContinues(t *testing.T) {
 		{SceneID: "bad", Files: []File{{Path: "/lib/x.mp4"}}},
 		{SceneID: "good", Files: []File{{Path: "/lib/y.mp4"}}},
 	})
-	out := Execute(context.Background(), f, p, nil, discard(), "test")
+	out := Executor{Stash: f, Log: discard()}.Execute(context.Background(), p, "test")
 	if len(out.Destroyed) != 1 || out.Destroyed[0].SceneID != "good" {
 		t.Fatalf("destroyed = %+v, want good to proceed past bad's failure", out.Destroyed)
 	}
@@ -167,7 +171,7 @@ func TestExecuteJournals(t *testing.T) {
 		{SceneID: "bad", Files: []File{{Path: "/lib/x.mp4"}}},
 		{SceneID: "multi", Files: []File{{Path: "/lib/m1.mp4"}, {Path: "/lib/m2.mp4"}}},
 	})
-	Execute(context.Background(), f, p, rec, discard(), "test surface")
+	Executor{Stash: f, Rec: rec, Log: discard()}.Execute(context.Background(), p, "test surface")
 
 	byScene := map[string]string{}
 	for _, e := range rec.entries {
