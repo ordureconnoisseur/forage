@@ -411,3 +411,19 @@ CREATE TABLE IF NOT EXISTS subscriptions (
   seen_total   INTEGER NOT NULL DEFAULT 0,
   last_seen_at INTEGER NOT NULL DEFAULT 0
 );
+
+-- Built-in torrent engine (internal/engine): one row per torrent the
+-- engine has ever been handed. uploaded and seed_seconds are CUMULATIVE
+-- across daemon restarts (the live client's session stats reset every
+-- boot; the accounting loop folds deltas in here) — they are what the
+-- seeding cull's ratio/age verdicts read.
+CREATE TABLE IF NOT EXISTS engine_torrents (
+  info_hash    TEXT PRIMARY KEY,               -- lowercase hex
+  name         TEXT NOT NULL DEFAULT '',
+  category     TEXT NOT NULL DEFAULT '',
+  added_on     INTEGER NOT NULL,
+  completed_on INTEGER NOT NULL DEFAULT 0,     -- unix; 0 while incomplete
+  total_size   INTEGER NOT NULL DEFAULT 0,
+  uploaded     INTEGER NOT NULL DEFAULT 0,     -- cumulative bytes
+  seed_seconds INTEGER NOT NULL DEFAULT 0      -- cumulative active seeding
+);
