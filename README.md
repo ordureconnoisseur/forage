@@ -182,6 +182,8 @@ The **Performers** tab is your library, sortable four ways:
 
 Pick a performer → **Missing scenes**. Pick a scene → **Releases**, with confidence-banded, quality-ranked Grab buttons. You can also multi-select scenes and hand the batch to a collection job (below), or hit **Complete collection** to sweep everything they're missing.
 
+![A performer page on the Missing tab — 590 scenes on StashDB, 353 in the library, 237 missing, each card showing its download or watchlist status (media blurred)](docs/assets/performer-missing.png)
+
 ### Discover
 
 A tab of scenes you don't own, refreshed on the cache cadence:
@@ -200,6 +202,8 @@ Hit **Track ▾** on any scene card and pick a target — *any quality*, *720p*,
 ### Release search & scoring
 
 Releases are ranked by a preference list you edit in Settings — built from the two things that actually appear in release names for this content: **resolution** and **indexer source**. Each rule adds or subtracts points (e.g. 1080p +100, 4K +70, 720p +30, SD −50), or marks a release rejected. The interactive view defaults to a fast *lean* search; **Deep search** runs the full multi-spelling fan-out across indexers when lean comes up short.
+
+![The releases view for one scene — five verified releases at 100% match, ranked by your quality preferences, with the winner flagged ★ Best (titles blurred)](docs/assets/releases.png)
 
 ### Packs & collections
 
