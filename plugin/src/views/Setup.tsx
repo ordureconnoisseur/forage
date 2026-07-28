@@ -173,6 +173,9 @@ export default function Setup({
   const [savingIndexer, setSavingIndexer] = useState(false);
 
   // Download-client step (qBittorrent and/or SABnzbd — either is enough)
+  // clients step: null = show the built-in vs own-client choice;
+  // "own" = show the qBit/SAB connection fields.
+  const [clientMode, setClientMode] = useState<null | "own">(null);
   const [qbitUrl, setQbitUrl] = useState("");
   const [qbitUser, setQbitUser] = useState("");
   const [qbitPass, setQbitPass] = useState("");
@@ -815,10 +818,10 @@ export default function Setup({
 
         {step === "clients" && (
           <div className="setup-step">
-            <h2>Add a download client</h2>
+            <h2>Downloads</h2>
             <p className="setup-sub">
-              forage sends grabs to qBittorrent (torrents) or SABnzbd (usenet).
-              Set up whichever you use — one is enough to get started.
+              How should forage download? Both paths are simple — the
+              built-in one is zero setup.
             </p>
             {liveHealth?.qbitConfigured || liveHealth?.sabConfigured ? (
               <ConfiguredNotice
@@ -831,6 +834,31 @@ export default function Setup({
                 }
                 onContinue={() => setStep("library")}
               />
+            ) : clientMode === null ? (
+              <div className="setup-choice">
+                <button
+                  className="setup-choice-card"
+                  onClick={() => setStep("library")}
+                >
+                  <strong>Use the built-in downloader</strong>
+                  <span>
+                    Recommended. forage downloads torrents itself — nothing
+                    to install, nothing to connect. It activates as soon as
+                    you pick a download folder on the next step.
+                  </span>
+                </button>
+                <button
+                  className="setup-choice-card"
+                  onClick={() => setClientMode("own")}
+                >
+                  <strong>Connect my own client</strong>
+                  <span>
+                    Use an existing qBittorrent (torrents) and/or SABnzbd
+                    (usenet) — forage manages its category for you. The
+                    only way to grab usenet releases.
+                  </span>
+                </button>
+              </div>
             ) : (
               <>
                 <h4 className="setup-subhead">qBittorrent</h4>

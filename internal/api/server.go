@@ -70,6 +70,11 @@ type Server struct {
 	managedMu  sync.Mutex
 	managedCtx context.Context
 
+	// Built-in torrent engine wiring (nil in tests); see engine_run.go.
+	engine    engineField
+	engineMu  sync.Mutex
+	engineCtx context.Context
+
 	// torrentGate spaces out .torrent fetches (addTorrentAsync) so a bulk
 	// grab or bulk-retry doesn't burst the indexer into HTTP 429s. Zero value
 	// is ready to use.
@@ -192,6 +197,9 @@ type Options struct {
 	// ManagedProwlarr is the managed-install manager; nil when managed mode
 	// doesn't apply (Docker, tests).
 	ManagedProwlarr *managed.Prowlarr
+	// Engine is the built-in torrent engine (constructed but not started);
+	// nil in tests. Activation is config-driven — see engine_run.go.
+	Engine engineField
 }
 
 // destroyExecutor assembles the one-door destruction machinery for a
@@ -223,6 +231,7 @@ func New(opts Options) *Server {
 		adoptNow:     opts.AdoptNow,
 		pollerHealth: opts.PollerHealth,
 		managed:      opts.ManagedProwlarr,
+		engine:       opts.Engine,
 		startedAt:    time.Now(),
 		pendingAdds:  opts.PendingAdds,
 		sessionKey:   loadOrCreateSessionKey(opts.DB, opts.Log),

@@ -139,6 +139,30 @@ func (e *Engine) Start(ctx context.Context) error {
 	return nil
 }
 
+// EnsureStarted starts the engine bound to downloadDir unless it already
+// runs. Returns whether THIS call started it (the caller then owns
+// launching Run). A different dir on an already-running engine is noted
+// but applies only at next daemon start — live torrents are mid-write in
+// the old one.
+func (e *Engine) EnsureStarted(ctx context.Context, downloadDir string) (bool, error) {
+	e.mu.Lock()
+	if e.closed {
+		e.mu.Unlock()
+		return false, fmt.Errorf("torrent engine already shut down")
+	}
+	if e.cl != nil {
+		if e.dataDir != downloadDir {
+			e.log.Warn("engine download dir changed; restart the daemon to apply",
+				"active", e.dataDir, "new", downloadDir)
+		}
+		e.mu.Unlock()
+		return false, nil
+	}
+	e.dataDir = downloadDir
+	e.mu.Unlock()
+	return true, e.Start(ctx)
+}
+
 // Run drives the accounting loop until ctx ends, then closes the client.
 func (e *Engine) Run(ctx context.Context) {
 	tick := time.NewTicker(30 * time.Second)

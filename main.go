@@ -87,20 +87,10 @@ func main() {
 		}()
 	}
 
-	// Built-in torrent engine: the torrent backend when no qBittorrent is
-	// configured (a configured qBit always wins — see Pool.Torrents).
-	// Started only when it can actually place bytes somewhere (a download
-	// folder exists); switching between backends applies at next boot.
-	if cfg.QbitURL == "" && cfg.DownloadRoot != "" {
-		eng := engine.New(filepath.Dir(bootstrap.DBPath), cfg.DownloadRoot, database, log.With("component", "engine"))
-		if err := eng.Start(ctx); err != nil {
-			log.Error("torrent engine start", "err", err)
-		} else {
-			pool.SetTorrentEngine(eng)
-			launch(func() { eng.Run(ctx) })
-			log.Info("built-in torrent engine active", "downloadDir", cfg.DownloadRoot)
-		}
-	}
+	// Built-in torrent engine: constructed here, activated by the api
+	// layer whenever the config says "torrents with no qBittorrent" — at
+	// boot and immediately after a config save (see api/engine_run.go).
+	eng := engine.New(filepath.Dir(bootstrap.DBPath), cfg.DownloadRoot, database, log.With("component", "engine"))
 
 	// Cache refresh goroutines hold the *Pool, not individual clients,
 	// so hot-swapped Stash credentials reach the next tick automatically.
@@ -161,7 +151,11 @@ func main() {
 		AdoptNow:        p.AdoptNow,
 		PendingAdds:     pendingAdds,
 		ManagedProwlarr: managedProwlarr,
+		Engine:          eng,
 	})
+
+	// Engine lifecycle: boot-time activation check + shutdown close.
+	launch(func() { server.RunEngine(ctx) })
 
 	// Boot-start (and shutdown-stop) the managed Prowlarr if one is
 	// installed; also retains the lifetime ctx for wizard installs.
