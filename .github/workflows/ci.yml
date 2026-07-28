@@ -85,3 +85,19 @@ jobs:
       # type-checks the whole plugin.
       - name: Build
         run: npm run build
+
+      # The committed embed at internal/api/ui/index.html is what a plain
+      # `go build` serves, so it has to track plugin source. It silently
+      # drifted three days behind once, shipping a wizard missing half its
+      # steps to every non-Docker build, and only a hand-run headless
+      # walkthrough caught it. The bundle is byte-reproducible from the
+      # lockfile, so a diff is a reliable gate.
+      - name: Committed SPA embed is current
+        run: |
+          if ! diff -q dist/index.html ../internal/api/ui/index.html >/dev/null; then
+            echo "internal/api/ui/index.html is stale against plugin/src."
+            echo "Run 'make ui' and commit the regenerated embed."
+            diff -u ../internal/api/ui/index.html dist/index.html | head -40
+            exit 1
+          fi
+          echo "embed matches a fresh build"
