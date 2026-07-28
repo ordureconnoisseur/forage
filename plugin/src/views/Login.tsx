@@ -7,6 +7,7 @@ import {
   setAdminToken,
   verifyToken,
 } from "../api";
+import { clearCache } from "../swr";
 import AcornIcon from "../AcornIcon";
 
 // Login gate — shown when the daemon reports adminAuthRequired but this
@@ -79,6 +80,7 @@ export default function Login({
         // resurrect a half-authenticated state.
         setAdminToken("");
         await clearSession();
+        clearCache();
         setErr("API key rejected — check it and try again");
       }
     } catch {

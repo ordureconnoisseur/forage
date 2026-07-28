@@ -454,8 +454,11 @@ function WatchCard({
     indexer: string;
     protocol: string;
     size: number;
-    grabs: number;
-    seeders: number;
+    // Optional on purpose: a row built from found_* (a grabbed watch, whose
+    // candidate blob the list endpoint omits) has no seeder/grab counts.
+    // Rendering 0 there states something false rather than nothing.
+    grabs?: number;
+    seeders?: number;
     score: number;
     scoreHits?: { label: string; points: number; reject?: boolean }[];
     reasons?: string[];
@@ -489,8 +492,6 @@ function WatchCard({
           indexer: w.found_indexer || "",
           protocol: w.found_protocol || "",
           size: w.found_size || 0,
-          grabs: 0,
-          seeders: 0,
           score: 0,
         },
       ];
@@ -645,10 +646,15 @@ function WatchCard({
                     </span>
                     <code className="watch-rel-file">{r.title}</code>
                     <span className="watch-rel-meta">
-                      {humanSize(r.size, "?")} · {r.indexer} ·{" "}
-                      {r.protocol === "usenet"
-                        ? `${r.grabs} grabs`
-                        : `${r.seeders} seeders`}
+                      {[
+                        humanSize(r.size, "?"),
+                        r.indexer,
+                        r.protocol === "usenet"
+                          ? r.grabs != null && `${r.grabs} grabs`
+                          : r.seeders != null && `${r.seeders} seeders`,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
                     </span>
                     {hasWhy && (
                       <button

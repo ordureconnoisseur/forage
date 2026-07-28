@@ -19,6 +19,7 @@ import {
   setForagerBase,
   testSection,
 } from "../api";
+import { clearCache } from "../swr";
 import { compileRules, parsePrefs } from "../releasePrefs";
 import ManagedProwlarrCard from "../ManagedProwlarr";
 import IndexerCatalog from "../IndexerCatalog";
@@ -299,6 +300,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   async function logout() {
     await clearSession();
     setAdminToken("");
+    // Drop cached list data too. Unlike saveConnection (which reloads the
+    // page and takes the module cache with it), logout leaves this tab
+    // alive, so without this the next login would paint the previous
+    // session's data before revalidating.
+    clearCache();
     onLoggedOut();
   }
 
