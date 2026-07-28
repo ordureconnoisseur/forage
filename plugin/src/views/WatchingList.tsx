@@ -11,6 +11,7 @@ import {
   type SceneRelease,
   type Watch,
 } from "../api";
+import { peek, store } from "../swr";
 import { ResBadge, resolution } from "../ResBadge";
 import { humanSize } from "../format";
 
@@ -18,6 +19,7 @@ import { humanSize } from "../format";
 // list changes slowly — a relaxed poll keeps the "available" badge fresh
 // without hammering. While a manual "search now" is running (any card
 // flagged searching), poll fast so progress shows live.
+const WATCHES_KEY = "/watches";
 const POLL_MS = 30000;
 const FAST_POLL_MS = 2500;
 
@@ -83,7 +85,11 @@ export default function WatchingList({
 }: {
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  const [watches, setWatches] = useState<Watch[] | null>(null);
+  // Seeded from the cache so returning to Watching paints the last known
+  // list immediately; the poll below then refreshes it in place.
+  const [watches, setWatches] = useState<Watch[] | null>(
+    () => peek<{ watches: Watch[] }>(WATCHES_KEY)?.watches ?? null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [searchBusy, setSearchBusy] = useState(false);
@@ -92,6 +98,7 @@ export default function WatchingList({
   const load = async (): Promise<Watch[] | null> => {
     try {
       const r = await fetchWatches();
+      store(WATCHES_KEY, r);
       setWatches(r.watches);
       setError(null);
       return r.watches;
@@ -358,7 +365,10 @@ function WatchCard({
   const [picked, setPicked] = useState(w.found_url || "");
 
   const cands = w.candidates || [];
-  const canExpand = cands.length > 0;
+  // The count is authoritative: the list endpoint omits the blob for
+  // grabbed watches, so cands.length would read 0 for them.
+  const candCount = w.candidate_count ?? cands.length;
+  const canExpand = candCount > 0;
 
   const grab = async () => {
     setBusy(true);
@@ -426,7 +436,12 @@ function WatchCard({
   const avail = w.status === "available";
   const isGrabbed = w.status === "grabbed";
   const pickedRel = cands.find((c) => c.download_url === picked) || null;
-  const pickedRes = pickedRel ? resolution(pickedRel.title) : null;
+  // found_title stands in when the blob was omitted, so the Grab button
+  // keeps its resolution label.
+  const pickedTitle =
+    pickedRel?.title ??
+    (picked && picked === w.found_url ? w.found_title : undefined);
+  const pickedRes = pickedTitle ? resolution(pickedTitle) : null;
   const openScene = () => onPickScene(w.stashdb_id, w.performer_name);
 
   // The release rows shown under the scene. Collapsed → just the chosen one;
@@ -482,7 +497,7 @@ function WatchCard({
     }
   }
   const selectable = avail && expanded && cands.length > 0;
-  const others = cands.length - 1;
+  const others = candCount - 1;
 
   return (
     <li

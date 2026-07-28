@@ -1542,7 +1542,15 @@ export interface Watch {
   batch_label?: string;
   // The verified candidate list captured when the watch went available, so
   // the user can re-pick a different release than the auto-chosen best.
+  //
+  // Omitted by the list endpoint for GRABBED watches, which is where the
+  // weight was: 13.9 MB of 14.9 MB across 1528 finished rows that render a
+  // single row and can never expand. Available and watching watches, the
+  // ones that actually use the list, still carry theirs.
   candidates?: SceneRelease[];
+  // The true number of stored candidates, present even where candidates
+  // itself was omitted. Decides whether a card can expand.
+  candidate_count?: number;
   // When the watch was grabbed (status="grabbed").
   grabbed_at?: number;
   // How many times this scene has been re-searched for a release (loop claims +
