@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,48 @@ func newTestEngine(t *testing.T, root, dataDir string) *Engine {
 	e := New(root, dataDir, dbh, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	e.Quiet()
 	return e
+}
+
+// TestEngineEnsureStartedConcurrent pins that racing callers start exactly
+// one client. postConfig does no serialization of its own, so a
+// double-clicked Save runs ensureEngine twice in parallel; before startMu
+// both callers cleared the cl == nil check and raced into Start, where the
+// loser collided with the winner's exclusive lock on the piece-completion
+// DB and surfaced a bolt timeout instead of starting.
+func TestEngineEnsureStartedConcurrent(t *testing.T) {
+	ctx := context.Background()
+	root, data := t.TempDir(), t.TempDir()
+	e := newTestEngine(t, root, data)
+	t.Cleanup(e.Close)
+
+	const callers = 4
+	var wg sync.WaitGroup
+	started := make([]bool, callers)
+	errs := make([]error, callers)
+	wg.Add(callers)
+	for i := range callers {
+		go func() {
+			defer wg.Done()
+			started[i], errs[i] = e.EnsureStarted(ctx, data)
+		}()
+	}
+	wg.Wait()
+
+	owners := 0
+	for i := range callers {
+		if errs[i] != nil {
+			t.Fatalf("caller %d: EnsureStarted: %v", i, errs[i])
+		}
+		if started[i] {
+			owners++
+		}
+	}
+	if owners != 1 {
+		t.Fatalf("%d callers told to own Run, want exactly 1", owners)
+	}
+	if _, err := e.client(); err != nil {
+		t.Fatalf("engine not running after EnsureStarted: %v", err)
+	}
 }
 
 // TestEngineSeedToLeech is the end-to-end proof: engine A holds the
