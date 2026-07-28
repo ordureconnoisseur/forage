@@ -47,6 +47,12 @@ type Engine struct {
 	db      *sql.DB
 	log     *slog.Logger
 
+	// startMu serializes EnsureStarted's check-then-start. mu can't do it:
+	// Start takes mu itself to publish the client, so holding mu across the
+	// call would deadlock. Without this, two concurrent config saves both
+	// see cl == nil and both run Start.
+	startMu sync.Mutex
+
 	mu     sync.Mutex
 	cl     *torrent.Client
 	store  storage.ClientImplCloser // owns the piece-completion DB; must close after cl
@@ -108,6 +114,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	}
 	cl, err := torrent.NewClient(cfg)
 	if err != nil {
+		// Hand back the piece-completion DB's file lock. Leaking it here
+		// poisons the engine for the rest of the process: EnsureStarted is
+		// retried on every config save, and each retry would fail reopening
+		// the bolt DB (1s lock timeout) rather than on the real cause.
+		_ = store.Close()
 		return fmt.Errorf("start torrent client: %w", err)
 	}
 	e.mu.Lock()
@@ -145,6 +156,9 @@ func (e *Engine) Start(ctx context.Context) error {
 // but applies only at next daemon start — live torrents are mid-write in
 // the old one.
 func (e *Engine) EnsureStarted(ctx context.Context, downloadDir string) (bool, error) {
+	e.startMu.Lock()
+	defer e.startMu.Unlock()
+
 	e.mu.Lock()
 	if e.closed {
 		e.mu.Unlock()
