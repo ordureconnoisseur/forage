@@ -298,6 +298,11 @@ To reach it from another device on your network, listen on all interfaces:
 ### Option B — Docker
 
 ```bash
+# Full stack — forage (with its built-in downloader) + Prowlarr, pre-wired:
+cp docker-compose.full.yml docker-compose.yml      # set the API key + media path inside
+docker compose up -d
+
+# Or forage alone, if you already run your own clients:
 cp docker-compose.example.yml docker-compose.yml   # edit the one volume line — see below
 docker compose up -d
 ```

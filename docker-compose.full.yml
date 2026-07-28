@@ -1,0 +1,60 @@
+# forage full stack — the Docker equivalent of the one-click install.
+#
+#   cp docker-compose.full.yml docker-compose.yml
+#   # 1. change PROWLARR_API_KEY below (any 32-char hex string)
+#   # 2. point the ./media bind at your media disk
+#   docker compose up -d
+#
+# Then open http://<host>:7979 — the wizard is pre-filled down to:
+# paste your Stash + StashDB keys, add indexers in Prowlarr, done.
+#
+# What's pre-wired and why:
+#   - forage's BUILT-IN torrent engine does the downloading — no
+#     qBittorrent container needed. Downloads land in /media/downloads,
+#     the library lives in /media/library, both inside the ONE bind
+#     mount so placement is a free hardlink.
+#   - Prowlarr runs alongside with a FIXED API key: servarr apps accept
+#     config via PROWLARR__AUTH__APIKEY, so the same value is handed to
+#     both containers and there is no key to copy out of a UI.
+#   - Usenet is the one thing not included: add your own SABnzbd and
+#     connect it in Settings if you use it.
+
+# Change this before first start (any 32 hex chars — this one is a
+# placeholder and deliberately invalid-looking):
+x-prowlarr-key: &prowlarr_key "CHANGE-ME-32-hex-chars-0000000000"
+
+services:
+  forager:
+    image: ghcr.io/ordureconnoisseur/forage:latest
+    # Building from a checkout instead:
+    #   build: { context: ., args: { VERSION: "docker" } }
+    container_name: forager
+    restart: unless-stopped
+    ports:
+      - "7979:7979"
+    environment:
+      FORAGER_PROWLARR_URL: http://prowlarr:9696
+      FORAGER_PROWLARR_API_KEY: *prowlarr_key
+      FORAGER_DOWNLOAD_ROOT: /media/downloads/complete
+      FORAGER_LIBRARY_ROOT: /media/library
+    volumes:
+      - ./data:/data # forage's own DB + state
+      - ./media:/media # ONE filesystem: downloads + library inside it
+    depends_on:
+      - prowlarr
+
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      # The pre-shared key forage connects with — same value as above.
+      PROWLARR__AUTH__APIKEY: *prowlarr_key
+      PROWLARR__AUTH__METHOD: External
+    ports:
+      - "9696:9696" # Prowlarr UI — where you add your indexers
+    volumes:
+      - ./prowlarr-config:/config
