@@ -450,7 +450,7 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 	if g.ClientID != "" {
 		switch g.Client {
 		case "qbit":
-			if qb := s.pool.Qbit(); qb != nil {
+			if qb := s.pool.Torrents(); qb != nil {
 				if derr := qb.DeleteTorrent(ctx, g.ClientID, true); derr != nil {
 					addErr("qbit torrent", derr)
 				} else {

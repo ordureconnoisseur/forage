@@ -491,7 +491,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	var qbitTorrents []qbit.Torrent
 	qbitByHash := map[string]*qbit.Torrent{}
 	qbitListOK := false
-	if qb := p.pool.Qbit(); needsQbit && qb != nil {
+	if qb := p.pool.Torrents(); needsQbit && qb != nil {
 		qbitTorrents, err = qb.ListTorrents(ctx, qbit.ListOpts{Filter: "all"})
 		if err != nil {
 			p.log.Warn("qbit list torrents", "err", err)
@@ -575,7 +575,7 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	// path stays network-free per grab; best-effort — a failed kick just
 	// leaves the torrent for the grace window to fail as before.
 	if len(p.resumeKick) > 0 {
-		if qb := p.pool.Qbit(); qb != nil {
+		if qb := p.pool.Torrents(); qb != nil {
 			for _, h := range p.resumeKick {
 				if err := qb.Resume(ctx, h); err != nil {
 					p.log.Warn("resume kick", "hash", h, "err", err)
@@ -2130,7 +2130,7 @@ func (p *Poller) adoptOrphans(ctx context.Context, minAge time.Duration) (adopte
 // passes manualAdoptGrace) so a torrent forage itself just added gets
 // linked to its existing grab first.
 func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, minAge time.Duration) (adopted, skippedRecent int) {
-	qb := p.pool.Qbit()
+	qb := p.pool.Torrents()
 	if qb == nil {
 		return
 	}
@@ -2457,7 +2457,7 @@ func classifyDownloadPath(path string) (kind string, videos int, ok bool) {
 // single. ok is false when the file list isn't available yet (a magnet
 // whose metadata hasn't resolved, or a transient API error) — callers
 // must not classify then, since kind is decided once and never revisited.
-func (p *Poller) classifyTorrent(ctx context.Context, qb *qbit.Client, hash string) (kind string, videos int, ok bool) {
+func (p *Poller) classifyTorrent(ctx context.Context, qb clientpool.TorrentClient, hash string) (kind string, videos int, ok bool) {
 	files, err := qb.TorrentFiles(ctx, hash)
 	if err != nil || len(files) == 0 {
 		return "", 0, false

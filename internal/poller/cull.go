@@ -142,7 +142,7 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 		p.log.Warn("seeding cull skipped: library mount unavailable")
 		return
 	}
-	qb := p.pool.Qbit()
+	qb := p.pool.Torrents()
 	if qb == nil {
 		return
 	}

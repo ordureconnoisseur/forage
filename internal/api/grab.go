@@ -154,7 +154,7 @@ func (s *Server) doGrab(ctx context.Context, req grabRequest) (grabResponse, err
 
 	switch protocol {
 	case "torrent":
-		if s.pool.Qbit() == nil {
+		if s.pool.Torrents() == nil {
 			return grabResponse{}, grabError{http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)"}
 		}
 		// A magnet carries its info_hash in the URI (xt=urn:btih:…), so we
@@ -316,7 +316,7 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 			s.pendingAdds.Done(grabID)
 		}
 	}()
-	qb := s.pool.Qbit()
+	qb := s.pool.Torrents()
 	if qb == nil {
 		s.failGrab(context.Background(), grabID, "qbit not configured")
 		return
@@ -637,7 +637,7 @@ func (s *Server) retryGrabWithReason(ctx context.Context, g *grabs.Grab, manual 
 
 	switch g.Client {
 	case "qbit":
-		if s.pool.Qbit() == nil {
+		if s.pool.Torrents() == nil {
 			return grabError{http.StatusServiceUnavailable, "qbit not configured"}
 		}
 		go s.addTorrentAsync(driveURL, driveCat, driveTitle, g.ID)

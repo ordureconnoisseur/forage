@@ -30,7 +30,7 @@ const maxUploadTorrent = 32 << 20
 //
 // Single vs pack is auto-detected from the parsed video count.
 func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
-	qb := s.pool.Qbit()
+	qb := s.pool.Torrents()
 	if qb == nil {
 		writeErr(w, http.StatusServiceUnavailable, "qbit not configured (set qbitUrl in Settings)")
 		return

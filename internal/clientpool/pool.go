@@ -16,6 +16,7 @@
 package clientpool
 
 import (
+	"context"
 	"log/slog"
 	"sync/atomic"
 	"time"
@@ -38,6 +39,9 @@ type Pool struct {
 	prowlarr atomic.Pointer[prowlarr.Client]
 	qbit     atomic.Pointer[qbit.Client]
 	sab      atomic.Pointer[sabnzbd.Client]
+	// engine is the built-in torrent backend, set once at boot (never
+	// reloaded — its lifecycle is the daemon's, not the config's).
+	engine   TorrentClient
 	placer   atomic.Pointer[placer.Placer]
 	notifier atomic.Pointer[notify.Notifier]
 
@@ -209,6 +213,48 @@ func (p *Pool) Prowlarr() *prowlarr.Client { return p.prowlarr.Load() }
 
 // Qbit returns the current qBit client, or nil if unconfigured.
 func (p *Pool) Qbit() *qbit.Client { return p.qbit.Load() }
+
+// TorrentClient is the surface the poller and API consume from whichever
+// torrent backend is active — an external qBittorrent or the built-in
+// engine. Both speak qBit's dialect (shapes + state vocabulary), so the
+// choice is invisible past this interface.
+type TorrentClient interface {
+	ListTorrents(ctx context.Context, opts qbit.ListOpts) ([]qbit.Torrent, error)
+	TorrentInfo(ctx context.Context, hash string) (*qbit.Torrent, error)
+	TorrentFiles(ctx context.Context, hash string) ([]qbit.TorrentFile, error)
+	AddTorrent(ctx context.Context, downloadURL, category string) (string, error)
+	AddTorrentFile(ctx context.Context, data []byte, category string) error
+	DeleteTorrent(ctx context.Context, hash string, deleteFiles bool) error
+	Resume(ctx context.Context, hash string) error
+	EnsureCategory(ctx context.Context, name, savePath string) error
+	Categories(ctx context.Context) (map[string]qbit.Category, error)
+}
+
+// SetTorrentEngine installs the built-in engine as the fallback torrent
+// backend. Called once at boot, before any Torrents() consumer runs.
+func (p *Pool) SetTorrentEngine(tc TorrentClient) { p.engine = tc }
+
+// Torrents returns the active torrent backend: a configured qBittorrent
+// always wins (the user pointed at it deliberately); otherwise the
+// built-in engine when one was started; nil when neither exists (torrent
+// grabs 503, same as before the engine existed).
+func (p *Pool) Torrents() TorrentClient {
+	if qb := p.qbit.Load(); qb != nil {
+		return qb
+	}
+	return p.engine
+}
+
+// TorrentBackend names the active backend for status surfaces.
+func (p *Pool) TorrentBackend() string {
+	if p.qbit.Load() != nil {
+		return "qbit"
+	}
+	if p.engine != nil {
+		return "engine"
+	}
+	return ""
+}
 
 // Sab returns the current SAB client, or nil if unconfigured.
 func (p *Pool) Sab() *sabnzbd.Client { return p.sab.Load() }

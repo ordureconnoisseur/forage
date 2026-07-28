@@ -331,7 +331,7 @@ func (s *Server) enrichProgress(r *http.Request, out []grabOut) {
 	}
 
 	qbitByHash := map[string]qbit.Torrent{}
-	if qb := s.pool.Qbit(); qb != nil {
+	if qb := s.pool.Torrents(); qb != nil {
 		if ts, err := qb.ListTorrents(r.Context(), qbit.ListOpts{Filter: "all"}); err == nil {
 			for _, t := range ts {
 				qbitByHash[strings.ToLower(t.Hash)] = t

@@ -504,11 +504,14 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		"stashdbConfigured":    s.pool.StashDB() != nil,
 		"prowlarrConfigured":   s.pool.Prowlarr() != nil,
 		"qbitConfigured":       s.pool.Qbit() != nil,
-		"qbitCategory":         settings.QbitCategory,
-		"qbitReachable":        qbitReachable,
-		"sabConfigured":        s.pool.Sab() != nil,
-		"sabCategory":          settings.SabCategory,
-		"sabReachable":         sabReachable,
+		// Which torrent backend is live: "qbit", "engine" (built-in), or ""
+		// (no torrent path — grabs 503).
+		"torrentBackend": s.pool.TorrentBackend(),
+		"qbitCategory":   settings.QbitCategory,
+		"qbitReachable":  qbitReachable,
+		"sabConfigured":  s.pool.Sab() != nil,
+		"sabCategory":    settings.SabCategory,
+		"sabReachable":   sabReachable,
 		// clientErrors lists configured-but-unreachable download clients,
 		// human-readable (e.g. "qbit: dial tcp 127.0.0.1:8083: connection
 		// refused"). Empty array when every configured client is reachable

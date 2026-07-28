@@ -21,6 +21,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/db"
+	"github.com/ordureconnoisseur/forager/internal/engine"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
@@ -84,6 +85,21 @@ func main() {
 			defer bg.Done()
 			fn()
 		}()
+	}
+
+	// Built-in torrent engine: the torrent backend when no qBittorrent is
+	// configured (a configured qBit always wins — see Pool.Torrents).
+	// Started only when it can actually place bytes somewhere (a download
+	// folder exists); switching between backends applies at next boot.
+	if cfg.QbitURL == "" && cfg.DownloadRoot != "" {
+		eng := engine.New(filepath.Dir(bootstrap.DBPath), cfg.DownloadRoot, database, log.With("component", "engine"))
+		if err := eng.Start(ctx); err != nil {
+			log.Error("torrent engine start", "err", err)
+		} else {
+			pool.SetTorrentEngine(eng)
+			launch(func() { eng.Run(ctx) })
+			log.Info("built-in torrent engine active", "downloadDir", cfg.DownloadRoot)
+		}
 	}
 
 	// Cache refresh goroutines hold the *Pool, not individual clients,

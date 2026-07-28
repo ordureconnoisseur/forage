@@ -171,7 +171,7 @@ func (s *Server) grabSourcePath(ctx context.Context, client, clientID string) st
 	}
 	switch client {
 	case "qbit":
-		if qb := s.pool.Qbit(); qb != nil {
+		if qb := s.pool.Torrents(); qb != nil {
 			if t, err := qb.TorrentInfo(ctx, clientID); err == nil && t != nil {
 				return t.ContentPath
 			}

@@ -166,7 +166,7 @@ func (s *Server) deferOrFailGrab(ctx context.Context, grabID int64, reason strin
 func (s *Server) clientRetryBlocked(g *grabs.Grab) bool {
 	switch g.Client {
 	case "qbit":
-		if s.pool.Qbit() == nil {
+		if s.pool.Torrents() == nil {
 			return true
 		}
 		h := s.pool.QbitHealth()
