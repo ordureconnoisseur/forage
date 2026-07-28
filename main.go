@@ -21,7 +21,6 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/db"
-	"github.com/ordureconnoisseur/forager/internal/engine"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
@@ -87,11 +86,6 @@ func main() {
 		}()
 	}
 
-	// Built-in torrent engine: constructed here, activated by the api
-	// layer whenever the config says "torrents with no qBittorrent" — at
-	// boot and immediately after a config save (see api/engine_run.go).
-	eng := engine.New(filepath.Dir(bootstrap.DBPath), cfg.DownloadRoot, database, log.With("component", "engine"))
-
 	// Cache refresh goroutines hold the *Pool, not individual clients,
 	// so hot-swapped Stash credentials reach the next tick automatically.
 	launch(func() { maybeRefreshOnBoot(ctx, pool, database, log.With("component", "cache"), cfg.CacheRefresh) })
@@ -151,11 +145,7 @@ func main() {
 		AdoptNow:        p.AdoptNow,
 		PendingAdds:     pendingAdds,
 		ManagedProwlarr: managedProwlarr,
-		Engine:          eng,
 	})
-
-	// Engine lifecycle: boot-time activation check + shutdown close.
-	launch(func() { server.RunEngine(ctx) })
 
 	// Boot-start (and shutdown-stop) the managed Prowlarr if one is
 	// installed; also retains the lifetime ctx for wizard installs.

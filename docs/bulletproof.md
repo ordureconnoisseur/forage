@@ -161,6 +161,40 @@ Acceptance: kill -9 mid-tick, unmount the library mid-place, and corrupt a
 response in each client — in all three cases the daemon recovers on its own
 and the journal/DB explain what happened.
 
+## Deferred — the built-in torrent engine
+
+Removed 2026-07-28, to come back when it can be held to the standard on this
+page rather than alongside it.
+
+It was the one subsystem carrying none of the properties above. It deleted
+files (`DeleteTorrent(deleteFiles=true)`) with a hand-written containment
+check rather than through the Phase 1 façade; it had no chaos coverage as a
+pool client and no contract fixtures, while qBit and SAB have both; and an
+audit found two lifecycle bugs in it that the suite could not see, one of
+which left the piece-completion lock stranded so a single transient start
+failure silently disabled downloads for the rest of the process.
+
+The cost was disproportionate to that. It pulled **216 of 298 packages** in
+the build graph and 488 of 545 `go.sum` lines, for a backend dormant on any
+install that has qBittorrent, which is the configuration the wizard now
+recommends and the full compose pre-wires. With `govulncheck` gating CI,
+that surface was also the most likely future source of red builds on
+unrelated work.
+
+What stayed, so restoring it is a pool-level change and not a rewrite:
+`clientpool.TorrentClient` (the qBit-dialect interface the poller and API
+consume) and `Pool.Torrents()`. What has to come back with it: the engine
+package, its wiring in `main.go` / `api` / the pool, the wizard's downloads
+choice, the `engine_torrents` table (deliberately not dropped from existing
+databases), and this section's replacement in Phase 2 and 4.
+
+Restoring it means, at minimum: routing its payload delete through the
+destroy façade, chaos coverage as a pool client, contract fixtures, and
+journalling the two orphan paths (metainfo persisted before `AddTorrent`
+succeeds, so a failure leaves a torrent that re-adds on the next `Start`
+with no DB row; magnet rows stranded when metadata never arrives inside the
+30-minute window).
+
 ## Phase 4 — survive other people's machines
 
 - ☑ **Windows-native path audit**: table-driven tests across both

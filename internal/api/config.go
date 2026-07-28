@@ -241,11 +241,6 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	// credentials.
 	catResults := s.ensureDownloadCategories(r.Context(), newCfg)
 
-	// The built-in torrent engine activates the moment the saved config
-	// calls for it (download folder set, no qBittorrent) — the wizard's
-	// "use the built-in downloader" path works without a restart.
-	s.ensureEngine()
-
 	out := map[string]any{
 		"ok":      true,
 		"results": results,

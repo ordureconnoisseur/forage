@@ -1165,7 +1165,7 @@ export interface Health {
   // The most recent recovered background panic, if any ever happened:
   // unix seconds + which loop. The full stack lives behind auth in /diag.
   lastPanic?: { at: number; in: string };
-  // Which torrent backend grabs ride: "qbit", "engine" (built-in), or ""
+  // Which torrent backend grabs ride: "qbit", or "" when none is
   // (no torrent path configured).
   torrentBackend?: string;
 }

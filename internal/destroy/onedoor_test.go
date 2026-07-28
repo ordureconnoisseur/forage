@@ -67,14 +67,6 @@ func TestOneDoor(t *testing.T) {
 				// (Flagged by this test on the feature's first full-suite
 				// run, exactly as designed.)
 				"internal/managed/prowlarr.go": true,
-				// Built-in torrent engine's DeleteTorrent(deleteFiles=true):
-				// removes the engine's own payload copy under the download
-				// dir — the exact parity of qBit's remote delete, which this
-				// engine replaces. Path is derived from the torrent's own
-				// name and refused unless strictly inside the download dir;
-				// the library's hardlinked copy is a separate inode and
-				// survives, same as with qBit.
-				"internal/engine/engine.go": true,
 			},
 		},
 	}
