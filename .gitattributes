@@ -5,3 +5,11 @@
 *.go text eol=lf
 go.mod text eol=lf
 go.sum text eol=lf
+
+# Same reasoning for the SPA, one step further: CI diffs the committed embed
+# (internal/api/ui/index.html) against a fresh Linux build, so the bundle has
+# to be byte-reproducible across platforms. It wasn't. plugin/index.html was
+# stored CRLF, and on Linux vite passed those template lines through verbatim
+# while rollup emitted the inlined JS with LF, so the result matched neither a
+# Windows-built embed nor itself across machines. Pin both ends to LF.
+*.html text eol=lf
