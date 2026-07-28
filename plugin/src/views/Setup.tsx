@@ -886,24 +886,25 @@ export default function Setup({
               <div className="setup-choice">
                 <button
                   className="setup-choice-card"
-                  onClick={() => setStep("library")}
-                >
-                  <strong>Use the built-in downloader</strong>
-                  <span>
-                    Recommended. forage downloads torrents itself — nothing
-                    to install, nothing to connect. It activates as soon as
-                    you pick a download folder on the next step.
-                  </span>
-                </button>
-                <button
-                  className="setup-choice-card"
                   onClick={() => setClientMode("own")}
                 >
                   <strong>Connect my own client</strong>
                   <span>
-                    Use an existing qBittorrent (torrents) and/or SABnzbd
-                    (usenet) — forage manages its category for you. The
-                    only way to grab usenet releases.
+                    Recommended. Use your existing qBittorrent (torrents)
+                    and/or SABnzbd (usenet) — forage sets its category up
+                    for you, so it&rsquo;s just the URL and login. The only
+                    way to grab usenet releases.
+                  </span>
+                </button>
+                <button
+                  className="setup-choice-card"
+                  onClick={() => setStep("library")}
+                >
+                  <strong>Use the built-in downloader</strong>
+                  <span>
+                    No torrent client? forage downloads torrents itself —
+                    nothing to install, nothing to connect. It activates as
+                    soon as you pick a download folder on the next step.
                   </span>
                 </button>
               </div>

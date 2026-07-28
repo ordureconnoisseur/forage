@@ -1,26 +1,31 @@
-# forage full stack — the Docker equivalent of the one-click install.
+# forage full stack — forage + qBittorrent + Prowlarr, pre-wired.
 #
 #   cp docker-compose.full.yml docker-compose.yml
-#   # 1. change PROWLARR_API_KEY below (any 32-char hex string)
-#   # 2. point the ./media bind at your media disk
+#   # 1. change PROWLARR key below (any 32 hex chars)
+#   # 2. point ./media at your media disk
 #   docker compose up -d
 #
-# Then open http://<host>:7979 — the wizard is pre-filled down to:
-# paste your Stash + StashDB keys, add indexers in Prowlarr, done.
+# Open http://<host>:7979 — the wizard is pre-filled down to: paste your
+# Stash + StashDB keys, add indexers in Prowlarr, done.
 #
-# What's pre-wired and why:
-#   - forage's BUILT-IN torrent engine does the downloading — no
-#     qBittorrent container needed. Downloads land in /media/downloads,
-#     the library lives in /media/library, both inside the ONE bind
-#     mount so placement is a free hardlink.
-#   - Prowlarr runs alongside with a FIXED API key: servarr apps accept
-#     config via PROWLARR__AUTH__APIKEY, so the same value is handed to
-#     both containers and there is no key to copy out of a UI.
-#   - Usenet is the one thing not included: add your own SABnzbd and
-#     connect it in Settings if you use it.
+# Pre-wired and why:
+#   - qBittorrent needs NO credentials from forage: a one-shot init
+#     container seeds its config to trust the compose network's subnet
+#     (auth whitelist), so container-to-container calls just work while
+#     the WebUI from your LAN still asks for the password qBit prints in
+#     its log on first start.
+#   - Prowlarr gets a FIXED API key via PROWLARR__AUTH__APIKEY; the same
+#     value is handed to forage. Nothing to copy out of a UI.
+#   - Downloads and library live inside the ONE ./media bind mount, so
+#     placement is a free hardlink and torrents keep seeding.
+#   - No qBittorrent? Delete the qbittorrent + qbit-init services and the
+#     FORAGER_QBIT_URL line: forage's built-in torrent engine takes over
+#     automatically.
+#   - Usenet: add your own SABnzbd and connect it in Settings.
+#
+# VPN (gluetun): see the commented section at the bottom — it routes
+# qBittorrent's traffic through the VPN while forage/Prowlarr stay local.
 
-# Change this before first start (any 32 hex chars — this one is a
-# placeholder and deliberately invalid-looking):
 x-prowlarr-key: &prowlarr_key "CHANGE-ME-32-hex-chars-0000000000"
 
 services:
@@ -35,6 +40,7 @@ services:
     environment:
       FORAGER_PROWLARR_URL: http://prowlarr:9696
       FORAGER_PROWLARR_API_KEY: *prowlarr_key
+      FORAGER_QBIT_URL: http://qbittorrent:8080
       FORAGER_DOWNLOAD_ROOT: /media/downloads/complete
       FORAGER_LIBRARY_ROOT: /media/library
     volumes:
@@ -42,6 +48,43 @@ services:
       - ./media:/media # ONE filesystem: downloads + library inside it
     depends_on:
       - prowlarr
+      - qbittorrent
+
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    restart: unless-stopped
+    environment:
+      PUID: "1000"
+      PGID: "1000"
+      TZ: Etc/UTC
+      WEBUI_PORT: "8080"
+    ports:
+      - "8080:8080" # WebUI (password printed in `docker logs qbittorrent`)
+      - "6881:6881"
+      - "6881:6881/udp"
+    volumes:
+      - ./qbit-config:/config
+      - ./media:/media # same mount as forage → hardlinks work
+    depends_on:
+      qbit-init:
+        condition: service_completed_successfully
+
+  # One-shot: seeds qBittorrent's config (before its first start only) to
+  # skip auth for the docker network, so forage needs no qBit password.
+  qbit-init:
+    image: busybox:stable
+    volumes:
+      - ./qbit-config:/config
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /config/qBittorrent
+        if [ ! -f /config/qBittorrent/qBittorrent.conf ]; then
+          printf '[Preferences]\nWebUI\\AuthSubnetWhitelistEnabled=true\nWebUI\\AuthSubnetWhitelist=172.16.0.0/12, 192.168.0.0/16, 10.0.0.0/8\n' \
+            > /config/qBittorrent/qBittorrent.conf
+        fi
 
   prowlarr:
     image: lscr.io/linuxserver/prowlarr:latest
@@ -51,10 +94,39 @@ services:
       PUID: "1000"
       PGID: "1000"
       TZ: Etc/UTC
-      # The pre-shared key forage connects with — same value as above.
       PROWLARR__AUTH__APIKEY: *prowlarr_key
       PROWLARR__AUTH__METHOD: External
     ports:
       - "9696:9696" # Prowlarr UI — where you add your indexers
     volumes:
       - ./prowlarr-config:/config
+
+# ── VPN variant (gluetun) ────────────────────────────────────────────
+# Route qBittorrent through a VPN: add the gluetun service, then change
+# the qbittorrent service to share its network namespace. forage then
+# reaches qBit through gluetun's name instead:
+#
+#   forager:
+#     environment:
+#       FORAGER_QBIT_URL: http://gluetun:8080
+#
+#   gluetun:
+#     image: qmcgaw/gluetun
+#     container_name: gluetun
+#     restart: unless-stopped
+#     cap_add: [NET_ADMIN]
+#     devices: [/dev/net/tun:/dev/net/tun]
+#     environment:
+#       VPN_SERVICE_PROVIDER: <your provider>   # see gluetun's wiki
+#       # + the provider's credentials/keys
+#     ports:
+#       - "8080:8080"   # qBit WebUI is published via gluetun now
+#
+#   qbittorrent:
+#     network_mode: "service:gluetun"
+#     depends_on: [gluetun, qbit-init]
+#     # remove the ports: block from qbittorrent — gluetun owns them
+#
+# Gotcha from real use: if gluetun restarts, containers in its namespace
+# keep "Up" status with no network. Restart qBittorrent after gluetun
+# (or automate it) — forage's poller tolerates the outage either way.
