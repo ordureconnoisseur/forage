@@ -7637,3 +7637,10 @@ code.grab-fact-v,
 .setup-dlcheck-row.fail .setup-dlcheck-icon {
   color: var(--red, #ef4444);
 }
+
+.setup-link.inline {
+  display: inline;
+  padding: 0;
+  font-size: 12px;
+  opacity: 0.7;
+}

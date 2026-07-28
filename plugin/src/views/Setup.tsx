@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   adminToken,
   type ClientCheck,
@@ -6,6 +6,7 @@ import {
   fetchConfig,
   fetchDownloadSetup,
   fetchHealth,
+  fetchIndexers,
   foragerBase,
   Health,
   saveConfig,
@@ -791,10 +792,17 @@ export default function Setup({
               it at Prowlarr and choose which categories to search.
             </p>
             {liveHealth?.prowlarrConfigured ? (
-              <ConfiguredNotice
-                label="Prowlarr is already configured"
-                onContinue={() => setStep("clients")}
-              />
+              <>
+                <IndexerCheck
+                  prowlarrHref={
+                    prowlarrUrl.trim() || foragerBase() + "/prowlarr/"
+                  }
+                />
+                <ConfiguredNotice
+                  label="Prowlarr is already configured"
+                  onContinue={() => setStep("clients")}
+                />
+              </>
             ) : (
               <>
                 <ManagedProwlarrCard onReady={refreshHealth} />
@@ -1229,6 +1237,60 @@ function Stepper({
 // ConfiguredNotice is the "breeze past" state for a step whose section the
 // daemon already has set (e.g. via .env) — a green confirmation plus a
 // plain Continue, no fields to fill.
+// IndexerCheck verifies the thing the Prowlarr connection is FOR: that
+// some indexers actually exist behind it. No recommendations — whose
+// indexers to use is the user's business — just the live count, so
+// finishing setup with zero indexers (searches return nothing) can't
+// happen silently.
+function IndexerCheck({ prowlarrHref }: { prowlarrHref: string }) {
+  const [count, setCount] = useState<number | null>(null);
+  const [checking, setChecking] = useState(false);
+  async function check() {
+    setChecking(true);
+    try {
+      setCount((await fetchIndexers()).length);
+    } catch {
+      setCount(null);
+    } finally {
+      setChecking(false);
+    }
+  }
+  useEffect(() => {
+    check();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  if (count === null) return null;
+  return (
+    <div className={"setup-dlcheck-row " + (count > 0 ? "ok" : "warn")}>
+      <span className="setup-dlcheck-icon">{count > 0 ? "✓" : "!"}</span>
+      <span className="setup-dlcheck-body">
+        {count > 0 ? (
+          <>
+            {count} indexer{count === 1 ? "" : "s"} detected — searches are
+            live.
+          </>
+        ) : (
+          <>
+            No indexers yet — searches will return nothing until you add
+            some.{" "}
+            <a href={prowlarrHref} target="_blank" rel="noreferrer">
+              Open Prowlarr &#8599;
+            </a>{" "}
+            &#8594; Indexers &#8594; Add.
+          </>
+        )}{" "}
+        <button
+          className="setup-link inline"
+          onClick={check}
+          disabled={checking}
+        >
+          {checking ? "checking…" : "re-check"}
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function ConfiguredNotice({
   label,
   onContinue,
