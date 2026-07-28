@@ -2,6 +2,12 @@ module github.com/ordureconnoisseur/forager
 
 go 1.26.3
 
+// Build with a toolchain carrying the crypto/tls fix for GO-2026-5856, so
+// the govulncheck gate in CI is clean on the standard library too. The `go`
+// line above stays at the real minimum: this raises what we BUILD with, not
+// what a consumer needs to compile the module.
+toolchain go1.26.5
+
 require (
 	github.com/anacrolix/torrent v1.58.1 // PINNED: v1.59+ defaults file storage to mmap and never unmaps on torrent/client close — on Windows every served payload stays file-locked forever (breaks the engine delete + seeding cull). Upgrade only after verifying TestEngineSeedToLeech releases handles.
 	github.com/go-chi/chi/v5 v5.3.0

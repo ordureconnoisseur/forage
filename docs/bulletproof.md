@@ -77,15 +77,27 @@ check; suite green; deployed to mini before the next pack grab runs.
   `log-only` value that journals what dedup *would* destroy without acting.
   Recommended default for new installs' first week.
 
-Acceptance: `git grep 'SceneDestroy\|os.RemoveAll' internal/` hits only the
-façade and the placer's own temp-file handling; a deleted file is
-recoverable from trash for the TTL; the journal reproduces every deletion in
-a soak week.
+Acceptance: every `SceneDestroy` / `os.RemoveAll` in `internal/` is either
+the façade or a `TestOneDoor` allowlist entry carrying a comment saying why.
+The test is the acceptance criterion, not the raw grep: legitimate scoped
+removals have grown to six sites (grab purge, performer re-file, trash TTL
+sweep, premature-placement heal, managed-Prowlarr installer, torrent engine
+payload delete), so the grep alone reads as a regression when it isn't.
+Also: a deleted file is recoverable from trash for the TTL; the journal
+reproduces every deletion in a soak week.
 
 ## Phase 2 — adversarial verification
 
 - ◐ CI runs gofmt + vet + full suite. Add:
   - ☑ `go test -race ./...` in CI (verified green in a Linux container).
+  - ☑ **Dependency vulnerability gate**: blocking `govulncheck` in CI,
+    added 2026-07-28 after an audit found GO-2026-5970 (infinite loop in
+    x/text `norm`) reachable from `fold`, the first statement of both
+    `Tokenize` and `ExtractJAVCodes`. The fuzz corpus below was hardening
+    those two parsers while a known hang sat one frame deeper, inside the
+    dependency they both call first: fuzzing cannot see that, and only a
+    hand audit did. `go.mod` carries a `toolchain` line so the standard
+    library is inside the same gate.
   - ☑ **Native fuzzing** for the parsing surfaces that eat hostile input:
     `Tokenize`, `ExtractJAVCodes`, the date reader, `pathmap`. Seed corpora
     from real release names; short fuzz in CI, long fuzz nightly.

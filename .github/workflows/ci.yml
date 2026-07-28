@@ -43,6 +43,20 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Fuzzing hardens our own parsers; it cannot see a known hang one frame
+      # deeper in a dependency. GO-2026-5970 (infinite loop in x/text norm)
+      # was reachable from fold, the first call in both Tokenize and
+      # ExtractJAVCodes, which is to say: from the exact functions the fuzz
+      # step below exercises, on the exact input those functions exist to
+      # distrust. A hand audit found it; nothing in CI would have.
+      #
+      # This gate blocks. The tool is pinned but the vulnerability database
+      # is queried fresh every run, so a new advisory against something we
+      # actually call fails the build instead of waiting for the next audit.
+      # go.mod's toolchain line keeps the standard library in scope too.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
       # -race because the poller, client pool and session cache are
       # genuinely concurrent, and nothing else proves them so. Roughly
       # doubles test time; that is the right trade for a daemon whose
