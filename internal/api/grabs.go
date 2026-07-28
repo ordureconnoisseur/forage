@@ -261,15 +261,74 @@ func (s *Server) enrichSceneTitles(r *http.Request, out []grabOut) {
 			counts[sid]++
 		}
 	}
+	// Resolve the whole page from the local scene cache in ONE indexed query
+	// before touching the network. sceneTitle() falls back to a StashDB
+	// FindScene per id, serially, inside the request, and those calls share
+	// the 4 req/s StashDB budget — so a page introducing twenty unseen
+	// scenes cost seconds, and the in-process memo meant every restart paid
+	// it again. stashdb_scene already holds a title for the overwhelming
+	// majority of them (on the reference instance, 168 of 175 multi-attempt
+	// scene ids), which makes the network the exception rather than the
+	// rule. Same source landedSceneMeta already reads.
+	need := make([]string, 0, len(counts))
+	for sid, n := range counts {
+		if n >= 2 {
+			need = append(need, sid)
+		}
+	}
+	if len(need) == 0 {
+		return
+	}
+	cached := s.cachedSceneTitles(r.Context(), need)
+
 	for i := range out {
 		sid := grabSceneID(out[i])
 		if sid == "" || counts[sid] < 2 {
 			continue
 		}
-		if title := s.sceneTitle(r.Context(), sid); title != "" {
+		title := cached[sid]
+		if title == "" {
+			// Cache miss: the memoised network path, which also records
+			// misses so a genuinely unknown id isn't refetched per request.
+			title = s.sceneTitle(r.Context(), sid)
+		}
+		if title != "" {
 			out[i].SceneTitle = title
 		}
 	}
+}
+
+// cachedSceneTitles looks up scene titles in the local StashDB scene cache,
+// batched. Missing ids are simply absent from the result. Best-effort: a
+// query error yields no titles and the caller falls back to the network.
+func (s *Server) cachedSceneTitles(ctx context.Context, ids []string) map[string]string {
+	out := make(map[string]string, len(ids))
+	// Chunked to stay clear of SQLite's bound-variable ceiling regardless of
+	// how large a page the caller asks for.
+	const chunk = 500
+	for start := 0; start < len(ids); start += chunk {
+		end := min(start+chunk, len(ids))
+		batch := ids[start:end]
+		q := `SELECT stashdb_id, COALESCE(title,'') FROM stashdb_scene WHERE stashdb_id IN (?` +
+			strings.Repeat(",?", len(batch)-1) + `)`
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		rows, err := s.db.QueryContext(ctx, q, args...)
+		if err != nil {
+			s.log.Warn("scene title cache lookup", "err", err)
+			return out
+		}
+		for rows.Next() {
+			var id, title string
+			if rows.Scan(&id, &title) == nil && title != "" {
+				out[id] = title
+			}
+		}
+		rows.Close()
+	}
+	return out
 }
 
 // grabSceneID returns the scene id a grab is tied to: the confirmed actual

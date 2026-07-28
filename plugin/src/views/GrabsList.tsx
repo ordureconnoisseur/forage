@@ -8,6 +8,7 @@ import {
   useState,
 } from "react";
 import { humanSize } from "../format";
+import { peek, store } from "../swr";
 import {
   ACTIVE_STATUSES,
   adoptDownloads,
@@ -63,6 +64,21 @@ const SLOW_POLL_MS = 30_000;
 // polls it; searching/filtering re-queries the whole table server-side, and
 // "Load more" appends further pages.
 const PAGE_SIZE = 100;
+
+// Cache key for the FIRST page of a given filter+query. Only the un-paged
+// view is ever cached: once the user pages, the accumulated list is a
+// different thing and restoring it would fight the offset bookkeeping.
+function grabsKey(filter: string, q: string): string {
+  return "/grabs?status=" + filter + "&q=" + q;
+}
+
+// What the first page needs to paint: the rows plus the counts the filter
+// pills and "showing N of M" read, so a restore is self-consistent.
+interface GrabsPage {
+  grabs: Grab[];
+  totals: Partial<Record<GrabFilter, number>>;
+  matchTotal?: number;
+}
 
 // The filter pills mirror the poller's state machine in two visual
 // groups: the in-flight pipeline (linear progression, shown with
@@ -133,13 +149,18 @@ export default function GrabsList({
   // performer to place under.
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  const [grabs, setGrabs] = useState<Grab[]>([]);
-  const [totals, setTotals] = useState<Partial<Record<GrabFilter, number>>>({});
+  // Seeded from the first-page cache so returning to Grabs paints the last
+  // known page immediately; the poll below revalidates within a tick.
+  const seed = peek<GrabsPage>(grabsKey("any", ""));
+  const [grabs, setGrabs] = useState<Grab[]>(() => seed?.grabs ?? []);
+  const [totals, setTotals] = useState<Partial<Record<GrabFilter, number>>>(
+    () => seed?.totals ?? {},
+  );
   // Total grabs matching the current status+q filter across the whole table
   // (from the daemon). Drives the result count and "load more" end-detection;
   // undefined until the first response (or on an older daemon that omits it).
   const [matchTotal, setMatchTotal] = useState<number | undefined>(undefined);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => seed === null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<GrabFilter>("any");
@@ -371,6 +392,14 @@ export default function GrabsList({
         setTotals(r.totals || {});
         setMatchTotal(r.match_total);
         loadedRef.current = r.grabs.length;
+        // Only the un-paged page-1 answer is cacheable (see grabsKey).
+        if (!pagedRef.current) {
+          store<GrabsPage>(grabsKey(filter, qDebounced), {
+            grabs: r.grabs,
+            totals: r.totals || {},
+            matchTotal: r.match_total,
+          });
+        }
         setError(null);
         lastFetch.current = Date.now();
         lastActive.current = r.grabs.some((g) => isActiveStatus(g.status));
@@ -387,6 +416,16 @@ export default function GrabsList({
       timer = window.setTimeout(tick, lastActive.current ? FAST_POLL_MS : SLOW_POLL_MS);
     }
 
+    // A different filter/query is a different key: show its cached page if
+    // we have one instead of dropping to a spinner.
+    const hit = peek<GrabsPage>(grabsKey(filter, qDebounced));
+    if (hit) {
+      setGrabs(hit.grabs);
+      setTotals(hit.totals);
+      setMatchTotal(hit.matchTotal);
+      loadedRef.current = hit.grabs.length;
+      setLoading(false);
+    }
     tick();
     const onVis = () => {
       if (
