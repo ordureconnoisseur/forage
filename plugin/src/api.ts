@@ -1668,6 +1668,19 @@ export async function clearWatchBatch(batchId: string): Promise<void> {
   if (!r.ok) await throwForStatus(r);
 }
 
+// clearFinishedWatches removes one group's GRABBED watches and reports how
+// many went. batchId "" is the ungrouped bucket, which clearWatchBatch
+// cannot address (it requires an id), so finished singles used to have no
+// bulk clear at all. Only finished rows are ever removed, so this can never
+// cancel an active hunt.
+export function clearFinishedWatches(
+  batchId: string,
+): Promise<{ cleared: number }> {
+  return postJSON<{ cleared: number }>("/watches/clear-finished", {
+    batch_id: batchId,
+  });
+}
+
 // dismissWatch rejects the watch's current found release (e.g. it's dead or
 // over-compressed): ignores that exact release going forward and flips the
 // watch back to watching so the loop surfaces a different one.

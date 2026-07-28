@@ -534,6 +534,32 @@ func (s *Server) clearBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// postClearFinished removes one group's GRABBED watches. batch_id "" is the
+// ungrouped bucket, which had no bulk clear before (clearBatch demands an
+// id), so finished singles accumulated indefinitely.
+//
+// Only grabbed rows go. Deleting a watching/available row would silently
+// cancel a live hunt, so the repo's status predicate — not this handler's
+// good intentions — is what makes that impossible.
+func (s *Server) postClearFinished(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		BatchID string `json:"batch_id"`
+	}
+	// An empty body is the ungrouped bucket, so a decode failure is only
+	// fatal if the caller sent something that wasn't JSON at all.
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&req)
+	}
+	n, err := s.watches.DeleteFinished(r.Context(), req.BatchID)
+	if err != nil {
+		s.log.Error("watch clear finished", "err", err)
+		writeErr(w, http.StatusInternalServerError, "db")
+		return
+	}
+	s.log.Info("cleared finished watches", "batch", req.BatchID, "count", n)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared": n})
+}
+
 // postWatchDismiss rejects the watch's current found release: ignore that
 // exact release (by URL) going forward and flip the watch back to watching
 // so the loop surfaces a different one. For the common case where the find

@@ -422,6 +422,28 @@ func (r *Repo) DeleteBatch(ctx context.Context, batchID string) error {
 	return err
 }
 
+// DeleteFinished removes the GRABBED watches of one group and returns how
+// many went. batchID "" means the ungrouped bucket, which is the case that
+// needed this: DeleteBatch requires a batch id, so singles had no bulk
+// clear at all and simply accumulated (628 of them on the reference
+// instance, against 1528 finished rows overall).
+//
+// Scoped to grabbed on purpose. These rows are finished bookkeeping, so
+// removing them costs only a batch's progress readout. A watching or
+// available row is an ACTIVE hunt, and deleting one would silently cancel
+// it — the status predicate is what keeps a "clear finished" button from
+// ever being able to do that.
+func (r *Repo) DeleteFinished(ctx context.Context, batchID string) (int, error) {
+	res, err := r.db.ExecContext(ctx,
+		`DELETE FROM watches WHERE status = ? AND COALESCE(batch_id,'') = ?`,
+		StatusGrabbed, batchID)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
 // Dismiss rejects the watch's current found release: adds its URL AND its
 // title to the ignored set (so the loop never re-surfaces it) and flips
 // the watch back to watching, clearing the found_* fields so the next

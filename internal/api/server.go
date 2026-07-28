@@ -302,6 +302,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/watches/search-now", s.postWatchSearchNow)
 		r.Get("/watches", s.getWatches)
 		r.Delete("/watches/batch/{batchId}", s.clearBatch)
+		r.Post("/watches/clear-finished", s.postClearFinished)
 		r.Delete("/watches/{id}", s.deleteWatch)
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
