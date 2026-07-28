@@ -9,6 +9,7 @@ import {
   performerImageURL,
   type AddWatchReq,
 } from "../api";
+import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
 
@@ -30,6 +31,12 @@ const DAYS_PRESETS = [7, 30, 60, 90] as const;
 // through them 5 at a time so this fits comfortably in one row.
 const TRENDING_LIMIT = 50;
 
+// Cache key for one Discover request. Must name every input that changes
+// the response, or switching day window would show the wrong cached set.
+function discoverKey(days: number, favoriteOnly: boolean, filter: string): string {
+  return `/discover?days=${days}&fav=${favoriteOnly}&filter=${filter}`;
+}
+
 export default function DiscoverList({
   onPickPerformer,
   onPickScene,
@@ -40,9 +47,6 @@ export default function DiscoverList({
   // <library>/<performer>/ when the user grabs from this jump-point.
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  const [data, setData] = useState<DiscoverResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<number>(() => {
     const stored = parseInt(localStorage.getItem("forage.discover.days") || "", 10);
     return DAYS_PRESETS.includes(stored as (typeof DAYS_PRESETS)[number])
@@ -58,6 +62,16 @@ export default function DiscoverList({
   const [contentFilter, setContentFilter] = useState<string>(
     () => localStorage.getItem("forage.discover.filter") || "",
   );
+  // Declared after the three inputs that key the request, so the initial
+  // state can be seeded from the cache for THIS key: navigating back paints
+  // the previous view immediately instead of spinning while the poll below
+  // refetches. Same treatment as WatchingList, and for the same reason —
+  // this view owns a poll timer, so useCached would be a second scheduler.
+  const [data, setData] = useState<DiscoverResponse | null>(() =>
+    peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter)),
+  );
+  const [loading, setLoading] = useState(() => data === null);
+  const [error, setError] = useState<string | null>(null);
   const lastFetch = useRef(0);
   // Multi-select over the "From your performers" grid, same interaction
   // as MissingScenes: Select flips cards into toggle mode, the bottom
@@ -111,6 +125,7 @@ export default function DiscoverList({
           trendingLimit: TRENDING_LIMIT,
         });
         if (cancelled) return;
+        store(discoverKey(days, favoriteOnly, contentFilter), r);
         setData(r);
         setError(null);
         lastFetch.current = Date.now();
@@ -124,7 +139,15 @@ export default function DiscoverList({
       if (cancelled) return;
       timer = window.setTimeout(tick, SLOW_POLL_MS);
     }
-    setLoading(true);
+    // Switching day window / filter is a different key: show that key's
+    // cached answer if we have one rather than blanking to a spinner.
+    const hit = peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter));
+    if (hit) {
+      setData(hit);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     tick();
     const onVis = () => {
       if (!document.hidden && Date.now() - lastFetch.current > SLOW_POLL_MS) {
