@@ -18,9 +18,8 @@
 #     value is handed to forage. Nothing to copy out of a UI.
 #   - Downloads and library live inside the ONE ./media bind mount, so
 #     placement is a free hardlink and torrents keep seeding.
-#   - No qBittorrent? Delete the qbittorrent + qbit-init services and the
-#     FORAGER_QBIT_URL line: forage's built-in torrent engine takes over
-#     automatically.
+#   - This stack brings its own qBittorrent. Already run one? Use
+#     docker-compose.example.yml instead and point FORAGER_QBIT_URL at it.
 #   - Usenet: add your own SABnzbd and connect it in Settings.
 #
 # VPN (gluetun): see the commented section at the bottom — it routes

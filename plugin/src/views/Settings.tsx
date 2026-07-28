@@ -102,9 +102,8 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
-  // Which torrent backend is live ("engine" | "qbit" | ""), from /healthz —
-  // drives the Download-clients section's status note. Refreshed after
-  // every save so switching backends shows immediately.
+  // Which torrent backend is live ("qbit" | ""), from /healthz. Drives the
+  // Download-clients section's status note; refreshed after every save.
   const [backend, setBackend] = useState<string>("");
   useEffect(() => {
     fetchHealth()
@@ -600,18 +599,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           probe={probes["qbit"]}
           subProbe={probes["sab"]}
         >
-          {backend === "engine" && (
+          {backend === "" && (
             <p className="settings-tip backend-note">
-              ✓ <strong>Built-in downloader active</strong> — torrents
-              download inside forage itself; nothing to configure here.
-              Filling in qBittorrent below switches torrents to it instead
-              (the built-in engine steps aside automatically).
-            </p>
-          )}
-          {backend === "qbit" && (
-            <p className="settings-tip backend-note">
-              Torrents ride your qBittorrent. Clearing its URL hands
-              torrents to the built-in downloader at the next save.
+              No torrent client configured, so torrent grabs are refused.
+              Fill in qBittorrent below to enable them. Usenet grabs work
+              independently through SABnzbd.
             </p>
           )}
           <h4 className="settings-subhead">qBittorrent</h4>

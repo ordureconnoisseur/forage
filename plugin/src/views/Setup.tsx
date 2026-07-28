@@ -178,9 +178,6 @@ export default function Setup({
   const [savingIndexer, setSavingIndexer] = useState(false);
 
   // Download-client step (qBittorrent and/or SABnzbd — either is enough)
-  // clients step: null = show the built-in vs own-client choice;
-  // "own" = show the qBit/SAB connection fields.
-  const [clientMode, setClientMode] = useState<null | "own">(null);
   const [qbitUrl, setQbitUrl] = useState("");
   const [qbitUser, setQbitUser] = useState("");
   const [qbitPass, setQbitPass] = useState("");
@@ -197,8 +194,8 @@ export default function Setup({
   const [libraryRoot, setLibraryRoot] = useState("");
   const [downloadRoot, setDownloadRoot] = useState("");
   // Post-save transparency checklist: what the folder save actually did
-  // (category creation, engine activation, placement). Non-null switches
-  // the library step to the checklist + Finish view.
+  // (category creation, placement). Non-null switches the library step to
+  // the checklist + Finish view.
   const [doneChecks, setDoneChecks] = useState<
     { ok: boolean; text: string }[] | null
   >(null);
@@ -538,9 +535,9 @@ export default function Setup({
         setLibraryErr(r.error || "Couldn't save the library settings.");
         return;
       }
-      // Transparency: show exactly what the save just did — category
-      // creation in each client, engine activation, placement — as a
-      // ticked checklist instead of silently finishing.
+      // Transparency: show exactly what the save just did, category
+      // creation in each client and placement, as a ticked checklist
+      // instead of silently finishing.
       const checks: { ok: boolean; text: string }[] = [];
       const cats = r.categories || {};
       for (const [client, status] of Object.entries(cats)) {
@@ -557,18 +554,10 @@ export default function Setup({
               },
         );
       }
-      let h = null;
       try {
-        h = await fetchHealth();
-        setLiveHealth(h);
+        setLiveHealth(await fetchHealth());
       } catch {
         /* checklist still shows the rest */
-      }
-      if (h?.torrentBackend === "engine") {
-        checks.unshift({
-          ok: true,
-          text: `Built-in downloader active, saving to ${downloadRoot.trim()}`,
-        });
       }
       if (libraryRoot.trim()) {
         checks.push({
@@ -877,8 +866,8 @@ export default function Setup({
           <div className="setup-step">
             <h2>Downloads</h2>
             <p className="setup-sub">
-              How should forage download? Both paths are simple — the
-              built-in one is zero setup.
+              Point forage at your download client. It sets its own category
+              up for you, so this is just the URL and login.
             </p>
             {liveHealth?.qbitConfigured || liveHealth?.sabConfigured ? (
               <ConfiguredNotice
@@ -891,32 +880,6 @@ export default function Setup({
                 }
                 onContinue={() => setStep("library")}
               />
-            ) : clientMode === null ? (
-              <div className="setup-choice">
-                <button
-                  className="setup-choice-card"
-                  onClick={() => setClientMode("own")}
-                >
-                  <strong>Connect my own client</strong>
-                  <span>
-                    Recommended. Use your existing qBittorrent (torrents)
-                    and/or SABnzbd (usenet) — forage sets its category up
-                    for you, so it&rsquo;s just the URL and login. The only
-                    way to grab usenet releases.
-                  </span>
-                </button>
-                <button
-                  className="setup-choice-card"
-                  onClick={() => setStep("library")}
-                >
-                  <strong>Use the built-in downloader</strong>
-                  <span>
-                    No torrent client? forage downloads torrents itself —
-                    nothing to install, nothing to connect. It activates as
-                    soon as you pick a download folder on the next step.
-                  </span>
-                </button>
-              </div>
             ) : (
               <>
                 <h4 className="setup-subhead">qBittorrent</h4>
@@ -1083,9 +1046,8 @@ export default function Setup({
                 </label>
                 <p className="setup-fieldnote">
                   Where finished downloads land. forage sets this up in your
-                  download client for you (its forage category), or uses it
-                  directly with the built-in downloader. Same filesystem as
-                  the library so placement can hardlink.
+                  download client for you (its forage category). Same
+                  filesystem as the library so placement can hardlink.
                 </p>
                 <label className={okCls(placementTest)}>
                   <span>Library root</span>

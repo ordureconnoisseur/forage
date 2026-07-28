@@ -298,7 +298,7 @@ To reach it from another device on your network, listen on all interfaces:
 ### Option B — Docker
 
 ```bash
-# Full stack — forage (with its built-in downloader) + Prowlarr, pre-wired:
+# Full stack — forage + qBittorrent + Prowlarr, pre-wired:
 cp docker-compose.full.yml docker-compose.yml      # set the API key + media path inside
 docker compose up -d
 
