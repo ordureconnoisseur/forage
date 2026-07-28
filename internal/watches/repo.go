@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"strconv"
 	"time"
 )
 
@@ -62,6 +63,11 @@ type Watch struct {
 	// sceneRelease) so this package needn't import api. Lets the UI re-pick a
 	// different release than the auto-chosen best. Empty ("[]") until available.
 	Candidates json.RawMessage `json:"candidates,omitempty"`
+	// CandidateCount is the TRUE number of stored candidates, even where
+	// Candidates itself was blanked (ListSummary does that for grabbed
+	// rows). The list view counts to decide whether a card can expand, so
+	// it must not infer the count from the blob. Zero off any other query.
+	CandidateCount int `json:"candidate_count"`
 	// GrabbedAt is when the watch was grabbed (status='grabbed'); 0 otherwise.
 	GrabbedAt int64 `json:"grabbed_at,omitempty"`
 	// UpgradeFloor marks an UPGRADE watch: 0 = normal acquire watch; >0 =
@@ -186,6 +192,26 @@ func (r *Repo) List(ctx context.Context) ([]Watch, error) {
 	return r.query(ctx, `
 		SELECT `+cols+` FROM watches
 		ORDER BY (status = 'available') DESC, created_at DESC`)
+}
+
+// ListSummary is List with the candidate blobs of GRABBED watches left out,
+// and every row carrying the true CandidateCount. See summaryCols for why
+// grabbed is the line: it is 13.9 MB of the 14.9 MB, and nothing renders it.
+// Dropping it in SQL keeps those bytes out of the row scan, not just off
+// the wire.
+func (r *Repo) ListSummary(ctx context.Context) ([]Watch, error) {
+	return r.querySummary(ctx, `
+		SELECT `+summaryCols+` FROM watches
+		ORDER BY (status = 'available') DESC, created_at DESC`)
+}
+
+// ByID loads one watch, candidates included, or nil when absent.
+func (r *Repo) ByID(ctx context.Context, id string) (*Watch, error) {
+	list, err := r.query(ctx, `SELECT `+cols+` FROM watches WHERE stashdb_id = ?`, id)
+	if err != nil || len(list) == 0 {
+		return nil, err
+	}
+	return &list[0], nil
 }
 
 // IDs returns the set of watched scene ids — for annotating scene lists
@@ -455,7 +481,45 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at,
 	COALESCE(performers,'[]'), search_count, upgrade_floor`
 
+// summaryCols mirrors cols ordinal for ordinal, with two changes: the
+// candidates blob is blanked for GRABBED watches, and the true length is
+// appended as a trailing column (see scanRows).
+//
+// Only grabbed watches are blanked because that is where the weight is and
+// where nothing reads it. On the reference instance, of 14.9 MB of blobs
+// across 1917 rows, 13.9 MB sits on 1528 GRABBED watches; the 21 available
+// and 368 watching rows hold 0.26 MB between them. A grabbed card is
+// finished: it renders one row and its expander is gated on `avail`, so it
+// can never show the list. Available and watching cards do use theirs, and
+// keeping them costs a quarter of a megabyte.
+//
+// The length is CAST to TEXT because that position is scanned into a string
+// either way, and leaning on driver-level int-to-string coercion is a
+// subtlety not worth relying on. json_valid guards the length call, since
+// json_array_length raises on malformed input, which would fail the whole
+// query rather than one row.
+const summaryCols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
+	COALESCE(studio_name,''), COALESCE(image_url,''),
+	COALESCE(performer_name,''), COALESCE(performer_id,''), target, status,
+	COALESCE(found_title,''), COALESCE(found_url,''), COALESCE(found_indexer,''),
+	COALESCE(found_protocol,''), found_size,
+	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
+	COALESCE(batch_id,''), COALESCE(batch_label,''),
+	CASE WHEN status = 'grabbed' THEN '[]' ELSE COALESCE(candidates,'[]') END,
+	grabbed_at, COALESCE(performers,'[]'), search_count, upgrade_floor,
+	CAST(CASE WHEN json_valid(candidates) THEN json_array_length(candidates) ELSE 0 END AS TEXT)`
+
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
+	return r.scanRows(ctx, q, false, args...)
+}
+
+// querySummary runs a summaryCols query: same shape, but the candidates
+// position carries the array length instead of the payload.
+func (r *Repo) querySummary(ctx context.Context, q string, args ...any) ([]Watch, error) {
+	return r.scanRows(ctx, q, true, args...)
+}
+
+func (r *Repo) scanRows(ctx context.Context, q string, summary bool, args ...any) ([]Watch, error) {
 	rows, err := r.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -464,14 +528,18 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 	var out []Watch
 	for rows.Next() {
 		var w Watch
-		var ignoredJSON, candJSON, perfsJSON string
-		if err := rows.Scan(
+		var ignoredJSON, candJSON, perfsJSON, countStr string
+		dest := []any{
 			&w.StashDBID, &w.Title, &w.Date, &w.StudioName, &w.ImageURL,
 			&w.PerformerName, &w.PerformerID, &w.Target, &w.Status,
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
 			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON, &w.SearchCount, &w.UpgradeFloor,
-		); err != nil {
+		}
+		if summary {
+			dest = append(dest, &countStr) // summaryCols trailing length
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		if ignoredJSON != "" && ignoredJSON != "[]" {
@@ -484,6 +552,10 @@ func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error
 			candJSON = "[]"
 		}
 		w.Candidates = json.RawMessage(candJSON)
+		if summary {
+			// The blob is "[]" for grabbed rows; the count is the real one.
+			w.CandidateCount, _ = strconv.Atoi(countStr)
+		}
 		out = append(out, w)
 	}
 	return out, rows.Err()

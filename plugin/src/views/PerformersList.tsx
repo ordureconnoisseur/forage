@@ -1,6 +1,7 @@
 import SubscriptionsRow from "../SubscriptionsRow";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { filterGlyph } from "../format";
+import { invalidate, useCached } from "../swr";
 import {
   fetchPerformers,
   PerformerSort,
@@ -30,9 +31,6 @@ export default function PerformersList({
 }: {
   onPick: (localID: string) => void;
 }) {
-  const [performers, setPerformers] = useState<Performer[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [favOnly, setFavOnly] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<PerformerSort>(loadSort);
@@ -44,7 +42,6 @@ export default function PerformersList({
   const [contentFilter, setContentFilter] = useState<string>(
     () => localStorage.getItem(FILTER_STORAGE_KEY) || "",
   );
-  const [filterSets, setFilterSets] = useState<Record<string, string[]>>({});
 
   useEffect(() => {
     localStorage.setItem(SORT_STORAGE_KEY, sort);
@@ -53,35 +50,20 @@ export default function PerformersList({
     localStorage.setItem(FILTER_STORAGE_KEY, contentFilter);
   }, [contentFilter]);
 
-  // Re-fetch the cached performer list. Returns a promise so the manual
-  // refresh can await it before clearing its spinner. loadSeq guards
-  // against out-of-order responses: two quick sort changes fire two
-  // loads, and without the guard the slower (stale) response would win
-  // and display the old sort's data. Only the latest call may commit.
-  const loadSeq = useRef(0);
-  const load = useCallback(
-    async (showSpinner = true) => {
-      const seq = ++loadSeq.current;
-      if (showSpinner) setLoading(true);
-      try {
-        const r = await fetchPerformers({ sort });
-        if (seq !== loadSeq.current) return;
-        setPerformers(r.performers);
-        setFilterSets(r.filters ?? {});
-        setError(null);
-      } catch (e) {
-        if (seq !== loadSeq.current) return;
-        setError((e as Error).message);
-      } finally {
-        if (showSpinner && seq === loadSeq.current) setLoading(false);
-      }
-    },
-    [sort],
-  );
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Cached per sort, so returning to the grid repaints instantly and
+  // revalidates behind the paint instead of spinning. useCached also owns
+  // the out-of-order guard two quick sort changes need.
+  const {
+    data,
+    loading,
+    error: loadError,
+    reload,
+  } = useCached("/performers?sort=" + sort, () => fetchPerformers({ sort }));
+  const performers = useMemo(() => data?.performers ?? [], [data]);
+  const filterSets = data?.filters ?? {};
+  // Errors from the manual refresh, shown alongside any load error.
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const error = refreshError ?? loadError;
 
   // Force an immediate server-side re-sync of the performer cache from Stash
   // (the fast pull) so a just-added performer shows up without waiting for
@@ -89,11 +71,13 @@ export default function PerformersList({
   async function refreshNow() {
     if (refreshing) return;
     setRefreshing(true);
+    setRefreshError(null);
     try {
       await refreshPerformers();
-      await load(false);
+      invalidate("/performers");
+      await reload();
     } catch (e) {
-      setError((e as Error).message);
+      setRefreshError((e as Error).message);
     } finally {
       setRefreshing(false);
     }

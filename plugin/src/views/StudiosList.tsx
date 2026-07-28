@@ -1,5 +1,6 @@
 import SubscriptionsRow from "../SubscriptionsRow";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { invalidate, useCached } from "../swr";
 import {
   fetchStudios,
   refreshStudios,
@@ -32,9 +33,6 @@ export default function StudiosList({
   // The studio's navigation id is its StashDB cross-id (or "stash:<id>").
   onPick: (studioId: string) => void;
 }) {
-  const [studios, setStudios] = useState<Studio[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [favOnly, setFavOnly] = useState(false);
   const [q, setQ] = useState("");
   const [sort, setSort] = useState<StudioSort>(loadSort);
@@ -44,38 +42,27 @@ export default function StudiosList({
     localStorage.setItem(SORT_STORAGE_KEY, sort);
   }, [sort]);
 
-  const loadSeq = useRef(0);
-  const load = useCallback(
-    async (showSpinner = true) => {
-      const seq = ++loadSeq.current;
-      if (showSpinner) setLoading(true);
-      try {
-        const r = await fetchStudios({ sort });
-        if (seq !== loadSeq.current) return;
-        setStudios(r.studios);
-        setError(null);
-      } catch (e) {
-        if (seq !== loadSeq.current) return;
-        setError((e as Error).message);
-      } finally {
-        if (showSpinner && seq === loadSeq.current) setLoading(false);
-      }
-    },
-    [sort],
-  );
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+  // Cached per sort — see PerformersList; same reasoning, same shape.
+  const {
+    data,
+    loading,
+    error: loadError,
+    reload,
+  } = useCached("/studios?sort=" + sort, () => fetchStudios({ sort }));
+  const studios = useMemo(() => data?.studios ?? [], [data]);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
+  const error = refreshError ?? loadError;
 
   async function refreshNow() {
     if (refreshing) return;
     setRefreshing(true);
+    setRefreshError(null);
     try {
       await refreshStudios();
-      await load(false);
+      invalidate("/studios");
+      await reload();
     } catch (e) {
-      setError((e as Error).message);
+      setRefreshError((e as Error).message);
     } finally {
       setRefreshing(false);
     }

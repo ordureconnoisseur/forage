@@ -105,13 +105,19 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 	// obtained elsewhere lingers in Watching forever, since only
 	// postWatchGrab removed watches before. Clears the existing backlog the
 	// moment the tab loads.
-	s.reconcileWatches(r.Context())
-
-	ws, err := s.watches.List(r.Context())
-	if err != nil {
-		s.log.Error("watch list", "err", err)
-		writeErr(w, http.StatusInternalServerError, "db")
-		return
+	//
+	// Reconcile hands back the list it already loaded, so re-reading is only
+	// needed when it actually changed a row. That is the rare case, so the
+	// steady-state request scans this table once instead of twice.
+	ws, changed := s.reconcileWatches(r.Context())
+	if changed || ws == nil {
+		var err error
+		ws, err = s.watches.ListSummary(r.Context())
+		if err != nil {
+			s.log.Error("watch list", "err", err)
+			writeErr(w, http.StatusInternalServerError, "db")
+			return
+		}
 	}
 	if ws == nil {
 		ws = []watches.Watch{}
@@ -143,7 +149,10 @@ func (s *Server) getWatches(w http.ResponseWriter, r *http.Request) {
 // (batch progress reads complete, nothing re-searches). The owned check
 // keeps a watch resolved when the scene landed anyway — a deleted grab row
 // after a confirm, or a pack that covered it. Best-effort: logs and moves on.
-func (s *Server) reconcileWatches(ctx context.Context) {
+// Returns the (summary) list it loaded plus whether it mutated any row, so
+// getWatches can reuse the list when nothing moved. A nil list means the
+// load failed and the caller must fetch its own.
+func (s *Server) reconcileWatches(ctx context.Context) (list []watches.Watch, changed bool) {
 	// Self-heal invalid "available but no grab link" rows back to watching, so
 	// a release that slipped through before the no-URL selection guard (or any
 	// future regression) re-searches instead of sitting un-grabbable. Runs
@@ -158,11 +167,11 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	// An EMPTY set is meaningful (every grabbed watch is a revert candidate).
 	live, covered, err := s.grabbedSceneSet(ctx)
 	if err != nil {
-		return
+		return nil, false
 	}
-	list, err := s.watches.List(ctx)
+	list, err = s.watches.ListSummary(ctx)
 	if err != nil {
-		return
+		return nil, false
 	}
 	// Reverting requires the scene to be fully UNcovered: no live grab AND
 	// nothing pending resolution. A mismatched grab in the review queue
@@ -191,11 +200,12 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 				s.log.Warn("watch reconcile mark grabbed", "scene", wt.StashDBID, "err", err)
 				continue
 			}
+			changed = true
 			s.log.Info("watch resolved — scene already grabbed", "scene", wt.StashDBID)
 		}
 	}
 	if len(stranded) == 0 {
-		return
+		return list, changed
 	}
 	// The owned sweep is the expensive part (memoised, but still a full
 	// library fetch on a cold memo) — only pay for it when there's an actual
@@ -203,7 +213,7 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 	// prove the scene didn't land.
 	owned, oerr := s.ownedSceneCopies(ctx)
 	if oerr != nil {
-		return
+		return list, changed
 	}
 	for _, wt := range stranded {
 		sid := wt.StashDBID
@@ -233,6 +243,7 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 					s.log.Warn("watch dismiss dead release", "scene", sid, "err", derr)
 					continue
 				}
+				changed = true
 				s.log.Info("watch reverted; dead release auto-ignored",
 					"scene", sid, "release", wt.FoundTitle, "reason", g.Reason)
 				continue
@@ -242,23 +253,21 @@ func (s *Server) reconcileWatches(ctx context.Context) {
 			s.log.Warn("watch revert grabbed", "scene", sid, "err", err)
 			continue
 		}
+		changed = true
 		s.log.Info("watch reverted — grab died without the scene landing; watching again", "scene", sid)
 	}
+	return list, changed
 }
 
-// findWatch loads a single watch by id, or nil. Small wrapper over List —
-// the watch list is tiny, so a dedicated lookup isn't worth a repo method.
+// findWatch loads a single watch by id, or nil. This used to scan the whole
+// list in memory, which was fine when the table was small and is not now:
+// the candidate blobs made every lookup a multi-megabyte read.
 func (s *Server) findWatch(ctx context.Context, id string) *watches.Watch {
-	list, err := s.watches.List(ctx)
+	wt, err := s.watches.ByID(ctx, id)
 	if err != nil {
 		return nil
 	}
-	for i := range list {
-		if list[i].StashDBID == id {
-			return &list[i]
-		}
-	}
-	return nil
+	return wt
 }
 
 func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {

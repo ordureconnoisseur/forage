@@ -442,3 +442,98 @@ func TestClaimBatchUnsearchedFirst(t *testing.T) {
 		t.Fatalf("expected a re-check after the unsearched lane drained, got %v", got2)
 	}
 }
+
+// TestByIDLoadsCandidates pins that the single-watch lookup keeps the blob:
+// the grab path re-picks a failover release from it.
+func TestByIDLoadsCandidates(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	if err := r.Add(ctx, Watch{StashDBID: "s1", Title: "Scene 1", Target: TargetAny}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkAvailable(ctx, "s1", "a", "http://x/a", "idx", "torrent", 1,
+		json.RawMessage(`[{"title":"a"}]`)); err != nil {
+		t.Fatal(err)
+	}
+	wt, err := r.ByID(ctx, "s1")
+	if err != nil || wt == nil {
+		t.Fatalf("ByID = %v, %v", wt, err)
+	}
+	if len(wt.Candidates) == 0 {
+		t.Error("ByID dropped candidates; the failover re-pick needs them")
+	}
+	missing, err := r.ByID(ctx, "nope")
+	if err != nil || missing != nil {
+		t.Errorf("ByID(missing) = %v, %v; want nil, nil", missing, err)
+	}
+}
+
+// TestListSummaryDropsGrabbedCandidates pins where the /watches payload went.
+// The blobs were 14.9 MB across 1917 rows on the reference instance, and
+// 13.9 MB of that sat on 1528 GRABBED watches whose cards render one row and
+// cannot expand. Grabbed rows therefore ship no blob; available and watching
+// rows, which the UI does read, keep theirs. Every row keeps a TRUE count,
+// since that is what decides whether a card can expand.
+//
+// Also proves SQLite JSON1 is available in this driver build, which
+// summaryCols depends on.
+func TestListSummaryDropsGrabbedCandidates(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	for _, id := range []string{"avail", "grabbed", "plain"} {
+		if err := r.Add(ctx, Watch{StashDBID: id, Title: id, Target: TargetAny}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cands := json.RawMessage(`[{"title":"a"},{"title":"b"},{"title":"c"}]`)
+	for _, id := range []string{"avail", "grabbed"} {
+		if err := r.MarkAvailable(ctx, id, "a", "http://x/"+id, "idx", "torrent", 1, cands); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.MarkGrabbed(ctx, "grabbed", "a", "http://x/grabbed", "idx", "torrent", 1); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := r.ListSummary(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]Watch{}
+	for _, w := range list {
+		by[w.StashDBID] = w
+	}
+	if len(by) != 3 {
+		t.Fatalf("summary list = %d rows, want 3", len(by))
+	}
+
+	// Grabbed: blob dropped, count intact.
+	g := by["grabbed"]
+	if g.Status != StatusGrabbed {
+		t.Fatalf("setup: grabbed row has status %q", g.Status)
+	}
+	if string(g.Candidates) != "[]" {
+		t.Errorf("grabbed row carried candidates %q, want []", g.Candidates)
+	}
+	if g.CandidateCount != 3 {
+		t.Errorf("grabbed candidate_count = %d, want the true 3", g.CandidateCount)
+	}
+	// Its display fields must survive — the card still renders from these.
+	if g.FoundTitle != "a" || g.FoundURL != "http://x/grabbed" {
+		t.Errorf("grabbed row lost found_* fields: %+v", g)
+	}
+
+	// Available: keeps the blob, the UI re-picks from it.
+	a := by["avail"]
+	if len(a.Candidates) == 0 || string(a.Candidates) == "[]" {
+		t.Errorf("available row lost its candidates (%q); the re-pick needs them", a.Candidates)
+	}
+	if a.CandidateCount != 3 {
+		t.Errorf("available candidate_count = %d, want 3", a.CandidateCount)
+	}
+
+	// Never-available: no candidates, zero count, and no crash on '[]'.
+	if p := by["plain"]; p.CandidateCount != 0 || string(p.Candidates) != "[]" {
+		t.Errorf("plain row = count %d, cands %q; want 0, []", p.CandidateCount, p.Candidates)
+	}
+}
