@@ -143,15 +143,19 @@ function isUnmatched(g: Grab): boolean {
 
 export default function GrabsList({
   onPickScene,
+  initialQ,
 }: {
   // Jump to a scene's releases view (to pick a different release when a
   // grab stalled or failed). Receives the scene's StashDB id + the
   // performer to place under.
   onPickScene: (stashDBID: string, performerName?: string) => void;
+  // Starting search text, from the ?q= route param, so another view can
+  // link into a filtered Grabs.
+  initialQ?: string;
 }) {
   // Seeded from the first-page cache so returning to Grabs paints the last
   // known page immediately; the poll below revalidates within a tick.
-  const seed = peek<GrabsPage>(grabsKey("any", ""));
+  const seed = initialQ ? null : peek<GrabsPage>(grabsKey("any", ""));
   const [grabs, setGrabs] = useState<Grab[]>(() => seed?.grabs ?? []);
   const [totals, setTotals] = useState<Partial<Record<GrabFilter, number>>>(
     () => seed?.totals ?? {},
@@ -164,10 +168,10 @@ export default function GrabsList({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<GrabFilter>("any");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQ ?? "");
   // Debounced copy of q — the server query runs off this so each keystroke
   // doesn't fire a request.
-  const [qDebounced, setQDebounced] = useState("");
+  const [qDebounced, setQDebounced] = useState(initialQ ?? "");
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [notice, setNotice] = useState<string | null>(null);
   const [adopting, setAdopting] = useState(false);

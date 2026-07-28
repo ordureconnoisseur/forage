@@ -52,7 +52,10 @@ type Route =
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
   | { kind: "watching" }
-  | { kind: "grabs" }
+  // grabs carries an optional starting query so other views can link into
+  // a filtered Grabs (the Watching tab points at a batch's finished work,
+  // whose real download state lives here rather than on the watch).
+  | { kind: "grabs"; q?: string }
   | { kind: "deletions" };
 
 function parseRoute(hash: string): Route {
@@ -79,7 +82,7 @@ function parseRoute(hash: string): Route {
     };
   }
   if (parts[0] === "grabs") {
-    return { kind: "grabs" };
+    return { kind: "grabs", q: query.get("q") || undefined };
   }
   if (parts[0] === "deletions") {
     return { kind: "deletions" };
@@ -304,7 +307,10 @@ export default function App() {
   const goStudios = () => setHash("#/studios");
   const goDiscover = () => setHash("#/discover");
   const goWatching = () => setHash("#/watching");
-  const goGrabs = () => setHash("#/grabs");
+  // Bare for the nav button; with a query when another view links into a
+  // filtered Grabs (see the Watching tab's finished-work disclosure).
+  const goGrabs = (q?: string) =>
+    setHash(q ? `#/grabs?q=${encodeURIComponent(q)}` : "#/grabs");
   const goPerformer = (id: string) => setHash(`#/performer/${id}`);
   const goStudio = (id: string) => setHash(`#/studio/${encodeURIComponent(id)}`);
   const goScene = (id: string, performerName?: string) => {
@@ -493,10 +499,10 @@ export default function App() {
           <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
         )}
         {ready && route.kind === "watching" && (
-          <WatchingList onPickScene={goScene} />
+          <WatchingList onPickScene={goScene} onPickGrabs={goGrabs} />
         )}
         {ready && route.kind === "grabs" && (
-          <GrabsList onPickScene={goScene} />
+          <GrabsList onPickScene={goScene} initialQ={route.q} />
         )}
         {ready && route.kind === "deletions" && <DeletionsList />}
         {loading && (

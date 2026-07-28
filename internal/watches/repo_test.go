@@ -537,3 +537,71 @@ func TestListSummaryDropsGrabbedCandidates(t *testing.T) {
 		t.Errorf("plain row = count %d, cands %q; want 0, []", p.CandidateCount, p.Candidates)
 	}
 }
+
+// TestDeleteFinishedOnlyTouchesGrabbed is the safety property of the
+// "clear finished" button: it must never be able to cancel a live hunt.
+// A watching or available row is an ACTIVE search; only grabbed rows are
+// finished bookkeeping and therefore safe to drop.
+func TestDeleteFinishedOnlyTouchesGrabbed(t *testing.T) {
+	r := testRepo(t)
+	ctx := context.Background()
+	// One batch and the ungrouped bucket, each with all three statuses.
+	for _, w := range []Watch{
+		{StashDBID: "b-grab", Title: "x", BatchID: "b1", BatchLabel: "B"},
+		{StashDBID: "b-avail", Title: "x", BatchID: "b1", BatchLabel: "B"},
+		{StashDBID: "b-watch", Title: "x", BatchID: "b1", BatchLabel: "B"},
+		{StashDBID: "s-grab", Title: "x"},
+		{StashDBID: "s-avail", Title: "x"},
+		{StashDBID: "s-watch", Title: "x"},
+	} {
+		if err := r.Add(ctx, w); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"b-grab", "b-avail", "s-grab", "s-avail"} {
+		if err := r.MarkAvailable(ctx, id, "rel", "http://x/"+id, "ix", "torrent", 1, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, id := range []string{"b-grab", "s-grab"} {
+		if err := r.MarkGrabbed(ctx, id, "rel", "http://x/"+id, "ix", "torrent", 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Clearing the ungrouped bucket must not reach into the batch.
+	n, err := r.DeleteFinished(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Errorf("cleared %d ungrouped finished, want 1", n)
+	}
+	left := map[string]string{}
+	list, _ := r.List(ctx)
+	for _, w := range list {
+		left[w.StashDBID] = w.Status
+	}
+	if _, gone := left["s-grab"]; gone {
+		t.Error("finished single survived the clear")
+	}
+	for _, id := range []string{"s-avail", "s-watch", "b-grab", "b-avail", "b-watch"} {
+		if _, ok := left[id]; !ok {
+			t.Errorf("%s was deleted; clear-finished must not touch it", id)
+		}
+	}
+
+	// Now the batch: same rule, scoped to that batch.
+	if n, err = r.DeleteFinished(ctx, "b1"); err != nil || n != 1 {
+		t.Fatalf("batch clear = %d, %v; want 1, nil", n, err)
+	}
+	list, _ = r.List(ctx)
+	for _, w := range list {
+		if w.Status == StatusGrabbed {
+			t.Errorf("%s still grabbed after clear", w.StashDBID)
+		}
+	}
+	if len(list) != 4 {
+		t.Errorf("%d rows left, want 4 (two active per group)", len(list))
+	}
+}

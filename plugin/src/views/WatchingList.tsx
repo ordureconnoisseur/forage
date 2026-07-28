@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  clearFinishedWatches,
   clearWatchBatch,
   deleteWatch,
   dismissWatch,
@@ -82,8 +83,12 @@ function groupWatches(watches: Watch[]): Group[] {
 
 export default function WatchingList({
   onPickScene,
+  onPickGrabs,
 }: {
   onPickScene: (stashDBID: string, performerName?: string) => void;
+  // Open Grabs filtered to some text — used by the finished-work
+  // disclosure, since a grabbed watch's real state lives over there.
+  onPickGrabs: (q: string) => void;
 }) {
   // Seeded from the cache so returning to Watching paints the last known
   // list immediately; the poll below then refreshes it in place.
@@ -199,6 +204,7 @@ export default function WatchingList({
           onChanged={load}
           onToast={flashToast}
           onPickScene={onPickScene}
+          onPickGrabs={onPickGrabs}
         />
       ))}
     </div>
@@ -210,11 +216,13 @@ function WatchGroup({
   onChanged,
   onToast,
   onPickScene,
+  onPickGrabs,
 }: {
   group: Group;
   onChanged: () => void;
   onToast: (msg: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
+  onPickGrabs: (q: string) => void;
 }) {
   const [grabAllBusy, setGrabAllBusy] = useState(false);
   const [clearBusy, setClearBusy] = useState(false);
@@ -225,6 +233,28 @@ function WatchGroup({
   const grabbed = items.filter((w) => w.status === "grabbed");
   const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
+  // Finished watches are bookkeeping, not content: they exist so a batch
+  // reads "9 of 30 grabbed". They were 1528 of 1913 rendered cards on the
+  // reference instance (~41k DOM nodes, seconds to paint), for rows whose
+  // only job is to be counted. Render the actionable ones and put the rest
+  // behind a disclosure; the real state of a grabbed scene lives in Grabs.
+  const actionable = items.filter((w) => w.status !== "grabbed");
+  const [showDone, setShowDone] = useState(false);
+  const [clearDoneBusy, setClearDoneBusy] = useState(false);
+
+  const clearDone = async () => {
+    if (clearDoneBusy) return;
+    setClearDoneBusy(true);
+    try {
+      const r = await clearFinishedWatches(isBatch ? group.id : "");
+      onToast(`Cleared ${r.cleared} finished watch${r.cleared === 1 ? "" : "es"}`);
+      onChanged();
+    } catch (e) {
+      onToast("Couldn't clear: " + (e as Error).message);
+    } finally {
+      setClearDoneBusy(false);
+    }
+  };
 
   // Collapse a group's card list. Default-collapse a batch that's fully done
   // (everything grabbed, nothing left to act on) so finished batches fold
@@ -329,16 +359,63 @@ function WatchGroup({
         </div>
       </div>
       {!collapsed && (
-        <ul className="watch-list">
-          {items.map((w) => (
-            <WatchCard
-              key={w.stashdb_id}
-              w={w}
-              onChanged={onChanged}
-              onPickScene={onPickScene}
-            />
-          ))}
-        </ul>
+        <>
+          <ul className="watch-list">
+            {actionable.map((w) => (
+              <WatchCard
+                key={w.stashdb_id}
+                w={w}
+                onChanged={onChanged}
+                onPickScene={onPickScene}
+              />
+            ))}
+          </ul>
+          {grabbed.length > 0 && (
+            <div className="watch-done">
+              <button
+                type="button"
+                className="watch-done-toggle"
+                aria-expanded={showDone}
+                onClick={() => setShowDone((v) => !v)}
+              >
+                <span
+                  className={"fchev" + (showDone ? " open" : "")}
+                  aria-hidden="true"
+                />
+                {grabbed.length} grabbed
+              </button>
+              <button
+                type="button"
+                className="setup-link watch-done-link"
+                onClick={() => onPickGrabs(group.label)}
+                title="Show these in Grabs, where their download state lives"
+              >
+                view in Grabs
+              </button>
+              <button
+                type="button"
+                className="setup-link watch-done-clear"
+                disabled={clearDoneBusy}
+                onClick={clearDone}
+                title="Remove these finished watches. Does not touch files or grabs."
+              >
+                {clearDoneBusy ? "Clearing…" : "clear finished"}
+              </button>
+            </div>
+          )}
+          {showDone && (
+            <ul className="watch-list">
+              {grabbed.map((w) => (
+                <WatchCard
+                  key={w.stashdb_id}
+                  w={w}
+                  onChanged={onChanged}
+                  onPickScene={onPickScene}
+                />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </section>
   );

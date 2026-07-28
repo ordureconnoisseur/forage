@@ -5192,6 +5192,38 @@ code.grab-fact-v,
 .watch-list section + section {
   margin-top: 24px;
 }
+/* Finished-work disclosure: the row that stands in for a group's grabbed
+   watches. They are bookkeeping (a batch reads "9 of 30"), so they sit
+   behind this instead of rendering hundreds of cards nobody acts on. */
+.watch-done {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 10px 0 2px 0;
+  font-size: 12px;
+  opacity: 0.75;
+}
+.watch-done-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.watch-done-toggle:hover {
+  opacity: 1;
+}
+.watch-done-link,
+.watch-done-clear {
+  font-size: 12px;
+}
+.watch-done-clear:hover {
+  color: var(--danger, #e0574e);
+}
 /* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
    actions ride with the scene title and never float against the middle of an
    expanded release list. */
