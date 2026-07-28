@@ -1165,6 +1165,9 @@ export interface Health {
   // The most recent recovered background panic, if any ever happened:
   // unix seconds + which loop. The full stack lives behind auth in /diag.
   lastPanic?: { at: number; in: string };
+  // Which torrent backend grabs ride: "qbit", "engine" (built-in), or ""
+  // (no torrent path configured).
+  torrentBackend?: string;
 }
 
 export function fetchHealth(): Promise<Health> {
@@ -1335,6 +1338,10 @@ export interface ProbeResult {
 export interface SaveConfigResponse {
   ok: boolean;
   results: Record<string, ProbeResult>;
+  // Per-client outcome of the automatic forage-category creation the save
+  // performs ("ready" | "failed: …"), present when a download folder is
+  // set and a client is configured.
+  categories?: Record<string, string>;
   // 422 body shape — error message plus per-section probe results.
   error?: string;
 }

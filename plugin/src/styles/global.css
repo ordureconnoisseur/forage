@@ -7618,3 +7618,22 @@ code.grab-fact-v,
   opacity: 0.75;
   line-height: 1.5;
 }
+
+/* Green tick on a field whose section test passed */
+.setup-field.field-ok > span::after {
+  content: " ✓";
+  color: var(--accent, #22c55e);
+  font-weight: 600;
+}
+.setup-field.field-ok input {
+  border-color: rgba(var(--accent-rgb, 34, 197, 94), 0.55);
+}
+.setup-fieldnote {
+  font-size: 12px;
+  opacity: 0.65;
+  margin: 4px 0 12px;
+  line-height: 1.5;
+}
+.setup-dlcheck-row.fail .setup-dlcheck-icon {
+  color: var(--red, #ef4444);
+}

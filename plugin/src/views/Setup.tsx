@@ -190,6 +190,16 @@ export default function Setup({
 
   // Library step
   const [libraryRoot, setLibraryRoot] = useState("");
+  const [downloadRoot, setDownloadRoot] = useState("");
+  // Post-save transparency checklist: what the folder save actually did
+  // (category creation, engine activation, placement). Non-null switches
+  // the library step to the checklist + Finish view.
+  const [doneChecks, setDoneChecks] = useState<
+    { ok: boolean; text: string }[] | null
+  >(null);
+  // Green-tick class for fields once their section's test passed.
+  const okCls = (t: Test) =>
+    "setup-field" + (t.kind === "ok" ? " field-ok" : "");
   // Download-client setup check (category + hardlink), run on the library
   // step where both clients and the library root are known.
   const [dlChecks, setDlChecks] = useState<ClientCheck[] | null>(null);
@@ -514,6 +524,7 @@ export default function Setup({
     setLibraryErr(null);
     try {
       const patch: ConfigPatch = {};
+      if (downloadRoot.trim()) patch.downloadRoot = downloadRoot.trim();
       if (libraryRoot.trim()) patch.libraryRoot = libraryRoot.trim();
       if (stashPathMapping.trim())
         patch.stashPathMapping = stashPathMapping.trim();
@@ -522,8 +533,45 @@ export default function Setup({
         setLibraryErr(r.error || "Couldn't save the library settings.");
         return;
       }
-      await refreshHealth();
-      finish();
+      // Transparency: show exactly what the save just did — category
+      // creation in each client, engine activation, placement — as a
+      // ticked checklist instead of silently finishing.
+      const checks: { ok: boolean; text: string }[] = [];
+      const cats = r.categories || {};
+      for (const [client, status] of Object.entries(cats)) {
+        const name = client === "qbit" ? "qBittorrent" : "SABnzbd";
+        checks.push(
+          status === "ready"
+            ? {
+                ok: true,
+                text: `${name}: forage category created, saving to ${downloadRoot.trim()}`,
+              }
+            : {
+                ok: false,
+                text: `${name} category: ${status} — create a category named "forage" pointing at ${downloadRoot.trim()} in its UI`,
+              },
+        );
+      }
+      let h = null;
+      try {
+        h = await fetchHealth();
+        setLiveHealth(h);
+      } catch {
+        /* checklist still shows the rest */
+      }
+      if (h?.torrentBackend === "engine") {
+        checks.unshift({
+          ok: true,
+          text: `Built-in downloader active, saving to ${downloadRoot.trim()}`,
+        });
+      }
+      if (libraryRoot.trim()) {
+        checks.push({
+          ok: true,
+          text: `Placing finished downloads into ${libraryRoot.trim()}`,
+        });
+      }
+      setDoneChecks(checks);
     } catch (e) {
       setLibraryErr((e as Error).message);
     } finally {
@@ -750,7 +798,7 @@ export default function Setup({
             ) : (
               <>
                 <ManagedProwlarrCard onReady={refreshHealth} />
-                <label className="setup-field">
+                <label className={okCls(prowlarrTest)}>
                   <span>Prowlarr URL</span>
                   <input
                     type="url"
@@ -760,7 +808,7 @@ export default function Setup({
                     onChange={(e) => setProwlarrUrl(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(prowlarrTest)}>
                   <span>Prowlarr API key</span>
                   <input
                     type="password"
@@ -862,7 +910,7 @@ export default function Setup({
             ) : (
               <>
                 <h4 className="setup-subhead">qBittorrent</h4>
-                <label className="setup-field">
+                <label className={okCls(qbitTest)}>
                   <span>qBit URL</span>
                   <input
                     type="url"
@@ -872,7 +920,7 @@ export default function Setup({
                     onChange={(e) => setQbitUrl(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(qbitTest)}>
                   <span>qBit username</span>
                   <input
                     type="text"
@@ -882,7 +930,7 @@ export default function Setup({
                     onChange={(e) => setQbitUser(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(qbitTest)}>
                   <span>qBit password</span>
                   <input
                     type="password"
@@ -893,7 +941,7 @@ export default function Setup({
                     onChange={(e) => setQbitPass(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(qbitTest)}>
                   <span>qBit category</span>
                   <input
                     type="text"
@@ -915,7 +963,7 @@ export default function Setup({
                 </div>
 
                 <h4 className="setup-subhead">SABnzbd</h4>
-                <label className="setup-field">
+                <label className={okCls(sabTest)}>
                   <span>SAB URL</span>
                   <input
                     type="url"
@@ -925,7 +973,7 @@ export default function Setup({
                     onChange={(e) => setSabUrl(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(sabTest)}>
                   <span>SAB API key</span>
                   <input
                     type="password"
@@ -936,7 +984,7 @@ export default function Setup({
                     onChange={(e) => setSabKey(e.target.value)}
                   />
                 </label>
-                <label className="setup-field">
+                <label className={okCls(sabTest)}>
                   <span>SAB category</span>
                   <input
                     type="text"
@@ -991,7 +1039,28 @@ export default function Setup({
               container, on the same filesystem as your download client's
               complete dir so it can hardlink.
             </p>
-            {liveHealth?.placerConfigured ? (
+            {doneChecks ? (
+              <>
+                <ul className="setup-dlcheck-list">
+                  {doneChecks.map((c, i) => (
+                    <li
+                      key={i}
+                      className={"setup-dlcheck-row " + (c.ok ? "ok" : "fail")}
+                    >
+                      <span className="setup-dlcheck-icon">
+                        {c.ok ? "✓" : "✗"}
+                      </span>
+                      <span className="setup-dlcheck-body">{c.text}</span>
+                    </li>
+                  ))}
+                </ul>
+                <div className="setup-actions">
+                  <button className="setup-primary" onClick={finish}>
+                    Finish setup
+                  </button>
+                </div>
+              </>
+            ) : liveHealth?.placerConfigured ? (
               <ConfiguredNotice
                 label="Library placement is already configured"
                 onContinue={finish}
@@ -999,6 +1068,22 @@ export default function Setup({
             ) : (
               <>
                 <label className="setup-field">
+                  <span>Download folder</span>
+                  <input
+                    type="text"
+                    value={downloadRoot}
+                    spellCheck={false}
+                    placeholder="/data/media/downloads/complete"
+                    onChange={(e) => setDownloadRoot(e.target.value)}
+                  />
+                </label>
+                <p className="setup-fieldnote">
+                  Where finished downloads land. forage sets this up in your
+                  download client for you (its forage category), or uses it
+                  directly with the built-in downloader. Same filesystem as
+                  the library so placement can hardlink.
+                </p>
+                <label className={okCls(placementTest)}>
                   <span>Library root</span>
                   <input
                     type="text"
