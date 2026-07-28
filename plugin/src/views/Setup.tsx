@@ -793,11 +793,7 @@ export default function Setup({
             </p>
             {liveHealth?.prowlarrConfigured ? (
               <>
-                <IndexerCheck
-                  prowlarrHref={
-                    prowlarrUrl.trim() || foragerBase() + "/prowlarr/"
-                  }
-                />
+                <IndexerCheck />
                 <ConfiguredNotice
                   label="Prowlarr is already configured"
                   onContinue={() => setStep("clients")}
@@ -1234,63 +1230,121 @@ function Stepper({
   );
 }
 
-// ConfiguredNotice is the "breeze past" state for a step whose section the
-// daemon already has set (e.g. via .env) — a green confirmation plus a
-// plain Continue, no fields to fill.
 // IndexerCheck verifies the thing the Prowlarr connection is FOR: that
-// some indexers actually exist behind it. No recommendations — whose
-// indexers to use is the user's business — just the live count, so
-// finishing setup with zero indexers (searches return nothing) can't
-// happen silently.
-function IndexerCheck({ prowlarrHref }: { prowlarrHref: string }) {
-  const [count, setCount] = useState<number | null>(null);
+// enabled indexers actually exist behind it. No recommendations (whose
+// indexers to use is the user's business), just the live state, so
+// finishing setup with zero working indexers cannot happen silently.
+// A fetch failure is shown, not swallowed: "Prowlarr configured" only
+// means credentials are saved, not that the service answers.
+function IndexerCheck() {
+  type CheckState =
+    | { kind: "loading" }
+    | { kind: "error"; detail: string }
+    | { kind: "ok"; enabled: number; total: number; href: string };
+  const [state, setState] = useState<CheckState>({ kind: "loading" });
   const [checking, setChecking] = useState(false);
-  async function check() {
+
+  async function check(isCancelled: () => boolean = () => false) {
     setChecking(true);
     try {
-      setCount((await fetchIndexers()).length);
-    } catch {
-      setCount(null);
+      const [indexers, cfg] = await Promise.all([
+        fetchIndexers(),
+        fetchConfig().catch(() => null),
+      ]);
+      if (isCancelled()) return;
+      // Where "Open Prowlarr" should land: the configured URL for a BYO
+      // Prowlarr; the authenticated /prowlarr/ proxy for a managed one
+      // (whose configured URL is a localhost address useless to a remote
+      // browser, and which always ends in /prowlarr).
+      const raw = cfg?.fields["prowlarrUrl"]?.value;
+      const cfgUrl = typeof raw === "string" ? raw.trim() : "";
+      const href =
+        !cfgUrl || cfgUrl.endsWith("/prowlarr")
+          ? foragerBase() + "/prowlarr/"
+          : cfgUrl;
+      setState({
+        kind: "ok",
+        enabled: indexers.filter((i) => i.enabled).length,
+        total: indexers.length,
+        href,
+      });
+    } catch (e) {
+      if (!isCancelled()) setState({ kind: "error", detail: (e as Error).message });
     } finally {
-      setChecking(false);
+      if (!isCancelled()) setChecking(false);
     }
   }
   useEffect(() => {
-    check();
+    let cancelled = false;
+    check(() => cancelled);
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  if (count === null) return null;
+
+  const recheck = (
+    <button className="setup-link inline" onClick={() => check()} disabled={checking}>
+      {checking ? "checking…" : "re-check"}
+    </button>
+  );
+  if (state.kind === "loading") {
+    return (
+      <div className="setup-dlcheck-row warn">
+        <span className="setup-dlcheck-icon">…</span>
+        <span className="setup-dlcheck-body">
+          <span>Checking indexers…</span>
+        </span>
+      </div>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <div className="setup-dlcheck-row error">
+        <span className="setup-dlcheck-icon">✗</span>
+        <span className="setup-dlcheck-body">
+          <span>
+            Couldn&rsquo;t reach Prowlarr: {state.detail}. Searches will fail
+            until it answers. {recheck}
+          </span>
+        </span>
+      </div>
+    );
+  }
+  const ok = state.enabled > 0;
   return (
-    <div className={"setup-dlcheck-row " + (count > 0 ? "ok" : "warn")}>
-      <span className="setup-dlcheck-icon">{count > 0 ? "✓" : "!"}</span>
+    <div className={"setup-dlcheck-row " + (ok ? "ok" : "warn")}>
+      <span className="setup-dlcheck-icon">{ok ? "✓" : "!"}</span>
       <span className="setup-dlcheck-body">
-        {count > 0 ? (
-          <>
-            {count} indexer{count === 1 ? "" : "s"} detected — searches are
-            live.
-          </>
-        ) : (
-          <>
-            No indexers yet — searches will return nothing until you add
-            some.{" "}
-            <a href={prowlarrHref} target="_blank" rel="noreferrer">
-              Open Prowlarr &#8599;
-            </a>{" "}
-            &#8594; Indexers &#8594; Add.
-          </>
-        )}{" "}
-        <button
-          className="setup-link inline"
-          onClick={check}
-          disabled={checking}
-        >
-          {checking ? "checking…" : "re-check"}
-        </button>
+        <span>
+          {ok ? (
+            <>
+              {state.enabled === state.total
+                ? `${state.enabled} indexer${state.enabled === 1 ? "" : "s"}`
+                : `${state.enabled} of ${state.total} indexers enabled and`}{" "}
+              detected. Searches are live. {recheck}
+            </>
+          ) : (
+            <>
+              {state.total > 0
+                ? `All ${state.total} indexers are disabled.`
+                : "No indexers yet."}{" "}
+              Searches will return nothing until one is enabled.{" "}
+              <a href={state.href} target="_blank" rel="noreferrer">
+                Open Prowlarr &#8599;
+              </a>{" "}
+              then Indexers, Add. {recheck}
+            </>
+          )}
+        </span>
       </span>
     </div>
   );
 }
 
+// ConfiguredNotice is the "breeze past" state for a step whose section the
+// daemon already has set (e.g. via .env) — a green confirmation plus a
+// plain Continue, no fields to fill.
 function ConfiguredNotice({
   label,
   onContinue,

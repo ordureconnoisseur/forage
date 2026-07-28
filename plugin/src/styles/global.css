@@ -7640,7 +7640,11 @@ code.grab-fact-v,
 
 .setup-link.inline {
   display: inline;
+  margin: 0; /* base .setup-link centers with 18px top margin */
   padding: 0;
   font-size: 12px;
   opacity: 0.7;
+}
+.setup-dlcheck-row.warn {
+  border-color: rgba(212, 161, 74, 0.4);
 }
