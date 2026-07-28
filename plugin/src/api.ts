@@ -1195,6 +1195,39 @@ export interface ManagedProwlarrStatus {
   url?: string;
 }
 
+// ── Indexer catalog (Prowlarr definitions, adult-capable only) ───────
+
+export interface CatalogField {
+  name: string;
+  label: string;
+  password: boolean;
+}
+
+export interface CatalogEntry {
+  id: string;
+  name: string;
+  protocol: string;
+  privacy: string;
+  description?: string;
+  fields: CatalogField[];
+  complex: boolean;
+  added: boolean;
+}
+
+export function fetchIndexerCatalog(): Promise<{ catalog: CatalogEntry[] }> {
+  return get<{ catalog: CatalogEntry[] }>("/indexer-catalog");
+}
+
+// addCatalogIndexer tests the definition against the real site, then
+// creates it in Prowlarr. Throws with Prowlarr's validation message on a
+// failed test.
+export function addCatalogIndexer(
+  id: string,
+  fields: Record<string, string>,
+): Promise<{ ok: boolean }> {
+  return postJSON<{ ok: boolean }>("/indexer-catalog/add", { id, fields });
+}
+
 // prowlarrProxyHref is the managed instance's UI through forage's
 // authenticated reverse proxy — the one URL a remote browser can reach it
 // at (the instance itself is localhost-only).

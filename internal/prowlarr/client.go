@@ -4,6 +4,7 @@
 package prowlarr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -411,4 +412,90 @@ func sortByPopularity(rs []Release) {
 			rs[j], rs[j-1] = rs[j-1], rs[j]
 		}
 	}
+}
+
+// ── Indexer management ───────────────────────────────────────────────
+//
+// Prowlarr's own "Add Indexer" UI is these three calls: the schema
+// catalog (every definition it knows, with the fields each needs), a
+// test, and a create. forage drives them so adult-capable indexers can
+// be added without leaving the wizard. Definitions are kept as raw maps:
+// forage only reads a few keys and must round-trip the rest untouched —
+// projecting through a struct would silently drop fields Prowlarr needs
+// back.
+
+// IndexerSchemas returns the full definition catalog
+// (GET /api/v1/indexer/schema). Large (~500 entries); callers cache.
+func (c *Client) IndexerSchemas(ctx context.Context) ([]map[string]any, error) {
+	if c.baseURL == "" {
+		return nil, fmt.Errorf("prowlarr base URL not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v1/indexer/schema", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, clienterr.Transport("prowlarr indexer schema", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, clienterr.Status("prowlarr indexer schema", resp.StatusCode, body)
+	}
+	var out []map[string]any
+	if err := json.Unmarshal(body, &out); err != nil {
+		return nil, fmt.Errorf("decode indexer schema: %w", err)
+	}
+	return out, nil
+}
+
+// postIndexer shares the create/test POST plumbing. Prowlarr answers
+// validation failures with a JSON array of {errorMessage}; surface the
+// first one readably instead of the raw blob.
+func (c *Client) postIndexer(ctx context.Context, path string, def map[string]any) error {
+	raw, err := json.Marshal(def)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+path, bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Api-Key", c.apiKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return clienterr.Transport("prowlarr "+path, err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	var validation []struct {
+		ErrorMessage string `json:"errorMessage"`
+	}
+	if json.Unmarshal(body, &validation) == nil && len(validation) > 0 && validation[0].ErrorMessage != "" {
+		return fmt.Errorf("%s (%w)", validation[0].ErrorMessage, clienterr.ErrRejected)
+	}
+	return clienterr.Status("prowlarr "+path, resp.StatusCode, body)
+}
+
+// TestIndexer validates a definition (credentials included) without
+// saving it (POST /api/v1/indexer/test).
+func (c *Client) TestIndexer(ctx context.Context, def map[string]any) error {
+	if c.baseURL == "" {
+		return fmt.Errorf("prowlarr base URL not configured")
+	}
+	return c.postIndexer(ctx, "/api/v1/indexer/test", def)
+}
+
+// CreateIndexer saves a definition (POST /api/v1/indexer).
+func (c *Client) CreateIndexer(ctx context.Context, def map[string]any) error {
+	if c.baseURL == "" {
+		return fmt.Errorf("prowlarr base URL not configured")
+	}
+	return c.postIndexer(ctx, "/api/v1/indexer", def)
 }

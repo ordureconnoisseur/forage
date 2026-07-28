@@ -7650,3 +7650,76 @@ code.grab-fact-v,
 .setup-dlcheck-row.warn {
   border-color: rgba(212, 161, 74, 0.4);
 }
+
+/* Indexer catalog (wizard + Settings) */
+.idx-catalog {
+  margin: 12px 0;
+}
+.idx-catalog-search {
+  width: 100%;
+  margin-bottom: 8px;
+}
+.idx-catalog-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+.idx-catalog-row {
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.idx-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.idx-catalog-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.idx-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  opacity: 0.85;
+}
+.idx-badge.private {
+  background: rgba(212, 161, 74, 0.18);
+  color: var(--amber, #d4a14a);
+}
+.idx-badge.semiPrivate {
+  background: rgba(120, 160, 255, 0.15);
+}
+.idx-catalog-added {
+  color: var(--accent, #22c55e);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.idx-catalog-ext {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.idx-catalog-err {
+  color: var(--red, #ef4444);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.idx-catalog-fields {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}

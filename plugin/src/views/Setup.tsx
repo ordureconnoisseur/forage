@@ -18,6 +18,7 @@ import {
 } from "../api";
 import AcornIcon from "../AcornIcon";
 import ManagedProwlarrCard from "../ManagedProwlarr";
+import IndexerCatalog from "../IndexerCatalog";
 
 // First-run setup wizard — the guided alternative to dropping a new user
 // into the full Settings form. Modelled on Hearth's onboarding: a step
@@ -172,6 +173,8 @@ export default function Setup({
   const [prowlarrCats, setProwlarrCats] = useState("6000,6010,6020,6030,6040");
   const [prowlarrTest, setProwlarrTest] = useState<Test>({ kind: "idle" });
   const [indexerErr, setIndexerErr] = useState<string | null>(null);
+  // Bumped after a catalog add so IndexerCheck remounts and re-counts.
+  const [idxNonce, setIdxNonce] = useState(0);
   const [savingIndexer, setSavingIndexer] = useState(false);
 
   // Download-client step (qBittorrent and/or SABnzbd — either is enough)
@@ -794,7 +797,8 @@ export default function Setup({
             </p>
             {liveHealth?.prowlarrConfigured ? (
               <>
-                <IndexerCheck />
+                <IndexerCheck key={idxNonce} />
+                <IndexerCatalog onAdded={() => setIdxNonce((n) => n + 1)} />
                 <ConfiguredNotice
                   label="Prowlarr is already configured"
                   onContinue={() => setStep("clients")}

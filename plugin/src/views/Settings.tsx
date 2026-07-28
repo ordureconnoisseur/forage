@@ -21,6 +21,7 @@ import {
 } from "../api";
 import { compileRules, parsePrefs } from "../releasePrefs";
 import ManagedProwlarrCard from "../ManagedProwlarr";
+import IndexerCatalog from "../IndexerCatalog";
 import ReleaseRulesEditor from "./ReleaseRulesEditor";
 import ReleasePrefsEditor from "./ReleasePrefsEditor";
 
@@ -524,6 +525,12 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               fetchConfig().then(setData).catch(() => undefined);
             }}
           />
+          {(data?.sectionConfigured?.["prowlarr"] ?? false) && (
+            <>
+              <h4 className="settings-subhead">Add indexers</h4>
+              <IndexerCatalog />
+            </>
+          )}
           <Field label="Prowlarr URL">
             <input
               type="url"

@@ -166,6 +166,12 @@ type Server struct {
 	// fast-polling list doesn't hammer StashDB. Guarded by sceneTitleMu.
 	sceneTitleMu sync.Mutex
 	sceneTitles  map[string]sceneTitleEntry
+
+	// Prowlarr definition-catalog cache (indexer_catalog.go): ~500 large
+	// objects that change only when Prowlarr updates.
+	schemaCacheMu sync.Mutex
+	schemas       []map[string]any
+	schemaFetched time.Time
 }
 
 type sceneTitleEntry struct {
@@ -324,6 +330,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/scenes/{id}/destroy", s.postDestroyScene)
 		r.Get("/discover", s.getDiscover)
 		r.Get("/indexers", s.getIndexers)
+		r.Get("/indexer-catalog", s.getIndexerCatalog)
+		r.Post("/indexer-catalog/add", s.postIndexerCatalogAdd)
 		r.Get("/download-setup", s.getDownloadSetup)
 		r.Get("/notifications", s.getNotifications)
 		// Stash image proxy — performer portraits + scene screenshots,
