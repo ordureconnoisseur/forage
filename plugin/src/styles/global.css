@@ -7634,8 +7634,10 @@ code.grab-fact-v,
   margin: 4px 0 12px;
   line-height: 1.5;
 }
-.setup-dlcheck-row.fail .setup-dlcheck-icon {
-  color: var(--red, #ef4444);
+.setup-dlcheck-multiline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
 .setup-link.inline {

@@ -1195,6 +1195,13 @@ export interface ManagedProwlarrStatus {
   url?: string;
 }
 
+// prowlarrProxyHref is the managed instance's UI through forage's
+// authenticated reverse proxy — the one URL a remote browser can reach it
+// at (the instance itself is localhost-only).
+export function prowlarrProxyHref(): string {
+  return foragerBase() + "/prowlarr/";
+}
+
 export function fetchManagedProwlarr(): Promise<ManagedProwlarrStatus> {
   return get<ManagedProwlarrStatus>("/managed/prowlarr");
 }

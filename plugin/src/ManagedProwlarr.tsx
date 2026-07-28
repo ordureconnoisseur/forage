@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
   fetchManagedProwlarr,
-  foragerBase,
   installManagedProwlarr,
+  prowlarrProxyHref,
   ManagedProwlarrStatus,
 } from "./api";
 
@@ -112,7 +112,7 @@ export default function ManagedProwlarrCard({
         <div className="managed-line ok">
           ✓ Managed Prowlarr {status.version} is running and connected.{" "}
           <a
-            href={foragerBase() + "/prowlarr/"}
+            href={prowlarrProxyHref()}
             target="_blank"
             rel="noreferrer"
           >

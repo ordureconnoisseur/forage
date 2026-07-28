@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   adminToken,
   type ClientCheck,
@@ -7,6 +7,7 @@ import {
   fetchDownloadSetup,
   fetchHealth,
   fetchIndexers,
+  prowlarrProxyHref,
   foragerBase,
   Health,
   saveConfig,
@@ -1048,15 +1049,9 @@ export default function Setup({
               <>
                 <ul className="setup-dlcheck-list">
                   {doneChecks.map((c, i) => (
-                    <li
-                      key={i}
-                      className={"setup-dlcheck-row " + (c.ok ? "ok" : "fail")}
-                    >
-                      <span className="setup-dlcheck-icon">
-                        {c.ok ? "✓" : "✗"}
-                      </span>
-                      <span className="setup-dlcheck-body">{c.text}</span>
-                    </li>
+                    <CheckRow key={i} status={c.ok ? "ok" : "error"}>
+                      {c.text}
+                    </CheckRow>
                   ))}
                 </ul>
                 <div className="setup-actions">
@@ -1139,15 +1134,8 @@ export default function Setup({
                   {dlChecks && dlChecks.length > 0 && (
                     <ul className="setup-dlcheck-list">
                       {dlChecks.map((c, i) => (
-                        <li key={i} className={"setup-dlcheck-row " + c.status}>
-                          <span className="setup-dlcheck-icon">
-                            {c.status === "ok"
-                              ? "✓"
-                              : c.status === "warn"
-                                ? "!"
-                                : "✗"}
-                          </span>
-                          <span className="setup-dlcheck-body">
+                        <CheckRow key={i} status={c.status}>
+                          <span className="setup-dlcheck-multiline">
                             <strong>
                               {c.client === "qbit"
                                 ? "qBittorrent"
@@ -1159,7 +1147,7 @@ export default function Setup({
                               {c.detail}
                             </span>
                           </span>
-                        </li>
+                        </CheckRow>
                       ))}
                     </ul>
                   )}
@@ -1230,6 +1218,31 @@ function Stepper({
   );
 }
 
+// CheckRow is the one status-row shape every setup checklist uses: icon
+// chosen by status (overridable), children rendered as the body. The
+// three checklists (folders result, download-setup verify, indexer
+// check) all render through it so the row contract has one home.
+function CheckRow({
+  status,
+  as: As = "li",
+  icon,
+  children,
+}: {
+  status: "ok" | "warn" | "error";
+  as?: "li" | "div";
+  icon?: string;
+  children: ReactNode;
+}) {
+  return (
+    <As className={"setup-dlcheck-row " + status}>
+      <span className="setup-dlcheck-icon">
+        {icon ?? (status === "ok" ? "✓" : status === "warn" ? "!" : "✗")}
+      </span>
+      <span className="setup-dlcheck-body">{children}</span>
+    </As>
+  );
+}
+
 // IndexerCheck verifies the thing the Prowlarr connection is FOR: that
 // enabled indexers actually exist behind it. No recommendations (whose
 // indexers to use is the user's business), just the live state, so
@@ -1260,7 +1273,7 @@ function IndexerCheck() {
       const cfgUrl = typeof raw === "string" ? raw.trim() : "";
       const href =
         !cfgUrl || cfgUrl.endsWith("/prowlarr")
-          ? foragerBase() + "/prowlarr/"
+          ? prowlarrProxyHref()
           : cfgUrl;
       setState({
         kind: "ok",
@@ -1290,33 +1303,25 @@ function IndexerCheck() {
   );
   if (state.kind === "loading") {
     return (
-      <div className="setup-dlcheck-row warn">
-        <span className="setup-dlcheck-icon">…</span>
-        <span className="setup-dlcheck-body">
-          <span>Checking indexers…</span>
-        </span>
-      </div>
+      <CheckRow as="div" status="warn" icon="…">
+        <span>Checking indexers…</span>
+      </CheckRow>
     );
   }
   if (state.kind === "error") {
     return (
-      <div className="setup-dlcheck-row error">
-        <span className="setup-dlcheck-icon">✗</span>
-        <span className="setup-dlcheck-body">
-          <span>
+      <CheckRow as="div" status="error">
+        <span>
             Couldn&rsquo;t reach Prowlarr: {state.detail}. Searches will fail
             until it answers. {recheck}
-          </span>
         </span>
-      </div>
+      </CheckRow>
     );
   }
   const ok = state.enabled > 0;
   return (
-    <div className={"setup-dlcheck-row " + (ok ? "ok" : "warn")}>
-      <span className="setup-dlcheck-icon">{ok ? "✓" : "!"}</span>
-      <span className="setup-dlcheck-body">
-        <span>
+    <CheckRow as="div" status={ok ? "ok" : "warn"}>
+      <span>
           {ok ? (
             <>
               {state.enabled === state.total
@@ -1336,9 +1341,8 @@ function IndexerCheck() {
               then Indexers, Add. {recheck}
             </>
           )}
-        </span>
       </span>
-    </div>
+    </CheckRow>
   );
 }
 
