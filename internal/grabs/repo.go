@@ -267,13 +267,21 @@ func (r *Repo) ConfirmedUnlinked(ctx context.Context, limit, offset int) ([]Grab
 		LIMIT ? OFFSET ?`, limit, offset)
 }
 
-// MismatchedRecent returns mismatched single grabs inside the reconcile
-// window. A mismatch is the machine's verdict, but the USER can overrule it
-// in Stash — re-identify the scene to the predicted id — and until the
-// reconcile pass learned to look, nothing ever noticed: mismatched grabs
-// are out of Active() and stayed mismatched forever (the "no recovery
-// path" residual in docs/error-handling.md).
-func (r *Repo) MismatchedRecent(ctx context.Context, since int64, limit int) ([]Grab, error) {
+// Mismatched returns mismatched single grabs, oldest-checked last. A
+// mismatch is the machine's verdict, but the USER can overrule it in Stash
+// — re-identify the scene to the predicted id — and until the reconcile
+// pass learned to look, nothing ever noticed: mismatched grabs are out of
+// Active() and stayed mismatched forever (the "no recovery path" residual
+// in docs/error-handling.md).
+//
+// That fix originally carried a 14-day window, which closed the hole for a
+// fortnight and left it open after. Measured on the reference instance:
+// 134 of 148 mismatched grabs (91%) had aged past it, averaging 27 days, so
+// the recovery pass could only ever see 14 of them. A user correcting a
+// match a month later is the NORMAL case, not an edge one — the window
+// assumed people tidy their library on the same schedule they download.
+// Paginated instead, with the caller rotating a cursor.
+func (r *Repo) Mismatched(ctx context.Context, limit, offset int) ([]Grab, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -282,9 +290,20 @@ func (r *Repo) MismatchedRecent(ctx context.Context, since int64, limit int) ([]
 		WHERE status = 'mismatched'
 		  AND COALESCE(kind, 'single') != 'pack'
 		  AND COALESCE(placed_path, '') != ''
-		  AND updated_at >= ?
 		ORDER BY updated_at DESC
-		LIMIT ?`, since, limit)
+		LIMIT ? OFFSET ?`, limit, offset)
+}
+
+// CountMismatched counts what Mismatched would return across every page, so
+// the recovery cursor knows when it has wrapped.
+func (r *Repo) CountMismatched(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM grabs
+		WHERE status = 'mismatched'
+		  AND COALESCE(kind, 'single') != 'pack'
+		  AND COALESCE(placed_path, '') != ''`).Scan(&n)
+	return n, err
 }
 
 // ConfirmedPlacedLinked returns confirmed grabs that have BOTH a placed

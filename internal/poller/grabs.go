@@ -150,6 +150,9 @@ type Poller struct {
 	// the single-goroutine tick, so they need no lock.
 	lastReconcile   time.Time
 	reconcileCursor int
+	// mismatchCursor rotates the mismatch-recovery pass over the whole
+	// mismatched set; unresolved mismatches live there indefinitely.
+	mismatchCursor int
 	// movedCursor rotates the moved-file repair pass independently: its set
 	// is every confirmed+placed+linked grab, which is most of the table, so
 	// it must not share a cursor with the much smaller unlinked set.
