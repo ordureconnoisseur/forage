@@ -3665,6 +3665,14 @@ code.grab-fact-v,
   border-color: var(--accent, #22c55e);
   opacity: 1;
 }
+.perf-chip-more {
+  cursor: pointer;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+.perf-chip-more:hover {
+  opacity: 1;
+}
 .perf-chip-add {
   background: none;
   border: none;

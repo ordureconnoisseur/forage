@@ -698,23 +698,61 @@ function DiscoverCard({
         </div>
         {s.performers.length > 0 && (
           <div className="perf-chips">
-            {s.performers.map((p) =>
-              p.local === false && p.stashdb_id ? (
-                // Not in your Stash: no local id to navigate to, so this pill
-                // offers the one useful action instead — add them.
-                <MissingPerfChip key={p.stashdb_id} p={p} />
-              ) : (
-                <PerfChip
-                  key={p.stash_id}
-                  p={p}
-                  onPick={() => onPickPerformer(p.stash_id)}
-                />
-              ),
-            )}
+            <ScenePerfChips s={s} onPickPerformer={onPickPerformer} />
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// How many "not in your library" pills a card shows before collapsing the
+// rest behind a count. Local pills are never capped — the user chose to have
+// those performers. Un-owned ones are discovered, and the cache holds
+// compilations with 20, 45, even 89 performers, so uncapped this would bury
+// the card it is attached to.
+const MISSING_CHIP_CAP = 3;
+
+// ScenePerfChips renders a card's performers: everyone you have, then up to
+// MISSING_CHIP_CAP you don't, then a count that reveals the remainder on
+// click. Collapsed rather than truncated, because a hidden performer is one
+// you cannot add, and adding them is the entire point of the pill.
+function ScenePerfChips({
+  s,
+  onPickPerformer,
+}: {
+  s: DiscoverScene;
+  onPickPerformer: (stashID: string) => void;
+}) {
+  const [showAll, setShowAll] = useState(false);
+  const local = s.performers.filter((p) => p.local !== false || !p.stashdb_id);
+  const missing = s.performers.filter((p) => p.local === false && p.stashdb_id);
+  const shown = showAll ? missing : missing.slice(0, MISSING_CHIP_CAP);
+  const hidden = missing.length - shown.length;
+
+  return (
+    <>
+      {local.map((p) => (
+        <PerfChip
+          key={p.stash_id}
+          p={p}
+          onPick={() => onPickPerformer(p.stash_id)}
+        />
+      ))}
+      {shown.map((p) => (
+        <MissingPerfChip key={p.stashdb_id} p={p} />
+      ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="perf-chip perf-chip-more"
+          onClick={() => setShowAll(true)}
+          title={`Show ${hidden} more performer${hidden === 1 ? "" : "s"} not in your library`}
+        >
+          +{hidden}
+        </button>
+      )}
+    </>
   );
 }
 

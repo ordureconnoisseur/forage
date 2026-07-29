@@ -163,25 +163,6 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// hot globally", regardless of which performers we have.
 	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
 
-	// Fill in the performers the user does NOT have. Trending is the one
-	// path that surfaces scenes for unknown performers, and hydrating from
-	// performer_cache silently dropped exactly those — so the name you'd
-	// want to add was the one name missing from the card.
-	sceneIDs := make([]string, 0, len(trending))
-	for i := range trending {
-		sceneIDs = append(sceneIDs, trending[i].StashDBID)
-	}
-	if sdbPerfs, perr := loadStashDBPerformers(r.Context(), s.db, sceneIDs); perr != nil {
-		s.log.Warn("discover: stashdb performer hydrate", "err", perr)
-	} else if len(sdbPerfs) > 0 {
-		localByStashDBID, lerr := localPerformerIDsByStashDBID(r.Context(), s.db)
-		if lerr != nil {
-			s.log.Warn("discover: local cross-id map", "err", lerr)
-		} else {
-			trending = addMissingPerformers(trending, sdbPerfs, localByStashDBID)
-		}
-	}
-
 	// Configurable content filters (deployment config, dormant when
 	// unset): ?flt=<name> keeps scenes with at least one local performer
 	// whose gender is in the named set. Trending scenes whose performers
@@ -203,6 +184,39 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	if _, covered, err := s.grabbedSceneSet(r.Context()); err == nil && len(covered) > 0 {
 		scenes = dropGrabbed(scenes, covered)
 		trending = dropGrabbed(trending, covered)
+	}
+
+	// Fill in the performers the user does NOT have, on BOTH lists.
+	//
+	// This first shipped applied to `trending` only, which missed the case
+	// that actually shows up: a scene in the main feed whose co-star isn't in
+	// your Stash rendered with NO pill at all (a "Hot Blonde Charlie Forde"
+	// card had zero, because she was its only performer and she is not
+	// local). Hydration comes from performer_cache, so any performer you
+	// don't have is dropped regardless of which list the scene is in.
+	//
+	// Deliberately AFTER the gender filter and the grabbed drop, so this only
+	// decorates the final lists. Filtering matches on a local performer's
+	// cached gender, which a non-local performer has none of, so running it
+	// earlier would not change any verdict — but doing it last means it
+	// cannot.
+	sceneIDs := make([]string, 0, len(scenes)+len(trending))
+	for i := range scenes {
+		sceneIDs = append(sceneIDs, scenes[i].StashDBID)
+	}
+	for i := range trending {
+		sceneIDs = append(sceneIDs, trending[i].StashDBID)
+	}
+	if sdbPerfs, perr := loadStashDBPerformers(r.Context(), s.db, sceneIDs); perr != nil {
+		s.log.Warn("discover: stashdb performer hydrate", "err", perr)
+	} else if len(sdbPerfs) > 0 {
+		localByStashDBID, lerr := localPerformerIDsByStashDBID(r.Context(), s.db)
+		if lerr != nil {
+			s.log.Warn("discover: local cross-id map", "err", lerr)
+		} else {
+			scenes = addMissingPerformers(scenes, sdbPerfs, localByStashDBID)
+			trending = addMissingPerformers(trending, sdbPerfs, localByStashDBID)
+		}
 	}
 
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
