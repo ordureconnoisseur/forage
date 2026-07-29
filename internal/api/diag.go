@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"runtime"
 	"time"
@@ -38,6 +39,22 @@ func (s *Server) getDiag(w http.ResponseWriter, r *http.Request) {
 		"sabConfigured":      s.pool.Sab() != nil,
 		"placerConfigured":   s.pool.Placer().Configured(),
 	}
+	// Which Stash this is talking to. forage tracks current Stash rather
+	// than supporting a version range, so the single most useful thing a
+	// bug report can carry is which version it actually ran against —
+	// otherwise "works for me" and "broken" differ by an unknown.
+	// Best-effort and tightly bounded: /diag must stay answerable when
+	// Stash is exactly the thing that is wrong.
+	if sc := s.pool.Stash(); sc != nil {
+		vctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		if v, verr := sc.Version(vctx); verr == nil && v != "" {
+			clients["stashVersion"] = v
+		} else if verr != nil {
+			clients["stashVersionErr"] = verr.Error()
+		}
+		cancel()
+	}
+
 	if h := s.pool.QbitHealth(); h.Probed {
 		clients["qbitOk"] = h.OK
 		if !h.OK {
