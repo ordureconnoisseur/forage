@@ -172,9 +172,24 @@ leaf spots that nothing matches on, so a blanket sweep is churn without payoff.
 
 ## Known residual risks (tracked, not yet fixed)
 
-- **Size-equality file reclaim** (`placer.go`): the copy path treats equal size
-  as "already placed". On a non-atomic-rename CIFS/SMB mount a same-size partial
-  could be adopted as complete. Low probability, filesystem-dependent.
+- **Size-equality file reclaim** (`placer.go`): three sites treat equal size as
+  equal content (`linkOrCopy`, the directory compare, `singleFileTarget`).
+  Narrower than this entry used to claim, and worth writing down so nobody
+  "fixes" it expensively. `copyFile` does NOT write to the destination: it
+  writes `.forage-copy-*.partial` in the destination directory, Syncs, closes,
+  re-checks that dest is still free, and only then renames. So an interrupted
+  copy cannot leave a partial AT the destination for a later placement to
+  mistake for a complete file — it leaves a temp beside it. The residual is
+  only the rename itself being non-atomic on CIFS/SMB, plus a crash in that
+  instant. Checked the live library for stranded temps: zero.
+
+  The obvious hardening, hashing to prove equality, is the wrong trade: these
+  are multi-gigabyte video files, so it would slow every placement measurably
+  to close an exotic filesystem-crash window. Comparing mtime as well does not
+  work either — a copy preserves neither inode nor mtime, so it would reject
+  legitimate reclaims and turn a rare false positive into a routine false
+  negative. `os.SameFile` already covers the hardlink case; size is the
+  pragmatic proxy for the rest.
 - **`mismatched` has no recovery path**: a corrected StashDB match leaves the
   grab `mismatched` forever (it is out of `Active()` and no sweep revives
   mismatches). Surfaces as principle 3's `recoverable: false`.
