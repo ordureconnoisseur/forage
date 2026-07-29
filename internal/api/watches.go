@@ -534,29 +534,36 @@ func (s *Server) clearBatch(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
-// postClearFinished removes one group's GRABBED watches. batch_id "" is the
-// ungrouped bucket, which had no bulk clear before (clearBatch demands an
-// id), so finished singles accumulated indefinitely.
+// postClearFinished removes the GRABBED watches among the ids the caller
+// names. clearBatch demands a batch id, so finished singles had no bulk
+// clear at all before and simply accumulated.
 //
 // Only grabbed rows go. Deleting a watching/available row would silently
 // cancel a live hunt, so the repo's status predicate — not this handler's
 // good intentions — is what makes that impossible.
 func (s *Server) postClearFinished(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		BatchID string `json:"batch_id"`
+		StashDBIDs []string `json:"stashdb_ids"`
 	}
-	// An empty body is the ungrouped bucket, so a decode failure is only
-	// fatal if the caller sent something that wasn't JSON at all.
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&req)
 	}
-	n, err := s.watches.DeleteFinished(r.Context(), req.BatchID)
+	if len(req.StashDBIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "stashdb_ids required")
+		return
+	}
+	// Keyed on the ids the UI actually displayed, NOT on batch_id. The
+	// Watching tab folds single-member batches into the ungrouped bucket, so
+	// a watch shown under "Single tracks" can still carry a batch_id —
+	// clearing by batch_id left exactly those rows on screen after the click
+	// and made the toast count disagree with the "N grabbed" just clicked.
+	n, err := s.watches.DeleteFinished(r.Context(), req.StashDBIDs)
 	if err != nil {
 		s.log.Error("watch clear finished", "err", err)
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
 	}
-	s.log.Info("cleared finished watches", "batch", req.BatchID, "count", n)
+	s.log.Info("cleared finished watches", "requested", len(req.StashDBIDs), "count", n)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "cleared": n})
 }
 
@@ -566,17 +573,12 @@ func (s *Server) postClearFinished(w http.ResponseWriter, r *http.Request) {
 // is dead/over-compressed and you don't want it but still want the scene.
 func (s *Server) postWatchDismiss(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	list, err := s.watches.List(r.Context())
+	// Indexed lookup, not a full scan: List drags every watch's candidate
+	// blob through memory to find one row.
+	wt, err := s.watches.ByID(r.Context(), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db")
 		return
-	}
-	var wt *watches.Watch
-	for i := range list {
-		if list[i].StashDBID == id {
-			wt = &list[i]
-			break
-		}
 	}
 	if wt == nil {
 		writeErr(w, http.StatusNotFound, "watch not found")

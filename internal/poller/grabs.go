@@ -1844,6 +1844,19 @@ func (p *Poller) graceClear(grabID int64) {
 	p.graceMu.Unlock()
 }
 
+// healRemovalPendingPrefix marks a grab whose premature placement forage
+// tried and FAILED to remove. The path it still carries is a known-bad
+// partial, not a library copy, so nothing may treat it as one: the heal
+// keeps retrying regardless of download progress, and the seeding cull
+// refuses to accept it as proof a library copy exists.
+const healRemovalPendingPrefix = "heal: could not remove premature placement"
+
+// removalPending reports whether a grab is carrying a placement the heal
+// still owes a removal for.
+func removalPending(g *grabs.Grab) bool {
+	return g.PlacedPath != "" && strings.HasPrefix(g.PlaceError, healRemovalPendingPrefix)
+}
+
 // advanceQbit handles the qBit-specific enrichment + state-refresh
 // steps, working entirely off the tick's shared torrent list (ts, plus
 // its byHash index) — no network calls of its own. Returns (dirty,
@@ -1975,7 +1988,14 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	//     reason), so a later recheck regressing progress can't re-arm the
 	//     heal against it. Premature placements have CompletedAt == 0 (the
 	//     download was never seen complete).
-	if g.PlacedPath != "" && t.Progress < 1 &&
+	// removalPending re-arms the heal after the download finishes. Without
+	// it the retry was gated on progress < 1, so a removal that kept failing
+	// until 100% stranded the partial for good: the heal stopped firing,
+	// Step 3 refuses to re-place while PlacedPath is set, and the cull then
+	// stats that partial, finds it present, and deletes the torrent's
+	// COMPLETE copy. Trading an orphaned partial for losing the good file is
+	// a worse bug than the one the retained pointer fixed.
+	if g.PlacedPath != "" && (t.Progress < 1 || removalPending(g)) &&
 		!qbitProgressUnreliable(t.State) &&
 		(g.CompletedAt == 0 || (g.PlacedAt > 0 && g.PlacedAt < g.CompletedAt)) {
 		bad := g.PlacedPath
@@ -1993,7 +2013,7 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 			// undone within the same tick: Step 2's "placed_path set,
 			// status was X" heal (see above) lifts exactly that
 			// combination back to "placed".
-			msg := "heal: could not remove premature placement: " + rerr.Error()
+			msg := healRemovalPendingPrefix + ": " + rerr.Error()
 			if g.PlaceError != msg {
 				g.PlaceError = msg
 				g.Reason = msg

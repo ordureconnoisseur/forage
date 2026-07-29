@@ -1874,3 +1874,94 @@ func TestPrematureHealRemoveFailureKeepsPointer(t *testing.T) {
 		t.Errorf("premature placement not removed on retry (stat err=%v)", serr)
 	}
 }
+
+// TestPrematureHealRetryOutlivesCompletion is the regression the ultra
+// review caught in the FIX for the orphan bug, which was worse than the
+// bug itself.
+//
+// Retaining placed_path on a failed removal only helped while the heal
+// could re-fire, and its condition was progress < 1. If the removal kept
+// failing until the torrent hit 100%, the heal went quiet, Step 3 refused
+// to re-place (it requires placed_path == ""), and the seeding cull then
+// stat'd the PARTIAL, found it present, and deleted the torrent holding
+// the only complete copy.
+//
+// So the retry must survive completion, and nothing may treat a
+// pending-removal path as a verified library copy.
+func TestPrematureHealRetryOutlivesCompletion(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	const (
+		hash      = "outlive0hash"
+		performer = "Riley Reid"
+		fileName  = "partial.mkv"
+	)
+	placedDir := filepath.Join(r.libRoot, performer)
+	if err := os.MkdirAll(placedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	placedPath := filepath.Join(placedDir, fileName)
+	if err := os.WriteFile(placedPath, []byte("half a file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Riley Reid - Release", Client: "qbit", ClientID: hash,
+		Category: "forager", Status: "placed", PlacedPath: placedPath,
+		PlacedAt: time.Now().Unix(), PerformerName: performer, Kind: "single",
+		Progress: 1, GrabbedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Removal fails while the download is still going.
+	var attempts int
+	r.poller.removeAll = func(string) error {
+		attempts++
+		return errors.New("input/output error")
+	}
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "downloading", Progress: 0.4,
+	}})
+	r.tick(t)
+	if g := r.get(t, id); g.PlacedPath != placedPath {
+		t.Fatalf("setup: placed_path=%q, want retained", g.PlacedPath)
+	}
+
+	// The download now COMPLETES with the removal still failing. Before the
+	// fix the heal stopped here and the partial was stranded for good.
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "uploading", Progress: 1, Ratio: 99, SeedingTime: 999999,
+	}})
+	before := attempts
+	r.tick(t)
+	if attempts == before {
+		t.Error("heal stopped retrying once the torrent completed; the partial is stranded")
+	}
+	g := r.get(t, id)
+	if g.PlacedPath != placedPath {
+		t.Errorf("placed_path=%q, want still retained while removal is owed", g.PlacedPath)
+	}
+
+	// The cull must NOT accept that partial as a verified library copy: the
+	// torrent holds the only complete file.
+	for _, h := range r.qbit.deletedCalls() {
+		if strings.Contains(h, hash) {
+			t.Fatal("cull deleted the torrent while its library copy was a known-bad partial — the complete copy is gone")
+		}
+	}
+
+	// Once the removal works, the heal completes and placement is free to
+	// run again.
+	r.poller.removeAll = os.RemoveAll
+	r.tick(t)
+	if g := r.get(t, id); g.PlacedPath != "" {
+		t.Errorf("placed_path=%q after a successful retry, want cleared so Step 3 can re-place", g.PlacedPath)
+	}
+	if _, serr := os.Stat(placedPath); !os.IsNotExist(serr) {
+		t.Errorf("partial still on disk after the retry succeeded (stat=%v)", serr)
+	}
+}

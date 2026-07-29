@@ -68,7 +68,9 @@ const (
 	// Scanning wider closes that to about an hour while the repair cap
 	// keeps the expensive half bounded to the same 40 as before.
 	movedScanBatch = 400
-	movedRepairCap = 40
+	// Caps the Stash round-trips a pass may make, which is the only
+	// expensive thing here — the 400-row scan itself is just os.Stat.
+	movedLookupCap = 40
 )
 
 // reconcileConfirmed backfills the StashDB cross-id on settled grabs Stash
@@ -283,7 +285,7 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 	}
 	p.movedCursor += movedScanBatch
 
-	repaired := 0
+	repaired, looked := 0, 0
 	for i := range rows {
 		g := rows[i]
 		// Only a MISSING file is a candidate. A present one is correct by
@@ -291,11 +293,34 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 		if _, serr := os.Stat(g.PlacedPath); serr == nil {
 			continue
 		}
+		// Cap LOOKUPS, not repairs. Counting successes let the expensive half
+		// run unbounded in exactly the bad case: a subtree moved somewhere
+		// forage cannot see repairs nothing, never reaches the cap, and bills
+		// a Stash round-trip per missing row every pass — inside the
+		// single-goroutine tick, ahead of placement work.
+		if looked >= movedLookupCap {
+			break
+		}
+		looked++
 		refs, rerr := stashC.FindSceneRefsByStashID(ctx, endpoint, g.ActualStashDBID)
 		if rerr != nil || len(refs) == 0 {
 			continue // Stash down, or it no longer knows this scene: leave it alone
 		}
+		// A cross-id can legitimately resolve to SEVERAL files: Stash returns
+		// one ref per file per scene carrying it, and duplicate copies of a
+		// scene are normal (95 stashdb ids have more than one grab on the
+		// reference instance). Taking the first path that happens to exist
+		// would point this grab at a file forage never placed — the user's
+		// own separate copy — and a later purge would then delete THAT while
+		// the real placed file survived untracked.
+		//
+		// A move preserves the filename, so the basename is the evidence that
+		// two paths are the same file. Anything else is a different file, and
+		// two equally-good matches mean we cannot tell which: both are
+		// refused, because being wrong here destroys a file.
+		want := pathmap.Base(g.PlacedPath)
 		fresh := ""
+		ambiguous := false
 		for _, ref := range refs {
 			// An empty mapping means Stash and forage share one mount, so
 			// Stash's path IS forage's. Reverse() returns "" for that case,
@@ -305,15 +330,24 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 			if mapping != "" {
 				cand = pathmap.Reverse(ref.Path, mapping)
 			}
-			if cand == "" || cand == g.PlacedPath {
+			if cand == "" || cand == g.PlacedPath || pathmap.Base(cand) != want {
 				continue
 			}
 			// The file must genuinely be there. Without this the repair would
 			// just swap one unverifiable path for another.
-			if _, serr := os.Stat(cand); serr == nil {
-				fresh = cand
+			if _, serr := os.Stat(cand); serr != nil {
+				continue
+			}
+			if fresh != "" && cand != fresh {
+				ambiguous = true
 				break
 			}
+			fresh = cand
+		}
+		if ambiguous {
+			p.log.Warn("reconcile: several candidate paths for a moved file; refusing to guess",
+				"id", g.ID, "name", want)
+			continue
 		}
 		if fresh == "" {
 			continue
@@ -329,12 +363,6 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 		}
 		repaired++
 		p.log.Info("reconcile: placed path repaired", "id", g.ID, "from", old, "to", fresh)
-		if repaired >= movedRepairCap {
-			// Stop the EXPENSIVE half here, not the scan. The cursor has
-			// already advanced, so the rest of this window is picked up on
-			// the next rotation rather than being retried immediately.
-			break
-		}
 	}
 	if repaired > 0 {
 		p.log.Info("reconcile: repaired moved files", "count", repaired)

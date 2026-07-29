@@ -246,7 +246,7 @@ function WatchGroup({
     if (clearDoneBusy) return;
     setClearDoneBusy(true);
     try {
-      const r = await clearFinishedWatches(isBatch ? group.id : "");
+      const r = await clearFinishedWatches(grabbed.map((w) => w.stashdb_id));
       onToast(`Cleared ${r.cleared} finished watch${r.cleared === 1 ? "" : "es"}`);
       onChanged();
     } catch (e) {
@@ -387,8 +387,12 @@ function WatchGroup({
               <button
                 type="button"
                 className="setup-link watch-done-link"
-                onClick={() => onPickGrabs(group.label)}
-                title="Show these in Grabs, where their download state lives"
+                onClick={() => onPickGrabs(isBatch ? group.label : "")}
+                title={
+                  isBatch
+                    ? "Show these in Grabs, where their download state lives"
+                    : "Open Grabs, where these downloads' real state lives"
+                }
               >
                 view in Grabs
               </button>
