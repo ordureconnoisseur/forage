@@ -194,6 +194,15 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 		if g.PlacedPath == "" {
 			continue // never placed: the client copy may be the only copy
 		}
+		// A placement the heal failed to remove is a PARTIAL that happens to
+		// exist. Stat'ing it would "verify" a library copy that was never
+		// complete, and the cull would then delete the torrent holding the
+		// only whole file.
+		if removalPending(g) {
+			p.log.Warn("seeding cull: placement pending removal, keeping torrent",
+				"id", g.ID, "path", g.PlacedPath)
+			continue
+		}
 		if _, serr := os.Stat(g.PlacedPath); serr != nil {
 			p.log.Warn("seeding cull: placed copy not verifiable, keeping torrent",
 				"id", g.ID, "path", g.PlacedPath, "err", serr)

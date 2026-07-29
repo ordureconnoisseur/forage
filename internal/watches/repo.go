@@ -12,6 +12,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -422,21 +423,29 @@ func (r *Repo) DeleteBatch(ctx context.Context, batchID string) error {
 	return err
 }
 
-// DeleteFinished removes the GRABBED watches of one group and returns how
-// many went. batchID "" means the ungrouped bucket, which is the case that
-// needed this: DeleteBatch requires a batch id, so singles had no bulk
-// clear at all and simply accumulated (628 of them on the reference
-// instance, against 1528 finished rows overall).
+// DeleteFinished removes the GRABBED watches among ids and returns how many
+// went. Keyed on explicit ids rather than a batch, because the Watching tab
+// folds single-member batches into its ungrouped bucket: a row displayed
+// under "Single tracks" can still carry a batch_id, so a batch-keyed delete
+// silently skipped exactly the rows the user had just counted.
 //
 // Scoped to grabbed on purpose. These rows are finished bookkeeping, so
 // removing them costs only a batch's progress readout. A watching or
 // available row is an ACTIVE hunt, and deleting one would silently cancel
 // it — the status predicate is what keeps a "clear finished" button from
 // ever being able to do that.
-func (r *Repo) DeleteFinished(ctx context.Context, batchID string) (int, error) {
+func (r *Repo) DeleteFinished(ctx context.Context, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, StatusGrabbed)
+	for _, id := range ids {
+		args = append(args, id)
+	}
 	res, err := r.db.ExecContext(ctx,
-		`DELETE FROM watches WHERE status = ? AND COALESCE(batch_id,'') = ?`,
-		StatusGrabbed, batchID)
+		`DELETE FROM watches WHERE status = ? AND stashdb_id IN (?`+
+			strings.Repeat(",?", len(ids)-1)+`)`, args...)
 	if err != nil {
 		return 0, err
 	}

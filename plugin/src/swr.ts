@@ -117,8 +117,12 @@ export function useCached<T>(
       if (!hit) setLoading(true);
       try {
         const fresh = await fetcherRef.current();
-        cache.set(key, { data: fresh, at: Date.now() });
+        // The sequence check gates the CACHE as well as the state. Writing
+        // first meant a reload() that overtook an in-flight mount fetch left
+        // the older payload in the cache: state was right, but the next
+        // remount painted the stale entry.
         if (!alive.current || mine !== seq.current) return;
+        cache.set(key, { data: fresh, at: Date.now() });
         setData(fresh);
         setError(null);
       } catch (e) {

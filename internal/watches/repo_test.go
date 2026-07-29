@@ -569,13 +569,13 @@ func TestDeleteFinishedOnlyTouchesGrabbed(t *testing.T) {
 		}
 	}
 
-	// Clearing the ungrouped bucket must not reach into the batch.
-	n, err := r.DeleteFinished(ctx, "")
+	// Clearing the ids the caller names must not reach anything else.
+	n, err := r.DeleteFinished(ctx, []string{"s-grab", "s-avail", "s-watch"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Errorf("cleared %d ungrouped finished, want 1", n)
+		t.Errorf("cleared %d of the named ids, want 1 (only the grabbed one)", n)
 	}
 	left := map[string]string{}
 	list, _ := r.List(ctx)
@@ -591,9 +591,14 @@ func TestDeleteFinishedOnlyTouchesGrabbed(t *testing.T) {
 		}
 	}
 
-	// Now the batch: same rule, scoped to that batch.
-	if n, err = r.DeleteFinished(ctx, "b1"); err != nil || n != 1 {
+	// A row displayed under a batch: same rule. Passing an available and a
+	// watching id alongside must still leave both alone.
+	if n, err = r.DeleteFinished(ctx, []string{"b-grab", "b-avail", "b-watch"}); err != nil || n != 1 {
 		t.Fatalf("batch clear = %d, %v; want 1, nil", n, err)
+	}
+	// Empty input is a no-op rather than a malformed IN () clause.
+	if n, err = r.DeleteFinished(ctx, nil); err != nil || n != 0 {
+		t.Fatalf("empty clear = %d, %v; want 0, nil", n, err)
 	}
 	list, _ = r.List(ctx)
 	for _, w := range list {
