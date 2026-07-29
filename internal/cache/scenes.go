@@ -119,6 +119,20 @@ func RefreshTrending(ctx context.Context, sc *stash.Client, sdb *stashdb.Client,
 		return err
 	}
 
+	// Persist the full scenes, not just their trending rank. Trending is the
+	// one path that surfaces scenes for performers the user does NOT have, and
+	// until now it wrote only recent_scene_cache — so a trending-only scene
+	// had no stashdb_scene row and therefore no StashDB performer list
+	// anywhere (31 of 50 trending rows had one on the reference instance, and
+	// only because the 12h performer-filtered pass had already cached them).
+	// Discover cannot offer a pill for a performer it has never heard of.
+	//
+	// Best-effort: trending is still usable without the enrichment, so a
+	// failure here logs and carries on to the rank update below.
+	if err := UpsertSceneBatch(ctx, db, scenes, start); err != nil {
+		log.Warn("trending: cache scene details", "err", err)
+	}
+
 	tx, err := db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)

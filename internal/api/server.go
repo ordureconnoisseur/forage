@@ -272,6 +272,7 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.adminAuthMiddleware)
 		r.Get("/performers", s.getPerformers)
+		r.Post("/performers/from-stashdb", s.postPerformerFromStashDB)
 		r.Get("/studios", s.getStudios)
 		r.Post("/refresh", s.postRefresh)
 		r.Post("/refresh/performers", s.postRefreshPerformers)

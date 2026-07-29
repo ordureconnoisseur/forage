@@ -5,6 +5,7 @@ import {
   DiscoverPerformer,
   DiscoverResponse,
   DiscoverScene,
+  addPerformerFromStashDB,
   fetchDiscover,
   performerImageURL,
   type AddWatchReq,
@@ -697,17 +698,73 @@ function DiscoverCard({
         </div>
         {s.performers.length > 0 && (
           <div className="perf-chips">
-            {s.performers.map((p) => (
-              <PerfChip
-                key={p.stash_id}
-                p={p}
-                onPick={() => onPickPerformer(p.stash_id)}
-              />
-            ))}
+            {s.performers.map((p) =>
+              p.local === false && p.stashdb_id ? (
+                // Not in your Stash: no local id to navigate to, so this pill
+                // offers the one useful action instead — add them.
+                <MissingPerfChip key={p.stashdb_id} p={p} />
+              ) : (
+                <PerfChip
+                  key={p.stash_id}
+                  p={p}
+                  onPick={() => onPickPerformer(p.stash_id)}
+                />
+              ),
+            )}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+// MissingPerfChip is the pill for a performer who appears on a trending
+// StashDB scene but is NOT in the user's Stash. It carries a "+" that
+// creates them, because there is nothing else useful to do with the pill:
+// there is no local performer to navigate to and no stats to hover.
+//
+// Once added it becomes inert rather than disappearing — the card would
+// otherwise reshuffle under the cursor, and the next Discover refresh
+// re-renders it as an ordinary local pill anyway.
+function MissingPerfChip({ p }: { p: DiscoverPerformer }) {
+  const [state, setState] = useState<"idle" | "adding" | "added" | "err">("idle");
+  const [msg, setMsg] = useState("");
+
+  const add = async () => {
+    if (state === "adding" || state === "added") return;
+    setState("adding");
+    try {
+      const r = await addPerformerFromStashDB(p.stashdb_id!, p.name);
+      setState("added");
+      setMsg(r.already_present ? "already in your library" : "added to your library");
+    } catch (e) {
+      setState("err");
+      setMsg((e as Error).message);
+    }
+  };
+
+  return (
+    <span
+      className={"perf-chip perf-chip-missing" + (state === "added" ? " is-added" : "")}
+      title={
+        state === "err"
+          ? msg
+          : state === "added"
+            ? p.name + " — " + msg
+            : p.name + " isn't in your library yet"
+      }
+    >
+      {p.name}
+      <button
+        type="button"
+        className="perf-chip-add"
+        onClick={add}
+        disabled={state === "adding" || state === "added"}
+        aria-label={"Add " + p.name + " to your library"}
+      >
+        {state === "adding" ? "…" : state === "added" ? "✓" : state === "err" ? "!" : "+"}
+      </button>
+    </span>
   );
 }
 

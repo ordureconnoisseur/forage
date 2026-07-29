@@ -31,9 +31,19 @@ type discoverScene struct {
 }
 
 type discoverPerformer struct {
-	StashID  string `json:"stash_id"`
-	Name     string `json:"name"`
-	Favorite bool   `json:"favorite"`
+	StashID string `json:"stash_id"`
+	Name    string `json:"name"`
+	// StashDBID is the performer's StashDB cross-id. Present for performers
+	// resolved from a scene's cached StashDB performer list, which is the
+	// only way a performer the user does NOT have can be named at all.
+	StashDBID string `json:"stashdb_id,omitempty"`
+	// Local is false for a performer who exists on StashDB but not in the
+	// user's Stash. Those used to be dropped silently: the discover query
+	// hydrates from performer_cache, so a trending scene's unknown performer
+	// simply had no pill, and therefore no way to add them. The UI renders
+	// these differently and offers the "+".
+	Local    bool `json:"local"`
+	Favorite bool `json:"favorite"`
 	// Gender: Stash performer gender enum, cached for the configurable
 	// Discover content filters. Omitted from JSON when empty.
 	Gender string `json:"gender,omitempty"`
@@ -152,6 +162,25 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// Trending isn't favourite-filtered — the whole point is "what's
 	// hot globally", regardless of which performers we have.
 	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
+
+	// Fill in the performers the user does NOT have. Trending is the one
+	// path that surfaces scenes for unknown performers, and hydrating from
+	// performer_cache silently dropped exactly those — so the name you'd
+	// want to add was the one name missing from the card.
+	sceneIDs := make([]string, 0, len(trending))
+	for i := range trending {
+		sceneIDs = append(sceneIDs, trending[i].StashDBID)
+	}
+	if sdbPerfs, perr := loadStashDBPerformers(r.Context(), s.db, sceneIDs); perr != nil {
+		s.log.Warn("discover: stashdb performer hydrate", "err", perr)
+	} else if len(sdbPerfs) > 0 {
+		localByStashDBID, lerr := localPerformerIDsByStashDBID(r.Context(), s.db)
+		if lerr != nil {
+			s.log.Warn("discover: local cross-id map", "err", lerr)
+		} else {
+			trending = addMissingPerformers(trending, sdbPerfs, localByStashDBID)
+		}
+	}
 
 	// Configurable content filters (deployment config, dormant when
 	// unset): ?flt=<name> keeps scenes with at least one local performer
@@ -410,7 +439,124 @@ func loadPerformersByIDs(ctx context.Context, db *sql.DB, ids map[string]struct{
 			return nil, err
 		}
 		p.Favorite = fav != 0
+		p.Local = true // it came from performer_cache, so the user has them
 		out[p.StashID] = p
+	}
+	return out, rows.Err()
+}
+
+// stashDBPerformer is one entry of stashdb_scene.performers.
+type stashDBPerformer struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// loadStashDBPerformers returns, per scene id, the scene's full StashDB
+// performer list from the scene cache.
+//
+// This is what makes a performer the user does not have nameable at all.
+// The discover queries hydrate from performer_cache, which by definition
+// only holds performers already in Stash, so a trending scene's unknown
+// performer had no pill and no route to being added. Every trending row on
+// the reference instance had at least one LOCAL performer, which is why the
+// cards looked populated while the interesting name was missing.
+func loadStashDBPerformers(ctx context.Context, db *sql.DB, sceneIDs []string) (map[string][]stashDBPerformer, error) {
+	out := map[string][]stashDBPerformer{}
+	if len(sceneIDs) == 0 {
+		return out, nil
+	}
+	const chunk = 400
+	for start := 0; start < len(sceneIDs); start += chunk {
+		end := min(start+chunk, len(sceneIDs))
+		batch := sceneIDs[start:end]
+		args := make([]any, len(batch))
+		for i, id := range batch {
+			args[i] = id
+		}
+		q := `SELECT stashdb_id, COALESCE(performers,'[]') FROM stashdb_scene WHERE stashdb_id IN (?` +
+			strings.Repeat(",?", len(batch)-1) + `)`
+		rows, err := db.QueryContext(ctx, q, args...)
+		if err != nil {
+			return out, err
+		}
+		for rows.Next() {
+			var sceneID, blob string
+			if err := rows.Scan(&sceneID, &blob); err != nil {
+				rows.Close()
+				return out, err
+			}
+			var ps []stashDBPerformer
+			if blob != "" && blob != "[]" {
+				_ = json.Unmarshal([]byte(blob), &ps)
+			}
+			if len(ps) > 0 {
+				out[sceneID] = ps
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
+}
+
+// addMissingPerformers appends, to each scene, the StashDB performers that
+// are not already represented by a local pill. Matching is by StashDB id
+// where the local performer has one, else by name — a local performer
+// without a cross-id would otherwise be duplicated by its own StashDB entry.
+func addMissingPerformers(scenes []discoverScene, byScene map[string][]stashDBPerformer,
+	localByStashDBID map[string]string) []discoverScene {
+	for i := range scenes {
+		sdbPerfs := byScene[scenes[i].StashDBID]
+		if len(sdbPerfs) == 0 {
+			continue
+		}
+		haveName := map[string]bool{}
+		for _, p := range scenes[i].Performers {
+			haveName[strings.ToLower(p.Name)] = true
+		}
+		for _, sp := range sdbPerfs {
+			if sp.ID == "" || sp.Name == "" {
+				continue
+			}
+			// Already on the card as a local pill?
+			if _, isLocal := localByStashDBID[sp.ID]; isLocal {
+				continue
+			}
+			if haveName[strings.ToLower(sp.Name)] {
+				continue
+			}
+			scenes[i].Performers = append(scenes[i].Performers, discoverPerformer{
+				Name:      sp.Name,
+				StashDBID: sp.ID,
+				Local:     false,
+			})
+			haveName[strings.ToLower(sp.Name)] = true
+		}
+	}
+	return scenes
+}
+
+// localPerformerIDsByStashDBID maps StashDB performer id → local Stash id
+// for everyone the user already has. Used to tell "this StashDB performer is
+// already on the card as a local pill" from "this one is genuinely missing",
+// which decides whether a "+" is offered.
+func localPerformerIDsByStashDBID(ctx context.Context, db *sql.DB) (map[string]string, error) {
+	rows, err := db.QueryContext(ctx,
+		`SELECT stashdb_id, stash_id FROM performer_cache
+		  WHERE stashdb_id IS NOT NULL AND stashdb_id != ''`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var sdbID, local string
+		if err := rows.Scan(&sdbID, &local); err != nil {
+			return nil, err
+		}
+		out[sdbID] = local
 	}
 	return out, rows.Err()
 }

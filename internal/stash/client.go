@@ -1260,3 +1260,169 @@ func (c *Client) FindStudioIDByName(ctx context.Context, name string) (string, e
 	}
 	return resp.FindStudios.Studios[0].ID, nil
 }
+
+// ── Creating a performer from a StashDB id ──────────────────────────
+//
+// Discover surfaces trending StashDB scenes whose performers the user may
+// not have, and the "+" on such a pill creates that performer locally.
+//
+// There is no "create from stash-box id" call in Stash, and the obvious
+// candidates do not work: scrapeSinglePerformer's performer_id wants a LOCAL
+// integer id (it re-scrapes an existing performer, and a UUID there fails
+// with strconv.Atoi), and scrapePerformerURL against a stashdb.org performer
+// URL returns an internal error. What does work is a stash-box query by
+// NAME, whose results each carry remote_site_id — the StashDB uuid. So the
+// name is only how candidates are FETCHED; the id is how one is CHOSEN.
+// Nothing is created unless the requested id is among them.
+
+// ScrapedPerformer is the subset of Stash's scraped performer fields worth
+// carrying into a create. Everything is optional: StashDB rows vary.
+type ScrapedPerformer struct {
+	Name         string   `json:"name"`
+	Disambig     string   `json:"disambiguation"`
+	Gender       string   `json:"gender"`
+	Birthdate    string   `json:"birthdate"`
+	DeathDate    string   `json:"death_date"`
+	Ethnicity    string   `json:"ethnicity"`
+	Country      string   `json:"country"`
+	EyeColor     string   `json:"eye_color"`
+	HairColor    string   `json:"hair_color"`
+	Height       string   `json:"height"`
+	Weight       string   `json:"weight"`
+	Measurements string   `json:"measurements"`
+	FakeTits     string   `json:"fake_tits"`
+	CareerStart  string   `json:"career_start"`
+	CareerEnd    string   `json:"career_end"`
+	Tattoos      string   `json:"tattoos"`
+	Piercings    string   `json:"piercings"`
+	Details      string   `json:"details"`
+	Aliases      string   `json:"aliases"`
+	URLs         []string `json:"urls"`
+	Images       []string `json:"images"`
+	RemoteSiteID string   `json:"remote_site_id"`
+}
+
+// ScrapePerformerByStashDBID asks the stash-box for performers matching name
+// and returns the one whose remote_site_id is stashDBID. Nil (no error) when
+// the id isn't among the candidates: that is a "cannot prove it is the right
+// performer", and creating the wrong one would put a bogus record in the
+// user's library.
+func (c *Client) ScrapePerformerByStashDBID(ctx context.Context, endpoint, name, stashDBID string) (*ScrapedPerformer, error) {
+	if endpoint == "" || name == "" || stashDBID == "" {
+		return nil, fmt.Errorf("endpoint, name and stashdb id are all required")
+	}
+	q := `query($s:ScraperSourceInput!,$i:ScrapeSinglePerformerInput!){
+		scrapeSinglePerformer(source:$s,input:$i){
+			name disambiguation gender birthdate death_date ethnicity country
+			eye_color hair_color height weight measurements fake_tits
+			career_start career_end tattoos piercings details aliases
+			urls images remote_site_id
+		}
+	}`
+	var resp struct {
+		ScrapeSinglePerformer []ScrapedPerformer `json:"scrapeSinglePerformer"`
+	}
+	vars := map[string]any{
+		"s": map[string]any{"stash_box_endpoint": endpoint},
+		"i": map[string]any{"query": name},
+	}
+	if err := c.do(ctx, q, vars, &resp); err != nil {
+		return nil, fmt.Errorf("scrape performer: %w", err)
+	}
+	for i := range resp.ScrapeSinglePerformer {
+		if resp.ScrapeSinglePerformer[i].RemoteSiteID == stashDBID {
+			return &resp.ScrapeSinglePerformer[i], nil
+		}
+	}
+	return nil, nil
+}
+
+// CreatePerformerFromScrape creates a local performer from a scrape,
+// stamping the StashDB cross-id so Stash (and forage) can link it
+// immediately rather than waiting for an identify to discover it. Returns
+// the new local id.
+//
+// One image only: Stash's create takes a single `image`, and StashDB returns
+// a gallery. The first is StashDB's primary.
+func (c *Client) CreatePerformerFromScrape(ctx context.Context, endpoint, stashDBID string, p *ScrapedPerformer) (string, error) {
+	if p == nil || p.Name == "" {
+		return "", fmt.Errorf("nothing to create")
+	}
+	input := map[string]any{
+		"name":      p.Name,
+		"stash_ids": []map[string]string{{"endpoint": endpoint, "stash_id": stashDBID}},
+	}
+	// Only send what the scrape actually had: Stash validates enums and
+	// dates, so an empty gender or a blank birthdate is a 422 rather than a
+	// no-op.
+	for k, v := range map[string]string{
+		"disambiguation": p.Disambig,
+		"gender":         p.Gender,
+		"birthdate":      p.Birthdate,
+		"death_date":     p.DeathDate,
+		"ethnicity":      p.Ethnicity,
+		"country":        p.Country,
+		"eye_color":      p.EyeColor,
+		"hair_color":     p.HairColor,
+		"measurements":   p.Measurements,
+		"fake_tits":      p.FakeTits,
+		"career_length":  careerLength(p.CareerStart, p.CareerEnd),
+		"tattoos":        p.Tattoos,
+		"piercings":      p.Piercings,
+		"details":        p.Details,
+	} {
+		if v != "" {
+			input[k] = v
+		}
+	}
+	if len(p.Images) > 0 && p.Images[0] != "" {
+		input["image"] = p.Images[0]
+	}
+	if len(p.URLs) > 0 {
+		input["urls"] = p.URLs
+	}
+	if p.Aliases != "" {
+		input["alias_list"] = splitAliases(p.Aliases)
+	}
+
+	q := `mutation($input:PerformerCreateInput!){ performerCreate(input:$input){ id } }`
+	var resp struct {
+		PerformerCreate struct {
+			ID string `json:"id"`
+		} `json:"performerCreate"`
+	}
+	if err := c.do(ctx, q, map[string]any{"input": input}, &resp); err != nil {
+		return "", fmt.Errorf("performerCreate: %w", err)
+	}
+	if resp.PerformerCreate.ID == "" {
+		return "", fmt.Errorf("performerCreate returned no id")
+	}
+	return resp.PerformerCreate.ID, nil
+}
+
+// careerLength renders StashDB's start/end pair as the single free-text
+// field Stash stores.
+func careerLength(start, end string) string {
+	switch {
+	case start == "" && end == "":
+		return ""
+	case end == "":
+		return start + "-"
+	case start == "":
+		return end
+	default:
+		return start + "-" + end
+	}
+}
+
+// splitAliases turns StashDB's comma-separated alias blob into the list
+// Stash wants, dropping blanks.
+func splitAliases(s string) []string {
+	var out []string
+	for _, a := range strings.Split(s, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			out = append(out, a)
+		}
+	}
+	return out
+}
