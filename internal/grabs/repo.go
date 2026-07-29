@@ -299,7 +299,12 @@ func (r *Repo) MismatchedRecent(ctx context.Context, since int64, limit int) ([]
 // that prompted this were 20 to 40 days old — so a window would exclude
 // exactly the rows that need repairing. The cursor paginates instead.
 func (r *Repo) ConfirmedPlacedLinked(ctx context.Context, limit, offset int) ([]Grab, error) {
-	if limit <= 0 || limit > 200 {
+	// Deliberately a higher ceiling than the sibling queries. Theirs is 200
+	// because each row they return drives a Stash lookup; this pass only
+	// os.Stats each row and calls Stash for the rare miss, so it wants to
+	// scan wide. Clamping to 50 here would silently make a wider scan
+	// NARROWER than the default batch it was meant to widen.
+	if limit <= 0 || limit > 1000 {
 		limit = 50
 	}
 	return r.query(ctx, `
