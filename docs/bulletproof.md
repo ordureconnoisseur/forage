@@ -150,7 +150,10 @@ guard regression (mutation test on the destroy façade) fails the build.
   "placed_path set" heal lifts back, so the pair would fight within one
   tick. Remaining: size-equality reclaim on CIFS (extend the reconcile
   pass — it already re-checks settled grabs — to notice a mismatched grab
-  whose scene now carries the predicted id); awaited shutdown.
+  whose scene now carries the predicted id). Awaited shutdown turned out to
+  be already done and the risk list simply stale — main tracks background
+  goroutines in a WaitGroup and joins them with a 3s cap; corrected in
+  error-handling.md with the measurement behind it.
 - ☑ **/healthz depth**: poller block with lastTickAt/lastTickMs +
   libraryOk (+ libraryError), so a wedged daemon or dropped mount is
   visible remotely. Journal tallies shipped too: a `destructions` block

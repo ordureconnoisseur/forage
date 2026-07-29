@@ -178,5 +178,16 @@ leaf spots that nothing matches on, so a blanket sweep is churn without payoff.
 - **`mismatched` has no recovery path**: a corrected StashDB match leaves the
   grab `mismatched` forever (it is out of `Active()` and no sweep revives
   mismatches). Surfaces as principle 3's `recoverable: false`.
-- **Non-awaited shutdown** can log "database is closed" if a tick is mid-write
-  when the process exits (harmless; WAL is durable).
+- **Shutdown is bounded, not unbounded-await.** This entry used to say
+  shutdown was *not* awaited; that stopped being true. `main` tracks every
+  background goroutine in a WaitGroup and `waitForBackground` joins it,
+  capped at 3s so a wedged goroutine cannot hang past docker's stop grace.
+  The residual is only that cap: a tick can run ~47s on the reference
+  instance, so a mid-tick SIGTERM has to unwind through it. In practice it
+  unwinds fast, because nearly all of that time is ctx-aware network I/O
+  that fails immediately on cancel. Measured with a real SIGTERM 20s in:
+  clean "poller stopping", zero "did not stop in time" warnings, zero
+  "database is closed" errors. Caveat on that measurement: the probe daemon
+  was unconfigured, so its tick did little work; the worst case (SIGTERM
+  during a fully-loaded tick) is still argued rather than measured. Worst
+  outcome remains a logged error, since the WAL is durable.
