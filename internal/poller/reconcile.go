@@ -90,14 +90,14 @@ func (p *Poller) reconcileConfirmed(ctx context.Context) {
 	// from the whole reconcile when there were zero unlinked grabs, which
 	// silently skipped the mismatch recovery below. (The tests caught it;
 	// the nothing-active early return in tickOnce was the same lesson.)
-	p.reconcileUnlinked(ctx, stashC, since)
+	p.reconcileUnlinked(ctx, stashC)
 	p.reconcileMismatched(ctx, stashC, since)
 	p.reconcileMovedFiles(ctx, stashC)
 }
 
 // reconcileUnlinked backfills cross-ids onto confirmed-but-unlinked grabs.
-func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client, since int64) {
-	total, err := p.repo.CountConfirmedUnlinked(ctx, since)
+func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client) {
+	total, err := p.repo.CountConfirmedUnlinked(ctx)
 	if err != nil {
 		p.log.Warn("reconcile: count unlinked", "err", err)
 		return
@@ -108,11 +108,12 @@ func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client, si
 	}
 	// Rotate: the never-identified rows are permanent residents of this set,
 	// so a fixed offset-0 batch would re-check the same ones every pass and
-	// never reach the rest.
+	// never reach the rest. Newest-first ordering means a fresh identify is
+	// still seen at the start of each rotation rather than waiting its turn.
 	if p.reconcileCursor >= total {
 		p.reconcileCursor = 0
 	}
-	rows, err := p.repo.ConfirmedUnlinked(ctx, since, reconcileBatch, p.reconcileCursor)
+	rows, err := p.repo.ConfirmedUnlinked(ctx, reconcileBatch, p.reconcileCursor)
 	if err != nil {
 		p.log.Warn("reconcile: list unlinked", "err", err)
 		return

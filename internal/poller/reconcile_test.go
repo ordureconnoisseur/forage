@@ -164,10 +164,24 @@ func TestReconcileSkipsPacks(t *testing.T) {
 	}
 }
 
-// TestReconcileWindowExcludesStale bounds the query: a file still unlinked
-// after reconcileWindow genuinely isn't on StashDB, and re-checking it forever
-// costs a Stash round-trip per pass to learn nothing.
-func TestReconcileWindowExcludesStale(t *testing.T) {
+// TestReconcileBackfillsAgedGrabs is the inverse of what this test used to
+// assert, and the reversal was earned by measurement rather than opinion.
+//
+// It used to pin a 14-day window on the backfill, on the reasoning that a
+// file still unlinked after two weeks "genuinely isn't on StashDB, and
+// re-checking it forever costs a Stash round-trip per pass to learn
+// nothing". Sampling the live instance said otherwise: of 25 unlinked grabs,
+// 10 (40%) already carried a stash_id in Stash. Identify had simply run
+// later than the window, and forage had stopped looking. Those rows averaged
+// 27 days old, so nothing would ever have revisited them — and without a
+// cross-id they are invisible to the moved-file repair, to dedup, and to
+// performer re-filing.
+//
+// The cost the old comment worried about is real but small and bounded: the
+// caller still takes reconcileBatch rows per pass behind a rotating cursor,
+// and the lookup is against the LOCAL Stash, not the rate-limited StashDB
+// budget. Rows that genuinely never link are re-queried once per rotation.
+func TestReconcileBackfillsAgedGrabs(t *testing.T) {
 	r := newRig(t, "forager")
 	ctx := context.Background()
 
@@ -178,6 +192,7 @@ func TestReconcileWindowExcludesStale(t *testing.T) {
 	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Comfortably older than the cutoff that used to exclude it.
 	old := time.Now().Add(-reconcileWindow - 24*time.Hour).Unix()
 	id, err := r.repo.Insert(ctx, grabs.Grab{
 		ReleaseTitle: "ancient clip", Client: "qbit", ClientID: "ancienthash",
@@ -188,14 +203,15 @@ func TestReconcileWindowExcludesStale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("insert: %v", err)
 	}
-	// Even though Stash now has a cross-id, this row is out of window.
+	// Stash has since identified it. Age must not stop forage adopting that.
 	r.stash.set([]fakeScene{{id: "304", title: "Ancient", path: placed, stashDBID: "sdb-ancient"}})
 
 	forceReconcile(r)
 	r.tick(t)
 
-	if g := r.get(t, id); g.ActualStashDBID != "" {
-		t.Fatalf("out-of-window grab was reconciled (actual=%q); window not applied", g.ActualStashDBID)
+	if g := r.get(t, id); g.ActualStashDBID != "sdb-ancient" {
+		t.Fatalf("aged grab still unlinked (actual=%q); a 14-day cutoff was discarding "+
+			"40%% of recoverable links on the live instance", g.ActualStashDBID)
 	}
 }
 

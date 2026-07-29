@@ -253,7 +253,7 @@ func (r *Repo) Active(ctx context.Context) ([]Grab, error) {
 //
 // Newest-first with limit/offset so the caller can rotate through a large
 // backlog a bounded batch at a time.
-func (r *Repo) ConfirmedUnlinked(ctx context.Context, since int64, limit, offset int) ([]Grab, error) {
+func (r *Repo) ConfirmedUnlinked(ctx context.Context, limit, offset int) ([]Grab, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
@@ -263,9 +263,8 @@ func (r *Repo) ConfirmedUnlinked(ctx context.Context, since int64, limit, offset
 		  AND COALESCE(kind, 'single') != 'pack'
 		  AND COALESCE(placed_path, '') != ''
 		  AND COALESCE(actual_stashdb_id, '') = ''
-		  AND COALESCE(NULLIF(confirmed_at, 0), updated_at) >= ?
 		ORDER BY COALESCE(NULLIF(confirmed_at, 0), updated_at) DESC
-		LIMIT ? OFFSET ?`, since, limit, offset)
+		LIMIT ? OFFSET ?`, limit, offset)
 }
 
 // MismatchedRecent returns mismatched single grabs inside the reconcile
@@ -328,17 +327,28 @@ func (r *Repo) CountConfirmedPlacedLinked(ctx context.Context) (int, error) {
 	return n, err
 }
 
+// The 14-day window both of these used to carry is gone. It assumed a file
+// still unlinked after two weeks is "genuinely not on StashDB", which
+// measurement contradicted: of 25 sampled unlinked grabs on the reference
+// instance, 10 (40%) already carried a stash_id in Stash — identify simply
+// ran later than the window, and forage had stopped looking. Those grabs
+// averaged 27 days old, so nothing would ever have revisited them.
+//
+// Cost is unchanged per pass: the caller still takes reconcileBatch rows and
+// rotates a cursor, and the lookup is against the LOCAL Stash, not the
+// rate-limited StashDB budget. Widening the set lengthens a rotation; it
+// does not raise the per-tick cost.
+
 // CountConfirmedUnlinked counts what ConfirmedUnlinked would return across
 // every page, so the reconcile cursor knows when it has wrapped.
-func (r *Repo) CountConfirmedUnlinked(ctx context.Context, since int64) (int, error) {
+func (r *Repo) CountConfirmedUnlinked(ctx context.Context) (int, error) {
 	var n int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM grabs
 		WHERE status = 'confirmed'
 		  AND COALESCE(kind, 'single') != 'pack'
 		  AND COALESCE(placed_path, '') != ''
-		  AND COALESCE(actual_stashdb_id, '') = ''
-		  AND COALESCE(NULLIF(confirmed_at, 0), updated_at) >= ?`, since).Scan(&n)
+		  AND COALESCE(actual_stashdb_id, '') = ''`).Scan(&n)
 	return n, err
 }
 
