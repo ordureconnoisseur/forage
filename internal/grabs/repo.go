@@ -288,6 +288,41 @@ func (r *Repo) MismatchedRecent(ctx context.Context, since int64, limit int) ([]
 		LIMIT ?`, since, limit)
 }
 
+// ConfirmedPlacedLinked returns confirmed grabs that have BOTH a placed
+// path and a StashDB cross-id, oldest-checked first. These are the grabs
+// whose placed_path can be re-derived from Stash when a file moves under
+// forage: the cross-id says which scene, and Stash knows where that
+// scene's file is now.
+//
+// Deliberately NOT bounded by a recency window, unlike the passes above. A
+// file is usually moved long after the grab settles — the stale pointers
+// that prompted this were 20 to 40 days old — so a window would exclude
+// exactly the rows that need repairing. The cursor paginates instead.
+func (r *Repo) ConfirmedPlacedLinked(ctx context.Context, limit, offset int) ([]Grab, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	return r.query(ctx, `
+		SELECT * FROM grabs
+		WHERE status = 'confirmed'
+		  AND COALESCE(placed_path, '') != ''
+		  AND COALESCE(actual_stashdb_id, '') != ''
+		ORDER BY id
+		LIMIT ? OFFSET ?`, limit, offset)
+}
+
+// CountConfirmedPlacedLinked counts what ConfirmedPlacedLinked would return
+// across every page, so the repair cursor knows when it has wrapped.
+func (r *Repo) CountConfirmedPlacedLinked(ctx context.Context) (int, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM grabs
+		WHERE status = 'confirmed'
+		  AND COALESCE(placed_path, '') != ''
+		  AND COALESCE(actual_stashdb_id, '') != ''`).Scan(&n)
+	return n, err
+}
+
 // CountConfirmedUnlinked counts what ConfirmedUnlinked would return across
 // every page, so the reconcile cursor knows when it has wrapped.
 func (r *Repo) CountConfirmedUnlinked(ctx context.Context, since int64) (int, error) {
