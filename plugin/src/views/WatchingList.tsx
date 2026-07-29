@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import {
   clearFinishedWatches,
   clearWatchBatch,
@@ -211,6 +211,53 @@ export default function WatchingList({
   );
 }
 
+// WatchShelf is the ONE collapsible primitive inside a group. Three of them
+// per group (ready / searching / grabbed), all identical in shape, so depth
+// reads as structure rather than as three separate ideas that happen to
+// nest. Before this, available and watching cards were dumped straight into
+// one list at full size while "grabbed" got a bespoke row, so a group with
+// 113 watching scenes was a wall of identical cards with nothing to do.
+//
+// Two rules do most of the work:
+//   - the count lives on the shelf, so the group header stops repeating
+//     "3 ready · 113 watching · 494 grabbed" and just says how far along it is;
+//   - defaultOpen encodes ACTIONABILITY, so what opens by default is exactly
+//     what you can act on.
+function WatchShelf({
+  label,
+  count,
+  defaultOpen,
+  actions,
+  children,
+}: {
+  label: string;
+  count: number;
+  defaultOpen: boolean;
+  actions?: ReactNode;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (count === 0) return null;
+  return (
+    <div className={"watch-shelf" + (open ? " is-open" : "")}>
+      <div className="watch-shelf-head">
+        <button
+          type="button"
+          className="watch-shelf-toggle"
+          aria-expanded={open}
+          onClick={() => setOpen((v) => !v)}
+        >
+          <span className={"fchev" + (open ? " open" : "")} aria-hidden="true" />
+          <span className="watch-shelf-count">{count}</span>
+          <span className="watch-shelf-label">{label}</span>
+        </button>
+        {actions && <div className="watch-shelf-actions">{actions}</div>}
+      </div>
+      {open && <div className="watch-shelf-body">{children}</div>}
+    </div>
+  );
+}
+
 function WatchGroup({
   group,
   onChanged,
@@ -238,8 +285,6 @@ function WatchGroup({
   // reference instance (~41k DOM nodes, seconds to paint), for rows whose
   // only job is to be counted. Render the actionable ones and put the rest
   // behind a disclosure; the real state of a grabbed scene lives in Grabs.
-  const actionable = items.filter((w) => w.status !== "grabbed");
-  const [showDone, setShowDone] = useState(false);
   const [clearDoneBusy, setClearDoneBusy] = useState(false);
 
   const clearDone = async () => {
@@ -293,19 +338,18 @@ function WatchGroup({
 
   // Progress line for a batch: collapses status counts into "N of M grabbed".
   const searchingNote = searchingCount > 0 ? `${searchingCount} searching` : "";
+  // The shelves below each state their own count, so the header only says
+  // how far along the group is. It used to repeat every count, which is most
+  // of why this looked cluttered.
   const progress = isBatch
     ? [
         `${grabbed.length} of ${items.length} grabbed`,
-        available.length > 0 ? `${available.length} ready` : "",
-        watching.length > 0 ? `${watching.length} watching` : "",
         searchingNote,
       ]
         .filter(Boolean)
         .join(" · ")
     : [
-        `${available.length} ready`,
-        `${watching.length} watching`,
-        grabbed.length ? `${grabbed.length} grabbed` : "",
+        `${grabbed.length} of ${items.length} grabbed`,
         searchingNote,
       ]
         .filter(Boolean)
@@ -336,16 +380,6 @@ function WatchGroup({
           <span className="watch-group-progress">{progress}</span>
         </div>
         <div className="watch-group-actions">
-          {available.length > 0 && (
-            <button
-              className="collection-cta"
-              disabled={grabAllBusy}
-              onClick={grabAll}
-              title="Queue every available release in this group"
-            >
-              {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
-            </button>
-          )}
           {isBatch && (
             <button
               className="watch-clear"
@@ -360,54 +394,81 @@ function WatchGroup({
       </div>
       {!collapsed && (
         <>
-          <ul className="watch-list">
-            {actionable.map((w) => (
-              <WatchCard
-                key={w.stashdb_id}
-                w={w}
-                onChanged={onChanged}
-                onPickScene={onPickScene}
-              />
-            ))}
-          </ul>
-          {grabbed.length > 0 && (
-            <div className="watch-done">
-              <button
-                type="button"
-                className="watch-done-toggle"
-                aria-expanded={showDone}
-                onClick={() => setShowDone((v) => !v)}
-              >
-                <span
-                  className={"fchev" + (showDone ? " open" : "")}
-                  aria-hidden="true"
+          <WatchShelf
+            label="ready to grab"
+            count={available.length}
+            defaultOpen
+            actions={
+              available.length > 0 ? (
+                <button
+                  className="collection-cta"
+                  disabled={grabAllBusy}
+                  onClick={grabAll}
+                  title="Queue every available release in this group"
+                >
+                  {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
+                </button>
+              ) : undefined
+            }
+          >
+            <ul className="watch-list">
+              {available.map((w) => (
+                <WatchCard
+                  key={w.stashdb_id}
+                  w={w}
+                  onChanged={onChanged}
+                  onPickScene={onPickScene}
                 />
-                {grabbed.length} grabbed
-              </button>
-              <button
-                type="button"
-                className="setup-link watch-done-link"
-                onClick={() => onPickGrabs(isBatch ? group.label : "")}
-                title={
-                  isBatch
-                    ? "Show these in Grabs, where their download state lives"
-                    : "Open Grabs, where these downloads' real state lives"
-                }
-              >
-                view in Grabs
-              </button>
-              <button
-                type="button"
-                className="setup-link watch-done-clear"
-                disabled={clearDoneBusy}
-                onClick={clearDone}
-                title="Remove these finished watches. Does not touch files or grabs."
-              >
-                {clearDoneBusy ? "Clearing…" : "clear finished"}
-              </button>
-            </div>
-          )}
-          {showDone && (
+              ))}
+            </ul>
+          </WatchShelf>
+
+          <WatchShelf
+            label="still searching"
+            count={watching.length}
+            defaultOpen={false}
+          >
+            <ul className="watch-list">
+              {watching.map((w) => (
+                <WatchCard
+                  key={w.stashdb_id}
+                  w={w}
+                  onChanged={onChanged}
+                  onPickScene={onPickScene}
+                />
+              ))}
+            </ul>
+          </WatchShelf>
+          <WatchShelf
+            label="grabbed"
+            count={grabbed.length}
+            defaultOpen={false}
+            actions={
+              <>
+                <button
+                  type="button"
+                  className="setup-link"
+                  onClick={() => onPickGrabs(isBatch ? group.label : "")}
+                  title={
+                    isBatch
+                      ? "Show these in Grabs, where their download state lives"
+                      : "Open Grabs, where these downloads' real state lives"
+                  }
+                >
+                  view in Grabs
+                </button>
+                <button
+                  type="button"
+                  className="setup-link watch-shelf-danger"
+                  disabled={clearDoneBusy}
+                  onClick={clearDone}
+                  title="Remove these finished watches. Does not touch files or grabs."
+                >
+                  {clearDoneBusy ? "Clearing…" : "clear finished"}
+                </button>
+              </>
+            }
+          >
             <ul className="watch-list">
               {grabbed.map((w) => (
                 <WatchCard
@@ -418,7 +479,7 @@ function WatchGroup({
                 />
               ))}
             </ul>
-          )}
+          </WatchShelf>
         </>
       )}
     </section>

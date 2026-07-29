@@ -5236,37 +5236,76 @@ code.grab-fact-v,
 .watch-list section + section {
   margin-top: 24px;
 }
-/* Finished-work disclosure: the row that stands in for a group's grabbed
-   watches. They are bookkeeping (a batch reads "9 of 30"), so they sit
-   behind this instead of rendering hundreds of cards nobody acts on. */
-.watch-done {
+/* Shelves: the one collapsible primitive inside a watch group, used three
+   times (ready / still searching / grabbed). Everything here exists to make
+   ONE nesting level unmistakable, because the group itself already collapses
+   and two indistinguishable levels of chevron is what made this a muddle.
+
+   The rail is the whole trick: a single hairline down the left of the shelf
+   stack says "these belong to the group above" without indenting so far that
+   cards lose width on a phone. */
+.watch-shelves {
+  margin-top: 6px;
+}
+.watch-shelf {
+  border-left: 1px solid var(--glass-border);
+  margin-left: 6px;
+  padding-left: 12px;
+}
+.watch-shelf + .watch-shelf {
+  margin-top: 2px;
+}
+.watch-shelf-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 34px;
+  flex-wrap: wrap;
+}
+.watch-shelf-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  cursor: pointer;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  opacity: 0.72;
+  transition: opacity 0.12s ease;
+}
+.watch-shelf-toggle:hover,
+.watch-shelf.is-open > .watch-shelf-head > .watch-shelf-toggle {
+  opacity: 1;
+}
+/* The count is the thing you scan for, so it carries the weight and the
+   label stays quiet beside it. */
+.watch-shelf-count {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 13px;
+}
+.watch-shelf-label {
+  letter-spacing: 0.01em;
+}
+.watch-shelf-actions {
   display: flex;
   align-items: center;
   gap: 14px;
-  margin: 10px 0 2px 0;
-  font-size: 12px;
-  opacity: 0.75;
-}
-.watch-done-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: none;
-  border: none;
-  padding: 0;
-  cursor: pointer;
-  color: inherit;
-  font: inherit;
-}
-.watch-done-toggle:hover {
-  opacity: 1;
-}
-.watch-done-link,
-.watch-done-clear {
+  margin-left: auto;
   font-size: 12px;
 }
-.watch-done-clear:hover {
+.watch-shelf-danger:hover {
   color: var(--danger, #e0574e);
+}
+.watch-shelf-body {
+  padding: 4px 0 8px 0;
+}
+/* A shelf's own cards don't need the group's spacing on top of the rail. */
+.watch-shelf-body .watch-list {
+  gap: 8px;
 }
 /* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
    actions ride with the scene title and never float against the middle of an
