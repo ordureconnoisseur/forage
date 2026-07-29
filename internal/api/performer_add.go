@@ -57,15 +57,20 @@ func (s *Server) postPerformerFromStashDB(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Already have them? Adding again would create a duplicate performer
-	// carrying the same cross-id, which is worse than doing nothing.
-	if existing, err := localPerformerIDsByStashDBID(r.Context(), s.db); err == nil {
-		if localID, ok := existing[req.StashDBID]; ok {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"ok": true, "already_present": true, "local_id": localID,
-			})
-			return
-		}
+	// Already have them? Ask STASH, not performer_cache: the cache is filled
+	// by the 12h refresh and so lags a just-created performer by hours, which
+	// made this guard useless in the case that matters most — a double-click
+	// — where it fell through to a create and surfaced Stash's raw
+	// "performer with name X already exists".
+	if localID, ferr := sc.FindPerformerByStashDBID(r.Context(), req.StashDBID); ferr != nil {
+		// Can't prove either way. Better to attempt the create and let Stash
+		// arbitrate than to refuse a performer the user asked for.
+		s.log.Warn("add performer: existing lookup", "stashdb_id", req.StashDBID, "err", ferr)
+	} else if localID != "" {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "already_present": true, "local_id": localID,
+		})
+		return
 	}
 
 	scraped, err := sc.ScrapePerformerByStashDBID(r.Context(), endpoint, req.Name, req.StashDBID)
@@ -84,6 +89,16 @@ func (s *Server) postPerformerFromStashDB(w http.ResponseWriter, r *http.Request
 
 	localID, err := sc.CreatePerformerFromScrape(r.Context(), endpoint, req.StashDBID, scraped)
 	if err != nil {
+		// Stash enforces name uniqueness. Hitting that means a performer of
+		// this name already exists WITHOUT the cross-id (so the lookup above
+		// could not see them) — a naming clash, not a failure the user can
+		// act on by retrying.
+		if strings.Contains(strings.ToLower(err.Error()), "already exists") {
+			writeErr(w, http.StatusConflict,
+				"Stash already has a performer named "+scraped.Name+
+					". Link them to StashDB in Stash instead of creating a second one.")
+			return
+		}
 		s.log.Error("add performer: create", "stashdb_id", req.StashDBID, "err", err)
 		writeErr(w, http.StatusBadGateway, "Stash rejected the new performer: "+err.Error())
 		return
