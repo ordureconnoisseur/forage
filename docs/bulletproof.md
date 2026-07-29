@@ -229,8 +229,30 @@ with no DB row; magnet rows stranded when metadata never arrives inside the
   knowing which Stash a report came from, so `/diag` now carries
   `stashVersion` — without a supported range, "works for me" and "broken"
   otherwise differ by an unknown.
-- ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
-  scopes) so `docker pull` works.
+- ☐ **GHCR unblock** so `docker pull` works. Diagnosed 2026-07-29, and it
+  is an account action nobody but the owner can take. Every release run has
+  failed the same way — v0.2.0, v0.2.1, v0.3.0 — on the "Daemon image →
+  GHCR" job only; the binaries/plugin job succeeds beside it, which is why
+  releases exist and the gap went unnoticed. The error is
+  `403 Forbidden` pushing `ghcr.io/ordureconnoisseur/forage`, despite the
+  workflow declaring `packages: write`. That combination means the package
+  exists but does not grant THIS repository write access (the rename from
+  `forager` left it linked elsewhere) — a repo-scoped `GITHUB_TOKEN` cannot
+  create over it.
+
+  Two separate things to fix, and fixing only the first still leaves
+  `docker pull` broken:
+  1. Package settings → *Manage Actions access* → add the `forage` repo
+     with the Write role (or delete the stale package and let the next
+     release create it cleanly).
+  2. Package visibility → Public. The repo is private, so a package pushed
+     from it is private too, and an anonymous `docker pull` stays 401 even
+     once the push succeeds.
+
+  Deliberately NOT papered over with `continue-on-error` on that job. A
+  green release run that silently ships no image is the failure mode this
+  document exists to prevent; red is the honest state until the account
+  side is done.
 - ☑ **Bug-report ergonomics**: issue templates (version/install/diag/
   logs/journal-rows prompts); diagnostics bundle as authenticated
   `GET /diag` (versions, config field sources through the same masking as
