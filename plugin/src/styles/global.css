@@ -3648,6 +3648,42 @@ code.grab-fact-v,
   gap: 4px;
   margin-top: 8px;
 }
+/* A performer on a trending StashDB scene who is NOT in your library. Dashed
+   to read as "not yours yet" rather than as a broken local pill, and it does
+   not take the pointer cursor because the pill itself is not clickable —
+   only the "+" inside it does anything. */
+.perf-chip-missing {
+  cursor: default;
+  border-style: dashed;
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-chip-missing.is-added {
+  border-style: solid;
+  border-color: var(--accent, #22c55e);
+  opacity: 1;
+}
+.perf-chip-add {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--accent, #22c55e);
+  font-weight: 700;
+}
+.perf-chip-add:disabled {
+  cursor: default;
+  opacity: 0.7;
+}
+.perf-chip-add:hover:not(:disabled) {
+  filter: brightness(1.25);
+}
+
 .perf-chip {
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);

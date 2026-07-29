@@ -196,6 +196,14 @@ export function fetchStudios(opts?: {
 export interface DiscoverPerformer {
   stash_id: string;
   name: string;
+  // The performer's StashDB cross-id. Only set for performers resolved from
+  // a scene's cached StashDB performer list, which is the only way someone
+  // NOT in your Stash can be named at all.
+  stashdb_id?: string;
+  // False for a performer who exists on StashDB but not in your Stash.
+  // These used to be dropped before reaching the UI, so a trending scene's
+  // unknown performer had no pill and no route to being added.
+  local?: boolean;
   favorite: boolean;
   // Stats backing the hovercard. Zero when the scene cache hasn't run
   // (or when the performer has no StashDB cross-id).
@@ -203,6 +211,20 @@ export interface DiscoverPerformer {
   total_stashdb_scenes?: number;
   owned_scenes_count?: number;
   last_release_unix?: number;
+}
+
+// addPerformerFromStashDB creates a performer in Stash from their StashDB
+// id. The name is only the stash-box search term; the daemon selects the
+// candidate whose id matches and refuses rather than guessing between
+// same-named performers.
+export function addPerformerFromStashDB(
+  stashDBID: string,
+  name: string,
+): Promise<{ ok: boolean; local_id?: string; name?: string; already_present?: boolean }> {
+  return postJSON("/performers/from-stashdb", {
+    stashdb_id: stashDBID,
+    name,
+  });
 }
 
 export interface DiscoverScene {
