@@ -178,7 +178,5 @@ leaf spots that nothing matches on, so a blanket sweep is churn without payoff.
 - **`mismatched` has no recovery path**: a corrected StashDB match leaves the
   grab `mismatched` forever (it is out of `Active()` and no sweep revives
   mismatches). Surfaces as principle 3's `recoverable: false`.
-- **Premature-heal `RemoveAll` failure** clears `PlacedPath` regardless, which
-  can orphan a partial file on disk with no grab pointing at it.
 - **Non-awaited shutdown** can log "database is closed" if a tick is mid-write
   when the process exits (harmless; WAL is durable).

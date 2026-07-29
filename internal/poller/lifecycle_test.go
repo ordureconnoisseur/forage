@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1784,5 +1785,92 @@ func TestScanInFlightGuard(t *testing.T) {
 	r.stash.setJob(false, "")
 	if r.poller.scanInFlight(ctx, sc, 1) {
 		t.Fatalf("a drained/finished scan must not be in flight")
+	}
+}
+
+// TestPrematureHealRemoveFailureKeepsPointer covers the failure half of the
+// premature-placement heal, which was a tracked residual risk in
+// docs/error-handling.md: the heal cleared placed_path even when the
+// RemoveAll had failed, so a partial file it could not delete was left on
+// disk with no grab pointing at it and nothing that would ever retry.
+//
+// The grab must instead stay exactly as it was, which is also what arms the
+// retry: the heal's condition is placed_path != "" && progress < 1, so the
+// next tick tries again. Staying "placed" matters for a second reason —
+// moving to "downloading" while keeping the path would be undone in the
+// same tick by Step 2's "placed_path set, status was X" heal.
+func TestPrematureHealRemoveFailureKeepsPointer(t *testing.T) {
+	r := newRig(t, "")
+	ctx := context.Background()
+
+	const (
+		hash      = "healfail0hash"
+		performer = "Riley Reid"
+		fileName  = "partial.mkv"
+	)
+	placedDir := filepath.Join(r.libRoot, performer)
+	if err := os.MkdirAll(placedDir, 0o755); err != nil {
+		t.Fatalf("mkdir placed: %v", err)
+	}
+	placedPath := filepath.Join(placedDir, fileName)
+	if err := os.WriteFile(placedPath, []byte("half a file"), 0o644); err != nil {
+		t.Fatalf("write placed: %v", err)
+	}
+
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: "Riley Reid - Release", Client: "qbit", ClientID: hash,
+		Category: "forager", Status: "placed", PlacedPath: placedPath,
+		PlacedAt: time.Now().Unix(), PerformerName: performer, Kind: "single",
+		Progress: 1, GrabbedAt: time.Now().Unix(),
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	r.qbit.set([]qbit.Torrent{{
+		Hash: hash, Name: fileName, Category: "forager",
+		State: "downloading", Progress: 0.4,
+	}})
+
+	// The removal fails, as it would with the library mount gone or the
+	// file held open by another process.
+	var attempts int
+	r.poller.removeAll = func(string) error {
+		attempts++
+		return errors.New("input/output error")
+	}
+	r.tick(t)
+
+	g := r.get(t, id)
+	if attempts != 1 {
+		t.Fatalf("removeAll called %d times, want 1", attempts)
+	}
+	if g.PlacedPath != placedPath {
+		t.Errorf("placed_path=%q, want it RETAINED as %q — clearing it orphans the file",
+			g.PlacedPath, placedPath)
+	}
+	if g.Status != "placed" {
+		t.Errorf("status=%q, want placed (reason=%q)", g.Status, g.Reason)
+	}
+	if g.PlaceError == "" {
+		t.Error("place_error empty; the failure must be surfaced, not swallowed")
+	}
+	if _, serr := os.Stat(placedPath); serr != nil {
+		t.Errorf("file should still be on disk after a failed removal: %v", serr)
+	}
+
+	// Next tick, with the removal working again, must complete the heal.
+	// This is the property the retained pointer buys.
+	r.poller.removeAll = os.RemoveAll
+	r.tick(t)
+
+	g = r.get(t, id)
+	if g.PlacedPath != "" {
+		t.Errorf("placed_path=%q after a successful retry, want cleared", g.PlacedPath)
+	}
+	if g.Status != "downloading" {
+		t.Errorf("status=%q after retry, want downloading (reason=%q)", g.Status, g.Reason)
+	}
+	if _, serr := os.Stat(placedPath); !os.IsNotExist(serr) {
+		t.Errorf("premature placement not removed on retry (stat err=%v)", serr)
 	}
 }

@@ -56,9 +56,10 @@ func TestOneDoor(t *testing.T) {
 				// itself placed from a download that later turned out
 				// unfinished — never a library copy. (Found by this very
 				// test on its first run: it was the sixth destructive call
-				// site in a codebase believed to have five. Residual risk
-				// tracked in docs/error-handling.md: a failed RemoveAll
-				// here still clears PlacedPath.)
+				// site in a codebase believed to have five.) A FAILED
+				// removal now keeps placed_path, so the pointer to a file
+				// it could not delete survives and the next tick retries;
+				// clearing it regardless used to orphan the partial.
 				"internal/poller/grabs.go": true,
 				// Managed-Prowlarr installer: removes only forage's OWN
 				// install dirs under <data>/managed/prowlarr (the stale app

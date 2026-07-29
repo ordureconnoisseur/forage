@@ -139,13 +139,18 @@ guard regression (mutation test on the destroy façade) fails the build.
   falling back to a permanent Stash-side delete, because during an outage
   "file missing" stops being evidence of anything. Surfaced in /healthz as
   poller.libraryOk. UI badge remains open.
-- ◐ **Fix the four residual risks** in error-handling.md: `mismatched`
+- ◐ **Fix the four residual risks** in error-handling.md. `mismatched`
   recovery SHIPPED (the reconcile pass confirms a mismatch the user
   corrected in Stash back to the predicted id; a third-id re-identify stays
-  mismatched on purpose). Remaining: size-equality reclaim on CIFS (extend the reconcile
+  mismatched on purpose). Premature-heal `RemoveAll` SHIPPED: a failed
+  removal now keeps `placed_path` instead of clearing it regardless, so the
+  pointer to a partial it could not delete survives and the heal's own
+  condition re-arms the retry on the next tick. Staying `placed` is load
+  bearing there — `downloading` plus a live path is exactly what Step 2's
+  "placed_path set" heal lifts back, so the pair would fight within one
+  tick. Remaining: size-equality reclaim on CIFS (extend the reconcile
   pass — it already re-checks settled grabs — to notice a mismatched grab
-  whose scene now carries the predicted id); premature-heal `RemoveAll`
-  clearing `PlacedPath` on failure; awaited shutdown.
+  whose scene now carries the predicted id); awaited shutdown.
 - ☑ **/healthz depth**: poller block with lastTickAt/lastTickMs +
   libraryOk (+ libraryError), so a wedged daemon or dropped mount is
   visible remotely. Journal tallies shipped too: a `destructions` block
