@@ -59,6 +59,11 @@ type Poller struct {
 	identifyMu       sync.Mutex
 	stashBoxEndpoint string
 
+	// jobFailures counts Stash jobs forage fired that came back FAILED or
+	// CANCELLED, by kind, surfaced in /healthz. Guarded by healthMu.
+	jobFailures    map[string]int
+	lastJobFailure string
+
 	// adoptMu serialises orphan adoption so the periodic tick and a
 	// manual force-adopt (AdoptNow) can't race the known-id check and
 	// double-insert the same torrent.
@@ -204,6 +209,19 @@ func (p *Poller) Health() map[string]any {
 	}
 	if p.libraryError != "" {
 		out["libraryError"] = p.libraryError
+	}
+	// Stash jobs forage fired that came back FAILED/CANCELLED. Retries are
+	// outcome-driven and recover on their own, so this is not an error
+	// state — it is the difference between a Stash quietly failing every
+	// scan and a Stash merely being slow, which otherwise look identical
+	// from outside.
+	if len(p.jobFailures) > 0 {
+		f := make(map[string]int, len(p.jobFailures))
+		for k, v := range p.jobFailures {
+			f[k] = v
+		}
+		out["stashJobFailures"] = f
+		out["lastStashJobFailure"] = p.lastJobFailure
 	}
 	return out
 }
@@ -1708,6 +1726,39 @@ func packScanCoverageOK(found, expected int) bool {
 // exists to prevent). This can't block identify indefinitely: a persistent
 // JobStatus failure is a Stash outage, and identify resumes the moment the
 // query succeeds again. [C12]
+// jobOutcome interprets a Stash job status. Both callers previously wrote
+// `default: return false`, which folded FAILED and CANCELLED in with
+// FINISHED: forage could not tell "Stash did the work" from "Stash tried
+// and gave up". The retry loops are outcome-driven, so they recovered
+// either way — but a Stash failing every scan looked exactly like a Stash
+// doing nothing slowly, and nothing anywhere said so.
+func jobOutcome(status string) (inFlight, failed bool) {
+	switch status {
+	case "READY", "RUNNING", "STOPPING":
+		return true, false
+	case "FAILED", "CANCELLED":
+		return false, true
+	default:
+		// FINISHED, or "" once the job has left the queue.
+		return false, false
+	}
+}
+
+// noteJobFailure records that a Stash job forage fired did not succeed, so a
+// persistently broken Stash is visible in /healthz instead of only inferable
+// from work that never lands.
+func (p *Poller) noteJobFailure(kind string, grabID int64, jobID, status string) {
+	p.healthMu.Lock()
+	if p.jobFailures == nil {
+		p.jobFailures = map[string]int{}
+	}
+	p.jobFailures[kind]++
+	p.lastJobFailure = kind + " job " + status
+	p.healthMu.Unlock()
+	p.log.Warn("stash job did not succeed", "kind", kind, "id", grabID,
+		"job_id", jobID, "status", status)
+}
+
 func (p *Poller) identifyInFlight(ctx context.Context, sc *stash.Client, grabID int64) bool {
 	p.identifyJobMu.Lock()
 	jobID := p.identifyJob[grabID]
@@ -1720,13 +1771,11 @@ func (p *Poller) identifyInFlight(ctx context.Context, sc *stash.Client, grabID 
 		p.log.Warn("identify job status check failed; assuming still in flight", "id", grabID, "job_id", jobID, "err", err)
 		return true
 	}
-	switch status {
-	case "READY", "RUNNING", "STOPPING":
-		return true
-	default:
-		// FINISHED, CANCELLED, FAILED, or "" (no longer in the queue).
-		return false
+	inFlight, failed := jobOutcome(status)
+	if failed {
+		p.noteJobFailure("identify", grabID, jobID, status)
 	}
+	return inFlight
 }
 
 // rememberIdentifyJob records the Identify job id last fired for a grab so a
@@ -1761,13 +1810,11 @@ func (p *Poller) scanInFlight(ctx context.Context, sc *stash.Client, grabID int6
 		p.log.Warn("scan job status check failed; assuming still in flight", "id", grabID, "job_id", jobID, "err", err)
 		return true
 	}
-	switch status {
-	case "READY", "RUNNING", "STOPPING":
-		return true
-	default:
-		// FINISHED, CANCELLED, FAILED, or "" (no longer in the queue).
-		return false
+	inFlight, failed := jobOutcome(status)
+	if failed {
+		p.noteJobFailure("scan", grabID, jobID, status)
 	}
+	return inFlight
 }
 
 // rememberScanJob records the metadataScan job id last fired for a grab so a

@@ -1965,3 +1965,58 @@ func TestPrematureHealRetryOutlivesCompletion(t *testing.T) {
 		t.Errorf("partial still on disk after the retry succeeded (stat=%v)", serr)
 	}
 }
+
+// TestJobOutcomeSeparatesFailureFromCompletion pins the distinction both
+// in-flight checks used to collapse. They wrote `default: return false`,
+// which folded FAILED and CANCELLED in with FINISHED, so forage could not
+// tell "Stash did the work" from "Stash tried and gave up".
+//
+// The retry loops are outcome-driven and recovered either way, which is why
+// this never showed as a bug — but a Stash failing every scan looked exactly
+// like a Stash doing nothing slowly, and forage is meant to supervise Stash,
+// not merely survive it.
+func TestJobOutcomeSeparatesFailureFromCompletion(t *testing.T) {
+	for _, c := range []struct {
+		status           string
+		inFlight, failed bool
+	}{
+		{"READY", true, false},
+		{"RUNNING", true, false},
+		{"STOPPING", true, false},
+		{"FINISHED", false, false},
+		{"", false, false}, // gone from the queue
+		{"FAILED", false, true},
+		{"CANCELLED", false, true},
+	} {
+		gotIn, gotFail := jobOutcome(c.status)
+		if gotIn != c.inFlight || gotFail != c.failed {
+			t.Errorf("jobOutcome(%q) = (inFlight=%v, failed=%v), want (%v, %v)",
+				c.status, gotIn, gotFail, c.inFlight, c.failed)
+		}
+	}
+}
+
+// TestStashJobFailureSurfacesInHealth pins that a failed Stash job reaches
+// /healthz. Without it the only evidence is work that never lands, which is
+// indistinguishable from a slow queue.
+func TestStashJobFailureSurfacesInHealth(t *testing.T) {
+	r := newRig(t, "")
+	if _, ok := r.poller.Health()["stashJobFailures"]; ok {
+		t.Fatal("health reported job failures before any occurred")
+	}
+	r.poller.noteJobFailure("scan", 7, "job-1", "FAILED")
+	r.poller.noteJobFailure("identify", 9, "job-2", "CANCELLED")
+	r.poller.noteJobFailure("scan", 11, "job-3", "FAILED")
+
+	h := r.poller.Health()
+	counts, ok := h["stashJobFailures"].(map[string]int)
+	if !ok {
+		t.Fatalf("stashJobFailures missing or wrong type: %#v", h["stashJobFailures"])
+	}
+	if counts["scan"] != 2 || counts["identify"] != 1 {
+		t.Errorf("counts = %v, want scan=2 identify=1", counts)
+	}
+	if h["lastStashJobFailure"] == "" {
+		t.Error("lastStashJobFailure empty; the reason must be visible, not just a count")
+	}
+}
