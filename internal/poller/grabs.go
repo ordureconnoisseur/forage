@@ -64,6 +64,14 @@ type Poller struct {
 	// double-insert the same torrent.
 	adoptMu sync.Mutex
 
+	// removeAll deletes a premature placement. Defaults to os.RemoveAll in
+	// New(); a field because the FAILURE path is the interesting one (it
+	// must not orphan the file) and there is no portable way to make a
+	// real os.RemoveAll fail: Go returns nil for a missing path AND for a
+	// path under a regular file, and a read-only parent only stops the
+	// removal on unix. Same seam the resolveFailover/subScenes fields use.
+	removeAll func(string) error
+
 	// lastScan throttles per-grab metadataScan retries. The initial
 	// post-placement scan can be coalesced by Stash with a concurrent
 	// one (e.g. several grabs placed into the same folder in one tick)
@@ -280,6 +288,7 @@ func New(repo *grabs.Repo, db *sql.DB, pool *clientpool.Pool, log *slog.Logger, 
 		interval:    interval,
 		orphan:      orphanAfter,
 		pending:     pending,
+		removeAll:   os.RemoveAll,
 		lastScan:    map[int64]time.Time{},
 		packScan:    map[int64]packScanState{},
 		grace:       map[int64]time.Time{},
@@ -1966,8 +1975,28 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 		!qbitProgressUnreliable(t.State) &&
 		(g.CompletedAt == 0 || (g.PlacedAt > 0 && g.PlacedAt < g.CompletedAt)) {
 		bad := g.PlacedPath
-		if rerr := os.RemoveAll(bad); rerr != nil {
+		if rerr := p.removeAll(bad); rerr != nil {
+			// Leave the grab exactly as it is. Clearing PlacedPath here
+			// would discard the only pointer to a partial file we just
+			// failed to delete, orphaning it in the library with no grab
+			// referencing it and nothing that would ever retry.
+			//
+			// Staying "placed" is also what makes the retry work. The
+			// heal's own condition is PlacedPath != "" && progress < 1,
+			// so the next tick re-enters here and tries the removal
+			// again once the mount or permission problem clears. Moving
+			// to "downloading" while keeping the path would instead be
+			// undone within the same tick: Step 2's "placed_path set,
+			// status was X" heal (see above) lifts exactly that
+			// combination back to "placed".
+			msg := "heal: could not remove premature placement: " + rerr.Error()
+			if g.PlaceError != msg {
+				g.PlaceError = msg
+				g.Reason = msg
+				dirty = true
+			}
 			p.log.Warn("heal: remove premature placement", "id", g.ID, "path", bad, "err", rerr)
+			return dirty, t.ContentPath
 		}
 		g.PlacedPath = ""
 		g.PlacedAt = 0
