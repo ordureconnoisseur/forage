@@ -559,3 +559,66 @@ func TestReconcileRecoversAgedMismatch(t *testing.T) {
 		t.Errorf("actual_stashdb_id=%q, want %q", g.ActualStashDBID, predicted)
 	}
 }
+
+// TestReconcileCursorSurvivesRestart pins that a rotation resumes where it
+// left off. Held only in memory, each cursor restarted at row 0 on every
+// daemon restart, so the tail of an 808-row set was reached only if the
+// daemon ran uninterrupted for hours.
+//
+// Not hypothetical: TestPackTagTimeoutSurvivesRestart records the same
+// shape already costing 21 hours of stuck packs because a day of deploys
+// kept resetting an in-memory clock.
+func TestReconcileCursorSurvivesRestart(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	// Enough unlinked rows that one batch cannot drain the set.
+	for i := 0; i < reconcileBatch*3; i++ {
+		placed := filepath.Join(r.libRoot, "Bulk", "clip"+itoa(i)+".mp4")
+		if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := r.repo.Insert(ctx, grabs.Grab{
+			ReleaseTitle: "clip", Client: "qbit", ClientID: "bulk" + itoa(i),
+			Category: "forager", Status: "confirmed", PlacedPath: placed,
+			PerformerName: "Bulk", Kind: "single", Reason: "in library (scanned)",
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	forceReconcile(r)
+	r.tick(t)
+	advanced := r.poller.reconcileCursor
+	if advanced == 0 {
+		t.Fatal("cursor did not advance on the first pass")
+	}
+
+	// A restart: fresh Poller over the SAME database, in-memory state empty.
+	if got := r.poller.loadCursor(ctx, cursorKeyUnlinked); got != advanced {
+		t.Fatalf("persisted cursor = %d, want %d", got, advanced)
+	}
+	r.poller.reconcileCursor = 0 // as after a restart
+	r.poller.lastReconcile = time.Time{}
+	r.tick(t)
+	if r.poller.reconcileCursor <= advanced {
+		t.Errorf("cursor restarted at %d after a restart (was %d); the tail of the "+
+			"set is only ever reached if the daemon runs uninterrupted",
+			r.poller.reconcileCursor, advanced)
+	}
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b []byte
+	for i > 0 {
+		b = append([]byte{byte('0' + i%10)}, b...)
+		i /= 10
+	}
+	return string(b)
+}

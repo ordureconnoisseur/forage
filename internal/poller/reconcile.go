@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -110,6 +111,9 @@ func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client) {
 	// so a fixed offset-0 batch would re-check the same ones every pass and
 	// never reach the rest. Newest-first ordering means a fresh identify is
 	// still seen at the start of each rotation rather than waiting its turn.
+	if p.reconcileCursor == 0 {
+		p.reconcileCursor = p.loadCursor(ctx, cursorKeyUnlinked)
+	}
 	if p.reconcileCursor >= total {
 		p.reconcileCursor = 0
 	}
@@ -119,6 +123,7 @@ func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client) {
 		return
 	}
 	p.reconcileCursor += reconcileBatch
+	p.saveCursor(ctx, cursorKeyUnlinked, p.reconcileCursor)
 
 	linked := 0
 	for i := range rows {
@@ -173,6 +178,9 @@ func (p *Poller) reconcileMismatched(ctx context.Context, stashC *stash.Client) 
 	// Rotate: a mismatch the user never resolves is a permanent resident of
 	// this set, so a fixed offset-0 batch would re-check the newest few
 	// forever and never reach the rest.
+	if p.mismatchCursor == 0 {
+		p.mismatchCursor = p.loadCursor(ctx, cursorKeyMismatched)
+	}
 	if p.mismatchCursor >= total {
 		p.mismatchCursor = 0
 	}
@@ -182,6 +190,7 @@ func (p *Poller) reconcileMismatched(ctx context.Context, stashC *stash.Client) 
 		return
 	}
 	p.mismatchCursor += reconcileBatch
+	p.saveCursor(ctx, cursorKeyMismatched, p.mismatchCursor)
 	fixed := 0
 	for i := range rows {
 		g := rows[i]
@@ -293,6 +302,9 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 		p.movedCursor = 0
 		return
 	}
+	if p.movedCursor == 0 {
+		p.movedCursor = p.loadCursor(ctx, cursorKeyMoved)
+	}
 	if p.movedCursor >= total {
 		p.movedCursor = 0
 	}
@@ -302,6 +314,7 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 		return
 	}
 	p.movedCursor += movedScanBatch
+	p.saveCursor(ctx, cursorKeyMoved, p.movedCursor)
 
 	repaired, looked := 0, 0
 	for i := range rows {
@@ -426,4 +439,51 @@ func truncateAtComponent(path, name string) string {
 		}
 	}
 	return ""
+}
+
+// Cursor persistence ────────────────────────────────────────────────
+//
+// The three reconcile passes rotate through sets far larger than one
+// batch: 808 unlinked grabs, 148 mismatched, 1637 placed paths on the
+// reference instance, at 40 rows per pass. Held only in memory, a cursor
+// restarts at row 0 on every daemon restart, so the tail of each set is
+// reached only if the daemon runs uninterrupted for hours.
+//
+// That is not hypothetical here. TestPackTagTimeoutSurvivesRestart records
+// the same shape biting already: two packs sat in "tagging" for 21 hours
+// against a 30-minute budget because a day of deploys kept restarting an
+// in-memory clock. A rotation that resets on deploy has exactly that
+// failure mode, and a day of deploys is precisely what shipping these
+// passes looked like.
+//
+// Best-effort on both sides: a read failure starts from 0 (costing a
+// repeat of work already done, never skipping any), and a write failure is
+// logged and dropped rather than failing a tick.
+
+const (
+	cursorKeyUnlinked   = "reconcile.cursor.unlinked"
+	cursorKeyMismatched = "reconcile.cursor.mismatched"
+	cursorKeyMoved      = "reconcile.cursor.moved"
+)
+
+func (p *Poller) loadCursor(ctx context.Context, key string) int {
+	var stored string
+	if err := p.db.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = ?`, key).Scan(&stored); err != nil {
+		return 0
+	}
+	n, err := strconv.Atoi(stored)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
+}
+
+func (p *Poller) saveCursor(ctx context.Context, key string, v int) {
+	if _, err := p.db.ExecContext(ctx, `
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		key, strconv.Itoa(v)); err != nil {
+		p.log.Warn("reconcile: cursor write", "key", key, "err", err)
+	}
 }
