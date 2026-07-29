@@ -212,7 +212,7 @@ with no DB row; magnet rows stranded when metadata never arrives inside the
   boundary), silently degrading scoped scans to full-library scans on the
   shipped .exe. Also verified live: daemon run on the Windows PC against
   real Stash, NTFS probes, backups.
-- ◐ **Version matrix**: download clients DONE — contract tests from
+- ☑ **Version matrix**: download clients DONE — contract tests from
   fixtures recorded against real containers (qBit 4.6.7 + 5.2.0, SAB
   3.7.2 + 4.5.1 + 5.0.4; testdata/contract/ in each client package, with
   the recording rig documented in the test headers). The recording
@@ -222,8 +222,13 @@ with no DB row; magnet rows stranded when metadata never arrives inside the
   state. Also pinned: the 5.x start/resume rename, pausedDL→stoppedDL,
   completion_on 0 vs -1 for incomplete, SAB 5.x UUID nzo_ids, and SAB's
   status-less set_config success echo. Supported floor in the README.
-  Remaining: the Stash GraphQL matrix (0.26→0.31) — needs per-version
-  instances with the setup mutation driven, a separate session's work.
+  The Stash GraphQL matrix (0.26→0.31) is CLOSED as out of scope, by
+  decision rather than by testing: forage tracks current Stash instead of
+  supporting a version range, so a matrix would be maintaining
+  compatibility nobody asked for. What that decision does require is
+  knowing which Stash a report came from, so `/diag` now carries
+  `stashVersion` — without a supported range, "works for me" and "broken"
+  otherwise differ by an unknown.
 - ☐ **GHCR unblock** (stale package linked to the old repo; needs owner
   scopes) so `docker pull` works.
 - ☑ **Bug-report ergonomics**: issue templates (version/install/diag/
