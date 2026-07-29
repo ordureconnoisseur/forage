@@ -150,6 +150,10 @@ type Poller struct {
 	// the single-goroutine tick, so they need no lock.
 	lastReconcile   time.Time
 	reconcileCursor int
+	// movedCursor rotates the moved-file repair pass independently: its set
+	// is every confirmed+placed+linked grab, which is most of the table, so
+	// it must not share a cursor with the much smaller unlinked set.
+	movedCursor int
 
 	// lastTrashSweep gates the daily trash-retention sweep (see
 	// destroy.SweepTrash). Owned by the single-goroutine tick.

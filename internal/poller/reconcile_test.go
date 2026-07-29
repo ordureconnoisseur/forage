@@ -45,6 +45,7 @@ func settledUnlinked(t *testing.T, r *rig, performer, fileName, predicted string
 func forceReconcile(r *rig) {
 	r.poller.lastReconcile = time.Time{}
 	r.poller.reconcileCursor = 0
+	r.poller.movedCursor = 0
 }
 
 // TestReconcileBackfillsLateIdentify is the bug this pass exists for: an
@@ -253,5 +254,116 @@ func TestReconcileRecoversCorrectedMismatch(t *testing.T) {
 	r.tick(t)
 	if g2 := r.get(t, id2); g2.Status != "mismatched" {
 		t.Fatalf("third-id case flipped to %q; must stay mismatched", g2.Status)
+	}
+}
+
+// TestReconcileRepairsMovedFile covers the moved-file repair. forage records
+// where IT put a file; anything that reorganises the library afterwards (the
+// user filing a scene out of an Unsorted holding folder, Stash's organise)
+// leaves that pointer aimed at nothing and forage never notices.
+//
+// Observed live: 23 confirmed grabs placed 20-40 days earlier into
+// /data/porn/Media/Unsorted, whose files had since moved to category
+// folders. The seeding cull then refuses to retire those torrents forever
+// (it will not delete on an unverifiable copy), and a purge would RemoveAll
+// the dead path and report success while the real file survived.
+func TestReconcileRepairsMovedFile(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const (
+		performer = "Moved Performer"
+		fileName  = "moved-scene.mp4"
+		sdbID     = "sdb-moved-0001"
+	)
+	// Where forage put it (and where it no longer is).
+	stalePath := filepath.Join(r.libRoot, "Unsorted", fileName)
+	if err := os.MkdirAll(filepath.Dir(stalePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Where it actually lives now.
+	movedPath := filepath.Join(r.libRoot, performer, fileName)
+	if err := os.MkdirAll(filepath.Dir(movedPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(movedPath, []byte("real file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: fileName, Client: "qbit", ClientID: "movedhash",
+		Category: "forager", Status: "confirmed", PlacedPath: stalePath,
+		PerformerName: performer, Kind: "single",
+		ActualStashDBID: sdbID, ConfirmedAt: now - 86400, GrabbedAt: now - 90000,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	// Stash knows the scene and reports its CURRENT path. The rig sets no
+	// StashPathMapping, which is the single-mount case: Stash's path is
+	// forage's path verbatim.
+	r.stash.set([]fakeScene{{id: "9001", title: "Moved", path: movedPath, stashDBID: sdbID}})
+
+	forceReconcile(r)
+	r.tick(t)
+
+	g := r.get(t, id)
+	if g.PlacedPath != movedPath {
+		t.Fatalf("placed_path=%q, want repaired to %q", g.PlacedPath, movedPath)
+	}
+	if g.Status != "confirmed" {
+		t.Errorf("status=%q, want confirmed (a repair must not change the verdict)", g.Status)
+	}
+}
+
+// TestReconcileLeavesPresentFileAlone is the guard: a file that IS where the
+// grab says must never be second-guessed against Stash. Without this, any
+// scene Stash reports at a different path (a duplicate, a re-encode) could
+// walk a correct pointer onto the wrong file.
+func TestReconcileLeavesPresentFileAlone(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const (
+		performer = "Present Performer"
+		fileName  = "present-scene.mp4"
+		sdbID     = "sdb-present-01"
+	)
+	placed := filepath.Join(r.libRoot, performer, fileName)
+	if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(placed, []byte("still here"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A DIFFERENT path Stash also knows for this cross-id.
+	other := filepath.Join(r.libRoot, "Elsewhere", fileName)
+	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("decoy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: fileName, Client: "qbit", ClientID: "presenthash",
+		Category: "forager", Status: "confirmed", PlacedPath: placed,
+		PerformerName: performer, Kind: "single",
+		ActualStashDBID: sdbID, ConfirmedAt: now - 86400, GrabbedAt: now - 90000,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	r.stash.set([]fakeScene{{id: "9002", title: "Present", path: other, stashDBID: sdbID}})
+
+	forceReconcile(r)
+	r.tick(t)
+
+	if g := r.get(t, id); g.PlacedPath != placed {
+		t.Fatalf("placed_path=%q, want it LEFT at %q — a present file is correct by definition",
+			g.PlacedPath, placed)
 	}
 }

@@ -3,6 +3,7 @@ package poller
 import (
 	"context"
 	"errors"
+	"os"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
@@ -77,6 +78,7 @@ func (p *Poller) reconcileConfirmed(ctx context.Context) {
 	// the nothing-active early return in tickOnce was the same lesson.)
 	p.reconcileUnlinked(ctx, stashC, since)
 	p.reconcileMismatched(ctx, stashC, since)
+	p.reconcileMovedFiles(ctx, stashC)
 }
 
 // reconcileUnlinked backfills cross-ids onto confirmed-but-unlinked grabs.
@@ -214,4 +216,110 @@ func (p *Poller) applyLateLink(ctx context.Context, g grabs.Grab, stashDBID stri
 	}
 	p.log.Info("reconcile: late StashDB link",
 		"id", g.ID, "stashdb_id", stashDBID, "status", g.Status)
+}
+
+// reconcileMovedFiles repairs placed_path on confirmed grabs whose file has
+// been moved under forage's feet.
+//
+// forage records where IT put a file. Anything that reorganises the library
+// afterwards — the user filing a scene out of an Unsorted holding folder,
+// Stash's own organise — leaves that pointer aimed at nothing, and forage
+// never notices. The observed case: 23 grabs, all placed 20 to 40 days
+// earlier into /data/porn/Media/Unsorted, whose files had since moved to
+// category folders.
+//
+// A stale pointer is not cosmetic. It costs two things:
+//
+//   - the seeding cull refuses to retire a torrent it cannot verify a
+//     library copy for (correctly — it will not delete on a false
+//     negative), so those torrents seed forever with no way out;
+//   - a purge RemoveAll's the recorded path, finds nothing, and reports
+//     success while the real file survives untouched.
+//
+// The cross-id makes the repair safe: Stash is asked where THAT scene's
+// file is now, the answer is reverse-mapped into forage's namespace, and it
+// is only adopted if a file actually exists there. Nothing is inferred from
+// a name.
+func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) {
+	// With the library mount gone, EVERY placed_path stats missing. Repointing
+	// the whole table off Stash during an outage is exactly the kind of
+	// confident wrongness the library-health latch exists to prevent.
+	if !p.libraryHealthy() {
+		return
+	}
+	mapping := p.pool.Settings().StashPathMapping
+	endpoint, eerr := p.identifyEndpoint(ctx, stashC)
+	if eerr != nil || endpoint == "" {
+		return // no StashDB endpoint configured in Stash: cross-ids can't be resolved
+	}
+
+	total, err := p.repo.CountConfirmedPlacedLinked(ctx)
+	if err != nil {
+		p.log.Warn("reconcile: count placed", "err", err)
+		return
+	}
+	if total == 0 {
+		p.movedCursor = 0
+		return
+	}
+	if p.movedCursor >= total {
+		p.movedCursor = 0
+	}
+	rows, err := p.repo.ConfirmedPlacedLinked(ctx, reconcileBatch, p.movedCursor)
+	if err != nil {
+		p.log.Warn("reconcile: list placed", "err", err)
+		return
+	}
+	p.movedCursor += reconcileBatch
+
+	repaired := 0
+	for i := range rows {
+		g := rows[i]
+		// Only a MISSING file is a candidate. A present one is correct by
+		// definition and must never be second-guessed against Stash.
+		if _, serr := os.Stat(g.PlacedPath); serr == nil {
+			continue
+		}
+		refs, rerr := stashC.FindSceneRefsByStashID(ctx, endpoint, g.ActualStashDBID)
+		if rerr != nil || len(refs) == 0 {
+			continue // Stash down, or it no longer knows this scene: leave it alone
+		}
+		fresh := ""
+		for _, ref := range refs {
+			// An empty mapping means Stash and forage share one mount, so
+			// Stash's path IS forage's. Reverse() returns "" for that case,
+			// which would silently disable this repair on every single-mount
+			// deployment (the common Docker shape) if taken as a failure.
+			cand := ref.Path
+			if mapping != "" {
+				cand = pathmap.Reverse(ref.Path, mapping)
+			}
+			if cand == "" || cand == g.PlacedPath {
+				continue
+			}
+			// The file must genuinely be there. Without this the repair would
+			// just swap one unverifiable path for another.
+			if _, serr := os.Stat(cand); serr == nil {
+				fresh = cand
+				break
+			}
+		}
+		if fresh == "" {
+			continue
+		}
+		old := g.PlacedPath
+		g.PlacedPath = fresh
+		g.Reason = "reconcile: file moved; placed path repaired from Stash"
+		if uerr := p.repo.Update(ctx, g); uerr != nil {
+			if !errors.Is(uerr, grabs.ErrStaleUpdate) {
+				p.log.Warn("reconcile: repair placed path", "id", g.ID, "err", uerr)
+			}
+			continue
+		}
+		repaired++
+		p.log.Info("reconcile: placed path repaired", "id", g.ID, "from", old, "to", fresh)
+	}
+	if repaired > 0 {
+		p.log.Info("reconcile: repaired moved files", "count", repaired)
+	}
 }
