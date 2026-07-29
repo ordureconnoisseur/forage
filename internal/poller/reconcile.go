@@ -58,6 +58,17 @@ const (
 	// identified stay in the result set permanently, so a pass must not
 	// try to drain it — the cursor rotates through instead.
 	reconcileBatch = 40
+
+	// The moved-file pass separates how WIDE it scans from how much work
+	// it may do, because its two costs are wildly different: every row
+	// costs one os.Stat, and only the rare row whose file is missing costs
+	// a Stash lookup plus a write. Sharing reconcileBatch made coverage
+	// hostage to the expensive case — 1637 rows on the reference instance
+	// at 40 per 15-minute pass is ~10 hours to notice a moved file.
+	// Scanning wider closes that to about an hour while the repair cap
+	// keeps the expensive half bounded to the same 40 as before.
+	movedScanBatch = 400
+	movedRepairCap = 40
 )
 
 // reconcileConfirmed backfills the StashDB cross-id on settled grabs Stash
@@ -265,12 +276,12 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 	if p.movedCursor >= total {
 		p.movedCursor = 0
 	}
-	rows, err := p.repo.ConfirmedPlacedLinked(ctx, reconcileBatch, p.movedCursor)
+	rows, err := p.repo.ConfirmedPlacedLinked(ctx, movedScanBatch, p.movedCursor)
 	if err != nil {
 		p.log.Warn("reconcile: list placed", "err", err)
 		return
 	}
-	p.movedCursor += reconcileBatch
+	p.movedCursor += movedScanBatch
 
 	repaired := 0
 	for i := range rows {
@@ -318,6 +329,12 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 		}
 		repaired++
 		p.log.Info("reconcile: placed path repaired", "id", g.ID, "from", old, "to", fresh)
+		if repaired >= movedRepairCap {
+			// Stop the EXPENSIVE half here, not the scan. The cursor has
+			// already advanced, so the rest of this window is picked up on
+			// the next rotation rather than being retried immediately.
+			break
+		}
 	}
 	if repaired > 0 {
 		p.log.Info("reconcile: repaired moved files", "count", repaired)

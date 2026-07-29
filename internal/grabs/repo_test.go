@@ -203,3 +203,47 @@ func TestCountFilteredMatchesFilter(t *testing.T) {
 		t.Errorf("count confirmed = %d, want 200 (more than one page)", total)
 	}
 }
+
+// TestConfirmedPlacedLinkedHonoursWideLimit pins the ceiling the moved-file
+// repair pass depends on. The sibling queries clamp above 200 because each
+// row they return costs a Stash lookup; this one only stats each row, so it
+// scans wide. When it shared the 200 ceiling, asking for 400 silently
+// returned 50 — NARROWER than the 40-row default it was widening.
+func TestConfirmedPlacedLinkedHonoursWideLimit(t *testing.T) {
+	r := newTestRepo(t)
+	ctx := context.Background()
+	const n = 260
+	for i := 0; i < n; i++ {
+		id, err := r.Insert(ctx, Grab{
+			ReleaseTitle: "rel", Client: "qbit", ClientID: "h" + itoa(i),
+			Status: "confirmed", PlacedPath: "/lib/x" + itoa(i) + ".mp4",
+			ActualStashDBID: "sdb-" + itoa(i),
+		})
+		if err != nil || id == 0 {
+			t.Fatalf("insert %d: %v", i, err)
+		}
+	}
+	got, err := r.ConfirmedPlacedLinked(ctx, 400, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != n {
+		t.Fatalf("limit 400 returned %d of %d rows; a silent clamp would give 50", len(got), n)
+	}
+	total, err := r.CountConfirmedPlacedLinked(ctx)
+	if err != nil || total != n {
+		t.Fatalf("count = %d (%v), want %d", total, err, n)
+	}
+}
+
+func itoa(i int) string {
+	if i == 0 {
+		return "0"
+	}
+	var b []byte
+	for i > 0 {
+		b = append([]byte{byte('0' + i%10)}, b...)
+		i /= 10
+	}
+	return string(b)
+}
