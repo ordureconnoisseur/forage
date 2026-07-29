@@ -170,12 +170,18 @@ func TestReconcileSkipsPacks(t *testing.T) {
 // It used to pin a 14-day window on the backfill, on the reasoning that a
 // file still unlinked after two weeks "genuinely isn't on StashDB, and
 // re-checking it forever costs a Stash round-trip per pass to learn
-// nothing". Sampling the live instance said otherwise: of 25 unlinked grabs,
-// 10 (40%) already carried a stash_id in Stash. Identify had simply run
-// later than the window, and forage had stopped looking. Those rows averaged
-// 27 days old, so nothing would ever have revisited them — and without a
-// cross-id they are invisible to the moved-file repair, to dedup, and to
-// performer re-filing.
+// nothing". Sampling the live instance said otherwise: of 60 unlinked grabs
+// drawn from the whole set, 18 (30%) already carried a stash_id in Stash.
+// Identify had simply run later than the window, and forage had stopped
+// looking. Those rows averaged 27 days old, so nothing would ever have
+// revisited them — and without a cross-id they are invisible to the
+// moved-file repair, to dedup, and to performer re-filing.
+//
+// (An earlier pass at this quoted 40%, from 25 rows sampled only out of the
+// Unsorted subset and matched by name alone. The 30% here is the honest
+// figure: a larger sample across the whole set, counting a scene only when
+// its FILE PATH contains the grab's filename, so a same-name different-scene
+// hit cannot inflate it. The conclusion is unchanged; the number is not.)
 //
 // The cost the old comment worried about is real but small and bounded: the
 // caller still takes reconcileBatch rows per pass behind a rotating cursor,
