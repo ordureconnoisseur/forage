@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
@@ -330,11 +331,26 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 			if mapping != "" {
 				cand = pathmap.Reverse(ref.Path, mapping)
 			}
-			if cand == "" || cand == g.PlacedPath || pathmap.Base(cand) != want {
+			if cand == "" {
 				continue
 			}
-			// The file must genuinely be there. Without this the repair would
-			// just swap one unverifiable path for another.
+			// placed_path is not always a file. A third of them (522 of 1637
+			// on the reference instance) are DIRECTORIES: a single whose
+			// release was a folder with the video inside. Stash only ever
+			// reports the file, so matching the leaf basename would refuse
+			// every one of those and leave the repair inert exactly where the
+			// unsafe version had been doing something.
+			//
+			// Same principle either way: the recorded NAME is the evidence.
+			// Find that name among the candidate's components and adopt the
+			// path up to and including it — the file itself when placed_path
+			// was a file, its containing directory when it was a directory.
+			cand = truncateAtComponent(cand, want)
+			if cand == "" || cand == g.PlacedPath {
+				continue
+			}
+			// It must genuinely be there. Without this the repair would just
+			// swap one unverifiable path for another.
 			if _, serr := os.Stat(cand); serr != nil {
 				continue
 			}
@@ -367,4 +383,30 @@ func (p *Poller) reconcileMovedFiles(ctx context.Context, stashC *stash.Client) 
 	if repaired > 0 {
 		p.log.Info("reconcile: repaired moved files", "count", repaired)
 	}
+}
+
+// truncateAtComponent returns path cut to end at the LAST component equal to
+// name, or "" when no component matches. It is how the moved-file repair
+// keeps one rule for both shapes of placed_path: a file's own basename
+// matches the final component, and a directory's basename matches an
+// ancestor, so both resolve to the thing that was actually recorded.
+//
+// Last rather than first, because a library legitimately repeats names down
+// a path (a performer folder and a release folder can share one) and the
+// deepest match is the specific one.
+func truncateAtComponent(path, name string) string {
+	if path == "" || name == "" {
+		return ""
+	}
+	sep := "/"
+	if strings.Contains(path, "\\") && !strings.Contains(path, "/") {
+		sep = "\\"
+	}
+	parts := strings.Split(path, sep)
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == name {
+			return strings.Join(parts[:i+1], sep)
+		}
+	}
+	return ""
 }

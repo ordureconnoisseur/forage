@@ -367,3 +367,120 @@ func TestReconcileLeavesPresentFileAlone(t *testing.T) {
 			g.PlacedPath, placed)
 	}
 }
+
+// TestTruncateAtComponent pins the rule that lets one repair path serve both
+// shapes of placed_path: a file's basename matches the last component, a
+// directory's matches an ancestor. Last-match wins because a library
+// legitimately repeats a name down a path.
+func TestTruncateAtComponent(t *testing.T) {
+	for _, c := range []struct{ path, name, want string }{
+		// File-shaped: adopt the file itself.
+		{"/lib/Perf/scene.mp4", "scene.mp4", "/lib/Perf/scene.mp4"},
+		// Directory-shaped: adopt the containing directory, not the file.
+		{"/lib/Perf/Pure.Taboo.1080p/Pure.Taboo.1080p.mp4", "Pure.Taboo.1080p", "/lib/Perf/Pure.Taboo.1080p"},
+		// Repeated name: the deepest one is the specific one.
+		{"/lib/Show/Show/ep.mp4", "Show", "/lib/Show/Show"},
+		// No match at all must refuse rather than guess.
+		{"/lib/Perf/other.mp4", "scene.mp4", ""},
+		{"", "scene.mp4", ""},
+		{"/lib/Perf/scene.mp4", "", ""},
+	} {
+		if got := truncateAtComponent(c.path, c.name); got != c.want {
+			t.Errorf("truncateAtComponent(%q, %q) = %q, want %q", c.path, c.name, got, c.want)
+		}
+	}
+}
+
+// TestReconcileRepairsMovedDirectoryPlacement is the case the basename rule
+// initially refused: a single whose release was a FOLDER with the video
+// inside, so placed_path is a directory while Stash only ever reports the
+// file. 522 of 1637 rows on the reference instance are this shape, and
+// refusing them left the repair inert exactly where the unsafe version had
+// been acting.
+func TestReconcileRepairsMovedDirectoryPlacement(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const (
+		performer = "Dir Performer"
+		relFolder = "Pure.Taboo.26.05.31.1080p"
+		sdbID     = "sdb-dir-0001"
+	)
+	staleDir := filepath.Join(r.libRoot, "Unsorted", relFolder)
+	movedDir := filepath.Join(r.libRoot, performer, relFolder)
+	movedFile := filepath.Join(movedDir, relFolder+".mp4")
+	if err := os.MkdirAll(movedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(movedFile, []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: relFolder, Client: "qbit", ClientID: "dirhash",
+		Category: "forager", Status: "confirmed", PlacedPath: staleDir,
+		PerformerName: performer, Kind: "single",
+		ActualStashDBID: sdbID, ConfirmedAt: now - 86400, GrabbedAt: now - 90000,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// Stash reports the FILE, not the folder.
+	r.stash.set([]fakeScene{{id: "9101", title: "Dir", path: movedFile, stashDBID: sdbID}})
+
+	forceReconcile(r)
+	r.tick(t)
+
+	g := r.get(t, id)
+	if g.PlacedPath != movedDir {
+		t.Fatalf("placed_path=%q, want the DIRECTORY %q (not the file inside it)",
+			g.PlacedPath, movedDir)
+	}
+}
+
+// TestReconcileRefusesWrongFile is the HIGH finding from the ultra review: a
+// cross-id can resolve to several files (95 stashdb ids carry more than one
+// grab on the reference instance), and adopting the first one that exists
+// could point a grab at the user's own separate copy — which a later purge
+// would then delete.
+func TestReconcileRefusesWrongFile(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const (
+		performer = "Wrong Performer"
+		fileName  = "wanted-scene.mp4"
+		sdbID     = "sdb-wrong-001"
+	)
+	stale := filepath.Join(r.libRoot, "Unsorted", fileName)
+	// A DIFFERENT file carrying the same cross-id: the user's own copy.
+	other := filepath.Join(r.libRoot, "SomeoneElse", "a-different-encode.mp4")
+	if err := os.MkdirAll(filepath.Dir(other), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(other, []byte("not forage's file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Now().Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: fileName, Client: "qbit", ClientID: "wronghash",
+		Category: "forager", Status: "confirmed", PlacedPath: stale,
+		PerformerName: performer, Kind: "single",
+		ActualStashDBID: sdbID, ConfirmedAt: now - 86400, GrabbedAt: now - 90000,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	r.stash.set([]fakeScene{{id: "9201", title: "Other", path: other, stashDBID: sdbID}})
+
+	forceReconcile(r)
+	r.tick(t)
+
+	if g := r.get(t, id); g.PlacedPath != stale {
+		t.Fatalf("placed_path=%q, want it LEFT at %q — adopting a differently-named file "+
+			"would point this grab at a copy forage never placed, and a purge would delete it",
+			g.PlacedPath, stale)
+	}
+}
