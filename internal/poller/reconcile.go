@@ -49,11 +49,12 @@ const (
 	// slower than the tick.
 	reconcileInterval = 15 * time.Minute
 
-	// reconcileWindow bounds how far back a pass looks. A late identify
-	// lands within hours; a hand-identify might take days. Past that a
-	// still-unlinked file is genuinely not on StashDB, and re-querying it
-	// forever costs one Stash round-trip per pass to learn nothing.
-	reconcileWindow = 14 * 24 * time.Hour
+	// There is deliberately NO recency window here any more. Both passes
+	// used to carry one, and both were measured to be losing real work
+	// because of it: 30% of aged-out unlinked grabs already had a stash_id
+	// in Stash, and 91% of mismatched grabs had aged past recovery. People
+	// identify and re-file their library on their own schedule, not within
+	// a fortnight of downloading. The cursors below bound the cost instead.
 
 	// reconcileBatch caps Stash lookups per pass. Files that never get
 	// identified stay in the result set permanently, so a pass must not
@@ -85,13 +86,12 @@ func (p *Poller) reconcileConfirmed(ctx context.Context) {
 	if stashC == nil {
 		return
 	}
-	since := time.Now().Add(-reconcileWindow).Unix()
 	// Each sub-pass owns its own early exits — the first version returned
 	// from the whole reconcile when there were zero unlinked grabs, which
 	// silently skipped the mismatch recovery below. (The tests caught it;
 	// the nothing-active early return in tickOnce was the same lesson.)
 	p.reconcileUnlinked(ctx, stashC)
-	p.reconcileMismatched(ctx, stashC, since)
+	p.reconcileMismatched(ctx, stashC)
 	p.reconcileMovedFiles(ctx, stashC)
 }
 
@@ -160,12 +160,28 @@ func (p *Poller) reconcileUnlinked(ctx context.Context, stashC *stash.Client) {
 // equalling the prediction is unambiguous evidence the user fixed the
 // match. A scene re-identified to some third id stays mismatched — that is
 // still a question for the user, and forage doesn't guess.
-func (p *Poller) reconcileMismatched(ctx context.Context, stashC *stash.Client, since int64) {
-	rows, err := p.repo.MismatchedRecent(ctx, since, reconcileBatch)
+func (p *Poller) reconcileMismatched(ctx context.Context, stashC *stash.Client) {
+	total, err := p.repo.CountMismatched(ctx)
+	if err != nil {
+		p.log.Warn("reconcile: count mismatched", "err", err)
+		return
+	}
+	if total == 0 {
+		p.mismatchCursor = 0
+		return
+	}
+	// Rotate: a mismatch the user never resolves is a permanent resident of
+	// this set, so a fixed offset-0 batch would re-check the newest few
+	// forever and never reach the rest.
+	if p.mismatchCursor >= total {
+		p.mismatchCursor = 0
+	}
+	rows, err := p.repo.Mismatched(ctx, reconcileBatch, p.mismatchCursor)
 	if err != nil {
 		p.log.Warn("reconcile: list mismatched", "err", err)
 		return
 	}
+	p.mismatchCursor += reconcileBatch
 	fixed := 0
 	for i := range rows {
 		g := rows[i]

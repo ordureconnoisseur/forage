@@ -46,6 +46,7 @@ func forceReconcile(r *rig) {
 	r.poller.lastReconcile = time.Time{}
 	r.poller.reconcileCursor = 0
 	r.poller.movedCursor = 0
+	r.poller.mismatchCursor = 0
 }
 
 // TestReconcileBackfillsLateIdentify is the bug this pass exists for: an
@@ -198,8 +199,8 @@ func TestReconcileBackfillsAgedGrabs(t *testing.T) {
 	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Comfortably older than the cutoff that used to exclude it.
-	old := time.Now().Add(-reconcileWindow - 24*time.Hour).Unix()
+	// Far older than the 14-day cutoff that used to exclude it.
+	old := time.Now().Add(-30 * 24 * time.Hour).Unix()
 	id, err := r.repo.Insert(ctx, grabs.Grab{
 		ReleaseTitle: "ancient clip", Client: "qbit", ClientID: "ancienthash",
 		Category: "forager", Status: "confirmed", PlacedPath: placed,
@@ -504,5 +505,57 @@ func TestReconcileRefusesWrongFile(t *testing.T) {
 		t.Fatalf("placed_path=%q, want it LEFT at %q — adopting a differently-named file "+
 			"would point this grab at a copy forage never placed, and a purge would delete it",
 			g.PlacedPath, stale)
+	}
+}
+
+// TestReconcileRecoversAgedMismatch is the sibling of the aged-backfill
+// case, and the same lesson: the mismatch-recovery pass existed to close
+// the "mismatched has no recovery path" residual, then carried a 14-day
+// window that reopened it after a fortnight.
+//
+// Measured on the reference instance: 134 of 148 mismatched grabs (91%) had
+// aged past that window, averaging 27 days, so the pass could only ever see
+// 14 of them. A user correcting a match a month later is the normal case.
+func TestReconcileRecoversAgedMismatch(t *testing.T) {
+	r := newRig(t, "forager")
+	ctx := context.Background()
+
+	const (
+		performer = "Aged Mismatch"
+		fileName  = "aged_mismatch.mp4"
+		predicted = "sdb-predicted-aged"
+	)
+	placed := filepath.Join(r.libRoot, performer, fileName)
+	if err := os.MkdirAll(filepath.Dir(placed), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(placed, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	id, err := r.repo.Insert(ctx, grabs.Grab{
+		ReleaseTitle: fileName, Client: "qbit", ClientID: "agedmmhash",
+		Category: "forager", Status: "mismatched", PlacedPath: placed,
+		PerformerName: performer, Kind: "single",
+		PredictedStashDBID: predicted, ActualStashDBID: "sdb-something-else",
+		CompletedAt: old, ConfirmedAt: old, GrabbedAt: old,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	// The user has since corrected the match in Stash: the scene now carries
+	// the id forage predicted all along.
+	r.stash.set([]fakeScene{{id: "401", title: "Aged", path: placed, stashDBID: predicted}})
+
+	forceReconcile(r)
+	r.tick(t)
+
+	g := r.get(t, id)
+	if g.Status != "confirmed" {
+		t.Fatalf("status=%q, want confirmed — a correction made a month later "+
+			"must still be noticed (reason=%q)", g.Status, g.Reason)
+	}
+	if g.ActualStashDBID != predicted {
+		t.Errorf("actual_stashdb_id=%q, want %q", g.ActualStashDBID, predicted)
 	}
 }
