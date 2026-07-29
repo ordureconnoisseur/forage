@@ -1426,3 +1426,36 @@ func splitAliases(s string) []string {
 	}
 	return out
 }
+
+// FindPerformerByStashDBID returns the local id of the performer carrying
+// this StashDB cross-id, or "" when Stash has none.
+//
+// Asked of Stash rather than of performer_cache, which the 12h refresh
+// populates and therefore lags a just-created performer by hours. That lag
+// made the "already have them?" guard useless in the case that matters most
+// — clicking "+" twice — where it fell through to a create and surfaced
+// Stash's raw "performer with name X already exists" instead.
+func (c *Client) FindPerformerByStashDBID(ctx context.Context, stashDBID string) (string, error) {
+	if stashDBID == "" {
+		return "", nil
+	}
+	q := `query($id:String!){
+		findPerformers(performer_filter:{stash_id_endpoint:{stash_id:$id, modifier:EQUALS}}){
+			performers { id }
+		}
+	}`
+	var resp struct {
+		FindPerformers struct {
+			Performers []struct {
+				ID string `json:"id"`
+			} `json:"performers"`
+		} `json:"findPerformers"`
+	}
+	if err := c.do(ctx, q, map[string]any{"id": stashDBID}, &resp); err != nil {
+		return "", fmt.Errorf("find performer by stash id: %w", err)
+	}
+	if len(resp.FindPerformers.Performers) == 0 {
+		return "", nil
+	}
+	return resp.FindPerformers.Performers[0].ID, nil
+}
