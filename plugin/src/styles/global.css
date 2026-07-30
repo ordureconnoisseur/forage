@@ -5541,6 +5541,16 @@ code.grab-fact-v,
   color: var(--danger, #f87171);
   border-color: var(--danger, #f87171);
 }
+/* Removing: the glyph becomes a spinner, so the button needs to centre a box
+   rather than a text glyph. Only while working, to leave the ✕ metrics alone.
+   Full opacity because this one is disabled for the honest reason that it is
+   already doing the thing, not because it is unavailable. */
+.watch-remove.is-working {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 1;
+}
 
 /* Release picker — the chosen release sits highlighted at the top; the
    "N other releases" toggle reveals the rest as radio choices. Every row is
