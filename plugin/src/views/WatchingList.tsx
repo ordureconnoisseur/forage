@@ -500,7 +500,14 @@ function WatchCard({
   onChanged: () => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  // WHICH action is in flight, not merely that one is. A shared boolean made
+  // every button report the same thing, so dismissing a release flipped the
+  // Grab button to "Grabbing…" — announcing the opposite of what was clicked.
+  // Only the button you pressed changes its label; the others just disable.
+  const [pending, setPending] = useState<
+    null | "grab" | "dismiss" | "remove" | "redo"
+  >(null);
+  const busy = pending !== null;
   const [queued, setQueued] = useState(false);
   const [expanded, setExpanded] = useState(false);
   // Which release row has its score-justification ("why ranked here") panel
@@ -511,6 +518,21 @@ function WatchCard({
   // endpoint instead of the plain best-grab.
   const [picked, setPicked] = useState(w.found_url || "");
 
+  // Release the in-flight state once the server's answer actually lands. The
+  // handlers only clear it on failure, on the theory that success re-renders
+  // the card into a different branch — but the ✕ is in every branch, so after
+  // a successful dismiss it stayed disabled until a full remount. The list
+  // keys cards by stashdb_id, so state survives the refetch and nothing else
+  // would ever reset it.
+  const seenStatus = useRef(w.status);
+  useEffect(() => {
+    if (seenStatus.current !== w.status) {
+      seenStatus.current = w.status;
+      setPending(null);
+      setQueued(false);
+    }
+  }, [w.status]);
+
   const cands = w.candidates || [];
   // The count is authoritative: the list endpoint omits the blob for
   // grabbed watches, so cands.length would read 0 for them.
@@ -518,7 +540,7 @@ function WatchCard({
   const canExpand = candCount > 0;
 
   const grab = async () => {
-    setBusy(true);
+    setPending("grab");
     try {
       if (picked && picked !== w.found_url) {
         await grabWatchCandidate(w.stashdb_id, picked);
@@ -528,23 +550,23 @@ function WatchCard({
       setQueued(true);
       onChanged();
     } catch {
-      setBusy(false);
+      setPending(null);
     }
   };
   const remove = async () => {
-    setBusy(true);
+    setPending("remove");
     try {
       await deleteWatch(w.stashdb_id);
       onChanged();
     } catch {
-      setBusy(false);
+      setPending(null);
     }
   };
   // Reject this find AND look for another now — ignores this exact release,
   // flips back to watching, then kicks an immediate re-search rather than
   // waiting for the background loop.
   const dismiss = async () => {
-    setBusy(true);
+    setPending("dismiss");
     try {
       await dismissWatch(w.stashdb_id);
       // Best-effort search kick. A search already in flight returns 409 —
@@ -556,14 +578,14 @@ function WatchCard({
       }
       onChanged();
     } catch {
-      setBusy(false);
+      setPending(null);
     }
   };
   // Discard a grabbed release that turned out bad: purge the grab (download +
   // any placed file/scene), ignore that release, flip back to watching, and
   // kick an immediate re-search for a different one.
   const redo = async () => {
-    setBusy(true);
+    setPending("redo");
     try {
       await redoWatch(w.stashdb_id);
       // Best-effort immediate re-search of just this scene. A search already
@@ -576,7 +598,7 @@ function WatchCard({
       }
       onChanged();
     } catch {
-      setBusy(false);
+      setPending(null);
     }
   };
 
@@ -698,7 +720,7 @@ function WatchCard({
                   onClick={redo}
                   title="This grab was bad — remove it and search for a different release"
                 >
-                  Find another
+                  {pending === "redo" ? "Searching…" : "Find another"}
                 </button>
               </>
             ) : avail ? (
@@ -710,7 +732,7 @@ function WatchCard({
                 >
                   {queued
                     ? "Queued ✓"
-                    : busy
+                    : pending === "grab"
                       ? "Grabbing…"
                       : `Grab${pickedRes ? " " + pickedRes.label : ""} ↓`}
                 </button>
@@ -721,7 +743,7 @@ function WatchCard({
                     onClick={dismiss}
                     title="Ignore this release and search for a different one now"
                   >
-                    Not this one
+                    {pending === "dismiss" ? "Searching…" : "Not this one"}
                   </button>
                 )}
               </>
@@ -744,13 +766,19 @@ function WatchCard({
               </span>
             )}
             <button
-              className="watch-remove"
+              className={
+                "watch-remove" + (pending === "remove" ? " is-working" : "")
+              }
               disabled={busy}
               onClick={remove}
               title="Stop watching this scene"
               aria-label="Stop watching"
             >
-              ✕
+              {pending === "remove" ? (
+                <span className="coll-spinner" aria-hidden="true" />
+              ) : (
+                "✕"
+              )}
             </button>
           </div>
         </div>
