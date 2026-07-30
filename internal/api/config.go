@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ordureconnoisseur/forager/internal/cache"
@@ -95,6 +96,7 @@ func (s *Server) configFields() map[string]configField {
 		"releasePrefs":        {Value: cfg.ReleasePrefs, Source: sources["releasePrefs"]},
 		"releaseAdvanced":     {Value: cfg.ReleaseAdvanced, Source: sources["releaseAdvanced"]},
 		"excludedSceneTags":   {Value: cfg.ExcludedSceneTags, Source: sources["excludedSceneTags"]},
+		"hideMalePerformers":  {Value: cfg.HideMalePerformers, Source: sources["hideMalePerformers"]},
 		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
 		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
 		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
@@ -231,6 +233,23 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 			if sc := s.pool.Stash(); sc != nil {
 				_ = cache.RefreshPerformers(ctx, sc, s.pool.StashDB(), s.db, s.log.With("op", "performers", "trigger", "config-save"))
 				_ = cache.RefreshStudios(ctx, sc, s.pool.StashDB(), s.db, s.log.With("op", "studios", "trigger", "config-save"))
+			}
+		}()
+	}
+
+	// Switching "hide male performers" ON needs genders for the un-owned
+	// performers on scene cards, and nothing else in forage fetches those.
+	// Waiting for the 5m ticker would leave the setting looking broken for
+	// the first few minutes after saving it, so kick a pass now.
+	if !oldCfg.HideMalePerformers && newCfg.HideMalePerformers {
+		go func() {
+			defer s.recoverPanic("config-save gender backfill")
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			if sdb := s.pool.StashDB(); sdb != nil {
+				_, _ = cache.BackfillGenders(ctx, sdb, s.db,
+					s.log.With("op", "genders", "trigger", "config-save"),
+					cache.GenderBackfillLimit)
 			}
 		}()
 	}
@@ -444,6 +463,9 @@ func (s *Server) previewConfig(patch configstore.Patch) config.Config {
 	}
 	if patch.ReleaseRules != nil {
 		merged.ReleaseRules = patch.ReleaseRules
+	}
+	if patch.HideMalePerformers != nil {
+		merged.HideMalePerformers = patch.HideMalePerformers
 	}
 	if patch.ExcludedSceneTags != nil {
 		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)

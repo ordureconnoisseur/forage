@@ -83,6 +83,9 @@ type StoredConfig struct {
 	// DiscoverFilters: named Discover content filters
 	// ("Name=GENDER1,GENDER2;..."), deployment-specific.
 	DiscoverFilters *string `json:"discoverFilters,omitempty"`
+	// HideMalePerformers hides MALE performers from the performer list and
+	// from scene-card pills. *bool so switching it back off round-trips.
+	HideMalePerformers *bool `json:"hideMalePerformers,omitempty"`
 	// ExcludedSceneTags drops scenes carrying any of these StashDB tag
 	// names from the gap analysis (case-insensitive). nil = no change.
 	ExcludedSceneTags *[]string `json:"excludedSceneTags,omitempty"`
@@ -358,6 +361,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.ReleaseAdvanced != nil {
 		base.ReleaseAdvanced = patch.ReleaseAdvanced
+	}
+	if patch.HideMalePerformers != nil {
+		base.HideMalePerformers = patch.HideMalePerformers
 	}
 	if patch.ExcludedSceneTags != nil {
 		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)

@@ -101,6 +101,26 @@ CREATE TABLE IF NOT EXISTS scene_performer (
 );
 CREATE INDEX IF NOT EXISTS idx_sp_performer ON scene_performer(performer_stashdb_id);
 
+-- stashdb_performer_gender is the gender of a StashDB performer the user does
+-- NOT have locally. An owned performer's gender is already in performer_cache,
+-- read from Stash; this covers the rest, which is exactly the set that appears
+-- as an un-owned pill on a Discover scene card and therefore the only set a
+-- "hide male performers" filter can act on.
+--
+-- A separate table rather than a `gender` key on the denormalised
+-- stashdb_scene.performers blob: the blob is only rewritten when a scene is
+-- re-fetched from StashDB, so a filter reading it would appear to do nothing
+-- for hours after being switched on, and would then fill in unevenly. This is
+-- filled by a bounded background pass and is authoritative the moment it lands.
+--
+-- gender may be '' when StashDB itself records none. That is a real answer,
+-- not a missing one, and is stored so the pass does not re-ask forever.
+CREATE TABLE IF NOT EXISTS stashdb_performer_gender (
+  stashdb_id  TEXT PRIMARY KEY,
+  gender      TEXT NOT NULL DEFAULT '',
+  fetched_at  INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE TABLE IF NOT EXISTS meta (
   key   TEXT PRIMARY KEY,
   value TEXT NOT NULL

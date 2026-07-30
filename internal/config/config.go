@@ -109,6 +109,12 @@ type Config struct {
 	// Stash performer gender enums. Deployment-specific configuration:
 	// the mechanism ships dormant (no filters, no UI chips) unless set.
 	DiscoverFilters string
+	// HideMalePerformers drops MALE performers from the performer list and
+	// from the performer pills on scene cards. Off by default: it is a
+	// personal-taste filter, not a correctness one, and it only ever hides
+	// a performer whose gender is KNOWN — an unrecorded gender is not an
+	// answer, so those stay visible.
+	HideMalePerformers bool
 	// ExcludedSceneTags is a list of StashDB tag names whose scenes are
 	// dropped from the missing-scenes gap analysis (and its counts) —
 	// e.g. "Compilation", "Music Video". Matched case-insensitively.
@@ -216,6 +222,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.ReleaseAdvanced = b.envBool("FORAGER_RELEASE_ADVANCED", false, "releaseAdvanced")
 	b.ExcludedSceneTags = parseCSVStrings(b.envOr("FORAGER_EXCLUDED_SCENE_TAGS", "", "excludedSceneTags"))
 	b.DiscoverFilters = b.envOr("FORAGER_DISCOVER_FILTERS", "", "discoverFilters")
+	b.HideMalePerformers = b.envBool("FORAGER_HIDE_MALE_PERFORMERS", false, "hideMalePerformers")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -335,6 +342,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.ReleasePrefs = str("releasePrefs", stored.ReleasePrefs, b.ReleasePrefs, "")
 	out.ReleaseAdvanced = boolean("releaseAdvanced", stored.ReleaseAdvanced, b.ReleaseAdvanced, false)
 	out.DiscoverFilters = str("discoverFilters", stored.DiscoverFilters, b.DiscoverFilters, "")
+	out.HideMalePerformers = boolean("hideMalePerformers", stored.HideMalePerformers, b.HideMalePerformers, false)
 	if stored.ExcludedSceneTags != nil {
 		out.ExcludedSceneTags = append([]string(nil), (*stored.ExcludedSceneTags)...)
 		src["excludedSceneTags"] = SourceJSON

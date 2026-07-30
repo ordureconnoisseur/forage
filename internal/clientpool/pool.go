@@ -105,6 +105,9 @@ type Settings struct {
 	// DiscoverFilters: raw named-filter config for Discover
 	// ("Name=GENDER1,GENDER2;..."); parsed in the api layer.
 	DiscoverFilters string
+	// HideMalePerformers drops known-MALE performers from the performer
+	// list and from scene-card pills.
+	HideMalePerformers bool
 }
 
 // New returns an empty Pool. Reload it before using.
@@ -175,6 +178,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
 		DiscoverFilters:     cfg.DiscoverFilters,
+		HideMalePerformers:  cfg.HideMalePerformers,
 	})
 
 	// The swapped-in clients invalidate the reachability verdicts, which

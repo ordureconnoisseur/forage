@@ -93,6 +93,7 @@ func main() {
 	// Trending refreshes on its own 1h cadence — StashDB's trending
 	// list changes faster than the 12h performer-filtered cache.
 	launch(func() { runTrendingTicker(ctx, pool, database, log.With("component", "trending")) })
+	launch(func() { runGenderBackfillTicker(ctx, pool, database, log.With("component", "genders")) })
 	// Download-client reachability prober: feeds the qbitReachable /
 	// sabReachable / clientErrors fields /healthz reports and the UI's
 	// "download client unavailable" banner. Probes on a 30s ticker and
@@ -346,6 +347,39 @@ func runTrendingTicker(ctx context.Context, pool *clientpool.Pool, database *sql
 		}
 		if err := cache.RefreshTrending(ctx, pool.Stash(), sdb, database, log); err != nil {
 			log.Error("trending refresh failed", "err", err)
+		}
+	}
+	tick()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			tick()
+		}
+	}
+}
+
+// runGenderBackfillTicker records the StashDB gender of un-owned performers
+// on cached scenes, which is what "hide male performers" filters the Discover
+// pills on. Gated on the setting: the work is pure cost to a user who has it
+// off, and the pass is a no-op once caught up, so the ticker is cheap in both
+// states. Boot-fires so enabling it and restarting does not wait a cycle.
+func runGenderBackfillTicker(ctx context.Context, pool *clientpool.Pool, database *sql.DB, log *slog.Logger) {
+	const interval = 5 * time.Minute
+	tick := func() {
+		defer recoverTo(log, database, "gender backfill")
+		if !pool.Settings().HideMalePerformers {
+			return
+		}
+		sdb := pool.StashDB()
+		if sdb == nil {
+			return
+		}
+		if _, err := cache.BackfillGenders(ctx, sdb, database, log, cache.GenderBackfillLimit); err != nil {
+			log.Warn("gender backfill failed", "err", err)
 		}
 	}
 	tick()
