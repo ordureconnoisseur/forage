@@ -10,6 +10,10 @@ import { addWatch, deleteWatch } from "./api";
 
 export interface WatchScene {
   stashdb_id: string;
+  // Stash-box endpoint that issued stashdb_id. Omitted = StashDB. Carried so
+  // the daemon resolves the id against the box it came from; the ids are only
+  // unique within a box.
+  source?: string;
   title?: string;
   date?: string;
   studio?: string;
@@ -42,6 +46,7 @@ export default function WatchControl({
     try {
       await addWatch({
         stashdb_id: scene.stashdb_id,
+        source: scene.source,
         title: scene.title ?? "",
         date: scene.date,
         studio: scene.studio,

@@ -199,3 +199,25 @@ func (s *Server) getDiscoverBoxes(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"boxes": out})
 }
+
+// stashDBFor returns the client for the box that issued a stored scene id.
+//
+// source is the endpoint recorded on a watch or grab; "" means StashDB, which
+// is every row created before secondary boxes existed and every row created
+// from the primary feed. An unknown or now-unreachable source falls back to
+// StashDB rather than returning nil: the callers are enrichment paths that
+// treat a miss as "no extra detail", and a nil client would turn a cosmetic
+// gap into a skipped code path.
+//
+// This exists because a scene id is only meaningful on the box that issued it.
+// Asking StashDB about a FansDB uuid does not fail loudly; it returns nothing,
+// which reads exactly like a scene StashDB has not indexed yet.
+func (s *Server) stashDBFor(ctx context.Context, source string) *stashdb.Client {
+	if source == "" || isStashDBEndpoint(source) {
+		return s.pool.StashDB()
+	}
+	if e := s.boxByEndpoint(ctx, source); e != nil {
+		return e.client
+	}
+	return s.pool.StashDB()
+}

@@ -21,7 +21,11 @@ import (
 // available watch.
 
 type addWatchRequest struct {
-	StashDBID     string `json:"stashdb_id"`
+	StashDBID string `json:"stashdb_id"`
+	// Source is the stash-box endpoint the scene came from. Omitted (the
+	// normal case) means StashDB. Discover sends it when browsing another
+	// box, so the id can later be resolved against the box that issued it.
+	Source        string `json:"source,omitempty"`
 	Title         string `json:"title"`
 	Date          string `json:"date,omitempty"`
 	Studio        string `json:"studio,omitempty"`
@@ -58,7 +62,10 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 	// so this only fires for bare adds (curl, integrations) — keeping the
 	// Watching tab able to render a thumbnail regardless of entry point.
 	if req.ImageURL == "" {
-		if sdb := s.pool.StashDB(); sdb != nil {
+		// The box that issued the id, not necessarily StashDB — asking
+		// StashDB about a FansDB uuid returns nothing, which is
+		// indistinguishable from "StashDB has not indexed it yet".
+		if sdb := s.stashDBFor(r.Context(), req.Source); sdb != nil {
 			if sc, ferr := sdb.FindScene(r.Context(), req.StashDBID); ferr == nil && sc != nil {
 				if req.Title == "" {
 					req.Title = sc.Title
@@ -79,6 +86,7 @@ func (s *Server) postWatch(w http.ResponseWriter, r *http.Request) {
 	target := normalizeTarget(req.Target)
 	if err := s.watches.Add(r.Context(), watches.Watch{
 		StashDBID:     req.StashDBID,
+		Source:        req.Source,
 		Title:         req.Title,
 		Date:          req.Date,
 		StudioName:    req.Studio,
@@ -382,6 +390,7 @@ func (s *Server) grabAvailableWatch(ctx context.Context, id string) error {
 		ReleaseIndexer: pickIndexer,
 		Protocol:       pickProtocol,
 		SceneID:        wt.StashDBID,
+		Source:         wt.Source,
 		Confidence:     pickConfidence,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {
@@ -442,6 +451,7 @@ func (s *Server) postWatchGrabCandidate(w http.ResponseWriter, r *http.Request) 
 		ReleaseIndexer: cand.Indexer,
 		Protocol:       cand.Protocol,
 		SceneID:        wt.StashDBID,
+		Source:         wt.Source,
 		Confidence:     cand.Confidence,
 		PerformerName:  wt.PerformerName,
 	}); err != nil {

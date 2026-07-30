@@ -38,7 +38,10 @@ type grabProgress struct {
 const qbitEtaUnknown = 8640000
 
 type grabOut struct {
-	ID                  int64   `json:"id"`
+	ID int64 `json:"id"`
+	// Source is the stash-box endpoint that issued this grab's scene ids
+	// ("" = StashDB). Carried so scene-title resolution asks the right box.
+	Source              string  `json:"source,omitempty"`
 	PredictedStashDBID  string  `json:"predicted_stashdb_id,omitempty"`
 	PredictedConfidence float64 `json:"predicted_confidence,omitempty"`
 	ActualStashDBID     string  `json:"actual_stashdb_id,omitempty"`
@@ -189,6 +192,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 	for _, g := range rows {
 		out = append(out, grabOut{
 			ID:                  g.ID,
+			Source:              g.Source,
 			PredictedStashDBID:  g.PredictedStashDBID,
 			PredictedConfidence: g.PredictedConfidence,
 			ActualStashDBID:     g.ActualStashDBID,
@@ -290,7 +294,7 @@ func (s *Server) enrichSceneTitles(r *http.Request, out []grabOut) {
 		if title == "" {
 			// Cache miss: the memoised network path, which also records
 			// misses so a genuinely unknown id isn't refetched per request.
-			title = s.sceneTitle(r.Context(), sid)
+			title = s.sceneTitle(r.Context(), sid, out[i].Source)
 		}
 		if title != "" {
 			out[i].SceneTitle = title
@@ -343,7 +347,7 @@ func grabSceneID(g grabOut) string {
 // sceneTitle resolves a StashDB scene id to its title, memoised. Returns ""
 // when StashDB isn't configured, the id isn't found, or the lookup fails —
 // callers fall back to the id.
-func (s *Server) sceneTitle(ctx context.Context, id string) string {
+func (s *Server) sceneTitle(ctx context.Context, id, source string) string {
 	s.sceneTitleMu.Lock()
 	if s.sceneTitles == nil {
 		s.sceneTitles = map[string]sceneTitleEntry{}
@@ -361,7 +365,7 @@ func (s *Server) sceneTitle(ctx context.Context, id string) string {
 	s.sceneTitleMu.Unlock()
 
 	title := ""
-	if sdb := s.pool.StashDB(); sdb != nil {
+	if sdb := s.stashDBFor(ctx, source); sdb != nil {
 		if sc, err := sdb.FindScene(ctx, id); err == nil && sc != nil {
 			title = sc.Title
 		}

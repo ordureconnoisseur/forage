@@ -155,7 +155,10 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sce
 		return nil
 	}
 	prowlarrC := s.pool.Prowlarr()
-	stashDBC := s.pool.StashDB()
+	// The box that issued PredictedStashDBID. Asking StashDB about another
+	// box's uuid returns nothing, and this returns nil on a miss — so the
+	// wrong client silently disables failover for those grabs.
+	stashDBC := s.stashDBFor(ctx, g.Source)
 	if prowlarrC == nil || stashDBC == nil {
 		return nil
 	}

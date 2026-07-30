@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS watches (
   candidates TEXT NOT NULL DEFAULT '[]', grabbed_at INTEGER NOT NULL DEFAULT 0,
   performers TEXT NOT NULL DEFAULT '[]',
   search_count INTEGER NOT NULL DEFAULT 0,
-  upgrade_floor INTEGER NOT NULL DEFAULT 0);`
+  upgrade_floor INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT '');`
 
 func testRepo(t *testing.T) *Repo {
 	t.Helper()
