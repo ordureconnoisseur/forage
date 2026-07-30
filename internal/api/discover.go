@@ -89,6 +89,14 @@ type discoverResponse struct {
 //	trending_limit   max trending rows (default 20, cap 50). StashDB's
 //	                 TRENDING sort, refreshed hourly.
 func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
+	// ?box= selects a SECONDARY stash-box, which is served live and
+	// browse-only (see discover_box.go). An unknown or unreachable endpoint
+	// falls through to StashDB rather than erroring: the switcher should
+	// degrade to the working source, not to a blank page.
+	if e := s.boxByEndpoint(r.Context(), r.URL.Query().Get("box")); e != nil {
+		s.getDiscoverForBox(w, r, e)
+		return
+	}
 	days, _ := strconv.Atoi(r.URL.Query().Get("days"))
 	if days <= 0 {
 		days = 30

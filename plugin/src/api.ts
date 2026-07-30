@@ -261,8 +261,12 @@ export function fetchDiscover(opts?: {
   limit?: number;
   trendingLimit?: number;
   filter?: string; // deployment-configured content filter name
+  // Endpoint of a secondary stash-box to browse instead of StashDB. Omit
+  // (or pass the primary) for the normal cached feed.
+  box?: string;
 }): Promise<DiscoverResponse> {
   const params = new URLSearchParams();
+  if (opts?.box) params.set("box", opts.box);
   if (opts?.days != null) params.set("days", String(opts.days));
   if (opts?.favoriteOnly) params.set("favorite_only", "true");
   if (opts?.filter) params.set("flt", opts.filter);
@@ -271,6 +275,22 @@ export function fetchDiscover(opts?: {
     params.set("trending_limit", String(opts.trendingLimit));
   const qs = params.toString();
   return get<DiscoverResponse>("/discover" + (qs ? "?" + qs : ""));
+}
+
+// A selectable source on Discover. StashDB (primary) is the cached feed that
+// backs the rest of forage; the others are live-queried browse surfaces, read
+// from the stash-boxes configured in Stash itself rather than re-entered here.
+export interface DiscoverBox {
+  endpoint: string;
+  name: string;
+  primary: boolean;
+  // Why a configured box cannot be offered (no key set in Stash, or it
+  // refused the probe). Present means "listed but not selectable".
+  unreachable?: string;
+}
+
+export function fetchDiscoverBoxes(): Promise<{ boxes: DiscoverBox[] }> {
+  return get<{ boxes: DiscoverBox[] }>("/discover/boxes");
 }
 
 // ── Missing scenes ─────────────────────────────────────────────────

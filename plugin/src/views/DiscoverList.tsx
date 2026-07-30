@@ -7,6 +7,8 @@ import {
   DiscoverScene,
   addPerformerFromStashDB,
   fetchDiscover,
+  fetchDiscoverBoxes,
+  type DiscoverBox,
   performerImageURL,
   type AddWatchReq,
 } from "../api";
@@ -34,8 +36,13 @@ const TRENDING_LIMIT = 50;
 
 // Cache key for one Discover request. Must name every input that changes
 // the response, or switching day window would show the wrong cached set.
-function discoverKey(days: number, favoriteOnly: boolean, filter: string): string {
-  return `/discover?days=${days}&fav=${favoriteOnly}&filter=${filter}`;
+function discoverKey(
+  days: number,
+  favoriteOnly: boolean,
+  filter: string,
+  box: string,
+): string {
+  return `/discover?days=${days}&fav=${favoriteOnly}&filter=${filter}&box=${box}`;
 }
 
 export default function DiscoverList({
@@ -68,8 +75,44 @@ export default function DiscoverList({
   // the previous view immediately instead of spinning while the poll below
   // refetches. Same treatment as WatchingList, and for the same reason —
   // this view owns a poll timer, so useCached would be a second scheduler.
+  // Which stash-box the feed reads. "" = StashDB, the cached feed that backs
+  // the rest of forage. Anything else is a live browse of a secondary box
+  // (see the daemon's discover_box.go). Remembered, because picking a source
+  // is a mood rather than a per-visit decision.
+  const [box, setBox] = useState<string>(
+    () => localStorage.getItem("forage.discover.box") || "",
+  );
+  const [boxes, setBoxes] = useState<DiscoverBox[]>([]);
+  useEffect(() => {
+    localStorage.setItem("forage.discover.box", box);
+  }, [box]);
+  useEffect(() => {
+    let cancelled = false;
+    fetchDiscoverBoxes()
+      .then((r) => {
+        if (cancelled) return;
+        setBoxes(r.boxes || []);
+        // A remembered box that has gone away or stopped answering must not
+        // strand the page on a source it cannot load.
+        if (
+          box &&
+          !(r.boxes || []).some(
+            (b) => b.endpoint === box && !b.primary && !b.unreachable,
+          )
+        ) {
+          setBox("");
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Once per mount: the list comes from Stash's settings and the daemon
+    // caches it for minutes anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [data, setData] = useState<DiscoverResponse | null>(() =>
-    peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter)),
+    peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter, box)),
   );
   const [loading, setLoading] = useState(() => data === null);
   const [error, setError] = useState<string | null>(null);
@@ -120,13 +163,14 @@ export default function DiscoverList({
       inFlight = true;
       try {
         const r = await fetchDiscover({
+          box: box || undefined,
           filter: contentFilter || undefined,
           days,
           favoriteOnly,
           trendingLimit: TRENDING_LIMIT,
         });
         if (cancelled) return;
-        store(discoverKey(days, favoriteOnly, contentFilter), r);
+        store(discoverKey(days, favoriteOnly, contentFilter, box), r);
         setData(r);
         setError(null);
         lastFetch.current = Date.now();
@@ -142,7 +186,7 @@ export default function DiscoverList({
     }
     // Switching day window / filter is a different key: show that key's
     // cached answer if we have one rather than blanking to a spinner.
-    const hit = peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter));
+    const hit = peek<DiscoverResponse>(discoverKey(days, favoriteOnly, contentFilter, box));
     if (hit) {
       setData(hit);
       setLoading(false);
@@ -162,7 +206,7 @@ export default function DiscoverList({
       if (timer) clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [days, favoriteOnly, contentFilter, reloadKey]);
+  }, [days, favoriteOnly, contentFilter, box, reloadKey]);
 
   // Changing the day window / favourites filter swaps the scene set out
   // from under a selection — drop it rather than keep invisible picks.
@@ -241,15 +285,32 @@ export default function DiscoverList({
     setReloadKey((k) => k + 1);
   };
 
+  // What to call the active source in the headings. On a secondary box the
+  // StashDB wording is not merely imprecise, it is false: there is no day
+  // window, the scenes are not "from your performers" (that would need
+  // performers identified on THAT box), and the carousel is not StashDB's.
+  const activeBox = boxes.find((b) => (b.primary ? "" : b.endpoint) === box);
+  const boxName = activeBox?.name || (box ? "this stash-box" : "StashDB");
+
   return (
     <div>
       <div className="page-header">
         <h2>Discover</h2>
         <div className="meta">
-          Last {data.days} days · {data.scenes.length} new scene
-          {data.scenes.length === 1 ? "" : "s"} from your performers
-          {data.refreshed_at > 0 && (
-            <> · cache refreshed {relativeTime(data.refreshed_at)}</>
+          {box ? (
+            <>
+              {data.scenes.length} recent scene
+              {data.scenes.length === 1 ? "" : "s"} on {boxName} · live, not
+              cached
+            </>
+          ) : (
+            <>
+              Last {data.days} days · {data.scenes.length} new scene
+              {data.scenes.length === 1 ? "" : "s"} from your performers
+              {data.refreshed_at > 0 && (
+                <> · cache refreshed {relativeTime(data.refreshed_at)}</>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -258,7 +319,7 @@ export default function DiscoverList({
         <section className="trending-section">
           <div className="trending-head">
             <h3 className="section-header">
-              Trending on StashDB · {data.trending.length}
+              Trending on {boxName} · {data.trending.length}
             </h3>
             {data.trending_refreshed_at > 0 && (
               <div className="trending-meta">
@@ -277,7 +338,7 @@ export default function DiscoverList({
       )}
 
       <h3 className="section-header from-your-performers">
-        From your performers
+        {box ? `Recent on ${boxName}` : "From your performers"}
       </h3>
 
       <div className="controls">
@@ -287,6 +348,36 @@ export default function DiscoverList({
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {boxes.filter((b) => !b.unreachable).length > 1 && (
+          <span className="discover-boxes" role="group" aria-label="Source">
+            {boxes.map((b) => {
+              const value = b.primary ? "" : b.endpoint;
+              const active = value === box;
+              return (
+                <button
+                  key={b.endpoint}
+                  className={"grab-chip" + (active ? " active chip-any" : "")}
+                  disabled={!!b.unreachable}
+                  title={
+                    b.unreachable
+                      ? `${b.name} is configured in Stash but not usable: ${b.unreachable}`
+                      : b.primary
+                        ? "StashDB — your library's source, with owned and missing tracking"
+                        : `Browse ${b.name}. Live results; owned and missing tracking stays on StashDB.`
+                  }
+                  onClick={() => setBox(value)}
+                >
+                  <span className="chip-label">{b.name}</span>
+                </button>
+              );
+            })}
+          </span>
+        )}
+        {/* Both of these read the StashDB cache: the day window bounds
+            recent_scene_cache, and "favourites" means a local performer.
+            Neither has meaning against a live secondary box, so rather than
+            leave two dead controls they step aside. */}
+        {!box && (
         <select
           className="discover-days"
           value={days}
@@ -298,6 +389,8 @@ export default function DiscoverList({
             </option>
           ))}
         </select>
+        )}
+        {!box && (
         <label className="check">
           <input
             type="checkbox"
@@ -306,6 +399,7 @@ export default function DiscoverList({
           />
           Favourites only
         </label>
+        )}
         {Object.keys(data.filters ?? {}).length > 0 && (
           <span className="discover-filters">
             {Object.keys(data.filters ?? {})
@@ -375,7 +469,9 @@ export default function DiscoverList({
       {filtered.length === 0 ? (
         <div className="empty">
           {data.scenes.length === 0
-            ? "No recent scenes found from your performers. The cache refreshes every 12 hours."
+            ? box
+              ? `No scenes came back from ${boxName}.`
+              : "No recent scenes found from your performers. The cache refreshes every 12 hours."
             : "No scenes match this filter."}
         </div>
       ) : (

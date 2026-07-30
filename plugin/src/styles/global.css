@@ -7928,3 +7928,20 @@ code.grab-fact-v,
   flex-direction: column;
   gap: 6px;
 }
+
+/* Discover source switcher: which stash-box the feed reads. Sits with the
+   other Discover controls rather than in a header of its own — it is one more
+   way to narrow what you are looking at, not a mode. */
+.discover-boxes {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* A box configured in Stash that cannot answer stays visible but inert, so
+   "I never set that up" reads differently from "forage is ignoring it". The
+   reason is in the title attribute. */
+.discover-boxes .grab-chip:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
