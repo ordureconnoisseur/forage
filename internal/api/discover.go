@@ -227,12 +227,12 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	if sdbPerfs, perr := loadStashDBPerformers(r.Context(), s.db, sceneIDs); perr != nil {
 		s.log.Warn("discover: stashdb performer hydrate", "err", perr)
 	} else if len(sdbPerfs) > 0 {
-		localByStashDBID, lerr := localPerformerIDsByStashDBID(r.Context(), s.db)
+		localByStashDBID, localByName, lerr := localPerformerIDsByStashDBID(r.Context(), s.db)
 		if lerr != nil {
-			s.log.Warn("discover: local cross-id map", "err", lerr)
+			s.log.Warn("discover: local performer index", "err", lerr)
 		} else {
-			scenes = addMissingPerformers(scenes, sdbPerfs, localByStashDBID)
-			trending = addMissingPerformers(trending, sdbPerfs, localByStashDBID)
+			scenes = addMissingPerformers(scenes, sdbPerfs, localByStashDBID, localByName)
+			trending = addMissingPerformers(trending, sdbPerfs, localByStashDBID, localByName)
 		}
 	}
 
@@ -537,7 +537,7 @@ func loadStashDBPerformers(ctx context.Context, db *sql.DB, sceneIDs []string) (
 // where the local performer has one, else by name — a local performer
 // without a cross-id would otherwise be duplicated by its own StashDB entry.
 func addMissingPerformers(scenes []discoverScene, byScene map[string][]stashDBPerformer,
-	localByStashDBID map[string]string) []discoverScene {
+	localByStashDBID, localByName map[string]string) []discoverScene {
 	for i := range scenes {
 		sdbPerfs := byScene[scenes[i].StashDBID]
 		if len(sdbPerfs) == 0 {
@@ -551,11 +551,33 @@ func addMissingPerformers(scenes []discoverScene, byScene map[string][]stashDBPe
 			if sp.ID == "" || sp.Name == "" {
 				continue
 			}
-			// Already on the card as a local pill?
-			if _, isLocal := localByStashDBID[sp.ID]; isLocal {
-				continue
-			}
 			if haveName[strings.ToLower(sp.Name)] {
+				continue // already rendered on this card
+			}
+			haveName[strings.ToLower(sp.Name)] = true
+
+			// Do we actually own them? Two ways to know, because either
+			// index can be stale or absent:
+			//   - by cross-id, which misses the 308-of-1087 local performers
+			//     that carry no cross-id at all;
+			//   - by name, which catches those.
+			localID, owned := localByStashDBID[sp.ID]
+			if !owned {
+				localID, owned = localByName[strings.ToLower(sp.Name)]
+			}
+			if owned {
+				// Render them as the local performer they are, rather than
+				// skipping. The scene's own local_performer_ids list is
+				// rebuilt on a 12h cadence, so a performer added minutes ago
+				// is missing from it — skipping here left them with NO pill,
+				// and trusting that list alone offered to add someone the
+				// user already had.
+				scenes[i].Performers = append(scenes[i].Performers, discoverPerformer{
+					StashID:   localID,
+					Name:      sp.Name,
+					StashDBID: sp.ID,
+					Local:     true,
+				})
 				continue
 			}
 			scenes[i].Performers = append(scenes[i].Performers, discoverPerformer{
@@ -563,7 +585,6 @@ func addMissingPerformers(scenes []discoverScene, byScene map[string][]stashDBPe
 				StashDBID: sp.ID,
 				Local:     false,
 			})
-			haveName[strings.ToLower(sp.Name)] = true
 		}
 	}
 	return scenes
@@ -573,21 +594,28 @@ func addMissingPerformers(scenes []discoverScene, byScene map[string][]stashDBPe
 // for everyone the user already has. Used to tell "this StashDB performer is
 // already on the card as a local pill" from "this one is genuinely missing",
 // which decides whether a "+" is offered.
-func localPerformerIDsByStashDBID(ctx context.Context, db *sql.DB) (map[string]string, error) {
+func localPerformerIDsByStashDBID(ctx context.Context, db *sql.DB) (byStashDBID, byName map[string]string, err error) {
+	// Every local performer, not only the cross-id'd ones: 308 of 1087 on the
+	// reference instance have no cross-id, and indexing by id alone treats
+	// every one of them as un-owned.
 	rows, err := db.QueryContext(ctx,
-		`SELECT stashdb_id, stash_id FROM performer_cache
-		  WHERE stashdb_id IS NOT NULL AND stashdb_id != ''`)
+		`SELECT COALESCE(stashdb_id,''), stash_id, name FROM performer_cache`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
-	out := map[string]string{}
+	byStashDBID, byName = map[string]string{}, map[string]string{}
 	for rows.Next() {
-		var sdbID, local string
-		if err := rows.Scan(&sdbID, &local); err != nil {
-			return nil, err
+		var sdbID, local, name string
+		if err := rows.Scan(&sdbID, &local, &name); err != nil {
+			return nil, nil, err
 		}
-		out[sdbID] = local
+		if sdbID != "" {
+			byStashDBID[sdbID] = local
+		}
+		if name != "" {
+			byName[strings.ToLower(name)] = local
+		}
 	}
-	return out, rows.Err()
+	return byStashDBID, byName, rows.Err()
 }

@@ -106,6 +106,24 @@ func (s *Server) postPerformerFromStashDB(w http.ResponseWriter, r *http.Request
 	s.log.Info("performer created from StashDB", "name", scraped.Name,
 		"stashdb_id", req.StashDBID, "local_id", localID)
 
+	// Record them in performer_cache immediately. That cache is rebuilt on a
+	// multi-hour cadence, so without this the daemon keeps reporting the
+	// performer it JUST created as un-owned, and the pill goes on offering to
+	// add them until the next refresh. Reported as "I do have Cherry Kiss"
+	// against a card still showing her "+".
+	//
+	// Best-effort: the performer exists in Stash either way, and the next
+	// refresh would fix the cache regardless.
+	if _, cerr := s.db.ExecContext(r.Context(), `
+		INSERT INTO performer_cache (stash_id, stashdb_id, name, favorite, scene_count)
+		VALUES (?, ?, ?, 0, 0)
+		ON CONFLICT(stash_id) DO UPDATE SET
+			stashdb_id = excluded.stashdb_id,
+			name       = excluded.name`,
+		localID, req.StashDBID, scraped.Name); cerr != nil {
+		s.log.Warn("add performer: cache insert", "local_id", localID, "err", cerr)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "local_id": localID, "name": scraped.Name,
 	})
