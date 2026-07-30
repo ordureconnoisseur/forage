@@ -284,21 +284,33 @@ func (s *Server) ownedByFingerprint(ctx context.Context, scenes []stashdb.Scene)
 		// the user sees again, which is the harmless direction.
 		s.log.Warn("discover box: fingerprint join", "err", err)
 	}
-	ownedCopies, err := s.ownedSceneCopies(ctx)
-	if err != nil {
-		s.log.Warn("discover box: owned copies", "err", err)
-		return nil
-	}
+	// The narrow per-endpoint sweep, not ownedSceneCopies. The question here
+	// is only "is this StashDB id in the library"; ownedSceneCopies answers a
+	// richer one (every copy, with path and resolution) by paging all 124,094
+	// scenes with their file lists, and its 60s memo meant a browse page paid
+	// for that sweep about every other load. This asks for 20,300 ids and
+	// nothing else, and shares the 5-minute memo the box path already has.
+	ownedStashDB := s.ownedOnBox(ctx, s.stashDBEndpointCached(ctx))
 	out := map[string]bool{}
 	for i, stashDBID := range matched {
 		if stashDBID == "" || i >= len(scenes) {
 			continue
 		}
-		if len(ownedCopies[stashDBID]) > 0 {
+		if ownedStashDB[stashDBID] {
 			out[scenes[i].ID] = true
 		}
 	}
 	return out
+}
+
+// stashDBEndpointCached is stashDBEndpoint without needing a Stash client in
+// hand, for callers that only want the string.
+func (s *Server) stashDBEndpointCached(ctx context.Context) string {
+	sc := s.pool.Stash()
+	if sc == nil {
+		return ""
+	}
+	return s.stashDBEndpoint(ctx, sc)
 }
 
 // getDiscoverForBox serves the Discover feed from a secondary stash-box.
