@@ -681,7 +681,9 @@ button {
 }
 .watch-group-title {
   display: flex;
-  align-items: baseline;
+  /* center, not baseline: the chevron is a masked box with no text baseline,
+     so baseline alignment lifted it clear of the name beside it. */
+  align-items: center;
   gap: 12px;
   flex-wrap: wrap;
   min-width: 0;
@@ -5278,8 +5280,8 @@ code.grab-fact-v,
 }
 .watch-drawer {
   display: inline-flex;
-  align-items: baseline;
-  gap: 7px;
+  align-items: center;
+  gap: 8px;
   background: none;
   border: none;
   padding: 6px 0;
@@ -5295,6 +5297,11 @@ code.grab-fact-v,
   opacity: 0.95;
 }
 /* The number is what you scan; the label just says which pile. */
+.watch-drawer-text {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+}
 .watch-drawer-count {
   font-variant-numeric: tabular-nums;
   font-weight: 600;

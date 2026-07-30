@@ -226,13 +226,19 @@ export default function WatchingList({
 //
 // One nesting level, and the second is visibly subordinate rather than
 // visually identical to the first.
+// ONE drawer, not one per status. Splitting it into "still searching" and
+// "grabbed" spent two chevrons and two labels restating something the group
+// header already says: "4 of 8 grabbed" tells you 4 are grabbed and 4 are
+// not. The drawer only has to be a door.
+//
+// The cards inside carry their own status, so nothing is lost by mixing
+// them, and "others" is the honest label — everything in this group other
+// than what you can act on right now.
 function WatchDrawer({
-  label,
   count,
   open,
   onToggle,
 }: {
-  label: string;
   count: number;
   open: boolean;
   onToggle: () => void;
@@ -246,8 +252,10 @@ function WatchDrawer({
       onClick={onToggle}
     >
       <span className={"fchev" + (open ? " open" : "")} aria-hidden="true" />
-      <span className="watch-drawer-count">{count}</span>
-      <span className="watch-drawer-label">{label}</span>
+      <span className="watch-drawer-text">
+        <span className="watch-drawer-count">{count}</span>
+        <span className="watch-drawer-label">others</span>
+      </span>
     </button>
   );
 }
@@ -282,9 +290,10 @@ function WatchGroup({
   const [clearDoneBusy, setClearDoneBusy] = useState(false);
   // One drawer open at a time. Two open at once rebuilds the wall of cards
   // this was meant to remove, and there is no reason to compare the two.
-  const [openDrawer, setOpenDrawer] = useState<null | "searching" | "grabbed">(
-    null,
-  );
+  const [showOthers, setShowOthers] = useState(false);
+  // Everything in the group other than what you can act on. Still-searching
+  // first, then grabbed, which is the order groupWatches already sorts them.
+  const others = items.filter((w) => w.status !== "available");
   // Nothing ready and nothing still being searched for: the batch is done.
   const settled = isBatch && available.length === 0 && watching.length === 0;
 
@@ -410,46 +419,15 @@ function WatchGroup({
             </ul>
           )}
 
-          {/* The footer: one bar holding everything tucked away. Both
-              drawers share a row, so putting things away costs a line, not
-              a section each. */}
-          {(watching.length > 0 || grabbed.length > 0) && (
+          {/* The footer: one line holding everything tucked away. */}
+          {others.length > 0 && (
             <div className="watch-drawers">
               <WatchDrawer
-                label="still searching"
-                count={watching.length}
-                open={openDrawer === "searching"}
-                onToggle={() =>
-                  setOpenDrawer((d) => (d === "searching" ? null : "searching"))
-                }
+                count={others.length}
+                open={showOthers}
+                onToggle={() => setShowOthers((v) => !v)}
               />
-              <WatchDrawer
-                label="grabbed"
-                count={grabbed.length}
-                open={openDrawer === "grabbed"}
-                onToggle={() =>
-                  setOpenDrawer((d) => (d === "grabbed" ? null : "grabbed"))
-                }
-              />
-              {settled && (
-                // Only once there is nothing left to act on. Clearing an
-                // UNFINISHED batch deletes its still-searching rows, which
-                // silently cancels active hunts — not something to put one
-                // tap away on every row. Finished is also the moment the
-                // action actually means something.
-                <span className="watch-drawer-actions">
-                  <button
-                    type="button"
-                    className="setup-link watch-drawer-danger"
-                    disabled={clearBusy}
-                    onClick={clear}
-                    title="Remove every watch in this finished batch"
-                  >
-                    {clearBusy ? "Clearing…" : "clear batch"}
-                  </button>
-                </span>
-              )}
-              {openDrawer === "grabbed" && (
+              {showOthers && grabbed.length > 0 && (
                 <span className="watch-drawer-actions">
                   <button
                     type="button"
@@ -468,17 +446,30 @@ function WatchGroup({
                     className="setup-link watch-drawer-danger"
                     disabled={clearDoneBusy}
                     onClick={clearDone}
-                    title="Remove these finished watches. Does not touch files or grabs."
+                    title="Remove the finished watches here. Does not touch files or grabs."
                   >
                     {clearDoneBusy ? "Clearing…" : "clear finished"}
                   </button>
                 </span>
               )}
+              {settled && !showOthers && (
+                <span className="watch-drawer-actions">
+                  <button
+                    type="button"
+                    className="setup-link watch-drawer-danger"
+                    disabled={clearBusy}
+                    onClick={clear}
+                    title="Remove every watch in this finished batch"
+                  >
+                    clear batch
+                  </button>
+                </span>
+              )}
             </div>
           )}
-          {openDrawer && (
+          {showOthers && (
             <ul className="watch-list watch-list-drawer">
-              {(openDrawer === "searching" ? watching : grabbed).map((w) => (
+              {others.map((w) => (
                 <WatchCard
                   key={w.stashdb_id}
                   w={w}
