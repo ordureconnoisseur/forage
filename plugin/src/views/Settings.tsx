@@ -920,10 +920,38 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
-          title="Scene filtering"
+          title="Filtering"
           isOpen={open.filtering}
           onToggle={() => setOpen((o) => ({ ...o, filtering: !o.filtering }))}
         >
+          <Field label="Hide male performers">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={boolValue(
+                  "hideMalePerformers",
+                  data?.fields["hideMalePerformers"],
+                )}
+                onChange={(e) =>
+                  setField("hideMalePerformers", e.target.checked)
+                }
+              />
+              Leave male performers out of the performer list and off scene
+              cards
+            </label>
+            <SourceBadge field={data?.fields["hideMalePerformers"]} />
+          </Field>
+          <p className="settings-tip">
+            Hides performers StashDB or Stash records as male — from the
+            Performers grid and from the performer pills on Discover cards,
+            including the ones offering to add someone to your library. Only a
+            performer whose gender is actually recorded is hidden; a blank
+            gender is not treated as male, so nobody disappears on the strength
+            of a missing field. Scenes themselves are never hidden, just their
+            male pills. Turning this on fetches the genders of performers you
+            don't own (nothing else needs them), which takes a moment the first
+            time.
+          </p>
           <Field label="Exclude StashDB tags">
             <ExcludedTagsEditor
               value={

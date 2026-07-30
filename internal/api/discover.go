@@ -236,6 +236,34 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// "Hide male performers", applied LAST so it acts on the finished pill
+	// lists — including the un-owned performers only just added above, which
+	// are the ones this is really for. An owned performer carries a gender
+	// from performer_cache; an un-owned one is only knowable from the
+	// backfilled StashDB gender table.
+	if s.pool.Settings().HideMalePerformers {
+		need := make([]string, 0, 64)
+		for _, list := range [][]discoverScene{scenes, trending} {
+			for i := range list {
+				for _, p := range list[i].Performers {
+					if !p.Local && p.StashDBID != "" && p.Gender == "" {
+						need = append(need, p.StashDBID)
+					}
+				}
+			}
+		}
+		byID, gerr := cache.GendersByStashDBID(r.Context(), s.db, need)
+		if gerr != nil {
+			// Fail open: showing a performer this filter would have hidden
+			// is a cosmetic miss, and hiding people because a lookup broke
+			// is worse than not filtering at all.
+			s.log.Warn("discover: performer genders", "err", gerr)
+		} else {
+			scenes = dropMalePerformers(scenes, byID)
+			trending = dropMalePerformers(trending, byID)
+		}
+	}
+
 	refreshedAt, _ := cache.ScenesRefreshedAt(r.Context(), s.db)
 	trendingRefreshedAt, _ := cache.TrendingRefreshedAt(r.Context(), s.db)
 	outFilters := filters
@@ -618,4 +646,37 @@ func localPerformerIDsByStashDBID(ctx context.Context, db *sql.DB) (byStashDBID,
 		}
 	}
 	return byStashDBID, byName, rows.Err()
+}
+
+// dropMalePerformers removes performers whose gender is KNOWN to be MALE from
+// every scene's pill list. byID supplies the gender for performers the user
+// does not own, whose own Gender field is empty because it is hydrated from
+// performer_cache and they are not in it.
+//
+// Unknown is not male. A performer with no recorded gender — Stash left it
+// blank, StashDB has none, or the backfill has not reached them — stays
+// visible, so switching this on can never quietly remove someone on the
+// strength of a missing field. The scene itself is always kept: the setting
+// hides performers, and dropping a scene because its cast was filtered would
+// silently narrow the feed the user is browsing.
+func dropMalePerformers(scenes []discoverScene, byID map[string]string) []discoverScene {
+	for i := range scenes {
+		perfs := scenes[i].Performers
+		if len(perfs) == 0 {
+			continue
+		}
+		kept := perfs[:0]
+		for _, p := range perfs {
+			g := p.Gender
+			if g == "" && p.StashDBID != "" {
+				g = byID[p.StashDBID]
+			}
+			if g == "MALE" {
+				continue
+			}
+			kept = append(kept, p)
+		}
+		scenes[i].Performers = kept
+	}
+	return scenes
 }

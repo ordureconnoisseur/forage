@@ -54,7 +54,7 @@ func (s *Server) getPerformers(w http.ResponseWriter, r *http.Request) {
 	favoriteOnly := r.URL.Query().Get("favorite_only") == "true"
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q)
+	rows, args := buildPerformerQuery(orderBy, favoriteOnly, q, s.pool.Settings().HideMalePerformers)
 	out, err := readPerformers(r.Context(), s.db, rows, args)
 	if err != nil {
 		s.log.Error("getPerformers query", "err", err)
@@ -95,9 +95,15 @@ func sortClause(sort string) (string, bool) {
 	return "", false
 }
 
-func buildPerformerQuery(orderBy string, favoriteOnly bool, q string) (string, []any) {
+func buildPerformerQuery(orderBy string, favoriteOnly bool, q string, hideMale bool) (string, []any) {
 	var where []string
 	var args []any
+	// Only a KNOWN male is hidden. performer_cache stores '' for a performer
+	// Stash records no gender for, and treating "unrecorded" as male would
+	// hide people on the strength of a blank field.
+	if hideMale {
+		where = append(where, "COALESCE(gender,'') <> 'MALE'")
+	}
 	if favoriteOnly {
 		where = append(where, "favorite = 1")
 	}

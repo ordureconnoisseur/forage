@@ -1362,6 +1362,10 @@ export interface ConfigPatch {
   // StashDB tag names whose scenes are dropped from the missing-scenes
   // gap analysis (case-insensitive). Empty = no filtering.
   excludedSceneTags?: string[];
+  // Hide performers whose gender is known to be MALE from the performer
+  // list and from the pills on scene cards. A performer with no recorded
+  // gender is never hidden.
+  hideMalePerformers?: boolean;
   pollInterval?: string;
   orphanAfter?: string;
   cacheRefresh?: string;
