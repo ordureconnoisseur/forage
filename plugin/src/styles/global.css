@@ -5382,9 +5382,13 @@ code.grab-fact-v,
   overflow: visible;
   transition: transform 0.18s ease;
 }
-/* Open: the same gesture in reverse, so it points back at what it hid. */
+/* Open: mirrored, not rotated. The polyline is symmetric about its centre, so
+   a vertical flip lands on exactly the same shape a 180deg turn would — but
+   172px sweeping through a half-turn is a lot of motion for a glyph 17px
+   tall, and it read as the thing rolling over. Flipping animates through
+   flat, which is what a chevron this wide should do. */
 .watch-drawer.is-open .watch-drawer-chev {
-  transform: rotate(180deg);
+  transform: scaleY(-1);
   color: var(--accent, #22c55e);
 }
 /* A drawer sitting under revealed cards divides itself from them with its
