@@ -244,22 +244,45 @@ function WatchDrawer({
   onToggle: () => void;
 }) {
   if (count === 0) return null;
-  // No chevron. The group header directly above owns one, and stacked in the
-  // same column the two read as a double chevron doing one job twice. A
-  // verb-led label carries the affordance instead, and says what will
-  // happen rather than leaving a glyph to imply it.
+  // A full-bleed strip along the panel's bottom edge, not a link in the
+  // footer bar. The door is the whole edge of the panel, so the target is as
+  // wide as the thing it opens and there is no text to misread as a status.
+  // It sits BELOW the revealed cards when open and points up, which is the
+  // same gesture in reverse rather than a separate control.
+  //
+  // The count moves into the accessible name and the tooltip. The glyph says
+  // "there is more"; the number is detail you can ask for.
+  const label = `${open ? "Hide" : "Show"} ${count} other${count === 1 ? "" : "s"} in this batch`;
   return (
     <button
       type="button"
       className={"watch-drawer" + (open ? " is-open" : "")}
       aria-expanded={open}
+      aria-label={label}
+      title={label}
       onClick={onToggle}
     >
-      <span className="watch-drawer-text">
-        <span className="watch-drawer-verb">{open ? "hide" : "show"}</span>
-        <span className="watch-drawer-count">{count}</span>
-        <span className="watch-drawer-label">others</span>
-      </span>
+      {/* preserveAspectRatio="none" is the point: the chevron stretches to
+          the strip's width instead of keeping its aspect, which is what
+          makes it read as an edge rather than an icon. non-scaling-stroke
+          keeps the line an even weight through that distortion. */}
+      <svg
+        className="watch-drawer-chev"
+        viewBox="0 0 100 12"
+        preserveAspectRatio="none"
+        aria-hidden="true"
+        focusable="false"
+      >
+        <polyline
+          points="1,1 50,11 99,1"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          vectorEffect="non-scaling-stroke"
+        />
+      </svg>
     </button>
   );
 }
@@ -300,6 +323,11 @@ function WatchGroup({
   const others = items.filter((w) => w.status !== "available");
   // Nothing ready and nothing still being searched for: the batch is done.
   const settled = isBatch && available.length === 0 && watching.length === 0;
+  // The footer bar used to hold the drawer toggle, so it always had content
+  // whenever there was anything to show. Now that the toggle owns the panel's
+  // bottom edge instead, the bar can be genuinely empty — and an empty bar
+  // still draws its rule and its margin, leaving a gap under the last card.
+  const footerLinks = (showOthers && grabbed.length > 0) || (settled && !showOthers);
 
   const clearDone = async () => {
     if (clearDoneBusy) return;
@@ -416,13 +444,8 @@ function WatchGroup({
               name + progress + button and wrapped it hard-left onto its own
               line, orphaned from everything. Here it is pinned to the panel
               edge, beside the content it acts on, and in thumb reach. */}
-          {(others.length > 0 || available.length > 0) && (
+          {(footerLinks || available.length > 0) && (
             <div className="watch-drawers">
-              <WatchDrawer
-                count={others.length}
-                open={showOthers}
-                onToggle={() => setShowOthers((v) => !v)}
-              />
               {showOthers && grabbed.length > 0 && (
                 <span className="watch-drawer-actions">
                   <button
@@ -485,6 +508,12 @@ function WatchGroup({
               ))}
             </ul>
           )}
+          {/* Last child on purpose: it is the panel's bottom edge. */}
+          <WatchDrawer
+            count={others.length}
+            open={showOthers}
+            onToggle={() => setShowOthers((v) => !v)}
+          />
         </>
       )}
     </section>

@@ -679,6 +679,12 @@ button {
 .watch-group-head:has(+ .watch-drawers) {
   margin-bottom: 4px;
 }
+/* A group with nothing ready is just its name and the drawer edge. The strip
+   already carries 10px above it, so the header adding its own would double
+   the gap for a panel that has no content between the two. */
+.watch-group-head:has(+ .watch-drawer) {
+  margin-bottom: 0;
+}
 .watch-group-head {
   display: flex;
   align-items: center;
@@ -5334,50 +5340,64 @@ code.grab-fact-v,
   margin-left: 16px;
 }
 .watch-drawer {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  background: none;
+  /* Full-bleed to the panel's edges: the panel is padded 12px 14px, so the
+     strip reaches out by exactly that much and sits ON the bottom border
+     rather than floating above it. Being the last child, its own rounded
+     corners have to match the panel's or the fill squares them off. */
+  display: block;
+  /* A button shrink-to-fits on `width: auto`, so the strip has to be sized
+     explicitly: 100% is the panel's CONTENT width, plus the 14px padding it
+     is pulled out over on each side. */
+  box-sizing: border-box;
+  width: calc(100% + 28px);
+  margin: 10px -14px -12px;
+  padding: 0;
   border: none;
-  padding: 6px 0;
-  cursor: pointer;
+  border-top: 1px solid var(--glass-border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: none;
   color: var(--text);
-  font: inherit;
-  font-size: 12px;
-  opacity: 0.55;
-  transition: opacity 0.14s ease;
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 0.14s ease, background-color 0.14s ease;
 }
 .watch-drawer:hover,
 .watch-drawer.is-open {
-  opacity: 0.95;
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.03);
 }
-/* The number is what you scan; the label just says which pile. */
-.watch-drawer-text {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
+/* The glyph itself. Wide and shallow so it reads as an edge you can pull,
+   not an icon sitting in a bar: a 100x12 viewBox stretched to ~200px keeps
+   the drop to 10px across the whole width. */
+.watch-drawer-chev {
+  display: block;
+  /* Wide, but not so wide the angle flattens: at 190x9 the line read as a
+     sagging wire rather than a chevron. Roughly 10:1 keeps it stretched and
+     still unmistakably pointing. */
+  width: min(46%, 172px);
+  height: 17px;
+  margin: 0 auto;
+  padding: 8px 0;
+  box-sizing: content-box;
+  overflow: visible;
+  transition: transform 0.18s ease;
 }
-.watch-drawer-verb {
-  text-decoration: underline;
-  text-decoration-color: var(--glass-border-bright);
-  text-underline-offset: 3px;
-}
-.watch-drawer:hover .watch-drawer-verb,
-.watch-drawer.is-open .watch-drawer-verb {
-  text-decoration-color: currentColor;
-}
-.watch-drawer-count {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  font-size: 13px;
-}
-.watch-drawer-label {
-  letter-spacing: 0.01em;
-}
-/* The open drawer's chevron is the only coloured thing in the bar, so which
-   pile is open is legible at a glance without a background or a border. */
-.watch-drawer.is-open .fchev {
+/* Open: the same gesture in reverse, so it points back at what it hid. */
+.watch-drawer.is-open .watch-drawer-chev {
+  transform: rotate(180deg);
   color: var(--accent, #22c55e);
+}
+/* A drawer sitting under revealed cards divides itself from them with its
+   own rule; it does not need the list's bottom spacing as well. */
+.watch-list-drawer + .watch-drawer {
+  margin-top: 8px;
+}
+/* Straight after the footer bar, its rule would be the second in ~60px and
+   the pair read as a heavy band. The footer's rule already divides actions
+   from content, so the strip joins that band instead of starting another. */
+.watch-drawers + .watch-drawer {
+  border-top: none;
+  margin-top: 2px;
 }
 .watch-drawer-actions {
   display: inline-flex;
