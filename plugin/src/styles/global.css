@@ -649,15 +649,35 @@ button {
 }
 /* Watch batches — each group of watches launched together. */
 .watch-group {
+  /* The gap BETWEEN groups. Must stay clearly larger than the gap between a
+     header and its own drawer row below, or the two levels read as one flat
+     list of alternating rows. */
+  margin-bottom: 26px;
+}
+.watch-group:last-child {
   margin-bottom: 8px;
 }
 .watch-group-head {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin: 28px 0 12px 0;
+  gap: 10px 16px;
+  /* Tight below: the drawer row belongs to THIS header, so it sits close.
+     No top margin — .watch-group owns the separation between groups. */
+  margin: 0 0 2px 0;
   flex-wrap: wrap;
+}
+/* The title block gets the leftover width and truncates, so a long batch
+   name shortens instead of shoving the actions onto their own line. */
+.watch-group-title {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.watch-group-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex: 0 0 auto;
 }
 .watch-group-title {
   display: flex;
@@ -694,6 +714,10 @@ button {
   align-items: center;
   gap: 8px;
 }
+/* NOTE: .watch-clear is shared with the page-level "Search all" button
+   (.watch-search-now), so it is left as the original pill. Clearing a batch
+   no longer uses it — that moved into the drawer bar as a quiet link — and
+   restyling this class to suit it silently restyled Search all too. */
 .watch-clear {
   background: transparent;
   border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.15));
@@ -5234,78 +5258,73 @@ code.grab-fact-v,
   gap: 10px;
 }
 .watch-list section + section {
-  margin-top: 24px;
+  margin-top: 0; /* .watch-group owns inter-group spacing now */
 }
-/* Shelves: the one collapsible primitive inside a watch group, used three
-   times (ready / still searching / grabbed). Everything here exists to make
-   ONE nesting level unmistakable, because the group itself already collapses
-   and two indistinguishable levels of chevron is what made this a muddle.
+/* Drawers: the footer of a watch group, holding what has been put away.
+   Everything here is calibrated to read BELOW the group header rather than
+   beside it — an earlier pass gave the two levels near-identical chevron
+   rows, and two peers where there is really a parent and a footer is what
+   made the nesting feel like scaffolding.
 
-   The rail is the whole trick: a single hairline down the left of the shelf
-   stack says "these belong to the group above" without indenting so far that
-   cards lose width on a phone. */
-.watch-shelves {
-  margin-top: 6px;
-}
-.watch-shelf {
-  border-left: 1px solid var(--glass-border);
-  margin-left: 6px;
-  padding-left: 12px;
-}
-.watch-shelf + .watch-shelf {
-  margin-top: 2px;
-}
-.watch-shelf-head {
+   Three things keep it subordinate: no uppercase, no rule above, and a
+   smaller chevron. It is a line of text you can press, not a section. */
+.watch-drawers {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 34px;
   flex-wrap: wrap;
+  gap: 4px 18px;
+  padding: 0;
+  margin: 0;
 }
-.watch-shelf-toggle {
+.watch-drawer {
   display: inline-flex;
   align-items: baseline;
   gap: 7px;
   background: none;
   border: none;
-  padding: 4px 0;
+  padding: 6px 0;
   cursor: pointer;
   color: var(--text);
   font: inherit;
   font-size: 12px;
-  opacity: 0.72;
-  transition: opacity 0.12s ease;
+  opacity: 0.55;
+  transition: opacity 0.14s ease;
 }
-.watch-shelf-toggle:hover,
-.watch-shelf.is-open > .watch-shelf-head > .watch-shelf-toggle {
-  opacity: 1;
+.watch-drawer:hover,
+.watch-drawer.is-open {
+  opacity: 0.95;
 }
-/* The count is the thing you scan for, so it carries the weight and the
-   label stays quiet beside it. */
-.watch-shelf-count {
+/* The number is what you scan; the label just says which pile. */
+.watch-drawer-count {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
   font-size: 13px;
 }
-.watch-shelf-label {
+.watch-drawer-label {
   letter-spacing: 0.01em;
 }
-.watch-shelf-actions {
-  display: flex;
+/* The open drawer's chevron is the only coloured thing in the bar, so which
+   pile is open is legible at a glance without a background or a border. */
+.watch-drawer.is-open .fchev {
+  color: var(--accent, #22c55e);
+}
+.watch-drawer-actions {
+  display: inline-flex;
   align-items: center;
   gap: 14px;
-  margin-left: auto;
   font-size: 12px;
+  margin-left: auto;
 }
-.watch-shelf-danger:hover {
+.watch-drawer-danger:hover {
   color: var(--danger, #e0574e);
 }
-.watch-shelf-body {
-  padding: 4px 0 8px 0;
-}
-/* A shelf's own cards don't need the group's spacing on top of the rail. */
-.watch-shelf-body .watch-list {
-  gap: 8px;
+/* Cards from a drawer sit slightly inset, which is the only indent in the
+   group. It says "these came from the row above" without a rail, a box, or
+   a second header. */
+.watch-list-drawer {
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--glass-border);
 }
 /* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
    actions ride with the scene title and never float against the middle of an
