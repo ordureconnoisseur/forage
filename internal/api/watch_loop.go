@@ -189,7 +189,11 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	if err != nil {
 		return
 	}
-	stashDBC := s.pool.StashDB()
+	// The box that issued this watch's id. Only the fallback below uses it
+	// (a watch added from a card already carries its performers), but that
+	// fallback returns early on a miss, so pointing it at the wrong box
+	// would silently strand every bare-added secondary-box watch.
+	stashDBC := s.stashDBFor(ctx, w.Source)
 	pc := s.pool.Prowlarr()
 	if stashDBC == nil || pc == nil {
 		return

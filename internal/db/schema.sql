@@ -156,6 +156,10 @@ CREATE TABLE IF NOT EXISTS meta (
 -- reason if placement didn't succeed, so the UI can surface it.
 CREATE TABLE IF NOT EXISTS grabs (
   id                    INTEGER PRIMARY KEY,
+  -- Which stash-box issued this grab's scene ids. '' = StashDB. Carried from
+  -- the watch that created the grab, so enrichment lookups ask the box the id
+  -- actually came from instead of asking StashDB about a FansDB uuid.
+  source                TEXT NOT NULL DEFAULT '',
   predicted_stashdb_id  TEXT,
   predicted_confidence  REAL,
   release_title         TEXT NOT NULL,
@@ -258,6 +262,10 @@ CREATE INDEX IF NOT EXISTS idx_recent_trending ON recent_scene_cache(trending_ra
 -- GROUP BY batch_id — there is no separate batch entity.
 CREATE TABLE IF NOT EXISTS watches (
   stashdb_id     TEXT PRIMARY KEY,
+  -- Which stash-box issued stashdb_id. '' = StashDB (the default, and every
+  -- row before secondary boxes existed). A scene id only means anything on
+  -- the box that issued it, so any lookup that resolves one needs this.
+  source         TEXT NOT NULL DEFAULT '',
   title          TEXT,
   date           TEXT,
   studio_name    TEXT,

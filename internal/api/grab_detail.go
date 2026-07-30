@@ -89,7 +89,7 @@ func (s *Server) getGrabDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.StashDBID = sceneID
 	if sceneID != "" {
-		if sdb := s.pool.StashDB(); sdb != nil {
+		if sdb := s.stashDBFor(r.Context(), g.Source); sdb != nil {
 			if scene, err := sdb.FindScene(r.Context(), sceneID); err == nil && scene != nil {
 				resp.Title = scene.Title
 				resp.Date = scene.Date

@@ -125,6 +125,10 @@ func migrateGrabsColumns(db *sql.DB) error {
 		{"placed_path", `ALTER TABLE grabs ADD COLUMN placed_path TEXT`},
 		{"place_error", `ALTER TABLE grabs ADD COLUMN place_error TEXT`},
 		{"placed_at", `ALTER TABLE grabs ADD COLUMN placed_at INTEGER`},
+		// 2026-07-30 secondary stash-boxes: the box that issued stashdb_id.
+		// '' = StashDB. Carried from the watch so the grab's enrichment
+		// lookups query the box the id actually came from.
+		{"source", `ALTER TABLE grabs ADD COLUMN source TEXT NOT NULL DEFAULT ''`},
 	}
 	for _, c := range placementCols {
 		exists, err := has(c.col)
@@ -321,6 +325,12 @@ func migrateGrabsColumns(db *sql.DB) error {
 			// the owned copy's height at creation, and only releases
 			// EXCEEDING it may flip the watch available.
 			{"upgrade_floor", `ALTER TABLE watches ADD COLUMN upgrade_floor INTEGER NOT NULL DEFAULT 0`},
+			// 2026-07-30 secondary stash-boxes: which box issued this
+			// watch's scene id. '' = StashDB, which is every pre-existing
+			// row and remains the default. A scene id is only meaningful
+			// on the box that issued it, so anything resolving one back to
+			// a stash-box has to know which.
+			{"source", `ALTER TABLE watches ADD COLUMN source TEXT NOT NULL DEFAULT ''`},
 		}
 		for _, c := range watchCols {
 			var has int

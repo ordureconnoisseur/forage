@@ -38,7 +38,11 @@ const (
 
 // Watch is the in-memory row.
 type Watch struct {
-	StashDBID     string `json:"stashdb_id"`
+	StashDBID string `json:"stashdb_id"`
+	// Source is the stash-box endpoint that issued StashDBID. "" = StashDB.
+	// A scene id only means something on the box that issued it, so anything
+	// resolving one back to a box has to read this first.
+	Source        string `json:"source,omitempty"`
 	Title         string `json:"title"`
 	Date          string `json:"date,omitempty"`
 	StudioName    string `json:"studio_name,omitempty"`
@@ -146,12 +150,13 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 	}
 	_, err := ex.ExecContext(ctx, `
 		INSERT INTO watches (
-		  stashdb_id, title, date, studio_name, image_url,
+		  stashdb_id, source, title, date, studio_name, image_url,
 		  performer_name, performer_id, target, status, created_at, last_checked,
 		  batch_id, batch_label, performers, upgrade_floor
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'watching', ?, 0, ?, ?, ?, ?)
 		ON CONFLICT(stashdb_id) DO UPDATE SET
 		  target = excluded.target,
+		  source = excluded.source,
 		  status = 'watching',
 		  performer_name = excluded.performer_name,
 		  performer_id = excluded.performer_id,
@@ -163,7 +168,7 @@ func (r *Repo) add(ctx context.Context, ex execer, w Watch) error {
 		  found_protocol = '', found_size = 0, found_at = 0,
 		  candidates = '[]', grabbed_at = 0,
 		  last_checked = 0`,
-		w.StashDBID, w.Title, w.Date, w.StudioName, w.ImageURL,
+		w.StashDBID, w.Source, w.Title, w.Date, w.StudioName, w.ImageURL,
 		w.PerformerName, w.PerformerID, w.Target, w.CreatedAt,
 		w.BatchID, w.BatchLabel, string(perfsJSON), w.UpgradeFloor)
 	return err
@@ -510,7 +515,8 @@ const cols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(found_protocol,''), found_size,
 	created_at, last_checked, found_at, COALESCE(ignored_urls,'[]'),
 	COALESCE(batch_id,''), COALESCE(batch_label,''), COALESCE(candidates,'[]'), grabbed_at,
-	COALESCE(performers,'[]'), search_count, upgrade_floor`
+	COALESCE(performers,'[]'), search_count, upgrade_floor,
+	COALESCE(source,'')`
 
 // summaryCols mirrors cols ordinal for ordinal, with two changes: the
 // candidates blob is blanked for GRABBED watches, and the true length is
@@ -538,6 +544,7 @@ const summaryCols = `stashdb_id, COALESCE(title,''), COALESCE(date,''),
 	COALESCE(batch_id,''), COALESCE(batch_label,''),
 	CASE WHEN status = 'grabbed' THEN '[]' ELSE COALESCE(candidates,'[]') END,
 	grabbed_at, COALESCE(performers,'[]'), search_count, upgrade_floor,
+	COALESCE(source,''),
 	CAST(CASE WHEN json_valid(candidates) THEN json_array_length(candidates) ELSE 0 END AS TEXT)`
 
 func (r *Repo) query(ctx context.Context, q string, args ...any) ([]Watch, error) {
@@ -566,6 +573,7 @@ func (r *Repo) scanRows(ctx context.Context, q string, summary bool, args ...any
 			&w.FoundTitle, &w.FoundURL, &w.FoundIndexer, &w.FoundProtocol, &w.FoundSize,
 			&w.CreatedAt, &w.LastChecked, &w.FoundAt, &ignoredJSON,
 			&w.BatchID, &w.BatchLabel, &candJSON, &w.GrabbedAt, &perfsJSON, &w.SearchCount, &w.UpgradeFloor,
+			&w.Source,
 		}
 		if summary {
 			dest = append(dest, &countStr) // summaryCols trailing length

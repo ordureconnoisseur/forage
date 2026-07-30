@@ -261,6 +261,7 @@ export default function DiscoverList({
     const chosen = data.scenes.filter((s) => selected.has(s.stashdb_id));
     const watches: AddWatchReq[] = chosen.map((s) => ({
       stashdb_id: s.stashdb_id,
+      source: box || undefined,
       title: s.title || "",
       date: s.release_date,
       studio: s.studio_name,
@@ -331,6 +332,7 @@ export default function DiscoverList({
           </div>
           <TrendingCarousel
             scenes={data.trending}
+            box={box}
             onPickPerformer={onPickPerformer}
             onPickScene={onPickScene}
           />
@@ -478,6 +480,7 @@ export default function DiscoverList({
         <div className="scene-grid">
           {filtered.map((s) => (
             <DiscoverCard
+              box={box}
               key={s.stashdb_id}
               s={s}
               selecting={selecting}
@@ -534,10 +537,12 @@ function useTrendingPageSize(): number {
 
 function TrendingCarousel({
   scenes,
+  box,
   onPickPerformer,
   onPickScene,
 }: {
   scenes: DiscoverScene[];
+  box: string;
   onPickPerformer: (localID: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
@@ -553,6 +558,7 @@ function TrendingCarousel({
         <div className="carousel-row">
           {scenes.map((s) => (
             <TrendingCard
+              box={box}
               key={s.stashdb_id}
               s={s}
               onPickPerformer={onPickPerformer}
@@ -588,6 +594,7 @@ function TrendingCarousel({
       <div className="carousel-row">
         {pageScenes.map((s) => (
           <TrendingCard
+            box={box}
             key={s.stashdb_id}
             s={s}
             onPickPerformer={onPickPerformer}
@@ -613,10 +620,13 @@ function TrendingCarousel({
 // for verification.
 function TrendingCard({
   s,
+  box,
   onPickPerformer,
   onPickScene,
 }: {
   s: DiscoverScene;
+  // Stash-box this card came from ("" = StashDB), recorded on any watch.
+  box: string;
   onPickPerformer: (localID: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
@@ -657,6 +667,7 @@ function TrendingCard({
         <WatchControl
           scene={{
             stashdb_id: s.stashdb_id,
+            source: box || undefined,
             title: s.title,
             date: s.release_date,
             studio: s.studio_name,
@@ -695,6 +706,7 @@ function TrendingCard({
 
 function DiscoverCard({
   s,
+  box,
   selecting,
   selected,
   onToggle,
@@ -702,6 +714,8 @@ function DiscoverCard({
   onPickScene,
 }: {
   s: DiscoverScene;
+  // Stash-box this card came from ("" = StashDB), recorded on any watch.
+  box: string;
   selecting: boolean;
   selected: boolean;
   onToggle: () => void;
@@ -774,6 +788,7 @@ function DiscoverCard({
         <WatchControl
           scene={{
             stashdb_id: s.stashdb_id,
+            source: box || undefined,
             title: s.title,
             date: s.release_date,
             studio: s.studio_name,

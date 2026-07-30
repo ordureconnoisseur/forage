@@ -1609,6 +1609,10 @@ export interface Watch {
 // AddWatchReq is one scene to watch — shared by the single add and the batch.
 export interface AddWatchReq {
   stashdb_id: string;
+  // Stash-box endpoint that issued stashdb_id. Omit for StashDB. Discover
+  // sends it when browsing a secondary box, so the id can later be resolved
+  // against the box that issued it rather than against StashDB.
+  source?: string;
   title: string;
   date?: string;
   studio?: string;

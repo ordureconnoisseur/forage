@@ -27,7 +27,11 @@ var ErrStaleUpdate = errors.New("grabs: update lost optimistic lock (row changed
 // Grab is the in-memory shape; columns map 1:1 onto the SQLite schema.
 // All optional fields are pointer-or-zero so they can be NULL on disk.
 type Grab struct {
-	ID                  int64
+	ID int64
+	// Source is the stash-box endpoint that issued this grab's scene ids.
+	// "" = StashDB. Carried from the watch so enrichment asks the box the
+	// id actually came from.
+	Source              string
 	PredictedStashDBID  string
 	PredictedConfidence float64
 	ReleaseTitle        string
@@ -126,8 +130,8 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		  performer_name, placed_path, place_error,
 		  grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		  kind, pack_files, pack_identified, pack_deduped,
-		  progress, progress_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		  progress, progress_at, source
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullString(g.PredictedStashDBID), nullFloat(g.PredictedConfidence), g.ReleaseTitle,
 		nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer), nullString(g.DownloadURL),
 		g.Client, nullString(g.ClientID), nullString(g.ClientName),
@@ -137,7 +141,7 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		g.GrabbedAt, now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
 		g.Kind, g.PackFiles, g.PackIdentified, g.PackDeduped,
-		g.Progress, g.ProgressAt,
+		g.Progress, g.ProgressAt, g.Source,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("grabs insert: %w", err)
@@ -800,7 +804,8 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		kind, pack_files, pack_identified, pack_deduped,
-		progress, progress_at, attempts, next_retry_at, fail_kind, rev`
+		progress, progress_at, attempts, next_retry_at, fail_kind, rev,
+		COALESCE(source,'')`
 	// Inject column list into the SELECT *.
 	sql = replaceFirstStar(sql, cols)
 	rows, err := r.db.QueryContext(ctx, sql, args...)
@@ -835,7 +840,8 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
 		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
-		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &failKind, &g.Rev)
+		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &failKind, &g.Rev,
+		&g.Source)
 	if err != nil {
 		return g, err
 	}

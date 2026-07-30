@@ -16,13 +16,16 @@ import (
 )
 
 type grabRequest struct {
-	DownloadURL    string  `json:"download_url"`
-	ReleaseTitle   string  `json:"release_title"`
-	ReleaseSize    int64   `json:"release_size"`
-	ReleaseIndexer string  `json:"release_indexer"`
-	Protocol       string  `json:"protocol"` // "torrent" | "usenet"; falls back to URL inspection if missing
-	SceneID        string  `json:"scene_id"`
-	Confidence     float64 `json:"confidence"`
+	DownloadURL    string `json:"download_url"`
+	ReleaseTitle   string `json:"release_title"`
+	ReleaseSize    int64  `json:"release_size"`
+	ReleaseIndexer string `json:"release_indexer"`
+	Protocol       string `json:"protocol"` // "torrent" | "usenet"; falls back to URL inspection if missing
+	SceneID        string `json:"scene_id"`
+	// Source is the stash-box endpoint that issued SceneID. "" = StashDB.
+	// Set when the grab came from a watch on a secondary box.
+	Source     string  `json:"source,omitempty"`
+	Confidence float64 `json:"confidence"`
 	// PerformerName is the folder forage will drop the finished file
 	// into under <library_root>. Plugin sets this from whichever
 	// performer page the user grabbed from. Optional — if missing the
@@ -206,6 +209,7 @@ func (s *Server) insertGrab(ctx context.Context, req grabRequest, client, client
 		return 0
 	}
 	id, err := s.grabs.Insert(ctx, grabs.Grab{
+		Source:              req.Source,
 		PredictedStashDBID:  req.SceneID,
 		PredictedConfidence: req.Confidence,
 		ReleaseTitle:        req.ReleaseTitle,
