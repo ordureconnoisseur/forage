@@ -116,11 +116,28 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 
 	// Two queries against the same table: recent performer-filtered
 	// (owned=0, within window) and trending (rank > 0).
+	// Trending scenes belong in the carousel, not sprinkled through the feed
+	// as well. Both lists read one table (trending_rank > 0 marks the
+	// trending set), and this query used to take everything in the window, so
+	// a globally-trending scene with nothing to do with the user's performers
+	// appeared below as if it were one of their new releases.
+	//
+	// The exclusion is "trending AND no local performer", not "trending":
+	// a scene BY one of your performers that also happens to be trending is
+	// in the feed because it is theirs, and dropping it would hide your own
+	// performers' new releases. 12 rows in the current window are the leak;
+	// 8 are legitimately both.
+	//
+	// The empty test spells out 'null' because that is the value actually
+	// stored — a nil slice marshals to the four-character string "null", not
+	// to '[]' or SQL NULL, so the obvious comparison silently matches nothing.
 	recentRaw, err := queryDiscoverRows(r.Context(), s.db,
 		`SELECT stashdb_id, title, release_date, release_unix,
 		        studio_name, image_url, local_performer_ids
 		   FROM recent_scene_cache
 		  WHERE owned = 0 AND release_unix >= ?
+		    AND NOT (trending_rank > 0
+		             AND COALESCE(local_performer_ids,'') IN ('', '[]', 'null'))
 		  ORDER BY release_unix DESC
 		  LIMIT ?`, cutoff, limit)
 	if err != nil {
