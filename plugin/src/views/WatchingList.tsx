@@ -343,16 +343,34 @@ function WatchGroup({
     }
   };
 
-  // Collapse a group's card list. Default-collapse a batch that's fully done
-  // (everything grabbed, nothing left to act on) so finished batches fold
-  // away; otherwise start expanded. Runs once on mount — the user's later
-  // toggles win.
-  const [collapsed, setCollapsed] = useState(
-    isBatch &&
-      available.length === 0 &&
-      watching.length === 0 &&
-      grabbed.length > 0,
-  );
+  // Collapse a group with nothing ready to grab. The page exists to answer
+  // "what can I take right now", so a group offering nothing is a header and
+  // a drawer edge wrapped around empty space — and the drawer's chevron is
+  // wide enough that an empty panel is mostly chevron. Collapsed, the group
+  // is one line that still reads "9 of 10 grabbed", and the batch chevron
+  // opens it.
+  //
+  // This used to collapse only a fully-settled BATCH, which left every
+  // still-searching group standing open with no cards in it.
+  const [collapsed, setCollapsed] = useState(available.length === 0);
+  // Once a group has something ready, it must not stay shut — the release
+  // arriving is the entire point of the page. Auto-open ONLY on the
+  // transition into "something is ready", and never auto-close: shutting a
+  // panel someone is reading is worse than leaving it open. A group the user
+  // has touched is theirs from then on.
+  const userToggled = useRef(false);
+  const hadAvailable = useRef(available.length > 0);
+  useEffect(() => {
+    const has = available.length > 0;
+    if (has && !hadAvailable.current && !userToggled.current) {
+      setCollapsed(false);
+    }
+    hadAvailable.current = has;
+  }, [available.length]);
+  const toggleCollapsed = () => {
+    userToggled.current = true;
+    setCollapsed((c) => !c);
+  };
 
   const grabAll = async () => {
     setGrabAllBusy(true);
@@ -406,11 +424,11 @@ function WatchGroup({
           tabIndex={0}
           aria-expanded={!collapsed}
           title={collapsed ? "Expand" : "Collapse"}
-          onClick={() => setCollapsed((c) => !c)}
+          onClick={toggleCollapsed}
           onKeyDown={(e) => {
             if (e.key === "Enter" || e.key === " ") {
               e.preventDefault();
-              setCollapsed((c) => !c);
+              toggleCollapsed();
             }
           }}
         >
