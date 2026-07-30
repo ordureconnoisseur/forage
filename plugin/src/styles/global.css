@@ -648,24 +648,52 @@ button {
   margin: 0;
 }
 /* Watch batches — each group of watches launched together. */
+/* Each batch is a panel. Proximity alone was doing this job and doing it
+   badly: rows floated on the page background, so where one batch ended and
+   the next began was communicated only by a gap, and the list read as loose
+   text rather than as structure.
+
+   A border does that job absolutely, which also means the big inter-group
+   gap can go — the spacing was compensating for the missing boundary. Built
+   from the app's existing glass tokens rather than a new surface, so it sits
+   in the same material as the cards inside it. */
 .watch-group {
-  /* The gap BETWEEN groups. Must stay clearly larger than the gap between a
-     header and its own drawer row below, or the two levels read as one flat
-     list of alternating rows. */
-  margin-bottom: 26px;
+  background: rgba(255, 255, 255, 0.022);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 10px;
 }
 .watch-group:last-child {
   margin-bottom: 8px;
+}
+/* A collapsed panel is only its header, so it should not carry the padding
+   of one holding content. */
+.watch-group:has(> .watch-group-head:only-child) {
+  padding: 10px 14px;
 }
 .watch-group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px 16px;
-  /* Tight below: the drawer row belongs to THIS header, so it sits close.
-     No top margin — .watch-group owns the separation between groups. */
-  margin: 0 0 2px 0;
-  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  /* No wrapping. The header carries identity only — the actions moved to the
+     footer bar precisely so this row can always be one line. */
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+/* Progress gives way before the name does. */
+.watch-group-progress {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.watch-group-title .section-header {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* The title block gets the leftover width and truncates, so a long batch
    name shortens instead of shoving the actions onto their own line. */
@@ -5274,9 +5302,25 @@ code.grab-fact-v,
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px 18px;
-  padding: 0;
+  gap: 8px 16px;
   margin: 0;
+  padding: 0;
+}
+/* Only ruled off when there is body content above it to divide. */
+.watch-list + .watch-drawers,
+.watch-list-drawer + .watch-drawers {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--glass-border);
+}
+/* The primary action pins to the panel's right edge. */
+.watch-grab-all {
+  margin-left: auto;
+}
+/* When both a link group and the button are present, the links keep their
+   own spacing and the button still takes the edge. */
+.watch-drawer-actions + .watch-grab-all {
+  margin-left: 16px;
 }
 .watch-drawer {
   display: inline-flex;
@@ -5329,9 +5373,7 @@ code.grab-fact-v,
    group. It says "these came from the row above" without a rail, a box, or
    a second header. */
 .watch-list-drawer {
-  margin-top: 6px;
-  padding-left: 10px;
-  border-left: 1px solid var(--glass-border);
+  margin-top: 10px;
 }
 /* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
    actions ride with the scene title and never float against the middle of an
