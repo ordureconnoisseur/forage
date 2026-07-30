@@ -710,14 +710,22 @@ button {
 }
 /* The grabbed count's link into Grabs. Quiet and on the header's right: it
    is a way OUT of this page, not an action on the group, so it must not
-   compete with the batch name or the Grab all button below. */
-.watch-group-grabs {
+   compete with the batch name or the Grab all button below.
+
+   Compound selector so it beats .setup-link, whose 18px top margin suits its
+   usual home under a paragraph of setup prose. Inherited here it dropped the
+   link a line below the batch name and made every group holding grabbed work
+   22px taller than one without, so the collapsed list alternated between two
+   row heights. */
+.watch-group-head .watch-group-grabs {
   flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
   font-size: 12px;
   white-space: nowrap;
-  opacity: 0.75;
+  opacity: 0.7;
 }
-.watch-group-grabs:hover {
+.watch-group-head .watch-group-grabs:hover {
   opacity: 1;
 }
 .watch-group-actions {
@@ -757,18 +765,6 @@ button {
 .watch-group-progress {
   font-size: 12px;
   color: var(--text-dim, #9aa);
-}
-/* The grabbed count's link into Grabs. Quiet and on the header's right: it
-   is a way OUT of this page, not an action on the group, so it must not
-   compete with the batch name or the Grab all button below. */
-.watch-group-grabs {
-  flex: 0 0 auto;
-  font-size: 12px;
-  white-space: nowrap;
-  opacity: 0.75;
-}
-.watch-group-grabs:hover {
-  opacity: 1;
 }
 .watch-group-actions {
   display: flex;
