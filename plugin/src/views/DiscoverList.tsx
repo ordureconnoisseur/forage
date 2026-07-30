@@ -633,17 +633,24 @@ function TrendingCard({
   onPickPerformer: (localID: string) => void;
   onPickScene: (stashDBID: string, performerName?: string) => void;
 }) {
-  // First library performer (if any) gets a tiny chip beneath the
-  // title — keeps the card height bounded while still surfacing the
-  // "from your library" signal.
-  const primaryLibraryPerformer = s.performers[0];
+  // Two different performers, conflated until secondary boxes arrived. On the
+  // StashDB feed the first name IS a library performer, because the feed is
+  // built from the performers you follow. On a live box it usually is not, so
+  // the chip navigated to an empty performer id and the card claimed someone
+  // you do not have as if you did.
+  //
+  // namedPerformer is who the scene is billed under (seeds a release search).
+  // libraryPerformer is the first one you actually own, and only that one can
+  // be navigated to.
+  const namedPerformer = s.performers[0];
+  const libraryPerformer = s.performers.find((p) => p.local !== false && p.stash_id);
   return (
     <div className="trending-card">
       <div className="scene-thumb-wrap">
         <button
           type="button"
           className="scene-thumb scene-thumb-button"
-          onClick={() => onPickScene(s.stashdb_id, primaryLibraryPerformer?.name)}
+          onClick={() => onPickScene(s.stashdb_id, namedPerformer?.name)}
           title={s.title ? `Find releases for "${s.title}"` : "Find releases"}
         >
           {s.image_url ? (
@@ -676,8 +683,8 @@ function TrendingCard({
             studio: s.studio_name,
             image_url: s.image_url,
           }}
-          performerName={primaryLibraryPerformer?.name}
-          performerId={primaryLibraryPerformer?.stash_id}
+          performerName={namedPerformer?.name}
+          performerId={libraryPerformer?.stash_id}
           initialStatus={s.watch_status || ""}
           variant="overlay"
         />
@@ -691,17 +698,21 @@ function TrendingCard({
           {s.release_date && s.studio_name && <span> · </span>}
           {s.studio_name && <span>{s.studio_name}</span>}
         </div>
-        {primaryLibraryPerformer && (
+        {libraryPerformer ? (
           <PerfChip
-            p={primaryLibraryPerformer}
-            onPick={() => onPickPerformer(primaryLibraryPerformer.stash_id)}
+            p={libraryPerformer}
+            onPick={() => onPickPerformer(libraryPerformer.stash_id)}
             extraLabel={
               s.performers.length > 1
                 ? ` +${s.performers.length - 1}`
                 : undefined
             }
           />
-        )}
+        ) : namedPerformer?.stashdb_id ? (
+          // Nobody on this card is yours. Offer to add the billed performer
+          // rather than showing a chip that navigates nowhere.
+          <MissingPerfChip p={namedPerformer} box={box} />
+        ) : null}
       </div>
     </div>
   );
