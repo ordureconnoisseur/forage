@@ -75,6 +75,232 @@ func (s *Server) ownedOnBox(ctx context.Context, endpoint string) map[string]boo
 	return set
 }
 
+// boxLinkTTL bounds how long the performer identity maps are reused. Shorter
+// than it could be: adding a performer from a box card should make the next
+// refresh show them as owned, not leave a stale "+" for an hour.
+const boxLinkTTL = 5 * time.Minute
+
+// boxIdentity is how one secondary box's performers map onto the library.
+type boxIdentity struct {
+	at time.Time
+	// onBox: box performer id → local Stash performer id, for performers the
+	// user has actually identified against this box. Exact.
+	onBox map[string]string
+	// onStashDB: StashDB performer id → local Stash performer id. The other
+	// half of the URL route below.
+	onStashDB map[string]string
+	// links: box performer id → the StashDB performer id their profile links
+	// to ("" when it links to none). Memoised across refreshes because it is
+	// a fact about the box, not about the library.
+	links map[string]string
+}
+
+type boxIdentityCache struct {
+	mu sync.Mutex
+	by map[string]*boxIdentity
+}
+
+// boxLinkMemoCap bounds the links memo. Browsing deep into a large box would
+// otherwise accumulate an entry per performer ever seen, for the lifetime of
+// the daemon. Dropping the whole map is fine: it costs one batched re-query.
+const boxLinkMemoCap = 20000
+
+// performersOwnedOnBox answers, for the performers on this page, which ones
+// the user already has, as box performer id → local Stash performer id.
+//
+// Two routes, tried in that order:
+//
+//  1. The performer is identified against this box locally. Exact, and free
+//     after one sweep, but rare: 147 FansDB and 2 JavStash performers on the
+//     reference library, against 779 on StashDB.
+//
+//  2. The box's own profile for them links to their StashDB page, and the
+//     library has that StashDB id. Secondary boxes carry no cross-id field,
+//     but their editors list StashDB among a performer's urls often enough to
+//     matter: 78% of JavStash performers and 47% of FansDB's on a 40-scene
+//     sample. This is what makes browsing FansDB recognise the performers you
+//     followed on StashDB.
+//
+// A failure at any step yields "not known to be owned", which shows the "+"
+// on someone you have. That is the right way round: the opposite would hide
+// the only control the pill offers.
+func (s *Server) performersOwnedOnBox(ctx context.Context, e *boxEntry, scenes []stashdb.Scene) map[string]string {
+	ids := make([]string, 0, 64)
+	seen := map[string]bool{}
+	for _, sc := range scenes {
+		for _, p := range sc.Performers {
+			if p.ID != "" && !seen[p.ID] {
+				seen[p.ID] = true
+				ids = append(ids, p.ID)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	id := s.boxIdentityFor(ctx, e.box.Endpoint)
+	if id == nil {
+		return nil
+	}
+
+	out := make(map[string]string, len(ids))
+	var unlinked []string
+	s.boxIdentity.mu.Lock()
+	for _, pid := range ids {
+		if local := id.onBox[pid]; local != "" {
+			out[pid] = local
+			continue
+		}
+		sdb, known := id.links[pid]
+		if !known {
+			unlinked = append(unlinked, pid)
+			continue
+		}
+		if local := id.onStashDB[sdb]; sdb != "" && local != "" {
+			out[pid] = local
+		}
+	}
+	s.boxIdentity.mu.Unlock()
+
+	if len(unlinked) > 0 {
+		links, err := e.client.PerformerStashDBLinks(ctx, unlinked)
+		if err != nil {
+			// Partial results are still returned by the client, so keep
+			// what came back rather than discarding the whole page's work.
+			s.log.Warn("discover box: performer links",
+				"endpoint", e.box.Endpoint, "err", err)
+		}
+		s.boxIdentity.mu.Lock()
+		if len(id.links)+len(links) > boxLinkMemoCap {
+			id.links = make(map[string]string, len(links))
+		}
+		for pid, sdb := range links {
+			id.links[pid] = sdb
+			if local := id.onStashDB[sdb]; sdb != "" && local != "" {
+				out[pid] = local
+			}
+		}
+		s.boxIdentity.mu.Unlock()
+	}
+	return out
+}
+
+// boxIdentityFor returns the (memoised) identity maps for one endpoint,
+// refreshing the two Stash sweeps when they age out. The links memo survives
+// a refresh; only the library-side halves are re-read.
+func (s *Server) boxIdentityFor(ctx context.Context, endpoint string) *boxIdentity {
+	s.boxIdentity.mu.Lock()
+	if s.boxIdentity.by == nil {
+		s.boxIdentity.by = map[string]*boxIdentity{}
+	}
+	got := s.boxIdentity.by[endpoint]
+	if got != nil && time.Since(got.at) < boxLinkTTL {
+		s.boxIdentity.mu.Unlock()
+		return got
+	}
+	s.boxIdentity.mu.Unlock()
+
+	sc := s.pool.Stash()
+	if sc == nil {
+		return got // stale beats nothing; nil if we never had one
+	}
+	onBox, err := sc.PerformerLocalIDsByStashID(ctx, endpoint)
+	if err != nil {
+		s.log.Warn("discover box: local performers on box", "endpoint", endpoint, "err", err)
+		return got
+	}
+	// The endpoint STASH uses for StashDB, not the canonical spelling: the
+	// cross-ids on local performers carry whatever it was configured with,
+	// and a mismatch here would silently return an empty map.
+	var onStashDB map[string]string
+	if sdb := s.stashDBEndpoint(ctx, sc); sdb != "" && sdb != endpoint {
+		onStashDB, err = sc.PerformerLocalIDsByStashID(ctx, sdb)
+		if err != nil {
+			s.log.Warn("discover box: local performers on stashdb", "err", err)
+		}
+	}
+
+	s.boxIdentity.mu.Lock()
+	defer s.boxIdentity.mu.Unlock()
+	cur := s.boxIdentity.by[endpoint]
+	if cur == nil {
+		cur = &boxIdentity{links: map[string]string{}}
+		s.boxIdentity.by[endpoint] = cur
+	}
+	cur.at = time.Now()
+	cur.onBox = onBox
+	if onStashDB != nil {
+		cur.onStashDB = onStashDB
+	}
+	return cur
+}
+
+// allScenes flattens the feed and the carousel into one list, so the lookups
+// that cost a round trip are done once for the page rather than per list.
+func allScenes(lists ...*stashdb.QueryScenesResult) []stashdb.Scene {
+	var out []stashdb.Scene
+	for _, l := range lists {
+		if l != nil {
+			out = append(out, l.Scenes...)
+		}
+	}
+	return out
+}
+
+// ownedByFingerprint returns the box scene ids whose file the library already
+// holds under a StashDB id, so they can be dropped from the feed.
+//
+// ownedOnBox only catches scenes identified against THIS box, which is a small
+// set (93 FansDB, 253 JavStash) because almost nobody identifies against a
+// secondary box. Most of what the user owns is keyed on StashDB, and a FansDB
+// scene id says nothing about that. Fingerprints do: they are computed from the
+// file, so when both boxes have seen a release they agree on its hash.
+//
+// One request for the whole page. Scenes the box has no hashes for are simply
+// not covered, which is why this supplements ownedOnBox rather than replacing
+// it.
+func (s *Server) ownedByFingerprint(ctx context.Context, scenes []stashdb.Scene) map[string]bool {
+	sdb := s.pool.StashDB()
+	if sdb == nil || len(scenes) == 0 {
+		return nil
+	}
+	batches := make([][]stashdb.Fingerprint, len(scenes))
+	any := false
+	for i, sc := range scenes {
+		batches[i] = sc.Fingerprints
+		if len(sc.Fingerprints) > 0 {
+			any = true
+		}
+	}
+	if !any {
+		// JavStash carries no fingerprints at all, so this is the normal
+		// path there rather than a failure.
+		return nil
+	}
+	matched, err := sdb.FindScenesByFingerprints(ctx, batches)
+	if err != nil {
+		// Partial results are usable; a scene we fail to recognise is one
+		// the user sees again, which is the harmless direction.
+		s.log.Warn("discover box: fingerprint join", "err", err)
+	}
+	ownedCopies, err := s.ownedSceneCopies(ctx)
+	if err != nil {
+		s.log.Warn("discover box: owned copies", "err", err)
+		return nil
+	}
+	out := map[string]bool{}
+	for i, stashDBID := range matched {
+		if stashDBID == "" || i >= len(scenes) {
+			continue
+		}
+		if len(ownedCopies[stashDBID]) > 0 {
+			out[scenes[i].ID] = true
+		}
+	}
+	return out
+}
+
 // getDiscoverForBox serves the Discover feed from a secondary stash-box.
 //
 // Both lists come from the same source with different sorts: TRENDING for the
@@ -104,7 +330,7 @@ func (s *Server) getDiscoverForBox(w http.ResponseWriter, r *http.Request, e *bo
 
 	ctx := r.Context()
 	recent, err := e.client.QueryScenes(ctx, stashdb.SceneQuery{
-		Page: page, PerPage: perPage, Sort: "DATE",
+		Page: page, PerPage: perPage, Sort: "DATE", WithFingerprints: true,
 	})
 	if err != nil {
 		s.log.Warn("discover box: recent", "endpoint", e.box.Endpoint, "err", err)
@@ -116,7 +342,7 @@ func (s *Server) getDiscoverForBox(w http.ResponseWriter, r *http.Request, e *bo
 	var trending *stashdb.QueryScenesResult
 	if page == 1 {
 		trending, err = e.client.QueryScenes(ctx, stashdb.SceneQuery{
-			Page: 1, PerPage: trendingLimit, Sort: "TRENDING",
+			Page: 1, PerPage: trendingLimit, Sort: "TRENDING", WithFingerprints: true,
 		})
 		if err != nil {
 			// A missing carousel is survivable; the feed is the point.
@@ -125,12 +351,21 @@ func (s *Server) getDiscoverForBox(w http.ResponseWriter, r *http.Request, e *bo
 	}
 
 	owned := s.ownedOnBox(ctx, e.box.Endpoint)
+	// Both lists in one pass: the fingerprint join is a single request, and
+	// splitting it in two would double it for no gain.
+	for id := range s.ownedByFingerprint(ctx, allScenes(recent, trending)) {
+		if owned == nil {
+			owned = map[string]bool{}
+		}
+		owned[id] = true
+	}
+	ownedPerformers := s.performersOwnedOnBox(ctx, e, allScenes(recent, trending))
 	watchStatus := s.watchStatusByScene(ctx)
 	hideMale := s.pool.Settings().HideMalePerformers
 
 	out := discoverResponse{
-		Scenes:   boxScenes(recent, owned, watchStatus, hideMale),
-		Trending: boxScenes(trending, owned, watchStatus, hideMale),
+		Scenes:   boxScenes(recent, owned, ownedPerformers, watchStatus, hideMale),
+		Trending: boxScenes(trending, owned, ownedPerformers, watchStatus, hideMale),
 		Days:     0, // no window: a live box query is not date-bounded
 	}
 	// Both lists are freshly fetched, so "refreshed" is now by definition.
@@ -142,12 +377,12 @@ func (s *Server) getDiscoverForBox(w http.ResponseWriter, r *http.Request, e *bo
 // boxScenes maps live stash-box scenes onto the wire shape the Discover UI
 // already renders.
 //
-// Every performer is marked Local:false. On a secondary box that is honest
-// rather than lazy: local performers are indexed by their StashDB cross-id, so
-// a FansDB performer id cannot be matched against them, and claiming ownership
-// forage cannot verify would be worse than claiming none. The consequence is
-// that the "+" to add a performer is offered for everyone here.
+// ownedPerformers maps a box performer id to the LOCAL Stash performer id, for
+// the performers the library already has. Anyone in it gets an ordinary pill
+// that navigates to them; anyone absent keeps the "+" that adds them. See
+// performersOwnedOnBox for how that mapping is established.
 func boxScenes(res *stashdb.QueryScenesResult, owned map[string]bool,
+	ownedPerformers map[string]string,
 	watchStatus map[string]string, hideMale bool) []discoverScene {
 	if res == nil {
 		return []discoverScene{}
@@ -183,11 +418,13 @@ func boxScenes(res *stashdb.QueryScenesResult, owned map[string]bool,
 			if p.As != "" {
 				name = p.As
 			}
+			local := ownedPerformers[p.ID]
 			d.Performers = append(d.Performers, discoverPerformer{
 				Name:      name,
+				StashID:   local,
 				StashDBID: p.ID,
 				Gender:    g,
-				Local:     false,
+				Local:     local != "",
 			})
 		}
 		if d.Performers == nil {

@@ -217,13 +217,18 @@ export interface DiscoverPerformer {
 // id. The name is only the stash-box search term; the daemon selects the
 // candidate whose id matches and refuses rather than guessing between
 // same-named performers.
+// source is the stash-box that issued stashDBID, omitted for StashDB. A
+// performer id only means something on the box that issued it, so a FansDB
+// pill has to say so or the daemon looks it up on the wrong box.
 export function addPerformerFromStashDB(
   stashDBID: string,
   name: string,
+  source?: string,
 ): Promise<{ ok: boolean; local_id?: string; name?: string; already_present?: boolean }> {
   return postJSON("/performers/from-stashdb", {
     stashdb_id: stashDBID,
     name,
+    source: source || undefined,
   });
 }
 

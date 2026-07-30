@@ -19,31 +19,51 @@ func TestBoxScenesDropsOwned(t *testing.T) {
 		stashdb.Scene{ID: "have-it", Title: "Owned"},
 		stashdb.Scene{ID: "want-it", Title: "New"},
 	)
-	got := boxScenes(res, map[string]bool{"have-it": true}, nil, false)
+	got := boxScenes(res, map[string]bool{"have-it": true}, nil, nil, false)
 	if len(got) != 1 || got[0].StashDBID != "want-it" {
 		t.Fatalf("got %+v, want only want-it", got)
 	}
 }
 
-// Performers from a secondary box are never marked local. Local performers are
-// indexed by StashDB cross-id, so a FansDB performer id cannot be matched
-// against them — claiming ownership forage cannot verify would be worse than
-// claiming none, and the "+" is the honest offer.
-func TestBoxScenesNeverClaimsLocalPerformers(t *testing.T) {
+// A performer resolved to a local one is marked local AND carries the local
+// Stash id, because that id is what the pill navigates with. Marking them
+// owned without it would leave a dead pill: no "+" and nowhere to go.
+func TestBoxScenesMarksResolvedPerformersLocal(t *testing.T) {
+	res := boxResult(stashdb.Scene{
+		ID: "s1",
+		Performers: []stashdb.ScenePerformer{
+			{ID: "known", Name: "Have Her", Gender: "FEMALE"},
+			{ID: "new", Name: "Someone", Gender: "FEMALE"},
+		},
+	})
+	got := boxScenes(res, nil, map[string]string{"known": "42"}, nil, false)
+	if len(got) != 1 || len(got[0].Performers) != 2 {
+		t.Fatalf("got %+v", got)
+	}
+	have, missing := got[0].Performers[0], got[0].Performers[1]
+	if !have.Local || have.StashID != "42" {
+		t.Errorf("resolved performer = %+v, want local with stash id 42", have)
+	}
+	if missing.Local || missing.StashID != "" {
+		t.Errorf("unresolved performer = %+v, want not local", missing)
+	}
+	// The box id rides along either way: it is how the "+" adds them, and
+	// how the next page's lookup recognises them.
+	if have.StashDBID != "known" || missing.StashDBID != "new" {
+		t.Errorf("box ids lost: %+v %+v", have, missing)
+	}
+}
+
+// An unresolved performer keeps the "+". Nothing may claim ownership forage
+// cannot point at a local row for.
+func TestBoxScenesLeavesUnknownPerformersAddable(t *testing.T) {
 	res := boxResult(stashdb.Scene{
 		ID:         "s1",
 		Performers: []stashdb.ScenePerformer{{ID: "p1", Name: "Someone", Gender: "FEMALE"}},
 	})
-	got := boxScenes(res, nil, nil, false)
-	if len(got) != 1 || len(got[0].Performers) != 1 {
-		t.Fatalf("got %+v", got)
-	}
-	p := got[0].Performers[0]
-	if p.Local {
-		t.Error("a secondary-box performer must not be reported as local")
-	}
-	if p.StashDBID != "p1" || p.Name != "Someone" {
-		t.Errorf("performer = %+v", p)
+	got := boxScenes(res, nil, map[string]string{"someone-else": "7"}, nil, false)
+	if got[0].Performers[0].Local {
+		t.Error("a performer with no local match must not be reported as local")
 	}
 }
 
@@ -54,7 +74,7 @@ func TestBoxScenesPrefersCreditedName(t *testing.T) {
 		ID:         "s1",
 		Performers: []stashdb.ScenePerformer{{ID: "p1", Name: "Real Name", As: "Stage Name"}},
 	})
-	got := boxScenes(res, nil, nil, false)
+	got := boxScenes(res, nil, nil, nil, false)
 	if got[0].Performers[0].Name != "Stage Name" {
 		t.Fatalf("name = %q, want the credited one", got[0].Performers[0].Name)
 	}
@@ -74,7 +94,7 @@ func TestBoxScenesHidesOnlyKnownMales(t *testing.T) {
 			{ID: "l", Name: "Lowercase", Gender: "male"},
 		},
 	})
-	got := boxScenes(res, nil, nil, true)
+	got := boxScenes(res, nil, nil, nil, true)
 	var names []string
 	for _, p := range got[0].Performers {
 		names = append(names, p.Name)
@@ -83,7 +103,7 @@ func TestBoxScenesHidesOnlyKnownMales(t *testing.T) {
 		t.Fatalf("kept %v, want [Fem Unrecorded] (lowercase male must still be hidden)", names)
 	}
 
-	off := boxScenes(boxResult(res.Scenes[0]), nil, nil, false)
+	off := boxScenes(boxResult(res.Scenes[0]), nil, nil, nil, false)
 	if len(off[0].Performers) != 4 {
 		t.Fatalf("with the setting off all four should remain, got %d", len(off[0].Performers))
 	}
@@ -97,7 +117,7 @@ func TestBoxScenesKeepsSceneWithNoPerformersLeft(t *testing.T) {
 		ID:         "s1",
 		Performers: []stashdb.ScenePerformer{{ID: "m", Name: "Male", Gender: "MALE"}},
 	})
-	got := boxScenes(res, nil, nil, true)
+	got := boxScenes(res, nil, nil, nil, true)
 	if len(got) != 1 {
 		t.Fatalf("scene dropped: %+v", got)
 	}
@@ -109,7 +129,7 @@ func TestBoxScenesKeepsSceneWithNoPerformersLeft(t *testing.T) {
 // A nil result (the trending query failed, or we are past page 1) is an empty
 // list, not a panic and not a null in the JSON.
 func TestBoxScenesNilResult(t *testing.T) {
-	got := boxScenes(nil, nil, nil, false)
+	got := boxScenes(nil, nil, nil, nil, false)
 	if got == nil || len(got) != 0 {
 		t.Fatalf("got %+v, want an empty slice", got)
 	}
@@ -119,7 +139,7 @@ func TestBoxScenesNilResult(t *testing.T) {
 // same on a secondary box as it does on StashDB.
 func TestBoxScenesCarriesWatchStatus(t *testing.T) {
 	res := boxResult(stashdb.Scene{ID: "s1"})
-	got := boxScenes(res, nil, map[string]string{"s1": "watching"}, false)
+	got := boxScenes(res, nil, nil, map[string]string{"s1": "watching"}, false)
 	if got[0].WatchStatus != "watching" {
 		t.Fatalf("watch status = %q", got[0].WatchStatus)
 	}

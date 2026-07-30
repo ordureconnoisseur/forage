@@ -80,6 +80,20 @@ type Scene struct {
 	// Updated is StashDB's `updated` timestamp parsed to unix seconds (0 if
 	// absent/unparseable). Stored on the persistent scene cache row.
 	Updated int64
+	// Fingerprints are the file hashes the box holds for this scene. Only
+	// populated when SceneQuery.WithFingerprints asks for them, because a
+	// popular scene can carry ninety of these and the cached StashDB feed
+	// has no use for any of them.
+	Fingerprints []Fingerprint
+}
+
+// Fingerprint is one file hash a stash-box holds for a scene. The hash is
+// computed from the file's content, so unlike a scene id it means the same
+// thing on every box, which makes it the only reliable way to ask "is this
+// FansDB scene the same release StashDB calls something else".
+type Fingerprint struct {
+	Hash      string `json:"hash"`
+	Algorithm string `json:"algorithm"`
 }
 
 // SceneImage is a single image associated with a scene. StashDB
@@ -143,16 +157,18 @@ type sceneWire struct {
 	Tags       []struct {
 		Name string `json:"name"`
 	} `json:"tags"`
-	Updated string `json:"updated"`
+	Updated      string        `json:"updated"`
+	Fingerprints []Fingerprint `json:"fingerprints"`
 }
 
 func (w sceneWire) toScene() Scene {
 	s := Scene{
-		ID:     w.ID,
-		Title:  w.Title,
-		Date:   w.Date,
-		Studio: w.Studio,
-		Images: w.Images,
+		ID:           w.ID,
+		Title:        w.Title,
+		Date:         w.Date,
+		Studio:       w.Studio,
+		Images:       w.Images,
+		Fingerprints: w.Fingerprints,
 	}
 	for _, p := range w.Performers {
 		s.Performers = append(s.Performers, ScenePerformer{
@@ -244,6 +260,11 @@ type SceneQuery struct {
 	// Sort overrides the default "DATE" sort. Common values: "DATE",
 	// "TRENDING", "CREATED_AT". Empty falls through to the default.
 	Sort string
+	// WithFingerprints asks for each scene's file hashes as well. Off by
+	// default: a scene can carry ninety of them, and the only caller that
+	// wants them is the secondary-box feed, which uses them to recognise a
+	// release the library already holds under a StashDB id.
+	WithFingerprints bool
 }
 
 // QueryScenesResult is what StashDB returns from queryScenes — the
@@ -259,6 +280,20 @@ query ForagerQueryScenes($input: SceneQueryInput!) {
     count
     scenes {
       ` + sceneFields + `
+    }
+  }
+}`
+
+// Same query with the file hashes attached. A separate document rather than a
+// flag inside sceneFields because sceneFields also feeds the cached StashDB
+// paths, and every row they write would grow by hashes nothing reads.
+const queryScenesWithFingerprintsGQL = `
+query ForagerQueryScenesFP($input: SceneQueryInput!) {
+  queryScenes(input: $input) {
+    count
+    scenes {
+      ` + sceneFields + `
+      fingerprints { hash algorithm }
     }
   }
 }`
@@ -441,7 +476,11 @@ func (c *Client) QueryScenes(ctx context.Context, q SceneQuery) (*QueryScenesRes
 			Scenes []sceneWire `json:"scenes"`
 		} `json:"queryScenes"`
 	}
-	if err := c.do(ctx, queryScenesGQL, map[string]any{"input": input}, &resp); err != nil {
+	doc := queryScenesGQL
+	if q.WithFingerprints {
+		doc = queryScenesWithFingerprintsGQL
+	}
+	if err := c.do(ctx, doc, map[string]any{"input": input}, &resp); err != nil {
 		return nil, err
 	}
 	out := &QueryScenesResult{Count: resp.QueryScenes.Count}
