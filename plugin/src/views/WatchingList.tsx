@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   clearFinishedWatches,
   clearWatchBatch,
@@ -211,50 +211,44 @@ export default function WatchingList({
   );
 }
 
-// WatchShelf is the ONE collapsible primitive inside a group. Three of them
-// per group (ready / searching / grabbed), all identical in shape, so depth
-// reads as structure rather than as three separate ideas that happen to
-// nest. Before this, available and watching cards were dumped straight into
-// one list at full size while "grabbed" got a bespoke row, so a group with
-// 113 watching scenes was a wall of identical cards with nothing to do.
+// A group's body IS its ready-to-grab scenes. They are not wrapped in
+// anything collapsible, because a control to hide them already exists one
+// level up: collapsing the batch. A second chevron for the same intent was
+// most of what made this feel like scaffolding around content.
 //
-// Two rules do most of the work:
-//   - the count lives on the shelf, so the group header stops repeating
-//     "3 ready · 113 watching · 494 grabbed" and just says how far along it is;
-//   - defaultOpen encodes ACTIONABILITY, so what opens by default is exactly
-//     what you can act on.
-function WatchShelf({
+// What DOES collapse is only what you have put away — still-searching and
+// grabbed — and those live in one quiet bar at the foot of the group rather
+// than as peers of the content above them. So the hierarchy reads:
+//
+//   the group, which you can collapse
+//     the scenes you can act on
+//     a footer of things tucked away
+//
+// One nesting level, and the second is visibly subordinate rather than
+// visually identical to the first.
+function WatchDrawer({
   label,
   count,
-  defaultOpen,
-  actions,
-  children,
+  open,
+  onToggle,
 }: {
   label: string;
   count: number;
-  defaultOpen: boolean;
-  actions?: ReactNode;
-  children: ReactNode;
+  open: boolean;
+  onToggle: () => void;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
   if (count === 0) return null;
   return (
-    <div className={"watch-shelf" + (open ? " is-open" : "")}>
-      <div className="watch-shelf-head">
-        <button
-          type="button"
-          className="watch-shelf-toggle"
-          aria-expanded={open}
-          onClick={() => setOpen((v) => !v)}
-        >
-          <span className={"fchev" + (open ? " open" : "")} aria-hidden="true" />
-          <span className="watch-shelf-count">{count}</span>
-          <span className="watch-shelf-label">{label}</span>
-        </button>
-        {actions && <div className="watch-shelf-actions">{actions}</div>}
-      </div>
-      {open && <div className="watch-shelf-body">{children}</div>}
-    </div>
+    <button
+      type="button"
+      className={"watch-drawer" + (open ? " is-open" : "")}
+      aria-expanded={open}
+      onClick={onToggle}
+    >
+      <span className={"fchev" + (open ? " open" : "")} aria-hidden="true" />
+      <span className="watch-drawer-count">{count}</span>
+      <span className="watch-drawer-label">{label}</span>
+    </button>
   );
 }
 
@@ -286,6 +280,13 @@ function WatchGroup({
   // only job is to be counted. Render the actionable ones and put the rest
   // behind a disclosure; the real state of a grabbed scene lives in Grabs.
   const [clearDoneBusy, setClearDoneBusy] = useState(false);
+  // One drawer open at a time. Two open at once rebuilds the wall of cards
+  // this was meant to remove, and there is no reason to compare the two.
+  const [openDrawer, setOpenDrawer] = useState<null | "searching" | "grabbed">(
+    null,
+  );
+  // Nothing ready and nothing still being searched for: the batch is done.
+  const settled = isBatch && available.length === 0 && watching.length === 0;
 
   const clearDone = async () => {
     if (clearDoneBusy) return;
@@ -380,37 +381,23 @@ function WatchGroup({
           <span className="watch-group-progress">{progress}</span>
         </div>
         <div className="watch-group-actions">
-          {isBatch && (
+          {available.length > 0 && (
             <button
-              className="watch-clear"
-              disabled={clearBusy}
-              onClick={clear}
-              title="Remove every watch in this batch"
+              className="collection-cta"
+              disabled={grabAllBusy}
+              onClick={grabAll}
+              title="Queue every available release in this group"
             >
-              {clearBusy ? "Clearing…" : "Clear batch"}
+              {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
             </button>
           )}
+
         </div>
       </div>
       {!collapsed && (
         <>
-          <WatchShelf
-            label="ready to grab"
-            count={available.length}
-            defaultOpen
-            actions={
-              available.length > 0 ? (
-                <button
-                  className="collection-cta"
-                  disabled={grabAllBusy}
-                  onClick={grabAll}
-                  title="Queue every available release in this group"
-                >
-                  {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
-                </button>
-              ) : undefined
-            }
-          >
+          {/* The body: what you can act on, rendered plainly. */}
+          {available.length > 0 && (
             <ul className="watch-list">
               {available.map((w) => (
                 <WatchCard
@@ -421,15 +408,77 @@ function WatchGroup({
                 />
               ))}
             </ul>
-          </WatchShelf>
+          )}
 
-          <WatchShelf
-            label="still searching"
-            count={watching.length}
-            defaultOpen={false}
-          >
-            <ul className="watch-list">
-              {watching.map((w) => (
+          {/* The footer: one bar holding everything tucked away. Both
+              drawers share a row, so putting things away costs a line, not
+              a section each. */}
+          {(watching.length > 0 || grabbed.length > 0) && (
+            <div className="watch-drawers">
+              <WatchDrawer
+                label="still searching"
+                count={watching.length}
+                open={openDrawer === "searching"}
+                onToggle={() =>
+                  setOpenDrawer((d) => (d === "searching" ? null : "searching"))
+                }
+              />
+              <WatchDrawer
+                label="grabbed"
+                count={grabbed.length}
+                open={openDrawer === "grabbed"}
+                onToggle={() =>
+                  setOpenDrawer((d) => (d === "grabbed" ? null : "grabbed"))
+                }
+              />
+              {settled && (
+                // Only once there is nothing left to act on. Clearing an
+                // UNFINISHED batch deletes its still-searching rows, which
+                // silently cancels active hunts — not something to put one
+                // tap away on every row. Finished is also the moment the
+                // action actually means something.
+                <span className="watch-drawer-actions">
+                  <button
+                    type="button"
+                    className="setup-link watch-drawer-danger"
+                    disabled={clearBusy}
+                    onClick={clear}
+                    title="Remove every watch in this finished batch"
+                  >
+                    {clearBusy ? "Clearing…" : "clear batch"}
+                  </button>
+                </span>
+              )}
+              {openDrawer === "grabbed" && (
+                <span className="watch-drawer-actions">
+                  <button
+                    type="button"
+                    className="setup-link"
+                    onClick={() => onPickGrabs(isBatch ? group.label : "")}
+                    title={
+                      isBatch
+                        ? "Show these in Grabs, where their download state lives"
+                        : "Open Grabs, where these downloads' real state lives"
+                    }
+                  >
+                    view in Grabs
+                  </button>
+                  <button
+                    type="button"
+                    className="setup-link watch-drawer-danger"
+                    disabled={clearDoneBusy}
+                    onClick={clearDone}
+                    title="Remove these finished watches. Does not touch files or grabs."
+                  >
+                    {clearDoneBusy ? "Clearing…" : "clear finished"}
+                  </button>
+                </span>
+              )}
+            </div>
+          )}
+          {openDrawer && (
+            <ul className="watch-list watch-list-drawer">
+              {(openDrawer === "searching" ? watching : grabbed).map((w) => (
                 <WatchCard
                   key={w.stashdb_id}
                   w={w}
@@ -438,48 +487,7 @@ function WatchGroup({
                 />
               ))}
             </ul>
-          </WatchShelf>
-          <WatchShelf
-            label="grabbed"
-            count={grabbed.length}
-            defaultOpen={false}
-            actions={
-              <>
-                <button
-                  type="button"
-                  className="setup-link"
-                  onClick={() => onPickGrabs(isBatch ? group.label : "")}
-                  title={
-                    isBatch
-                      ? "Show these in Grabs, where their download state lives"
-                      : "Open Grabs, where these downloads' real state lives"
-                  }
-                >
-                  view in Grabs
-                </button>
-                <button
-                  type="button"
-                  className="setup-link watch-shelf-danger"
-                  disabled={clearDoneBusy}
-                  onClick={clearDone}
-                  title="Remove these finished watches. Does not touch files or grabs."
-                >
-                  {clearDoneBusy ? "Clearing…" : "clear finished"}
-                </button>
-              </>
-            }
-          >
-            <ul className="watch-list">
-              {grabbed.map((w) => (
-                <WatchCard
-                  key={w.stashdb_id}
-                  w={w}
-                  onChanged={onChanged}
-                  onPickScene={onPickScene}
-                />
-              ))}
-            </ul>
-          </WatchShelf>
+          )}
         </>
       )}
     </section>
