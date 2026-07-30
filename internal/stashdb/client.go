@@ -100,6 +100,11 @@ type ScenePerformer struct {
 	ID   string `json:"-"`
 	Name string `json:"-"`
 	As   string `json:"as"`
+	// Gender as the box reports it. Only the live secondary-box path reads
+	// this; the StashDB feed resolves gender from performer_cache and the
+	// backfill table, because its scenes are served from cache rows written
+	// before this field existed.
+	Gender string `json:"-"`
 }
 
 // scenePerformerWire is the GraphQL response shape — the StashDB
@@ -108,8 +113,9 @@ type ScenePerformer struct {
 // (the credited stage name on that scene).
 type scenePerformerWire struct {
 	Performer struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		Gender string `json:"gender"`
 	} `json:"performer"`
 	As string `json:"as"`
 }
@@ -150,9 +156,10 @@ func (w sceneWire) toScene() Scene {
 	}
 	for _, p := range w.Performers {
 		s.Performers = append(s.Performers, ScenePerformer{
-			ID:   p.Performer.ID,
-			Name: p.Performer.Name,
-			As:   p.As,
+			ID:     p.Performer.ID,
+			Name:   p.Performer.Name,
+			As:     p.As,
+			Gender: p.Performer.Gender,
 		})
 	}
 	for _, u := range w.URLs {
@@ -177,7 +184,7 @@ const sceneFields = `
   date
   updated
   studio { id name }
-  performers { performer { id name } as }
+  performers { performer { id name gender } as }
   urls { url site { name } }
   images { url width height }
   tags { name }

@@ -124,6 +124,15 @@ type Server struct {
 	matcherMu sync.Mutex
 	matcher   *matcher.Matcher
 
+	// boxes caches the user's stash-boxes (read from Stash, not from
+	// forage's own config) plus a client and reachability verdict for each.
+	// Backs the Discover source switcher; see boxes.go.
+	boxes boxRegistry
+	// owned memoises, per secondary stash-box endpoint, the set of scene ids
+	// the library already carries for that box — so browsing it can drop
+	// what you have without a Stash round trip per card.
+	owned boxOwnedCache
+
 	// ownedCopies memoises StashDB scene id → the local copies the user owns,
 	// each carrying resolution/size (via the enriched FindAllSceneStashDBIDs
 	// sweep), memoised for ownedTTL. Backs the performer page's missing/owned/
@@ -322,6 +331,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
 		r.Post("/scenes/{id}/destroy", s.postDestroyScene)
 		r.Get("/discover", s.getDiscover)
+		r.Get("/discover/boxes", s.getDiscoverBoxes)
 		r.Get("/indexers", s.getIndexers)
 		r.Get("/indexer-catalog", s.getIndexerCatalog)
 		r.Post("/indexer-catalog/add", s.postIndexerCatalogAdd)

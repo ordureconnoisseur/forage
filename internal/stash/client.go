@@ -1459,3 +1459,60 @@ func (c *Client) FindPerformerByStashDBID(ctx context.Context, stashDBID string)
 	}
 	return resp.FindPerformers.Performers[0].ID, nil
 }
+
+// sceneStashIDsQuery pulls just the cross-ids of scenes labelled against one
+// stash-box. Deliberately narrower than labeledScenesQuery (no files, studio or
+// performers): the caller only needs to answer "do I have this scene", and the
+// heavier projection would page the whole library's file lists to do it.
+const sceneStashIDsQuery = `
+query ForagerSceneStashIDs($page: Int!, $perPage: Int!, $endpoint: String!) {
+  findScenes(
+    scene_filter: { stash_id_endpoint: { endpoint: $endpoint, modifier: NOT_NULL } }
+    filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }
+  ) {
+    count
+    scenes { stash_ids { endpoint stash_id } }
+  }
+}`
+
+// SceneStashIDsForEndpoint returns the stash-box ids of every local scene
+// identified against `endpoint`.
+//
+// Used to mark scenes you already have when browsing a secondary stash-box.
+// One paged sweep rather than a lookup per card: Stash's stash-id filter takes
+// a single id, so checking a page of results individually would be one round
+// trip per scene. The result sets are small in practice (93 and 253 for FansDB
+// and JavStash on the reference library) because secondary boxes are lightly
+// identified.
+//
+// A scene can carry ids from several boxes, so entries are filtered to the
+// endpoint asked for — returning a StashDB id here would mark the wrong rows.
+func (c *Client) SceneStashIDsForEndpoint(ctx context.Context, endpoint string) ([]string, error) {
+	if endpoint == "" {
+		return nil, nil
+	}
+	const perPage = 500
+	var out []string
+	type resp struct {
+		FindScenes struct {
+			Scenes []struct {
+				StashIDs []StashID `json:"stash_ids"`
+			} `json:"scenes"`
+		} `json:"findScenes"`
+	}
+	err := pagedQuery(ctx, c, "sceneStashIDs", sceneStashIDsQuery,
+		map[string]any{"endpoint": endpoint}, perPage, func(r resp) (int, bool) {
+			for _, s := range r.FindScenes.Scenes {
+				for _, id := range s.StashIDs {
+					if id.Endpoint == endpoint && id.StashID != "" {
+						out = append(out, id.StashID)
+					}
+				}
+			}
+			return len(r.FindScenes.Scenes), false
+		})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
