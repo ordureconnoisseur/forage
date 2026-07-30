@@ -812,7 +812,7 @@ function DiscoverCard({
         </div>
         {s.performers.length > 0 && (
           <div className="perf-chips">
-            <ScenePerfChips s={s} onPickPerformer={onPickPerformer} />
+            <ScenePerfChips s={s} box={box} onPickPerformer={onPickPerformer} />
           </div>
         )}
       </div>
@@ -833,9 +833,13 @@ const MISSING_CHIP_CAP = 3;
 // you cannot add, and adding them is the entire point of the pill.
 function ScenePerfChips({
   s,
+  box,
   onPickPerformer,
 }: {
   s: DiscoverScene;
+  // Stash-box these performers came from ("" = StashDB), so the "+" adds
+  // them from the box that knows the id.
+  box: string;
   onPickPerformer: (stashID: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
@@ -854,7 +858,7 @@ function ScenePerfChips({
         />
       ))}
       {shown.map((p) => (
-        <MissingPerfChip key={p.stashdb_id} p={p} />
+        <MissingPerfChip key={p.stashdb_id} p={p} box={box} />
       ))}
       {hidden > 0 && (
         <button
@@ -878,7 +882,7 @@ function ScenePerfChips({
 // Once added it becomes inert rather than disappearing — the card would
 // otherwise reshuffle under the cursor, and the next Discover refresh
 // re-renders it as an ordinary local pill anyway.
-function MissingPerfChip({ p }: { p: DiscoverPerformer }) {
+function MissingPerfChip({ p, box }: { p: DiscoverPerformer; box: string }) {
   const [state, setState] = useState<"idle" | "adding" | "added" | "err">("idle");
   const [msg, setMsg] = useState("");
 
@@ -886,7 +890,7 @@ function MissingPerfChip({ p }: { p: DiscoverPerformer }) {
     if (state === "adding" || state === "added") return;
     setState("adding");
     try {
-      const r = await addPerformerFromStashDB(p.stashdb_id!, p.name);
+      const r = await addPerformerFromStashDB(p.stashdb_id!, p.name, box);
       setState("added");
       setMsg(r.already_present ? "already in your library" : "added to your library");
     } catch (e) {

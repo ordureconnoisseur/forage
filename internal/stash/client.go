@@ -1516,3 +1516,59 @@ func (c *Client) SceneStashIDsForEndpoint(ctx context.Context, endpoint string) 
 	}
 	return out, nil
 }
+
+// performerStashIDsQuery is the performer counterpart of sceneStashIDsQuery:
+// the local id plus every cross-id, for performers labelled against one box.
+const performerStashIDsQuery = `
+query ForagerPerformerStashIDs($page: Int!, $perPage: Int!, $endpoint: String!) {
+  findPerformers(
+    performer_filter: { stash_id_endpoint: { endpoint: $endpoint, modifier: NOT_NULL } }
+    filter: { page: $page, per_page: $perPage, sort: "id", direction: ASC }
+  ) {
+    count
+    performers { id stash_ids { endpoint stash_id } }
+  }
+}`
+
+// PerformerLocalIDsByStashID maps a stash-box performer id to the LOCAL Stash
+// performer id, for every performer identified against `endpoint`.
+//
+// The local id is the point: a performer the user owns gets an ordinary pill
+// that navigates to them, and that navigation needs the Stash id, not the
+// box's. Returning a bare "do I own them" set would leave the pill inert.
+//
+// Small enough to sweep whole and memoise: 779 performers carry a StashDB id
+// on the reference library, 147 a FansDB one, 2 a JavStash one.
+func (c *Client) PerformerLocalIDsByStashID(ctx context.Context, endpoint string) (map[string]string, error) {
+	if endpoint == "" {
+		return nil, nil
+	}
+	const perPage = 500
+	out := map[string]string{}
+	type resp struct {
+		FindPerformers struct {
+			Performers []struct {
+				ID       string    `json:"id"`
+				StashIDs []StashID `json:"stash_ids"`
+			} `json:"performers"`
+		} `json:"findPerformers"`
+	}
+	err := pagedQuery(ctx, c, "performerStashIDs", performerStashIDsQuery,
+		map[string]any{"endpoint": endpoint}, perPage, func(r resp) (int, bool) {
+			for _, p := range r.FindPerformers.Performers {
+				for _, id := range p.StashIDs {
+					// A performer carries ids from several boxes, so this
+					// filters to the one asked for. Keying by another box's
+					// id would map the wrong pill onto a local performer.
+					if id.Endpoint == endpoint && id.StashID != "" && p.ID != "" {
+						out[id.StashID] = p.ID
+					}
+				}
+			}
+			return len(r.FindPerformers.Performers), false
+		})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}

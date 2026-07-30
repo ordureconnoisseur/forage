@@ -132,6 +132,10 @@ type Server struct {
 	// the library already carries for that box — so browsing it can drop
 	// what you have without a Stash round trip per card.
 	owned boxOwnedCache
+	// boxIdentity memoises how a secondary box's performers map onto local
+	// ones, so a performer you own is not offered to you as new. See
+	// discover_box.go.
+	boxIdentity boxIdentityCache
 
 	// ownedCopies memoises StashDB scene id → the local copies the user owns,
 	// each carrying resolution/size (via the enriched FindAllSceneStashDBIDs

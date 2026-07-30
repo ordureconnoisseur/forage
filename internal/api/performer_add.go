@@ -26,6 +26,11 @@ type addPerformerRequest struct {
 	// it from the scene's cached performer list, so the client sends it
 	// rather than making the daemon look it up again.
 	Name string `json:"name"`
+	// Source is the endpoint that issued StashDBID: "" for StashDB, which is
+	// every request from the primary feed. A performer id is only meaningful
+	// on the box that issued it, so scraping a FansDB uuid from StashDB finds
+	// nothing and refuses, leaving a dead "+" on every secondary-box pill.
+	Source string `json:"source,omitempty"`
 }
 
 func (s *Server) postPerformerFromStashDB(w http.ResponseWriter, r *http.Request) {
@@ -51,9 +56,21 @@ func (s *Server) postPerformerFromStashDB(w http.ResponseWriter, r *http.Request
 	if eerr == nil && len(boxes) > 0 {
 		endpoint = boxes[0]
 	}
+	// Scrape from the box that issued the id. Matched against Stash's own
+	// list rather than trusted as given: this string is handed to Stash as
+	// the endpoint to scrape and the endpoint stamped on the new performer's
+	// cross-id, so an unrecognised one falls back to the default instead.
+	if src := strings.TrimSpace(req.Source); src != "" {
+		for _, ep := range boxes {
+			if ep == src {
+				endpoint = ep
+				break
+			}
+		}
+	}
 	if endpoint == "" {
 		writeErr(w, http.StatusServiceUnavailable,
-			"Stash has no StashDB endpoint configured, so it can't look this performer up")
+			"Stash has no stash-box configured, so it can't look this performer up")
 		return
 	}
 
