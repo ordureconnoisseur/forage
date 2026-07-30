@@ -24,7 +24,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,6 +45,119 @@ const sessionCookieName = "forage_token"
 // sessionTTL is how long a web-login session stays valid. Matches the
 // cookie MaxAge so the two expire together.
 const sessionTTL = 7 * 24 * time.Hour
+
+// ── Trusted proxies ─────────────────────────────────────────────────
+//
+// X-Forwarded-* headers are client input. They decide two things here —
+// whether the session cookie gets the Secure flag, and which address the
+// auth log attributes an attempt to — so they're honoured only when the
+// request actually arrived from an address a reverse proxy could
+// plausibly occupy: loopback, RFC1918, ULA, or link-local. That's the
+// same set Sonarr allows via ForwardedHeadersOptions.KnownIPNetworks.
+//
+// CGNAT (100.64.0.0/10, where Tailscale addresses live) is deliberately
+// NOT trusted. forage's usual arrangement puts `tailscale serve` in the
+// same netns proxying to 127.0.0.1, so the proxy reads as loopback and
+// is covered; trusting the whole CGNAT range instead would let any
+// tailnet peer forge its own identity in the auth log.
+
+// remoteHost strips the port from a RemoteAddr, tolerating the
+// bare-address form some transports produce.
+func remoteHost(addr string) string {
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
+	}
+	return addr
+}
+
+// fromTrustedProxy reports whether the request's transport-level peer sits
+// in a network a reverse proxy could occupy. False for anything routable
+// from the wider internet, so a direct client's forwarded headers are
+// ignored rather than believed.
+func fromTrustedProxy(r *http.Request) bool {
+	ip := net.ParseIP(remoteHost(r.RemoteAddr))
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
+}
+
+// clientIP resolves the address to attribute a request to, plus the direct
+// transport peer. Behind a trusted proxy the left-most X-Forwarded-For
+// entry wins; otherwise the header is ignored entirely. The entry is
+// re-serialised through net.ParseIP, so a malformed or injected value
+// never reaches the log as-is.
+//
+// peer is returned alongside and logged whenever it differs, so even a
+// forged header can't erase the ground truth of who actually connected.
+// That's the property a fail2ban jail needs and the reason this returns
+// two values rather than collapsing to one.
+func clientIP(r *http.Request) (ip, peer string) {
+	peer = remoteHost(r.RemoteAddr)
+	if !fromTrustedProxy(r) {
+		return peer, peer
+	}
+	first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-For"), ",")
+	if parsed := net.ParseIP(strings.TrimSpace(first)); parsed != nil {
+		return parsed.String(), peer
+	}
+	return peer, peer
+}
+
+// cookieSecure decides the session cookie's Secure flag: direct TLS, or a
+// trusted proxy reporting it terminated https.
+func cookieSecure(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return fromTrustedProxy(r) &&
+		strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+}
+
+// ── Auth audit log ──────────────────────────────────────────────────
+//
+// Every credential check that fails, and every one that succeeds, emits a
+// line carrying the client address. forage has no login lockout (neither
+// do the *arrs), so this log IS the control that makes a password spray
+// visible and gives fail2ban something to match on. Records look like:
+//
+//	msg=auth-failure ip=192.168.50.9 username=admin
+//	msg=auth-unauthorized ip=100.64.1.2 peer=127.0.0.1 method=GET path=/config
+//
+// so a jail can key on `msg=auth-failure .* ip=<HOST>`.
+
+// discardLog backstops the handful of unit tests that build a bare Server
+// without a logger; auditing must never be the thing that panics a request.
+var discardLog = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+func (s *Server) authLogger() *slog.Logger {
+	if s.log == nil {
+		return discardLog
+	}
+	return s.log
+}
+
+// maxLoggedLen bounds attacker-controlled strings (usernames, paths) so a
+// flood of oversized values can't bloat the log. slog's handlers already
+// quote-escape control characters, which covers injection.
+const maxLoggedLen = 96
+
+func logSafe(v string) string {
+	if len(v) > maxLoggedLen {
+		return v[:maxLoggedLen] + "..."
+	}
+	return v
+}
+
+// logAuth emits one audit record for an authentication event.
+func (s *Server) logAuth(r *http.Request, level slog.Level, event string, extra ...any) {
+	ip, peer := clientIP(r)
+	args := []any{"ip", ip}
+	if peer != ip {
+		args = append(args, "peer", peer)
+	}
+	s.authLogger().Log(r.Context(), level, event, append(args, extra...)...)
+}
 
 // effectiveAdminToken is the API key the gate accepts as a Bearer
 // credential: the UI-managed config.json value when set, else the env
@@ -103,6 +218,11 @@ func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		// Info, not Warn: a browser whose cookie just expired trips this
+		// on every poll, and that shouldn't read as an attack. The
+		// credential-check failures below are the Warn-level signal.
+		s.logAuth(r, slog.LevelInfo, "auth-unauthorized",
+			"method", r.Method, "path", logSafe(r.URL.Path))
 		writeErr(w, http.StatusUnauthorized, "authentication required")
 	})
 }
@@ -284,14 +404,13 @@ func (s *Server) sessionValid(value string) bool {
 // Secure on https (direct TLS or behind a proxy that forwarded https),
 // HttpOnly so client JS can't read it, SameSite=Lax, 7-day MaxAge.
 func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
-	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    value,
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
+		Secure:   cookieSecure(r),
 		MaxAge:   int(sessionTTL / time.Second),
 	})
 }
@@ -308,6 +427,8 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	if hash == "" {
 		// No password configured — password login isn't available on this
 		// daemon (it may still accept the API key via POST /session).
+		s.logAuth(r, slog.LevelInfo, "auth-failure", "method", "password",
+			"reason", "password login not enabled")
 		writeErr(w, http.StatusUnauthorized, "password login is not enabled")
 		return
 	}
@@ -323,6 +444,11 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	userOK := subtle.ConstantTimeCompare([]byte(body.Username), []byte(s.effectiveUsername())) == 1
 	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) == nil
 	if !userOK || !passOK {
+		// The attempted username is logged (spray detection needs it) but
+		// NOT which half was wrong — that stays as undisclosed in the log
+		// as it is in the response.
+		s.logAuth(r, slog.LevelWarn, "auth-failure", "method", "password",
+			"username", logSafe(body.Username))
 		writeErr(w, http.StatusUnauthorized, "incorrect username or password")
 		return
 	}
@@ -333,6 +459,8 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, r, id)
+	s.logAuth(r, slog.LevelInfo, "auth-success", "method", "password",
+		"username", logSafe(body.Username))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -366,6 +494,9 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	keyOK := stashKey != "" &&
 		subtle.ConstantTimeCompare([]byte(body.Token), []byte(stashKey)) == 1
 	if !tokenOK && !keyOK {
+		// No token value in the log, not even a prefix: it's a bearer
+		// secret, and a near-miss would be as good as the real thing.
+		s.logAuth(r, slog.LevelWarn, "auth-failure", "method", "token")
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
@@ -375,6 +506,12 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	setSessionCookie(w, r, id)
+	credential := "adminToken"
+	if !tokenOK {
+		credential = "stashApiKey"
+	}
+	s.logAuth(r, slog.LevelInfo, "auth-success", "method", "token",
+		"credential", credential)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": true})
 }
 
@@ -386,15 +523,17 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 // unauthenticated: removing your own browser's credential is harmless, and
 // a locked-out client has nothing valid to present anyway.
 func (s *Server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
-		Secure:   secure,
+		Secure:   cookieSecure(r),
 		MaxAge:   -1,
 	})
+	// Debug, not Info: the route is public and unauthenticated, so anyone
+	// can call it in a loop. Useful when tracing a session, not a signal.
+	s.logAuth(r, slog.LevelDebug, "auth-logout")
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
