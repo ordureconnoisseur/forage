@@ -244,6 +244,10 @@ function WatchDrawer({
   onToggle: () => void;
 }) {
   if (count === 0) return null;
+  // No chevron. The group header directly above owns one, and stacked in the
+  // same column the two read as a double chevron doing one job twice. A
+  // verb-led label carries the affordance instead, and says what will
+  // happen rather than leaving a glyph to imply it.
   return (
     <button
       type="button"
@@ -251,8 +255,8 @@ function WatchDrawer({
       aria-expanded={open}
       onClick={onToggle}
     >
-      <span className={"fchev" + (open ? " open" : "")} aria-hidden="true" />
       <span className="watch-drawer-text">
+        <span className="watch-drawer-verb">{open ? "hide" : "show"}</span>
         <span className="watch-drawer-count">{count}</span>
         <span className="watch-drawer-label">others</span>
       </span>
