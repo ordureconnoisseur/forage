@@ -389,19 +389,6 @@ function WatchGroup({
           <h3 className="section-header">{group.label}</h3>
           <span className="watch-group-progress">{progress}</span>
         </div>
-        <div className="watch-group-actions">
-          {available.length > 0 && (
-            <button
-              className="collection-cta"
-              disabled={grabAllBusy}
-              onClick={grabAll}
-              title="Queue every available release in this group"
-            >
-              {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
-            </button>
-          )}
-
-        </div>
       </div>
       {!collapsed && (
         <>
@@ -419,8 +406,13 @@ function WatchGroup({
             </ul>
           )}
 
-          {/* The footer: one line holding everything tucked away. */}
-          {others.length > 0 && (
+          {/* The footer action bar: what is tucked away on the left, the
+              primary action on the right. "Grab all" lives here rather than
+              in the header because on a phone the header could not fit
+              name + progress + button and wrapped it hard-left onto its own
+              line, orphaned from everything. Here it is pinned to the panel
+              edge, beside the content it acts on, and in thumb reach. */}
+          {(others.length > 0 || available.length > 0) && (
             <div className="watch-drawers">
               <WatchDrawer
                 count={others.length}
@@ -464,6 +456,16 @@ function WatchGroup({
                     clear batch
                   </button>
                 </span>
+              )}
+              {available.length > 0 && (
+                <button
+                  className="collection-cta watch-grab-all"
+                  disabled={grabAllBusy}
+                  onClick={grabAll}
+                  title="Queue every available release in this group"
+                >
+                  {grabAllBusy ? "Grabbing…" : `Grab all ${available.length} →`}
+                </button>
               )}
             </div>
           )}
