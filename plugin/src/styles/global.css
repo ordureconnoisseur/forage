@@ -672,12 +672,19 @@ button {
 .watch-group:has(> .watch-group-head:only-child) {
   padding: 10px 14px;
 }
+.watch-group:has(> .watch-group-head:only-child) .watch-group-head {
+  margin-bottom: 0;
+}
+/* Nor does a header whose only sibling is the footer link. */
+.watch-group-head:has(+ .watch-drawers) {
+  margin-bottom: 4px;
+}
 .watch-group-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 0;
+  margin: 0 0 10px 0;
   /* No wrapping. The header carries identity only — the actions moved to the
      footer bar precisely so this row can always be one line. */
   flex-wrap: nowrap;
@@ -5304,13 +5311,17 @@ code.grab-fact-v,
   flex-wrap: wrap;
   gap: 8px 16px;
   margin: 0;
-  padding: 0;
+  /* Indented to the batch NAME, not the panel edge. The name sits 29px past
+     the chevron, so a footer link flush to the edge left the panel's left
+     rag zigzagging between two different starts. Now the chevron owns its
+     own column and everything else lines up behind it. */
+  padding: 0 0 0 29px;
 }
 /* Only ruled off when there is body content above it to divide. */
 .watch-list + .watch-drawers,
 .watch-list-drawer + .watch-drawers {
   margin-top: 10px;
-  padding-top: 10px;
+  padding: 10px 0 0 29px;
   border-top: 1px solid var(--glass-border);
 }
 /* The primary action pins to the panel's right edge. */
@@ -5344,7 +5355,16 @@ code.grab-fact-v,
 .watch-drawer-text {
   display: inline-flex;
   align-items: baseline;
-  gap: 7px;
+  gap: 6px;
+}
+.watch-drawer-verb {
+  text-decoration: underline;
+  text-decoration-color: var(--glass-border-bright);
+  text-underline-offset: 3px;
+}
+.watch-drawer:hover .watch-drawer-verb,
+.watch-drawer.is-open .watch-drawer-verb {
+  text-decoration-color: currentColor;
 }
 .watch-drawer-count {
   font-variant-numeric: tabular-nums;
