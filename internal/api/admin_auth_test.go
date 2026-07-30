@@ -577,3 +577,184 @@ func TestEffectiveAdminToken(t *testing.T) {
 		})
 	}
 }
+
+// TestFromTrustedProxyAndClientIP covers the forwarded-header trust
+// boundary: X-Forwarded-* is believed only from an address a reverse proxy
+// could occupy, and the direct peer is always reported alongside so a
+// forged header can't erase who actually connected.
+func TestClientIP(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		wantIP     string
+		wantPeer   string
+	}{
+		{"no header, direct client", "203.0.113.7:5555", "", "203.0.113.7", "203.0.113.7"},
+		{"loopback proxy is trusted", "127.0.0.1:5555", "100.64.1.2", "100.64.1.2", "127.0.0.1"},
+		{"rfc1918 proxy is trusted", "192.168.50.1:5555", "9.9.9.9", "9.9.9.9", "192.168.50.1"},
+		{"ipv6 loopback proxy is trusted", "[::1]:5555", "9.9.9.9", "9.9.9.9", "::1"},
+		{"ula proxy is trusted", "[fd00::1]:5555", "9.9.9.9", "9.9.9.9", "fd00::1"},
+		{"public client cannot forge", "203.0.113.7:5555", "9.9.9.9", "203.0.113.7", "203.0.113.7"},
+		{"cgnat peer is NOT a trusted proxy", "100.64.1.2:5555", "9.9.9.9", "100.64.1.2", "100.64.1.2"},
+		{"leftmost entry of a chain wins", "127.0.0.1:5555", "9.9.9.9, 10.0.0.1", "9.9.9.9", "127.0.0.1"},
+		{"garbage header falls back to peer", "127.0.0.1:5555", "not-an-ip", "127.0.0.1", "127.0.0.1"},
+		{"empty header falls back to peer", "127.0.0.1:5555", "", "127.0.0.1", "127.0.0.1"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/config", nil)
+			req.RemoteAddr = c.remoteAddr
+			if c.xff != "" {
+				req.Header.Set("X-Forwarded-For", c.xff)
+			}
+			ip, peer := clientIP(req)
+			if ip != c.wantIP || peer != c.wantPeer {
+				t.Errorf("clientIP() = (%q, %q), want (%q, %q)", ip, peer, c.wantIP, c.wantPeer)
+			}
+		})
+	}
+}
+
+// TestCookieSecure verifies the Secure flag is driven by real TLS or a
+// TRUSTED proxy's X-Forwarded-Proto, never by an arbitrary client's.
+func TestCookieSecure(t *testing.T) {
+	cases := []struct {
+		name       string
+		remoteAddr string
+		proto      string
+		want       bool
+	}{
+		{"plain http, no header", "127.0.0.1:5555", "", false},
+		{"trusted proxy reports https", "127.0.0.1:5555", "https", true},
+		{"trusted proxy reports http", "127.0.0.1:5555", "http", false},
+		{"case insensitive", "127.0.0.1:5555", "HTTPS", true},
+		{"untrusted client cannot force Secure", "203.0.113.7:5555", "https", false},
+		{"cgnat client cannot force Secure", "100.64.1.2:5555", "https", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/login", nil)
+			req.RemoteAddr = c.remoteAddr
+			if c.proto != "" {
+				req.Header.Set("X-Forwarded-Proto", c.proto)
+			}
+			if got := cookieSecure(req); got != c.want {
+				t.Errorf("cookieSecure() = %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// TestAuthEventLogging is the audit trail that stands in for a login
+// lockout: every credential failure must land in the log with the client
+// address, and the password must never appear.
+func TestAuthEventLogging(t *testing.T) {
+	hash, err := bcrypt.GenerateFromPassword([]byte("correct-horse"), bcrypt.MinCost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := configstore.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newServer := func(buf *bytes.Buffer) *Server {
+		return &Server{
+			bootstrap: config.BootstrapConfig{Config: config.Config{
+				Username:     "ethork",
+				PasswordHash: string(hash),
+				AdminToken:   "tok-secret",
+			}},
+			store:      store,
+			sessionKey: []byte("0123456789abcdef0123456789abcdef"),
+			log:        slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})),
+		}
+	}
+
+	cases := []struct {
+		name      string
+		call      func(s *Server, r *http.Request, w http.ResponseWriter)
+		body      string
+		wantIn    []string
+		wantNotIn []string
+	}{
+		{
+			name:      "bad password logs failure with username and ip",
+			body:      `{"username":"ethork","password":"hunter2"}`,
+			call:      func(s *Server, r *http.Request, w http.ResponseWriter) { s.postLogin(w, r) },
+			wantIn:    []string{"auth-failure", "method=password", "username=ethork", "ip=192.168.50.9"},
+			wantNotIn: []string{"hunter2"},
+		},
+		{
+			name:      "good password logs success",
+			body:      `{"username":"ethork","password":"correct-horse"}`,
+			call:      func(s *Server, r *http.Request, w http.ResponseWriter) { s.postLogin(w, r) },
+			wantIn:    []string{"auth-success", "method=password", "username=ethork"},
+			wantNotIn: []string{"correct-horse"},
+		},
+		{
+			name:      "bad token logs failure without the attempted value",
+			body:      `{"token":"guessed-token"}`,
+			call:      func(s *Server, r *http.Request, w http.ResponseWriter) { s.postSession(w, r) },
+			wantIn:    []string{"auth-failure", "method=token", "ip=192.168.50.9"},
+			wantNotIn: []string{"guessed-token"},
+		},
+		{
+			name:   "good token logs which credential matched",
+			body:   `{"token":"tok-secret"}`,
+			call:   func(s *Server, r *http.Request, w http.ResponseWriter) { s.postSession(w, r) },
+			wantIn: []string{"auth-success", "method=token", "credential=adminToken"},
+		},
+		{
+			name: "gated route 401 logs method and path",
+			call: func(s *Server, r *http.Request, w http.ResponseWriter) {
+				s.adminAuthMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(w, r)
+			},
+			wantIn: []string{"auth-unauthorized", "method=POST", "path=/scenes/1/destroy"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			s := newServer(&buf)
+			req := httptest.NewRequest(http.MethodPost, "/scenes/1/destroy", strings.NewReader(c.body))
+			req.RemoteAddr = "192.168.50.9:4444"
+			c.call(s, req, httptest.NewRecorder())
+			got := buf.String()
+			if got == "" {
+				t.Fatal("no audit record emitted")
+			}
+			for _, want := range c.wantIn {
+				if !strings.Contains(got, want) {
+					t.Errorf("log missing %q\ngot: %s", want, got)
+				}
+			}
+			for _, bad := range c.wantNotIn {
+				if strings.Contains(got, bad) {
+					t.Errorf("log leaked %q\ngot: %s", bad, got)
+				}
+			}
+		})
+	}
+}
+
+// TestLogAuthSurvivesNilLogger guards the bare-Server construction several
+// tests (and any future caller) use: auditing must never panic a request.
+func TestLogAuthSurvivesNilLogger(t *testing.T) {
+	s := &Server{}
+	req := httptest.NewRequest(http.MethodGet, "/config", nil)
+	s.logAuth(req, slog.LevelWarn, "auth-failure")
+}
+
+// TestLogSafeTruncates keeps an oversized attacker-supplied username from
+// bloating the audit log.
+func TestLogSafeTruncates(t *testing.T) {
+	if got := logSafe("short"); got != "short" {
+		t.Errorf("logSafe(short) = %q", got)
+	}
+	long := strings.Repeat("a", maxLoggedLen*3)
+	got := logSafe(long)
+	if len(got) != maxLoggedLen+3 || !strings.HasSuffix(got, "...") {
+		t.Errorf("logSafe(long) = %d chars, want %d with ellipsis", len(got), maxLoggedLen+3)
+	}
+}
