@@ -5361,10 +5361,28 @@ code.grab-fact-v,
   opacity: 0.5;
   transition: opacity 0.14s ease, background-color 0.14s ease;
 }
-.watch-drawer:hover,
-.watch-drawer.is-open {
+.watch-drawer:hover {
   opacity: 1;
   background: rgba(255, 255, 255, 0.03);
+}
+/* Open, the strip is the only way to shut a list that can be many screens
+   tall — and being the panel's last child, it went to the bottom WITH that
+   list, so closing meant scrolling past everything you had just opened.
+   Sticky pins it to the viewport's bottom edge while its panel is on screen
+   and lets it settle onto the panel's border when you reach the end, so the
+   door is always where you left it. */
+.watch-drawer.is-open {
+  opacity: 1;
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  /* Cards now scroll UNDER it, so the strip stops being translucent. Layered
+     rather than flat: the page colour first, then the same tint the panel
+     carries, so the pinned strip matches the panel it belongs to instead of
+     reading as a floating bar. */
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)),
+    var(--bg-0);
 }
 /* The glyph itself. Wide and shallow so it reads as an edge you can pull,
    not an icon sitting in a bar: a 100x12 viewBox stretched to ~200px keeps
