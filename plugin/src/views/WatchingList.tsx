@@ -86,8 +86,8 @@ export default function WatchingList({
   onPickGrabs,
 }: {
   onPickScene: (stashDBID: string, performerName?: string) => void;
-  // Open Grabs filtered to some text — used by the finished-work
-  // disclosure, since a grabbed watch's real state lives over there.
+  // Open Grabs filtered to some text. A group's grabbed count links here,
+  // since a grabbed watch's real state is its download and that lives there.
   onPickGrabs: (q: string) => void;
 }) {
   // Seeded from the cache so returning to Watching paints the last known
@@ -211,82 +211,27 @@ export default function WatchingList({
   );
 }
 
-// A group's body IS its ready-to-grab scenes. They are not wrapped in
-// anything collapsible, because a control to hide them already exists one
-// level up: collapsing the batch. A second chevron for the same intent was
-// most of what made this feel like scaffolding around content.
+// A group's body is what is still OPEN: ready to grab, or still being
+// searched for. Grabbed scenes are not here at all.
 //
-// What DOES collapse is only what you have put away — still-searching and
-// grabbed — and those live in one quiet bar at the foot of the group rather
-// than as peers of the content above them. So the hierarchy reads:
+// They used to be, behind a drawer, and that drawer was the source of every
+// problem this panel had. It existed for one reason: 643 of the 1,038 rows
+// were finished, so the group could not show its own contents without burying
+// them. Hiding them needed a toggle, the toggle needed an edge to live on,
+// the edge went below the fold when opened, and the fix for that was a
+// sticky bar. Five mechanisms in service of rows you cannot act on.
+//
+// A grabbed scene's real state is its download, and that lives in Grabs. So
+// the count stays in the header, where it reads as progress, and the count
+// is the link there. The page itself only carries what is still open: 395
+// rows rather than 1,038, and the largest panel drops from 653 to 126.
+//
+// The hierarchy is now one level deep:
 //
 //   the group, which you can collapse
-//     the scenes you can act on
-//     a footer of things tucked away
+//     the scenes still open in it
+//     a footer bar of group actions
 //
-// One nesting level, and the second is visibly subordinate rather than
-// visually identical to the first.
-// ONE drawer, not one per status. Splitting it into "still searching" and
-// "grabbed" spent two chevrons and two labels restating something the group
-// header already says: "4 of 8 grabbed" tells you 4 are grabbed and 4 are
-// not. The drawer only has to be a door.
-//
-// The cards inside carry their own status, so nothing is lost by mixing
-// them, and "others" is the honest label — everything in this group other
-// than what you can act on right now.
-function WatchDrawer({
-  count,
-  open,
-  onToggle,
-}: {
-  count: number;
-  open: boolean;
-  onToggle: () => void;
-}) {
-  if (count === 0) return null;
-  // A full-bleed strip along the panel's bottom edge, not a link in the
-  // footer bar. The door is the whole edge of the panel, so the target is as
-  // wide as the thing it opens and there is no text to misread as a status.
-  // It sits BELOW the revealed cards when open and points up, which is the
-  // same gesture in reverse rather than a separate control.
-  //
-  // The count moves into the accessible name and the tooltip. The glyph says
-  // "there is more"; the number is detail you can ask for.
-  const label = `${open ? "Hide" : "Show"} ${count} other${count === 1 ? "" : "s"} in this batch`;
-  return (
-    <button
-      type="button"
-      className={"watch-drawer" + (open ? " is-open" : "")}
-      aria-expanded={open}
-      aria-label={label}
-      title={label}
-      onClick={onToggle}
-    >
-      {/* preserveAspectRatio="none" is the point: the chevron stretches to
-          the strip's width instead of keeping its aspect, which is what
-          makes it read as an edge rather than an icon. non-scaling-stroke
-          keeps the line an even weight through that distortion. */}
-      <svg
-        className="watch-drawer-chev"
-        viewBox="0 0 100 12"
-        preserveAspectRatio="none"
-        aria-hidden="true"
-        focusable="false"
-      >
-        <polyline
-          points="1,1 50,11 99,1"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          vectorEffect="non-scaling-stroke"
-        />
-      </svg>
-    </button>
-  );
-}
-
 function WatchGroup({
   group,
   onChanged,
@@ -305,29 +250,21 @@ function WatchGroup({
 
   const items = group.items;
   const available = items.filter((w) => w.status === "available");
-  const watching = items.filter((w) => w.status === "watching");
   const grabbed = items.filter((w) => w.status === "grabbed");
   const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
-  // Finished watches are bookkeeping, not content: they exist so a batch
-  // reads "9 of 30 grabbed". They were 1528 of 1913 rendered cards on the
-  // reference instance (~41k DOM nodes, seconds to paint), for rows whose
-  // only job is to be counted. Render the actionable ones and put the rest
-  // behind a disclosure; the real state of a grabbed scene lives in Grabs.
   const [clearDoneBusy, setClearDoneBusy] = useState(false);
-  // One drawer open at a time. Two open at once rebuilds the wall of cards
-  // this was meant to remove, and there is no reason to compare the two.
-  const [showOthers, setShowOthers] = useState(false);
-  // Everything in the group other than what you can act on. Still-searching
-  // first, then grabbed, which is the order groupWatches already sorts them.
-  const others = items.filter((w) => w.status !== "available");
-  // Nothing ready and nothing still being searched for: the batch is done.
-  const settled = isBatch && available.length === 0 && watching.length === 0;
-  // The footer bar used to hold the drawer toggle, so it always had content
-  // whenever there was anything to show. Now that the toggle owns the panel's
-  // bottom edge instead, the bar can be genuinely empty — and an empty bar
-  // still draws its rule and its margin, leaving a gap under the last card.
-  const footerLinks = (showOthers && grabbed.length > 0) || (settled && !showOthers);
+  // What the panel renders: everything still open, in the order groupWatches
+  // already sorted them (ready first, then still searching). A grabbed watch
+  // is finished work whose real state is its download, so it is counted in
+  // the header and rendered in Grabs, not here. That is 643 of 1,038 rows
+  // this panel no longer has to find somewhere to put.
+  const open = items.filter((w) => w.status !== "grabbed");
+  // Nothing open left: the group is done and only offers to clear itself.
+  const settled = open.length === 0;
+  // The bar only draws when it has something in it. An empty one still
+  // carries its rule and its margin, leaving a gap under the last card.
+  const footerLinks = grabbed.length > 0 || settled;
 
   const clearDone = async () => {
     if (clearDoneBusy) return;
@@ -343,15 +280,15 @@ function WatchGroup({
     }
   };
 
-  // Collapse a group with nothing ready to grab. The page exists to answer
-  // "what can I take right now", so a group offering nothing is a header and
-  // a drawer edge wrapped around empty space — and the drawer's chevron is
-  // wide enough that an empty panel is mostly chevron. Collapsed, the group
-  // is one line that still reads "9 of 10 grabbed", and the batch chevron
-  // opens it.
+  // Collapse a group with nothing ready to grab. The page answers "what can
+  // I take right now" first, and a group offering nothing should not cost a
+  // screen to say so. Collapsed it is one line that still reads "9 of 10
+  // grabbed", and the header chevron opens it.
   //
-  // This used to collapse only a fully-settled BATCH, which left every
-  // still-searching group standing open with no cards in it.
+  // Note this is deliberately NOT "collapse when the panel would be empty".
+  // Thirteen of the fifteen groups have watches still open, so keying off
+  // that would stand 395 cards up on load, which is the wall this page keeps
+  // being redesigned to avoid.
   const [collapsed, setCollapsed] = useState(available.length === 0);
   // Once a group has something ready, it must not stay shut — the release
   // arriving is the entire point of the page. Auto-open ONLY on the
@@ -396,24 +333,13 @@ function WatchGroup({
     }
   };
 
-  // Progress line for a batch: collapses status counts into "N of M grabbed".
+  // The header still counts the whole group, grabbed included. Those rows
+  // left the panel; they did not stop being part of the group, and "555 of
+  // 653 grabbed" is the one line that says how far along this performer is.
   const searchingNote = searchingCount > 0 ? `${searchingCount} searching` : "";
-  // The shelves below each state their own count, so the header only says
-  // how far along the group is. It used to repeat every count, which is most
-  // of why this looked cluttered.
-  const progress = isBatch
-    ? [
-        `${grabbed.length} of ${items.length} grabbed`,
-        searchingNote,
-      ]
-        .filter(Boolean)
-        .join(" · ")
-    : [
-        `${grabbed.length} of ${items.length} grabbed`,
-        searchingNote,
-      ]
-        .filter(Boolean)
-        .join(" · ");
+  const progress = [`${grabbed.length} of ${items.length} grabbed`, searchingNote]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <section className="watch-group">
@@ -439,13 +365,38 @@ function WatchGroup({
           <h3 className="section-header">{group.label}</h3>
           <span className="watch-group-progress">{progress}</span>
         </div>
+        {/* The way to the rows that left. They are finished downloads, so
+            Grabs is where their state actually lives. Outside the title's
+            click target, and stopping propagation, so reaching them does not
+            also collapse the group. */}
+        {grabbed.length > 0 && (
+          <button
+            type="button"
+            className="setup-link watch-group-grabs"
+            onClick={(e) => {
+              e.stopPropagation();
+              onPickGrabs(isBatch ? group.label : "");
+            }}
+            title={
+              isBatch
+                ? `Show ${group.label}'s ${grabbed.length} grabbed in Grabs, where their download state lives`
+                : "Open Grabs, where these downloads' real state lives"
+            }
+          >
+            in Grabs ↗
+          </button>
+        )}
       </div>
       {!collapsed && (
         <>
-          {/* The body: what you can act on, rendered plainly. */}
-          {available.length > 0 && (
+          {/* The body: everything still open, rendered plainly. Ready first,
+              then still searching, which is the order groupWatches sorted
+              them into. One list, not two shelves: a card states its own
+              status, so splitting them spent a heading each to repeat what
+              every row already said. */}
+          {open.length > 0 && (
             <ul className="watch-list">
-              {available.map((w) => (
+              {open.map((w) => (
                 <WatchCard
                   key={w.stashdb_id}
                   w={w}
@@ -463,45 +414,33 @@ function WatchGroup({
               line, orphaned from everything. Here it is pinned to the panel
               edge, beside the content it acts on, and in thumb reach. */}
           {(footerLinks || available.length > 0) && (
-            <div className="watch-drawers">
-              {showOthers && grabbed.length > 0 && (
-                <span className="watch-drawer-actions">
+            <div className="watch-foot">
+              <span className="watch-foot-actions">
+                {settled && isBatch && (
                   <button
                     type="button"
-                    className="setup-link"
-                    onClick={() => onPickGrabs(isBatch ? group.label : "")}
-                    title={
-                      isBatch
-                        ? "Show these in Grabs, where their download state lives"
-                        : "Open Grabs, where these downloads' real state lives"
-                    }
-                  >
-                    view in Grabs
-                  </button>
-                  <button
-                    type="button"
-                    className="setup-link watch-drawer-danger"
-                    disabled={clearDoneBusy}
-                    onClick={clearDone}
-                    title="Remove the finished watches here. Does not touch files or grabs."
-                  >
-                    {clearDoneBusy ? "Clearing…" : "clear finished"}
-                  </button>
-                </span>
-              )}
-              {settled && !showOthers && (
-                <span className="watch-drawer-actions">
-                  <button
-                    type="button"
-                    className="setup-link watch-drawer-danger"
+                    className="setup-link watch-foot-danger"
                     disabled={clearBusy}
                     onClick={clear}
                     title="Remove every watch in this finished batch"
                   >
                     clear batch
                   </button>
-                </span>
-              )}
+                )}
+                {grabbed.length > 0 && !(settled && isBatch) && (
+                  <button
+                    type="button"
+                    className="setup-link watch-foot-danger"
+                    disabled={clearDoneBusy}
+                    onClick={clearDone}
+                    title="Forget the finished watches in this group. Does not touch files or grabs."
+                  >
+                    {clearDoneBusy
+                      ? "Forgetting…"
+                      : `forget ${grabbed.length} finished`}
+                  </button>
+                )}
+              </span>
               {available.length > 0 && (
                 <button
                   className="collection-cta watch-grab-all"
@@ -514,24 +453,6 @@ function WatchGroup({
               )}
             </div>
           )}
-          {showOthers && (
-            <ul className="watch-list watch-list-drawer">
-              {others.map((w) => (
-                <WatchCard
-                  key={w.stashdb_id}
-                  w={w}
-                  onChanged={onChanged}
-                  onPickScene={onPickScene}
-                />
-              ))}
-            </ul>
-          )}
-          {/* Last child on purpose: it is the panel's bottom edge. */}
-          <WatchDrawer
-            count={others.length}
-            open={showOthers}
-            onToggle={() => setShowOthers((v) => !v)}
-          />
         </>
       )}
     </section>
