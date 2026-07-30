@@ -350,30 +350,33 @@ export default function DiscoverList({
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
+        {/* One control, not a chip per box. A native select collapses to the
+            active source and opens on press, so adding a fifth stash-box in
+            Stash costs no width here. Unreachable boxes stay in the list but
+            un-pickable, with the reason in their label. */}
         {boxes.filter((b) => !b.unreachable).length > 1 && (
-          <span className="discover-boxes" role="group" aria-label="Source">
-            {boxes.map((b) => {
-              const value = b.primary ? "" : b.endpoint;
-              const active = value === box;
-              return (
-                <button
-                  key={b.endpoint}
-                  className={"grab-chip" + (active ? " active chip-any" : "")}
-                  disabled={!!b.unreachable}
-                  title={
-                    b.unreachable
-                      ? `${b.name} is configured in Stash but not usable: ${b.unreachable}`
-                      : b.primary
-                        ? "StashDB — your library's source, with owned and missing tracking"
-                        : `Browse ${b.name}. Live results; owned and missing tracking stays on StashDB.`
-                  }
-                  onClick={() => setBox(value)}
-                >
-                  <span className="chip-label">{b.name}</span>
-                </button>
-              );
-            })}
-          </span>
+          <select
+            className="discover-days discover-box"
+            aria-label="Source"
+            value={box}
+            title={
+              box
+                ? `Browsing ${boxName}. Live results; owned and missing tracking stays on StashDB.`
+                : "StashDB, your library's source, with owned and missing tracking"
+            }
+            onChange={(e) => setBox(e.target.value)}
+          >
+            {boxes.map((b) => (
+              <option
+                key={b.endpoint}
+                value={b.primary ? "" : b.endpoint}
+                disabled={!!b.unreachable}
+              >
+                {b.name}
+                {b.unreachable ? ` (${b.unreachable})` : ""}
+              </option>
+            ))}
+          </select>
         )}
         {/* Both of these read the StashDB cache: the day window bounds
             recent_scene_cache, and "favourites" means a local performer.
