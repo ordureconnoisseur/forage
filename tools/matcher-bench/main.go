@@ -59,6 +59,7 @@ func main() {
 		verify      = flag.Bool("verify", false, "verification mode: per entry assert the expected scene verifies (recall) and other candidates do NOT (precision) — exercises matcher.Verify, the release-page badge logic")
 		explain     = flag.String("explain", "", "match ONE release string and dump every candidate (rank, conf, title overlap, reasons, verify outcome) — the failure-CSV microscope")
 		expectID    = flag.String("expect", "", "with --explain: the expected StashDB scene id, highlighted and verify-checked")
+		dumpPath    = flag.String("dump", "", "with --verify: record every entry's candidates to this JSON path. Verify is pure given its candidates, so a dump lets threshold sweeps and a CI regression gate replay the corpus offline instead of paying two StashDB round trips per release (26 minutes a run).")
 	)
 	flag.Parse()
 
@@ -169,11 +170,18 @@ func main() {
 	if *verify {
 		log.Info("running verify mode", "entries", len(gt), "concurrency", *concurrency)
 		t0 := time.Now()
-		vr := runVerify(ctx, log, m, gt, *concurrency)
+		vr := runVerify(ctx, log, m, gt, *concurrency, *dumpPath != "")
 		vr.Elapsed = time.Since(t0)
 		csvPath := filepath.Join(*outputDir, "verify.failures.csv")
 		if err := writeVerifyFailures(csvPath, vr.Failures, *maxFailures); err != nil {
 			log.Error("write verify csv", "err", err)
+		}
+		if *dumpPath != "" {
+			if err := matcher.SaveReplay(*dumpPath, vr.Replay); err != nil {
+				log.Error("write replay dump", "err", err)
+			} else {
+				log.Info("replay dump written", "path", *dumpPath, "entries", len(vr.Replay))
+			}
 		}
 		printVerify(os.Stdout, vr, csvPath)
 		return
@@ -520,6 +528,10 @@ func unquoteYAML(s string) string {
 //                does is a false-green — the "Home And Horny (156)" class.
 
 type verifyResult struct {
+	// Replay is the recorded candidate set, populated only when --dump is
+	// given. Kept on the result rather than written inline so the writer
+	// stays with the other output paths.
+	Replay           []matcher.ReplayEntry
 	Total            int
 	Recall           int // expected scene verified
 	NoExpectedCand   int // expected scene wasn't even a candidate
@@ -587,7 +599,7 @@ func runExplain(ctx context.Context, m *matcher.Matcher, release, expectID strin
 	tw.Flush()
 }
 
-func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int) *verifyResult {
+func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int, dump bool) *verifyResult {
 	r := &verifyResult{Total: len(entries), PerSource: map[string]*sourceStats{}}
 	srcStat := func(src string) *sourceStats {
 		if src == "" {
@@ -648,6 +660,11 @@ func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entrie
 				continue
 			}
 			cands := rr.cands
+			if dump {
+				mu.Lock()
+				r.Replay = append(r.Replay, matcher.RecordCandidates(e.Basename, e.StashDBID, cands))
+				mu.Unlock()
+			}
 			var expTitle string
 			var expConf float64
 			expFound := false

@@ -7,74 +7,6 @@ import "strings"
 // The release page and the bench share this one implementation so the
 // badge logic is corpus-testable and can't drift between them.
 
-const (
-	// verifyRankMinTitleOverlap: for the ranking path, the viewed scene
-	// must carry at least this much title overlap (matcher Jaccard) — so
-	// it's #1 because of the title, not merely the shared performer. The
-	// matcher floors no-overlap at ~0.05; a real partial match is ~0.2+.
-	verifyRankMinTitleOverlap = 0.15
-	// verifyTitleMinTokens: the containment path needs a title with at
-	// least this many significant tokens, so generic short titles ("Home
-	// And Horny") — whose words recur across unrelated releases — can't
-	// trivially verify everything. Short titles use the ranking path.
-	verifyTitleMinTokens = 4
-	// verifyTitleMinContainment: fraction of the scene title's tokens the
-	// release name must contain for the containment path.
-	verifyTitleMinContainment = 0.80
-	// verifyTitleMinConf: the containment path also requires the viewed
-	// scene to already be a real candidate (performer/date matched, not a
-	// pure title-word coincidence — those top out around 0.25).
-	verifyTitleMinConf = 0.30
-	// verifyStrongTitleOverlap: a #1 with this much title overlap is the
-	// scene even without a performer/date signal (the release clearly
-	// names it) — recovers correct title-only matches the conf floor
-	// would otherwise drop.
-	verifyStrongTitleOverlap = 0.40
-	// verifyShortTitleMaxTokens: at or below this many significant title
-	// tokens, Jaccard overlap can't clear verifyRankMinTitleOverlap even on
-	// an exact match — one or two tokens are a tiny fraction of a full
-	// release name — so the ranking path falls back to a confidence check
-	// instead of the overlap floor for such titles.
-	verifyShortTitleMaxTokens = 2
-	// verifyShortTitleMinConf: the confidence a short-titled #1 needs to
-	// verify via the containment fallback (below). Set at the performer+
-	// date / performer+studio level so a bare shared-performer coincidence
-	// (conf ~0.4) doesn't qualify.
-	verifyShortTitleMinConf = 0.50
-	// verifyStrongMatchConf: a #1 candidate this confident is the scene
-	// even with negligible title overlap. Title Jaccard collapses when a
-	// release pads its name with a long tag list (Brunette, Big Ass, POV,
-	// SiteRip, …) or when the scene title carries an episode tag the
-	// release omits (e.g. "… For Pussy – S13:E6" vs a release without
-	// "S13:E6") — the title is right but drowned. Confidence this high is
-	// unreachable by a shared-performer coincidence (performer alone caps
-	// at ~0.46); it requires performer + date + studio/cast to all agree,
-	// which is identity-level corroboration. Set above that 0.46 ceiling
-	// with margin.
-	verifyStrongMatchConf = 0.70
-	// verifyStrongMatchRivalTitleMargin: the strong-match path is blocked
-	// when some OTHER candidate's title overlap exceeds the viewed scene's
-	// by this margin. A higher-title-overlap rival means the title IS
-	// discriminating between siblings (multi-scene rips where the same
-	// cast+date maps to several StashDB scenes — a compilation episode vs
-	// its BTS vs a TS-on-TS cut), so we must not let raw confidence
-	// override it. When the viewed scene's title is merely drowned by a
-	// release's tag-soup, NO rival has meaningfully higher overlap, so the
-	// guard doesn't trip and the real match still verifies.
-	verifyStrongMatchRivalTitleMargin = 0.15
-	// verifyDateAnchorMinConf gates the date-anchored path below. The
-	// dominant scene-release form carries NO title at all
-	// (site.26.03.20.performer.mp4), so below verifyStrongMatchConf such
-	// a release was structurally unverifiable: the overlap and
-	// containment paths can never fire on a title that isn't there.
-	// performer (0.40) + exact date (0.20) + both-tracks (0.05) lands at
-	// ~0.66 even with no studio in the corpus and no cast bonus, so 0.65
-	// effectively requires "performer AND exact date agreed" — while the
-	// performer-matched-but-date-DISagreeing population sits at ~0.51 and
-	// stays correctly out of reach.
-	verifyDateAnchorMinConf = 0.65
-)
-
 // VerifyResult is the outcome of checking a release against a scene.
 type VerifyResult struct {
 	Verified   bool
@@ -259,11 +191,18 @@ func castStrippedTitleTokens(c Candidate) []string {
 // cands must be Match(releaseName) output; sceneTitle is the viewed
 // scene's title (for containment).
 func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
+	return VerifyWith(DefaultVerifyConfig, cands, sceneID, sceneTitle, releaseName)
+}
+
+// VerifyWith is Verify against an explicit threshold set. Sweeps and the
+// replay harness call this; production calls Verify.
+func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
 	var conf, overlap float64
 	var targetDateFarOff bool
 	found := false
 	var relTokens map[string]bool // lazily built for rival overlap
 	var rivalMaxOverlap float64   // highest CAST-STRIPPED title overlap among OTHER candidates
+	var runnerUpConf float64      // highest CONFIDENCE among OTHER candidates
 	for i := range cands {
 		if cands[i].Scene.ID == sceneID {
 			conf = cands[i].Confidence
@@ -271,6 +210,9 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			targetDateFarOff = cands[i].DateFarOff
 			found = true
 			continue
+		}
+		if cands[i].Confidence > runnerUpConf {
+			runnerUpConf = cands[i].Confidence
 		}
 		if relTokens == nil {
 			relTokens = tokenSet(filterTitleStopwords(Tokenize(releaseName)))
@@ -301,11 +243,11 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	rivalOwnsTitle := false
 	relTokSet := tokenSet(filterTitleStopwords(Tokenize(releaseName)))
 	for i := range cands {
-		if cands[i].Scene.ID == sceneID || cands[i].Confidence < verifyTitleMinConf {
+		if cands[i].Scene.ID == sceneID || cands[i].Confidence < cfg.TitleMinConf {
 			continue
 		}
 		rf, rn := TitleContainment(cands[i].Scene.Title, releaseName)
-		if rn < verifyTitleMinTokens || rf < verifyTitleMinContainment {
+		if rn < cfg.TitleMinTokens || rf < cfg.TitleMinContainment {
 			continue
 		}
 		// Count DISTINCT non-cast tokens: castStrippedTitleTokens keeps
@@ -336,7 +278,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	// conf-only added false verifies, conf+containment recovers the real
 	// short-title scenes with no precision cost.
 	if isTop {
-		shortTitle := nTok > 0 && nTok <= verifyShortTitleMaxTokens
+		shortTitle := nTok > 0 && nTok <= cfg.ShortTitleMaxTokens
 		// The strong-title-overlap shortcut verifies on the title ALONE (no
 		// performer/date corroboration), so it must only fire when the title
 		// names the scene distinctively. A title built entirely from generic
@@ -344,7 +286,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		// any release that lists the same acts but points at no specific
 		// scene — require at least one non-generic shared token before
 		// trusting the title by itself.
-		strongTitle := overlap >= verifyStrongTitleOverlap &&
+		strongTitle := overlap >= cfg.StrongTitleOverlap &&
 			distinctiveTitleHits(sceneTitle, releaseName) >= 1
 		// Date veto: a confidently-far release date (>= dateVetoDays off the
 		// scene under every plausible reading) vetoes ONLY the two title/
@@ -352,20 +294,28 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 		// target clears the title-overlap floor purely because the studio name
 		// leaks into title overlap (conf ~0.30) — a far date proves it's a
 		// different scene. The strong-match and date-anchored paths are NOT
-		// vetoed: strong-match needs conf >= verifyStrongMatchConf (performer +
+		// vetoed: strong-match needs conf >= cfg.StrongMatchConf (performer +
 		// studio + cast at identity level), which legitimately tolerates a
 		// StashDB-vs-release date discrepancy (corpus-measured: blanket-vetoing
 		// it dropped a real 6-performer match with a divergent date and removed
 		// zero false verifies).
 		dateOK := !targetDateFarOff
+		// The confidence-driven paths below answer from corroboration
+		// rather than from the release naming the scene, so they are the
+		// two that can be fooled by a flat candidate field: a performer-only
+		// query returns that performer's whole filmography and every entry
+		// scores within a few hundredths. marginOK requires the viewed scene
+		// to actually stand out before either path trusts its confidence.
+		marginOK := cfg.TopMargin <= 0 || conf >= runnerUpConf+cfg.TopMargin
 		switch {
-		case dateOK && overlap >= verifyRankMinTitleOverlap &&
-			(conf >= verifyTitleMinConf || strongTitle):
+		case dateOK && overlap >= cfg.RankMinTitleOverlap &&
+			(conf >= cfg.TitleMinConf || strongTitle):
 			return VerifyResult{Verified: true, Confidence: conf}
-		case dateOK && shortTitle && conf >= verifyShortTitleMinConf && frac >= verifyTitleMinContainment:
+		case dateOK && shortTitle && conf >= cfg.ShortTitleMinConf && frac >= cfg.TitleMinContainment:
 			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= verifyStrongMatchConf && !rivalOwnsTitle &&
-			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
+		case conf >= cfg.StrongMatchConf && !rivalOwnsTitle && marginOK &&
+			(dateOK || !cfg.StrongMatchNeedsDate) &&
+			rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin:
 			// Title overlap is negligible (tag-soup release name, or an
 			// episode tag the release omits) but performer+date+studio/cast
 			// corroborate at identity level. Trust the strong overall match —
@@ -373,9 +323,9 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 			// which means the title is discriminating between same-cast
 			// scenes and must not be overridden.
 			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= verifyDateAnchorMinConf && !rivalOwnsTitle &&
+		case conf >= cfg.DateAnchorMinConf && !rivalOwnsTitle && marginOK &&
 			dateAnchored(cands, sceneID, releaseName) &&
-			rivalMaxOverlap <= overlap+verifyStrongMatchRivalTitleMargin:
+			rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin:
 			// Date-anchored: the release literally states this scene's
 			// exact date and NO other candidate shares that date, so the
 			// date is doing the discriminating a title would normally do —
@@ -389,7 +339,7 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 	}
 
 	// Containment path: the release names the scene outright.
-	if nTok >= verifyTitleMinTokens && frac >= verifyTitleMinContainment && conf >= verifyTitleMinConf {
+	if nTok >= cfg.TitleMinTokens && frac >= cfg.TitleMinContainment && conf >= cfg.TitleMinConf {
 		if conf < frac {
 			conf = frac
 		}
