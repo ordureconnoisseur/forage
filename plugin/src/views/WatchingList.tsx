@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  clearFinishedWatches,
   clearWatchBatch,
   deleteWatch,
   dismissWatch,
@@ -253,7 +252,6 @@ function WatchGroup({
   const grabbed = items.filter((w) => w.status === "grabbed");
   const searchingCount = items.filter((w) => w.searching).length;
   const isBatch = group.id !== "";
-  const [clearDoneBusy, setClearDoneBusy] = useState(false);
   // What the panel renders: everything still open, in the order groupWatches
   // already sorted them (ready first, then still searching). A grabbed watch
   // is finished work whose real state is its download, so it is counted in
@@ -264,21 +262,14 @@ function WatchGroup({
   const settled = open.length === 0;
   // The bar only draws when it has something in it. An empty one still
   // carries its rule and its margin, leaving a gap under the last card.
-  const footerLinks = grabbed.length > 0 || settled;
-
-  const clearDone = async () => {
-    if (clearDoneBusy) return;
-    setClearDoneBusy(true);
-    try {
-      const r = await clearFinishedWatches(grabbed.map((w) => w.stashdb_id));
-      onToast(`Cleared ${r.cleared} finished watch${r.cleared === 1 ? "" : "es"}`);
-      onChanged();
-    } catch (e) {
-      onToast("Couldn't clear: " + (e as Error).message);
-    } finally {
-      setClearDoneBusy(false);
-    }
-  };
+  //
+  // Finished watches no longer put anything here. Once they stopped being
+  // rendered as cards, their whole remaining job was to be counted, so a
+  // control that deletes them only rewrites "555 of 653 grabbed" as "0 of 98"
+  // — it cost a click to destroy the one thing they were for. They are also
+  // free to keep: the watch loop claims status='watching', so a grabbed row
+  // is never searched again.
+  const footerLinks = settled && isBatch;
 
   // Collapse a group with nothing ready to grab. The page answers "what can
   // I take right now" first, and a group offering nothing should not cost a
@@ -425,19 +416,6 @@ function WatchGroup({
                     title="Remove every watch in this finished batch"
                   >
                     clear batch
-                  </button>
-                )}
-                {grabbed.length > 0 && !(settled && isBatch) && (
-                  <button
-                    type="button"
-                    className="setup-link watch-foot-danger"
-                    disabled={clearDoneBusy}
-                    onClick={clearDone}
-                    title="Forget the finished watches in this group. Does not touch files or grabs."
-                  >
-                    {clearDoneBusy
-                      ? "Forgetting…"
-                      : `forget ${grabbed.length} finished`}
                   </button>
                 )}
               </span>
