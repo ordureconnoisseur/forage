@@ -65,6 +65,29 @@ func main() {
 	}
 	defer rows.Close()
 
+	// Drain the cursor FIRST. forage sets MaxOpenConns(1) — correct for
+	// SQLite — so a lookup issued while this cursor is still open waits for a
+	// connection the cursor itself is holding, and the process deadlocks. It
+	// did, on the first real run.
+	type row struct {
+		id                int64
+		path              string
+		predicted, actual string
+	}
+	var candidates []row
+	for rows.Next() {
+		var id int64
+		var path, predicted, actual sql.NullString
+		if err := rows.Scan(&id, &path, &predicted, &actual); err != nil {
+			die("scan: %v", err)
+		}
+		candidates = append(candidates, row{id, path.String, predicted.String, actual.String})
+	}
+	if err := rows.Err(); err != nil {
+		die("rows: %v", err)
+	}
+	rows.Close()
+
 	var plans []plan
 	var (
 		missing   int
@@ -72,14 +95,10 @@ func main() {
 		total     int
 		byUnknown int
 	)
-	for rows.Next() {
-		var id int64
-		var path, predicted, actual sql.NullString
-		if err := rows.Scan(&id, &path, &predicted, &actual); err != nil {
-			die("scan: %v", err)
-		}
+	for _, c := range candidates {
+		id, predicted, actual := c.id, c.predicted, c.actual
 		total++
-		p := path.String
+		p := c.path
 		if p == "" {
 			continue
 		}
@@ -87,9 +106,9 @@ func main() {
 			missing++ // moved or deleted since; leave it alone
 			continue
 		}
-		names := castFor(dbh, predicted.String)
+		names := castFor(dbh, predicted)
 		if len(names) == 0 {
-			names = castFor(dbh, actual.String)
+			names = castFor(dbh, actual)
 		}
 		name, local := pick(dbh, names)
 		if name == "" {
@@ -103,9 +122,6 @@ func main() {
 		if *limit > 0 && len(plans) >= *limit {
 			break
 		}
-	}
-	if err := rows.Err(); err != nil {
-		die("rows: %v", err)
 	}
 
 	fmt.Printf("grabs recorded under Unsorted: %d\n", total)
