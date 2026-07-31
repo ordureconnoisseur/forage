@@ -167,9 +167,22 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		if err != nil {
 			return Result{}, err
 		}
-		mode, placed, err := p.mirrorTree(srcPath, destPath)
+		mode, placed, skipped, err := p.mirrorTree(srcPath, destPath)
 		if err != nil {
 			return Result{}, err
+		}
+		if placed == 0 && skipped > 0 {
+			// Everything in the release was refused by the file-type policy.
+			// That is a decided outcome, not an incomplete source, so it must
+			// NOT take the retry path below: a fake release consisting of an
+			// installer and a .nfo would otherwise be re-placed every tick
+			// forever. Report the (empty) destination and let the grab fail
+			// confirmation, which the cull pass already handles.
+			if p.log != nil {
+				p.log.Warn("placer placed nothing: no file in the release is a media type",
+					"src", srcPath, "skipped", skipped)
+			}
+			return Result{Path: destPath, Mode: mode}, nil
 		}
 		if placed == 0 {
 			// placed==0 is a legitimate no-op ONLY when the destination
@@ -328,6 +341,50 @@ func copyFile(src, dest string) error {
 	return nil
 }
 
+// What forage is willing to put in your library.
+//
+// mirrorTree used to hardlink every file in a release folder. Releases carry
+// passengers: .nfo and artwork, which are harmless, but also .exe, .lnk, .scr
+// and desktop.ini, which are not. forage never executes any of it, so the
+// daemon is not the target — the library is. It lives on a NAS shared over
+// SMB, and a .lnk or .url file makes Explorer fetch its icon from wherever the
+// file says, which leaks NTLM credentials to a remote host merely by browsing
+// the folder. No one has to click anything.
+//
+// An allowlist rather than a blocklist. A blocklist has to enumerate every
+// dangerous extension and stays wrong until someone remembers to update it;
+// this only has to enumerate what a media library is actually for. The cost of
+// being wrong is inverted too: a missing entry here means a file did not get
+// placed and is still sitting in the download client, which is visible and
+// recoverable, where a missing blocklist entry means an executable is in a
+// folder you browse from Windows.
+//
+// Generous on video containers on purpose. Stash will only make scenes from
+// some of these, but placing an unusual container costs nothing and refusing
+// one strands a legitimate grab.
+var placeableExts = map[string]bool{
+	// video
+	".mp4": true, ".mkv": true, ".avi": true, ".wmv": true, ".m4v": true,
+	".mov": true, ".mpg": true, ".mpeg": true, ".ts": true, ".flv": true,
+	".webm": true, ".m2ts": true, ".mts": true, ".vob": true, ".divx": true,
+	".rm": true, ".rmvb": true, ".asf": true, ".3gp": true, ".ogv": true,
+	".f4v": true, ".mpv": true, ".m2v": true, ".m4p": true,
+	// subtitles: Stash reads these next to the scene
+	".srt": true, ".sub": true, ".idx": true, ".vtt": true, ".ass": true,
+	".ssa": true,
+	// artwork and release notes: inert, and some tooling expects them
+	".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true,
+	".bmp": true, ".nfo": true, ".txt": true,
+}
+
+// isPlaceable reports whether a release file may enter the library. Extension
+// only: content sniffing would be a stronger check and a much bigger promise,
+// and the threat here is what Windows does with a NAME, not what the bytes
+// turn out to be.
+func isPlaceable(name string) bool {
+	return placeableExts[strings.ToLower(filepath.Ext(name))]
+}
+
 // videoExts is the set of extensions Stash treats as scenes. Sample
 // detection only applies to these — a "sample" in a non-video name (a
 // proof image, a .nfo) never becomes a scene, so it's harmless clutter we
@@ -421,9 +478,10 @@ func largestVideoSize(root string) int64 {
 // both makes Stash create a junk, un-identifiable second scene from the
 // sample. Skipping them here — not after the fact — keeps the library clean
 // without a downstream sweep.
-func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
+func (p *Placer) mirrorTree(src, dest string) (string, int, int, error) {
 	mode := "hardlink"
 	placed := 0
+	skipped := 0
 	largest := largestVideoSize(src)
 	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -450,6 +508,17 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 			}
 			return nil
 		}
+		// Refuse the passengers. Counted, not silent: a release that is
+		// ENTIRELY unplaceable must be distinguishable from one whose source
+		// has not finished moving in, or the caller retries it forever.
+		if !isPlaceable(d.Name()) {
+			skipped++
+			if p.log != nil {
+				p.log.Info("placer skipped file type", "path", path,
+					"ext", strings.ToLower(filepath.Ext(d.Name())))
+			}
+			return nil
+		}
 		// Already linked/copied by a prior pass — skip so an interrupted
 		// mirror resumes instead of erroring on the existing file.
 		if _, err := os.Stat(destPath); err == nil {
@@ -466,9 +535,9 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, error) {
 		return nil
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("mirror tree: %w", err)
+		return "", 0, 0, fmt.Errorf("mirror tree: %w", err)
 	}
-	return mode, placed, nil
+	return mode, placed, skipped, nil
 }
 
 // dirHasNoFiles reports whether dir contains no regular files — it's empty
