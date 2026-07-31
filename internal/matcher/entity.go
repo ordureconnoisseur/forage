@@ -31,6 +31,14 @@ import (
 // Tokenize from many goroutines); a shared transform.Transformer is NOT, so
 // we normalise + filter inline rather than reuse a Chain transformer.
 func fold(s string) string {
+	// Sanitise first. norm.NFKD leaves a segment containing invalid UTF-8
+	// alone, so "\xf6¼" kept its ¼ while the same string re-fed after one
+	// pass (by then valid, the bad byte having become U+FFFD) decomposed it
+	// to "1 4". Tokenize therefore was not idempotent, which matters because
+	// the entity corpus is stored pre-tokenised: a name normalised once and a
+	// release normalised twice would never compare equal. Indexers do emit
+	// mis-encoded bytes, so this is not hypothetical.
+	s = strings.ToValidUTF8(s, "�")
 	d := norm.NFKD.String(s)
 	var b strings.Builder
 	b.Grow(len(d))
