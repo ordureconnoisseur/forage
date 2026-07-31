@@ -1723,18 +1723,6 @@ export async function clearWatchBatch(batchId: string): Promise<void> {
   if (!r.ok) await throwForStatus(r);
 }
 
-// clearFinishedWatches removes the GRABBED watches among the given ids and
-// reports how many went. Keyed on the ids actually on screen, because the
-// Watching tab folds single-member batches into its ungrouped bucket, so a
-// row shown under "Single tracks" can still carry a batch_id. Only finished
-// rows are ever removed, so this can never cancel an active hunt.
-export function clearFinishedWatches(
-  stashDBIDs: string[],
-): Promise<{ cleared: number }> {
-  return postJSON<{ cleared: number }>("/watches/clear-finished", {
-    stashdb_ids: stashDBIDs,
-  });
-}
 
 // dismissWatch rejects the watch's current found release (e.g. it's dead or
 // over-compressed): ignores that exact release going forward and flips the
