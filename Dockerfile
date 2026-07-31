@@ -45,11 +45,17 @@ RUN go build -trimpath \
     -ldflags="-s -w" \
     -o /out/matcher-bench ./tools/matcher-bench
 
+# refile-unsorted re-files grabs the placer dropped into Unsorted back under
+# their scene's performer. Dry-run by default; --apply moves files, so it is a
+# deliberate one-shot rather than anything the daemon runs.
+RUN go build -trimpath     -ldflags="-s -w"     -o /out/refile-unsorted ./tools/refile-unsorted
+
 # ── Runtime stage ──────────────────────────────────────────────────
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/forager /forager
 COPY --from=build /out/build-corpus /build-corpus
 COPY --from=build /out/matcher-bench /matcher-bench
+COPY --from=build /out/refile-unsorted /refile-unsorted
 
 # Persistent SQLite cache. Mount a volume here.
 VOLUME ["/data"]

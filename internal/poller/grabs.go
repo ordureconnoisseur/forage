@@ -714,7 +714,18 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		// otherwise have us hardlink a file into the library for a grab being
 		// torn down, leaving an orphaned untracked copy. (Shrinks the race to
 		// the Get→Place gap; the deleted grab's later CAS write is a no-op.)
-		res, err := pl.Place(srcPath, g.PerformerName)
+		// Not g.PerformerName directly: when the watch was created without
+		// one (a Discover batch, a subscription, a bare scene watch), the
+		// scene's own cast supplies the folder instead of dropping a
+		// correctly-identified file into Unsorted. See place_folder.go.
+		folder := p.placementPerformer(ctx, g)
+		if folder != "" && folder != g.PerformerName {
+			// Record what it was filed under, so the UI and any later
+			// re-file reason agree with the path on disk.
+			g.PerformerName = folder
+			dirty = true
+		}
+		res, err := pl.Place(srcPath, folder)
 		if err != nil {
 			// Don't flip status — stay in "completed" so we retry next
 			// tick. Surface the error so the UI can show it.
