@@ -3,7 +3,6 @@ package matcher
 import (
 	"strings"
 	"testing"
-	"unicode"
 )
 
 // Release names are the most hostile input forage parses: arbitrary bytes
@@ -33,10 +32,15 @@ func FuzzTokenize(f *testing.F) {
 			if tok == "" {
 				t.Fatalf("Tokenize(%q) emitted an empty token", s)
 			}
-			for _, r := range tok {
-				if unicode.IsUpper(r) {
-					t.Fatalf("Tokenize(%q) emitted non-lowercase token %q", s, tok)
-				}
+			// The contract is that a token equals its own lowercasing, so
+			// the pre-lowercased entity corpus and a release's tokens
+			// compare equal. unicode.IsUpper was the wrong proxy for that:
+			// some runes are categorised Lu yet have no lowercase mapping,
+			// so ToLower leaves them alone and they are already at the
+			// fixpoint the comparison needs. U+03D2 GREEK UPSILON WITH HOOK
+			// is one, and the fuzzer found it.
+			if low := strings.ToLower(tok); low != tok {
+				t.Fatalf("Tokenize(%q) emitted %q, which lowercases to %q", s, tok, low)
 			}
 		}
 		// Tokenizing the joined tokens must be stable (idempotence over the
