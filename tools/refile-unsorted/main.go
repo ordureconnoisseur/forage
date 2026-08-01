@@ -15,6 +15,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"flag"
@@ -23,9 +24,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/db"
+	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
 type plan struct {
@@ -52,6 +55,14 @@ func main() {
 		die("open db: %v", err)
 	}
 	defer dbh.Close()
+
+	var stashC *stash.Client
+	if cfg.StashURL != "" && cfg.StashAPIKey != "" {
+		stashC = stash.New(cfg.StashURL, cfg.StashAPIKey)
+	} else {
+		fmt.Fprintln(os.Stderr, "note: Stash is not configured, so identified scenes "+
+			"can't supply a folder; falling back to watch casts only")
+	}
 
 	// Only grabs the library actually holds under Unsorted. A grab whose file
 	// has since been moved by hand is not ours to second-guess.
@@ -94,6 +105,7 @@ func main() {
 		noCast    int
 		total     int
 		byUnknown int
+		viaStash  int
 	)
 	for _, c := range candidates {
 		id, predicted, actual := c.id, c.predicted, c.actual
@@ -106,11 +118,30 @@ func main() {
 			missing++ // moved or deleted since; leave it alone
 			continue
 		}
-		names := castFor(dbh, predicted)
-		if len(names) == 0 {
-			names = castFor(dbh, actual)
+		// Best source first. If Stash identified the file, it matched the
+		// actual bytes by hash and attached the performers the LIBRARY
+		// holds, so the folder is guaranteed to be one that already exists.
+		// This is the same evidence the daemon now acts on at confirm time
+		// (poller/refile_identified.go); this applies it to everything that
+		// confirmed before that existed.
+		name, local := "", false
+		if stashC != nil {
+			if sceneID := sceneByPath(stashC, p); sceneID != "" {
+				if n := topPerformer(stashC, sceneID); n != "" {
+					name, local = n, true
+					viaStash++
+				}
+			}
 		}
-		name, local := pick(dbh, names)
+		// Otherwise fall back to the cast a watch recorded, which is a name
+		// from a release listing rather than from the file.
+		if name == "" {
+			names := castFor(dbh, predicted)
+			if len(names) == 0 {
+				names = castFor(dbh, actual)
+			}
+			name, local = pick(dbh, names)
+		}
 		if name == "" {
 			noCast++
 			continue
@@ -127,8 +158,10 @@ func main() {
 	fmt.Printf("grabs recorded under Unsorted: %d\n", total)
 	fmt.Printf("  file no longer at that path: %d\n", missing)
 	fmt.Printf("  no cast recorded for the scene: %d\n", noCast)
-	fmt.Printf("  re-filable: %d  (%d under a performer the library already has, %d under a new folder)\n\n",
+	fmt.Printf("  re-filable: %d  (%d under a performer the library already has, %d under a new folder)\n",
 		len(plans), len(plans)-byUnknown, byUnknown)
+	fmt.Printf("    of those, resolved from Stash's own identify: %d (the rest from a watch's cast)\n\n",
+		viaStash)
 
 	// Group by destination: a list of 3,000 individual moves tells you nothing,
 	// whereas "412 files would go to Kenzie Reeves" is reviewable.
@@ -194,6 +227,41 @@ func main() {
 	fmt.Printf("\nmoved %d, failed %d\n", moved, failed)
 	fmt.Println("Stash still points at the old paths: run a library scan, then Stash's")
 	fmt.Println("own cleanup, so the moved scenes re-attach at their new location.")
+}
+
+// sceneByPath asks Stash which scene a placed file is, the same lookup the
+// daemon's confirm step uses. Going by path rather than by cross-id also
+// catches scenes you tagged by hand, which have performers but no StashDB id.
+func sceneByPath(c *stash.Client, path string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	m, err := c.FindSceneByPathContains(ctx, filepath.Base(path))
+	if err != nil || m == nil {
+		return ""
+	}
+	return m.ID
+}
+
+// topPerformer returns the scene's most-collected local performer — the same
+// rule the daemon and the pack distribute step use, so a file lands in the
+// same folder however forage came to file it.
+func topPerformer(c *stash.Client, sceneID string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	perfs, err := c.ScenePerformers(ctx, sceneID)
+	if err != nil {
+		return ""
+	}
+	var top stash.ScenePerformer
+	for _, pf := range perfs {
+		if pf.Name == "" {
+			continue
+		}
+		if top.Name == "" || pf.SceneCount > top.SceneCount {
+			top = pf
+		}
+	}
+	return top.Name
 }
 
 func castFor(dbh *sql.DB, sceneID string) []string {
