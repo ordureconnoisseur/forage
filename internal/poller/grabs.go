@@ -873,6 +873,14 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 					g.Reason = "stash phash → different scene than predicted"
 				}
 				dirty = true
+				// Stash has now matched this file, by hash, to a scene and
+				// attached the performers the library holds. That is better
+				// evidence than the guess that chose the folder, so a grab
+				// still sitting without one gets re-filed here rather than
+				// staying in Unsorted forever with the answer known.
+				if p.refileIdentified(ctx, stashC, g, scene.ID) {
+					dirty = true
+				}
 				// A single grab confirming into a scene that ALREADY has
 				// other copies (an upgrade landing beside the old file, or
 				// a deliberate re-download) leaves two files claiming one

@@ -46,6 +46,15 @@ func TestOneDoor(t *testing.T) {
 				// Performer re-file: removes the OLD path after the placer
 				// has re-placed the files under the new performer folder.
 				"internal/api/grab_performer.go": true,
+				// The same re-file, run automatically once Stash identifies
+				// an adopted grab: removes the OLD library link only after
+				// the placer has returned a DIFFERENT path under the
+				// identified scene's performer. Library side only — the
+				// download client's copy is never touched, so a torrent
+				// keeps seeding. Guarded by g.PerformerName == "", so it can
+				// only ever move a file out of Unsorted, never out of a
+				// folder someone chose.
+				"internal/poller/refile_identified.go": true,
 				// The trash TTL sweep's final unlink: scoped to dated
 				// directories directly under the trash root, journalled per
 				// file before removal. (This very test flagged it when the
