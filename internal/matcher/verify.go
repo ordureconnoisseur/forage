@@ -1,6 +1,9 @@
 package matcher
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
 
 // Verification — deciding whether a specific release IS a specific
 // scene — is distinct from ranking (which scene best matches a release).
@@ -178,6 +181,16 @@ func castStrippedTitleTokens(c Candidate) []string {
 	return out
 }
 
+// btsMarker matches the ways a stash-box titles a behind-the-scenes cut:
+// a "BTS" token, or the phrase spelled out. Anchored on token boundaries so
+// it cannot fire on a word that merely contains the letters.
+var btsMarker = regexp.MustCompile(`(?i)(^|[^a-z])(bts|behind[ ._-]the[ ._-]scenes)([^a-z]|$)`)
+
+// looksBehindTheScenes reports whether a title marks itself as a BTS cut.
+func looksBehindTheScenes(title string) bool {
+	return btsMarker.MatchString(title)
+}
+
 // Verify decides whether the release (whose matcher candidates are
 // `cands`) is the scene identified by sceneID/sceneTitle. Two
 // independent signals, either sufficient:
@@ -224,6 +237,14 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 
 	frac, nTok := TitleContainment(sceneTitle, releaseName)
 	isTop := found && len(cands) > 0 && cands[0].Scene.ID == sceneID
+
+	// A BTS cut shares its main scene's cast, date, studio and title, so
+	// every weighted signal ties and the ranking is arbitrary. The release
+	// naming one of the two is the only fact that separates them.
+	if cfg.RefuseBehindTheScenes && looksBehindTheScenes(sceneTitle) &&
+		!looksBehindTheScenes(releaseName) {
+		return VerifyResult{Verified: false, Confidence: conf}
+	}
 
 	// rivalOwnsTitle: some OTHER candidate's distinctive title is spelled
 	// out by the release — the release is telling us outright which scene
@@ -274,9 +295,18 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 	// fall back to: a strong overall match (high conf = performer AND
 	// date/studio agreed) AND the release actually containing the title
 	// tokens. Requiring containment (not conf alone) is what keeps a
-	// right-performer/wrong-scene release from verifying — corpus-measured:
-	// conf-only added false verifies, conf+containment recovers the real
-	// short-title scenes with no precision cost.
+	// right-performer/wrong-scene release from verifying.
+	//
+	// Re-measured on the search-title corpus (1,570 entries, the input the
+	// matcher actually sees) because the original claim here — "conf-only
+	// added false verifies, conf+containment recovers the real short-title
+	// scenes with no precision cost" — was taken on a corpus of post-download
+	// filenames. What it actually buys: dropping containment costs exactly
+	// ONE false verify on the holdout split and zero on train, and changes
+	// recall by nothing at all. So the requirement is kept because it is
+	// free, not because it is load-bearing, and the fallback is not visibly
+	// recovering scenes on this input. Sweep it with
+	// ShortTitleNeedsContainment before trusting either reading again.
 	if isTop {
 		shortTitle := nTok > 0 && nTok <= cfg.ShortTitleMaxTokens
 		// The strong-title-overlap shortcut verifies on the title ALONE (no
@@ -294,11 +324,21 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 		// target clears the title-overlap floor purely because the studio name
 		// leaks into title overlap (conf ~0.30) — a far date proves it's a
 		// different scene. The strong-match and date-anchored paths are NOT
-		// vetoed: strong-match needs conf >= cfg.StrongMatchConf (performer +
-		// studio + cast at identity level), which legitimately tolerates a
-		// StashDB-vs-release date discrepancy (corpus-measured: blanket-vetoing
-		// it dropped a real 6-performer match with a divergent date and removed
-		// zero false verifies).
+		// vetoed: strong-match needs conf >= cfg.StrongMatchConf, which
+		// tolerates a StashDB-vs-release date discrepancy.
+		//
+		// The justification here used to read "corpus-measured: blanket-
+		// vetoing it dropped a real 6-performer match with a divergent date
+		// and removed zero false verifies" — measured on post-download
+		// filenames. Re-measured on the 1,570-entry search-title corpus, the
+		// veto removes ONE false verify (98 to 97 on train, 47 to 46 on
+		// holdout) and costs a little recall on holdout. So "zero" was wrong
+		// and the conclusion was right anyway: not worth taking.
+		//
+		// Note what this does NOT mean. A confident wrong answer here is
+		// real: one measured case verified the wrong scene at 0.727 with the
+		// release date 1,593 days off. It is rare, not absent. Toggle
+		// StrongMatchNeedsDate to re-test.
 		dateOK := !targetDateFarOff
 		// The confidence-driven paths below answer from corroboration
 		// rather than from the release naming the scene, so they are the
@@ -311,7 +351,8 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 		case dateOK && overlap >= cfg.RankMinTitleOverlap &&
 			(conf >= cfg.TitleMinConf || strongTitle):
 			return VerifyResult{Verified: true, Confidence: conf}
-		case dateOK && shortTitle && conf >= cfg.ShortTitleMinConf && frac >= cfg.TitleMinContainment:
+		case dateOK && shortTitle && conf >= cfg.ShortTitleMinConf &&
+			(!cfg.ShortTitleNeedsContainment || frac >= cfg.TitleMinContainment):
 			return VerifyResult{Verified: true, Confidence: conf}
 		case conf >= cfg.StrongMatchConf && !rivalOwnsTitle && marginOK &&
 			(dateOK || !cfg.StrongMatchNeedsDate) &&

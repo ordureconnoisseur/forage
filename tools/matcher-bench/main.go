@@ -117,6 +117,14 @@ func main() {
 			log.Error("load corpus", "err", err)
 			os.Exit(1)
 		}
+		// --limit applies here too. It did not, so a run asked to bench 400
+		// entries quietly benched all 1,570 — the flag reported one thing
+		// and the numbers described another, which is the whole failure
+		// mode this tool exists to prevent.
+		if *limit > 0 && len(entries) > *limit {
+			log.Info("corpus truncated by --limit", "entries", len(entries), "limit", *limit)
+			entries = entries[:*limit]
+		}
 		log.Info("corpus loaded", "entries", len(entries))
 		for _, e := range entries {
 			// Reuse LabeledScene as the test-case shape. Basename =

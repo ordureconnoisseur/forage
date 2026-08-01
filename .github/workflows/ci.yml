@@ -61,8 +61,15 @@ jobs:
       # genuinely concurrent, and nothing else proves them so. Roughly
       # doubles test time; that is the right trade for a daemon whose
       # failure mode is a user's media library.
+      #
+      # -timeout: the matcher package now carries the corpus accuracy gate,
+      # which replays 1,570 recorded entries through the verifier. That is
+      # pure single-goroutine computation the race detector cannot say
+      # anything about, but CI runs only this job, so skipping it here would
+      # disable the ratchet entirely. Under -race it is slow enough that Go's
+      # 10-minute default is no longer the right number for this package.
       - name: Test (race detector)
-        run: go test -race ./...
+        run: go test -race -timeout 25m ./...
 
       # Short fuzz pass over the hostile-input parsers (release names in
       # any script/punctuation). The saved corpus under testdata/fuzz

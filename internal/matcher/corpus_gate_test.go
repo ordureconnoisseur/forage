@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -28,15 +29,46 @@ const (
 	// corpusMinRecall: the expected scene verifies. Measured 0.9529.
 	corpusMinRecall = 0.94
 	// corpusMinClean: the expected scene verifies AND nothing else does,
-	// which is what "identified" actually means. Measured 0.8713.
-	corpusMinClean = 0.86
+	// which is what "identified" actually means. Measured 0.8803, up from
+	// 0.8713 when the behind-the-scenes guard landed. Ratcheted with it:
+	// a floor left at the old value would let that improvement be undone
+	// silently, which is the entire point of having a floor.
+	corpusMinClean = 0.87
 	// corpusMaxFalseVerifies caps the precision side outright. Measured
-	// 145. A change that trades recall for a flood of false verifies would
-	// otherwise pass both rates above.
-	corpusMaxFalseVerifies = 160
+	// 127, down from 145. A change that trades recall for a flood of false
+	// verifies would otherwise pass both rates above.
+	corpusMaxFalseVerifies = 140
 )
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
+
+// The fixture is 1,570 entries of roughly ten candidates each, so one
+// ScoreReplay is ~16,000 Verify calls. CI runs `go test -race` and nothing
+// else, so these tests cannot opt out of the race detector — which makes them
+// 10-50x slower and blew the package's 10-minute timeout when four tests each
+// re-did the same work. Load once, score each distinct config once.
+var (
+	fixtureOnce    sync.Once
+	fixtureEntries []ReplayEntry
+	fixtureErr     error
+
+	scoreMu    sync.Mutex
+	scoreCache = map[string]ReplayScore{}
+)
+
+// scoreOnce memoises ScoreReplay per named config. The name is the key
+// because VerifyConfig is comparable but a map keyed on it would silently
+// recompute whenever a field is added.
+func scoreOnce(name string, cfg VerifyConfig, entries []ReplayEntry) ReplayScore {
+	scoreMu.Lock()
+	defer scoreMu.Unlock()
+	if s, ok := scoreCache[name]; ok {
+		return s
+	}
+	s := ScoreReplay(cfg, entries)
+	scoreCache[name] = s
+	return s
+}
 
 // loadCorpusFixture returns the recorded corpus, or nil when the fixture is
 // absent. Absence is a skip rather than a failure: the fixture holds real
@@ -44,25 +76,29 @@ const corpusFixture = "testdata/corpus-replay.json.gz"
 // out of the tree, and that choice must not break the build.
 func loadCorpusFixture(t *testing.T) []ReplayEntry {
 	t.Helper()
-	f, err := os.Open(corpusFixture)
-	if errors.Is(err, fs.ErrNotExist) {
+	fixtureOnce.Do(func() {
+		f, err := os.Open(corpusFixture)
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		defer f.Close()
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		defer gz.Close()
+		fixtureErr = json.NewDecoder(gz).Decode(&fixtureEntries)
+	})
+	if errors.Is(fixtureErr, fs.ErrNotExist) {
 		t.Skip("no corpus fixture; regenerate with matcher-bench --verify --dump")
 		return nil
 	}
-	if err != nil {
-		t.Fatal(err)
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
 	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer gz.Close()
-	var entries []ReplayEntry
-	if err := json.NewDecoder(gz).Decode(&entries); err != nil {
-		t.Fatal(err)
-	}
-	return entries
+	return fixtureEntries
 }
 
 func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
@@ -70,7 +106,7 @@ func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	if len(entries) < 1000 {
 		t.Fatalf("fixture holds %d entries, expected the full corpus", len(entries))
 	}
-	s := ScoreReplay(DefaultVerifyConfig, entries)
+	s := scoreOnce("default", DefaultVerifyConfig, entries)
 	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (in %d entries)",
 		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.EntriesWithFalse)
 
@@ -88,12 +124,37 @@ func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	}
 }
 
-// The fixture must reproduce the live bench. If replaying diverges from the
-// run that produced it, every offline experiment is measuring a different
-// verifier from the one that ships, and this whole apparatus is decorative.
+// recordedConfig is the verifier as it stood when the fixture was recorded.
+//
+// Pinned as a literal rather than referring to DefaultVerifyConfig, which was
+// the first version's mistake: it made the faithfulness check below fail
+// whenever the verifier legitimately improved, so it was really asserting
+// "nobody has changed anything" while claiming to assert "the replay is
+// faithful". Those are different questions and only the second is useful.
+var recordedConfig = VerifyConfig{
+	RankMinTitleOverlap:         0.15,
+	TitleMinTokens:              4,
+	TitleMinContainment:         0.80,
+	TitleMinConf:                0.30,
+	StrongTitleOverlap:          0.40,
+	ShortTitleMaxTokens:         2,
+	ShortTitleMinConf:           0.50,
+	StrongMatchConf:             0.70,
+	StrongMatchRivalTitleMargin: 0.15,
+	DateAnchorMinConf:           0.65,
+	StrongMatchNeedsDate:        false,
+	ShortTitleNeedsContainment:  true,
+	RefuseBehindTheScenes:       false,
+	TopMargin:                   0,
+}
+
+// The fixture must reproduce the live bench, run under the config that
+// produced it. If replaying diverges, every offline experiment is measuring a
+// different verifier from the one that ran, and this whole apparatus is
+// decorative.
 func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	s := ScoreReplay(DefaultVerifyConfig, entries)
+	s := scoreOnce("recorded", recordedConfig, entries)
 	// Recorded from matcher-bench --verify on 2026-07-31 against the same
 	// corpus build (commit 627749f, 1,570 confirmed search-grabs).
 	const (
@@ -110,11 +171,38 @@ func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	}
 }
 
+// And the shipped verifier must be at least as good as the recording. This is
+// the ratchet the floors above imply, stated directly against the same data.
+func TestShippedConfigBeatsTheRecording(t *testing.T) {
+	entries := loadCorpusFixture(t)
+	was := scoreOnce("recorded", recordedConfig, entries)
+	now := scoreOnce("default", DefaultVerifyConfig, entries)
+	t.Logf("recorded: recall %d clean %.4f false %d | shipped: recall %d clean %.4f false %d",
+		was.Recall, was.CleanRate(), was.FalseVerifies,
+		now.Recall, now.CleanRate(), now.FalseVerifies)
+	if now.CleanRate() < was.CleanRate() {
+		t.Errorf("clean rate regressed against the recording: %.4f -> %.4f",
+			was.CleanRate(), now.CleanRate())
+	}
+	if now.FalseVerifies > was.FalseVerifies {
+		t.Errorf("false verifies grew against the recording: %d -> %d",
+			was.FalseVerifies, now.FalseVerifies)
+	}
+}
+
 // A config that verifies nothing has perfect precision, and one that verifies
 // everything has perfect recall. The gate must be able to fail in both
 // directions or it only measures one.
 func TestCorpusGateCatchesBothFailureDirections(t *testing.T) {
 	entries := loadCorpusFixture(t)
+	// A slice, not the whole corpus. This asserts the gate is capable of
+	// failing in each direction, which a few hundred entries demonstrates as
+	// well as 1,570 — and the accept-everything arm verifies every candidate
+	// of every entry, which is the single most expensive thing in the
+	// package. Measured at 2m20s under -race on the full set.
+	if len(entries) > 300 {
+		entries = entries[:300]
+	}
 
 	refuseAll := DefaultVerifyConfig
 	refuseAll.RankMinTitleOverlap = 1.1
