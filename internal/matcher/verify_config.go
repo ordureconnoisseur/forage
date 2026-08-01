@@ -67,6 +67,32 @@ type VerifyConfig struct {
 	// corpus and does not carry over; on search titles the strong-match
 	// path demonstrably verifies wrong scenes whose dates are years off.
 	StrongMatchNeedsDate bool
+	// ShortTitleNeedsContainment keeps the short-title fallback requiring
+	// the release to actually contain the title's tokens, rather than
+	// trusting confidence alone.
+	//
+	// On by default, which is the shipped behaviour. It exists as a knob so
+	// the claim attached to it can be re-measured: the code asserted
+	// "corpus-measured: conf-only added false verifies, conf+containment
+	// recovers the real short-title scenes with no precision cost", and that
+	// measurement was taken on the filename corpus, which is not the input
+	// the matcher sees.
+	ShortTitleNeedsContainment bool
+	// RefuseBehindTheScenes blocks a candidate whose title marks it as a
+	// behind-the-scenes cut when the release name carries no such marker.
+	//
+	// Hand-labelling 40 false verifies found this to be the single largest
+	// class, 27% of the sample. A BTS entry shares its main scene's cast,
+	// date, studio AND title, differing only by a prefix, so every signal the
+	// verifier weighs is identical and no threshold can separate them. The
+	// release names one of the two; that is the only discriminating fact
+	// available, and it was being ignored.
+	//
+	// Swept on the search-title corpus: 18 fewer false verifies (98 to 84 on
+	// train, 47 to 43 on holdout) for ZERO recall cost on either split. A
+	// free improvement, which is why it is on rather than another knob
+	// waiting for someone to find it.
+	RefuseBehindTheScenes bool
 	// TopMargin requires the viewed scene, when verifying through a
 	// confidence-driven path, to beat the runner-up candidate by this
 	// much. Zero disables the check, which is the historical behaviour.
@@ -94,5 +120,7 @@ var DefaultVerifyConfig = VerifyConfig{
 	StrongMatchRivalTitleMargin: 0.15,
 	DateAnchorMinConf:           0.65,
 	StrongMatchNeedsDate:        false,
+	ShortTitleNeedsContainment:  true,
+	RefuseBehindTheScenes:       true,
 	TopMargin:                   0,
 }

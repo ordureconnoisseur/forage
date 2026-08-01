@@ -28,12 +28,15 @@ const (
 	// corpusMinRecall: the expected scene verifies. Measured 0.9529.
 	corpusMinRecall = 0.94
 	// corpusMinClean: the expected scene verifies AND nothing else does,
-	// which is what "identified" actually means. Measured 0.8713.
-	corpusMinClean = 0.86
+	// which is what "identified" actually means. Measured 0.8803, up from
+	// 0.8713 when the behind-the-scenes guard landed. Ratcheted with it:
+	// a floor left at the old value would let that improvement be undone
+	// silently, which is the entire point of having a floor.
+	corpusMinClean = 0.87
 	// corpusMaxFalseVerifies caps the precision side outright. Measured
-	// 145. A change that trades recall for a flood of false verifies would
-	// otherwise pass both rates above.
-	corpusMaxFalseVerifies = 160
+	// 127, down from 145. A change that trades recall for a flood of false
+	// verifies would otherwise pass both rates above.
+	corpusMaxFalseVerifies = 140
 )
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
@@ -88,12 +91,37 @@ func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	}
 }
 
-// The fixture must reproduce the live bench. If replaying diverges from the
-// run that produced it, every offline experiment is measuring a different
-// verifier from the one that ships, and this whole apparatus is decorative.
+// recordedConfig is the verifier as it stood when the fixture was recorded.
+//
+// Pinned as a literal rather than referring to DefaultVerifyConfig, which was
+// the first version's mistake: it made the faithfulness check below fail
+// whenever the verifier legitimately improved, so it was really asserting
+// "nobody has changed anything" while claiming to assert "the replay is
+// faithful". Those are different questions and only the second is useful.
+var recordedConfig = VerifyConfig{
+	RankMinTitleOverlap:         0.15,
+	TitleMinTokens:              4,
+	TitleMinContainment:         0.80,
+	TitleMinConf:                0.30,
+	StrongTitleOverlap:          0.40,
+	ShortTitleMaxTokens:         2,
+	ShortTitleMinConf:           0.50,
+	StrongMatchConf:             0.70,
+	StrongMatchRivalTitleMargin: 0.15,
+	DateAnchorMinConf:           0.65,
+	StrongMatchNeedsDate:        false,
+	ShortTitleNeedsContainment:  true,
+	RefuseBehindTheScenes:       false,
+	TopMargin:                   0,
+}
+
+// The fixture must reproduce the live bench, run under the config that
+// produced it. If replaying diverges, every offline experiment is measuring a
+// different verifier from the one that ran, and this whole apparatus is
+// decorative.
 func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	s := ScoreReplay(DefaultVerifyConfig, entries)
+	s := ScoreReplay(recordedConfig, entries)
 	// Recorded from matcher-bench --verify on 2026-07-31 against the same
 	// corpus build (commit 627749f, 1,570 confirmed search-grabs).
 	const (
@@ -107,6 +135,25 @@ func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 		t.Errorf("replay diverged from the live run:\n  got  entries=%d recall=%d false=%d entriesWithFalse=%d\n  want entries=%d recall=%d false=%d entriesWithFalse=%d",
 			s.Entries, s.Recall, s.FalseVerifies, s.EntriesWithFalse,
 			liveEntries, liveRecall, liveFalseVerifies, liveEntriesFalse)
+	}
+}
+
+// And the shipped verifier must be at least as good as the recording. This is
+// the ratchet the floors above imply, stated directly against the same data.
+func TestShippedConfigBeatsTheRecording(t *testing.T) {
+	entries := loadCorpusFixture(t)
+	was := ScoreReplay(recordedConfig, entries)
+	now := ScoreReplay(DefaultVerifyConfig, entries)
+	t.Logf("recorded: recall %d clean %.4f false %d | shipped: recall %d clean %.4f false %d",
+		was.Recall, was.CleanRate(), was.FalseVerifies,
+		now.Recall, now.CleanRate(), now.FalseVerifies)
+	if now.CleanRate() < was.CleanRate() {
+		t.Errorf("clean rate regressed against the recording: %.4f -> %.4f",
+			was.CleanRate(), now.CleanRate())
+	}
+	if now.FalseVerifies > was.FalseVerifies {
+		t.Errorf("false verifies grew against the recording: %d -> %d",
+			was.FalseVerifies, now.FalseVerifies)
 	}
 }
 

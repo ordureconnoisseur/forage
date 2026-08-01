@@ -83,6 +83,22 @@ func main() {
 	c := base
 	c.StrongMatchNeedsDate = true
 	add("StrongMatchNeedsDate", c)
+	// Re-measuring a claim the code makes: "conf-only added false verifies,
+	// conf+containment recovers the real short-title scenes with no
+	// precision cost". Taken on the filename corpus; this checks it against
+	// the input the matcher actually sees.
+	c = base
+	c.ShortTitleNeedsContainment = false
+	add("shortTitle: conf ONLY (no containment)", c)
+	// The largest false-verify class found by hand-labelling: BTS cuts that
+	// share every signal with their main scene.
+	c = base
+	c.RefuseBehindTheScenes = true
+	add("RefuseBehindTheScenes", c)
+	c = base
+	c.RefuseBehindTheScenes = true
+	c.TopMargin = 0.02
+	add("RefuseBTS + TopMargin=0.02", c)
 	for _, s := range []float64{0.75, 0.80, 0.85} {
 		c := base
 		c.StrongMatchConf = s
