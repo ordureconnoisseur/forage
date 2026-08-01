@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -41,31 +42,63 @@ const (
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
 
+// The fixture is 1,570 entries of roughly ten candidates each, so one
+// ScoreReplay is ~16,000 Verify calls. CI runs `go test -race` and nothing
+// else, so these tests cannot opt out of the race detector — which makes them
+// 10-50x slower and blew the package's 10-minute timeout when four tests each
+// re-did the same work. Load once, score each distinct config once.
+var (
+	fixtureOnce    sync.Once
+	fixtureEntries []ReplayEntry
+	fixtureErr     error
+
+	scoreMu    sync.Mutex
+	scoreCache = map[string]ReplayScore{}
+)
+
+// scoreOnce memoises ScoreReplay per named config. The name is the key
+// because VerifyConfig is comparable but a map keyed on it would silently
+// recompute whenever a field is added.
+func scoreOnce(name string, cfg VerifyConfig, entries []ReplayEntry) ReplayScore {
+	scoreMu.Lock()
+	defer scoreMu.Unlock()
+	if s, ok := scoreCache[name]; ok {
+		return s
+	}
+	s := ScoreReplay(cfg, entries)
+	scoreCache[name] = s
+	return s
+}
+
 // loadCorpusFixture returns the recorded corpus, or nil when the fixture is
 // absent. Absence is a skip rather than a failure: the fixture holds real
 // scene ids from a real library, so it is the kind of thing an owner may want
 // out of the tree, and that choice must not break the build.
 func loadCorpusFixture(t *testing.T) []ReplayEntry {
 	t.Helper()
-	f, err := os.Open(corpusFixture)
-	if errors.Is(err, fs.ErrNotExist) {
+	fixtureOnce.Do(func() {
+		f, err := os.Open(corpusFixture)
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		defer f.Close()
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			fixtureErr = err
+			return
+		}
+		defer gz.Close()
+		fixtureErr = json.NewDecoder(gz).Decode(&fixtureEntries)
+	})
+	if errors.Is(fixtureErr, fs.ErrNotExist) {
 		t.Skip("no corpus fixture; regenerate with matcher-bench --verify --dump")
 		return nil
 	}
-	if err != nil {
-		t.Fatal(err)
+	if fixtureErr != nil {
+		t.Fatal(fixtureErr)
 	}
-	defer f.Close()
-	gz, err := gzip.NewReader(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer gz.Close()
-	var entries []ReplayEntry
-	if err := json.NewDecoder(gz).Decode(&entries); err != nil {
-		t.Fatal(err)
-	}
-	return entries
+	return fixtureEntries
 }
 
 func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
@@ -73,7 +106,7 @@ func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	if len(entries) < 1000 {
 		t.Fatalf("fixture holds %d entries, expected the full corpus", len(entries))
 	}
-	s := ScoreReplay(DefaultVerifyConfig, entries)
+	s := scoreOnce("default", DefaultVerifyConfig, entries)
 	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (in %d entries)",
 		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.EntriesWithFalse)
 
@@ -121,7 +154,7 @@ var recordedConfig = VerifyConfig{
 // decorative.
 func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	s := ScoreReplay(recordedConfig, entries)
+	s := scoreOnce("recorded", recordedConfig, entries)
 	// Recorded from matcher-bench --verify on 2026-07-31 against the same
 	// corpus build (commit 627749f, 1,570 confirmed search-grabs).
 	const (
@@ -142,8 +175,8 @@ func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 // the ratchet the floors above imply, stated directly against the same data.
 func TestShippedConfigBeatsTheRecording(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	was := ScoreReplay(recordedConfig, entries)
-	now := ScoreReplay(DefaultVerifyConfig, entries)
+	was := scoreOnce("recorded", recordedConfig, entries)
+	now := scoreOnce("default", DefaultVerifyConfig, entries)
 	t.Logf("recorded: recall %d clean %.4f false %d | shipped: recall %d clean %.4f false %d",
 		was.Recall, was.CleanRate(), was.FalseVerifies,
 		now.Recall, now.CleanRate(), now.FalseVerifies)
@@ -162,6 +195,14 @@ func TestShippedConfigBeatsTheRecording(t *testing.T) {
 // directions or it only measures one.
 func TestCorpusGateCatchesBothFailureDirections(t *testing.T) {
 	entries := loadCorpusFixture(t)
+	// A slice, not the whole corpus. This asserts the gate is capable of
+	// failing in each direction, which a few hundred entries demonstrates as
+	// well as 1,570 — and the accept-everything arm verifies every candidate
+	// of every entry, which is the single most expensive thing in the
+	// package. Measured at 2m20s under -race on the full set.
+	if len(entries) > 300 {
+		entries = entries[:300]
+	}
 
 	refuseAll := DefaultVerifyConfig
 	refuseAll.RankMinTitleOverlap = 1.1
