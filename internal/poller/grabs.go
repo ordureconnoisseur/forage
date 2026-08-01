@@ -38,6 +38,10 @@ import (
 // reach the next tick automatically — every call into a client goes
 // through the pool's atomic accessor.
 type Poller struct {
+	// matcherCache holds the lazily-built matcher used to identify adopted
+	// downloads (see adopt_match.go).
+	matcherCache
+
 	repo     *grabs.Repo
 	db       *sql.DB // performer_cache lookups for adoption folder suggestions
 	pool     *clientpool.Pool
@@ -2326,12 +2330,23 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 		if kind == "pack" {
 			packFiles = videos
 		}
-		// Confidence-gated: only auto-file under a performer when the match
-		// is a full, unambiguous multi-word name. A weak guess (lone first
-		// name, or two performers both fitting) returns "" and the grab
-		// lands in Unsorted — far easier to fix than a confidently wrong
-		// folder, which is what mis-filed a batch of adopted torrents.
+		// Two ways to work out where this goes, in order of how much they
+		// know. First the name guess: is a local performer's full name
+		// inside the release title? Confidence-gated, so a lone first name
+		// or two performers both fitting returns "" rather than risk a
+		// confidently wrong folder.
+		//
+		// When that declines, ask the matcher what the release actually IS.
+		// It answers the same question with StashDB behind it and was
+		// measured at 0.953 on real release titles, and its answer carries
+		// the scene's own cast instead of a substring of a filename. Only a
+		// verified match is used, which is the same bar the name guess sets.
 		folder := suggest.ConfidentTopFolder(ctx, p.db, t.Name)
+		var ident adoptedIdentity
+		if folder == "" {
+			ident = p.identifyAdopted(ctx, t.Name)
+			folder = ident.Performer
+		}
 		id, err := p.repo.Insert(ctx, grabs.Grab{
 			ReleaseTitle:  t.Name,
 			Client:        "qbit",
@@ -2340,10 +2355,14 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 			Category:      cat,
 			Status:        "queued",
 			PerformerName: folder,
-			Kind:          kind,
-			PackFiles:     packFiles,
-			GrabbedAt:     t.AddedOn,
-			Reason:        "adopted from qbit",
+			// Carried so the confirm path has something to check against,
+			// and so the grab stops looking like it came from nowhere.
+			PredictedStashDBID:  ident.SceneID,
+			PredictedConfidence: ident.Confidence,
+			Kind:                kind,
+			PackFiles:           packFiles,
+			GrabbedAt:           t.AddedOn,
+			Reason:              "adopted from qbit",
 		})
 		if err != nil {
 			p.log.Warn("adopt: insert", "hash", t.Hash, "name", t.Name, "err", err)
@@ -2351,7 +2370,8 @@ func (p *Poller) adoptQbitOrphans(ctx context.Context, known map[string]bool, mi
 		}
 		adopted++
 		p.log.Info("adopted qbit torrent", "id", id, "name", t.Name,
-			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder)
+			"hash", t.Hash, "kind", kind, "videos", videos, "folder", folder,
+			"matched_scene", ident.SceneID)
 	}
 	return
 }
@@ -2449,19 +2469,27 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 		if grabbedAt == 0 {
 			grabbedAt = now
 		}
+		// Same two-step as the qBit path above.
 		folder := suggest.ConfidentTopFolder(ctx, p.db, it.Name)
+		var ident adoptedIdentity
+		if folder == "" {
+			ident = p.identifyAdopted(ctx, it.Name)
+			folder = ident.Performer
+		}
 		id, err := p.repo.Insert(ctx, grabs.Grab{
-			ReleaseTitle:  it.Name,
-			Client:        "sabnzbd",
-			ClientID:      it.NzoID,
-			ClientName:    it.Name,
-			Category:      cat,
-			Status:        "queued",
-			PerformerName: folder,
-			Kind:          kind,
-			PackFiles:     packFiles,
-			GrabbedAt:     grabbedAt,
-			Reason:        "adopted from sab",
+			ReleaseTitle:        it.Name,
+			Client:              "sabnzbd",
+			ClientID:            it.NzoID,
+			ClientName:          it.Name,
+			Category:            cat,
+			Status:              "queued",
+			PerformerName:       folder,
+			PredictedStashDBID:  ident.SceneID,
+			PredictedConfidence: ident.Confidence,
+			Kind:                kind,
+			PackFiles:           packFiles,
+			GrabbedAt:           grabbedAt,
+			Reason:              "adopted from sab",
 		})
 		if err != nil {
 			p.log.Warn("adopt: insert", "nzo_id", it.NzoID, "name", it.Name, "err", err)
@@ -2469,7 +2497,8 @@ func (p *Poller) adoptSabOrphans(ctx context.Context, known map[string]bool) int
 		}
 		adopted++
 		p.log.Info("adopted sab job", "id", id, "name", it.Name,
-			"nzo_id", it.NzoID, "kind", kind, "videos", videos, "folder", folder)
+			"nzo_id", it.NzoID, "kind", kind, "videos", videos, "folder", folder,
+			"matched_scene", ident.SceneID)
 	}
 	return adopted
 }
