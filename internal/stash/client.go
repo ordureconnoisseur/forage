@@ -684,6 +684,41 @@ type ScenePerformer struct {
 	SceneCount int
 }
 
+// scenePerformersQuery fetches one scene's cast with each performer's local
+// scene count, which is what picks the folder: the performer you collect most
+// of is the one whose folder the file belongs in.
+const scenePerformersQuery = `
+query ForagerScenePerformers($id: ID!) {
+  findScene(id: $id) {
+    id
+    performers { id name scene_count }
+  }
+}`
+
+// ScenePerformers returns the LOCAL performers Stash has on a scene.
+//
+// Local is the point. These come from Stash after its own identify has run,
+// so every name is one the library already has a folder for — unlike a name
+// parsed out of a release title, which may be someone you have never heard of.
+// Empty (not an error) for an unidentified scene or one with no cast.
+func (c *Client) ScenePerformers(ctx context.Context, sceneID string) ([]ScenePerformer, error) {
+	if sceneID == "" {
+		return nil, nil
+	}
+	var resp struct {
+		FindScene *struct {
+			Performers []ScenePerformer `json:"performers"`
+		} `json:"findScene"`
+	}
+	if err := c.do(ctx, scenePerformersQuery, map[string]any{"id": sceneID}, &resp); err != nil {
+		return nil, fmt.Errorf("scene performers: %w", err)
+	}
+	if resp.FindScene == nil {
+		return nil, nil
+	}
+	return resp.FindScene.Performers, nil
+}
+
 // DistScene is a scene under a pack dir plus the data needed to distribute it
 // into a performer folder: its file path (Stash's view — Reverse-map to
 // forager's), whether it's identified, and its performers.
