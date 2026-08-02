@@ -46,6 +46,9 @@ const (
 type Prowlarr struct {
 	root string // <data>/managed/prowlarr
 	log  *slog.Logger
+	// releasesURL is prowlarrReleasesAPI everywhere except in tests, which
+	// point it at a local server so Install can be exercised end to end.
+	releasesURL string
 
 	mu         sync.Mutex
 	state      State
@@ -64,15 +67,16 @@ type Prowlarr struct {
 // immediately; it does not start anything.
 func NewProwlarr(dataDir string, log *slog.Logger) *Prowlarr {
 	p := &Prowlarr{
-		root:  filepath.Join(dataDir, "managed", "prowlarr"),
-		log:   log,
-		state: StateAbsent,
+		root:        filepath.Join(dataDir, "managed", "prowlarr"),
+		log:         log,
+		state:       StateAbsent,
+		releasesURL: prowlarrReleasesAPI,
 	}
 	if p.Installed() {
 		p.state = StateStopped
 		p.loadSeededConfig()
 		if v, err := os.ReadFile(filepath.Join(p.root, "version.txt")); err == nil {
-			// First line is the release tag; the rest is the download's
+			// First line is the release tag; the rest is the verified
 			// sha256 audit record.
 			p.version, _, _ = strings.Cut(strings.TrimSpace(string(v)), "\n")
 		}
@@ -206,7 +210,7 @@ func (p *Prowlarr) Install(ctx context.Context) error {
 
 	p.setState(StateDownloading, "resolving latest release")
 	hc := httpClientForDownloads()
-	tag, asset, err := resolveLatest(ctx, hc)
+	tag, asset, err := resolveLatest(ctx, hc, p.releasesURL)
 	if err != nil {
 		return fail(err)
 	}
@@ -216,13 +220,20 @@ func (p *Prowlarr) Install(ctx context.Context) error {
 	archive := filepath.Join(p.root, "download.tmp")
 	defer os.Remove(archive)
 	p.log.Info("downloading managed prowlarr", "tag", tag, "asset", asset.Name, "bytes", asset.Size)
+	// download verifies the bytes against the digest published with the
+	// release before returning, so reaching the extract below means the
+	// archive is the one GitHub serves for this tag. Nothing is unpacked or
+	// executed on the failure path.
 	sum, err := download(ctx, hc, asset, archive, func(done, total int64) {
 		p.mu.Lock()
 		p.doneBytes, p.totalBytes = done, total
 		p.mu.Unlock()
 	})
 	if err != nil {
-		return fail(fmt.Errorf("download %s: %w", asset.Name, err))
+		// Deliberately unwrapped. download's verification errors already begin
+		// with the asset name, so wrapping them in "download <name>:" reached
+		// the UI as "Install failed: download X.zip: X.zip failed sha256 ...".
+		return fail(err)
 	}
 
 	p.setState(StateInstalling, "extracting "+asset.Name)
