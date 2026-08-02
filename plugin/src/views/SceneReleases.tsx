@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   fetchSceneReleases,
   postGrab,
+  type MatchExplain,
   type MissingPerformer,
   type SceneRelease,
   type SceneReleasesResponse,
@@ -665,8 +666,13 @@ function ReleaseList({
                   )}
                 </div>
               )}
-              {r.reasons && r.reasons.length > 0 && (
-                <MatchBreakdown reasons={r.reasons} />
+              {/* The verdict's reasoning. Falls back to the plain
+                  component chips when the daemon sent no explanation. */}
+              {r.explain ? (
+                <MatchVerdict explain={r.explain} reasons={r.reasons} />
+              ) : (
+                r.reasons &&
+                r.reasons.length > 0 && <MatchBreakdown reasons={r.reasons} />
               )}
             </div>
 
@@ -708,23 +714,217 @@ function MatchBreakdown({ reasons }: { reasons: string[] }) {
   return (
     <details className="match-why">
       <summary>Match breakdown</summary>
-      <ul className="match-why-list">
-        {reasons.map((reason, i) => {
-          const sep = reason.indexOf(":");
-          const label = sep >= 0 ? reason.slice(0, sep).trim() : reason;
-          const value = sep >= 0 ? reason.slice(sep + 1).trim() : "";
-          const miss = REASON_MISS.test(value);
-          return (
-            <li
-              key={i}
-              className={"match-why-row " + (miss ? "is-miss" : "is-hit")}
-            >
-              <span className="match-why-label">{label}</span>
-              {value && <span className="match-why-value">{value}</span>}
-            </li>
-          );
-        })}
-      </ul>
+      <ReasonChips reasons={reasons} />
+    </details>
+  );
+}
+
+// ReasonChips renders the matcher's per-component reason strings as tinted
+// pills. Shared by the plain breakdown and the verdict panel so a scene's
+// signals look the same wherever they appear.
+function ReasonChips({ reasons }: { reasons: string[] }) {
+  return (
+    <ul className="match-why-list">
+      {reasons.map((reason, i) => {
+        const sep = reason.indexOf(":");
+        const label = sep >= 0 ? reason.slice(0, sep).trim() : reason;
+        const value = sep >= 0 ? reason.slice(sep + 1).trim() : "";
+        const miss = REASON_MISS.test(value);
+        return (
+          <li
+            key={i}
+            className={"match-why-row " + (miss ? "is-miss" : "is-hit")}
+          >
+            <span className="match-why-label">{label}</span>
+            {value && <span className="match-why-value">{value}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// MatchVerdict is the "why did (or didn't) this verify?" panel.
+//
+// The badge alone is one bit standing in for four acceptance paths and a dozen
+// thresholds, and a wrong answer looked exactly like a right one — the case
+// that prompted this verified the WRONG scene at 73% with its date 1,593 days
+// off, and the top three candidates were 0.013 apart. Nothing on screen could
+// have shown that. So the panel says three things in order: what decided it,
+// which paths were tried and what stopped each, and the ranked field with what
+// every candidate scored.
+//
+// It expands on click and ships with the release list (no extra request): the
+// daemon builds it from candidates it already had.
+function MatchVerdict({
+  explain,
+  reasons,
+}: {
+  explain: MatchExplain;
+  reasons?: string[];
+}) {
+  const gates = explain.gates ?? [];
+  const cands = explain.candidates ?? [];
+  const pos = explain.position;
+  const overrides = explain.overrides ?? [];
+  const verified = explain.verified;
+
+  // Collapsed line: the single most useful fact, so the common question is
+  // answered without opening anything.
+  let hint = "";
+  if (verified && explain.path_label) hint = explain.path_label;
+  else if (explain.note) hint = "nothing to compare against";
+  else if (explain.veto || overrides.some((o) => o.verdict === "refused"))
+    hint = "refused by a rule";
+  else if (!pos.found) hint = "not among the candidates";
+  else if (pos.rank > 1) hint = `ranked #${pos.rank} of ${pos.candidates}`;
+  else hint = "no acceptance path applied";
+
+  // Losing the top spot blocks four of the five paths, so the same sentence
+  // repeated down the whole list and buried each path's own reason. Hoist any
+  // blocker at least half the failing paths share, and state it once. Half
+  // rather than all: containment is the one path that does not need the top
+  // spot, so "all" never fires on the case this exists for.
+  const failing = gates.filter((g) => !g.passed);
+  const shared =
+    failing.length > 2
+      ? [...new Set(failing.flatMap((g) => g.blockers ?? []))].filter(
+          (b) =>
+            failing.filter((g) => (g.blockers ?? []).includes(b)).length * 2 >=
+            failing.length,
+        )
+      : [];
+
+  return (
+    <details className="match-why match-verdict">
+      <summary>
+        <span className={"mv-verdict " + (verified ? "is-yes" : "is-no")}>
+          {verified ? "Verified" : "Not verified"}
+        </span>
+        {hint && <span className="mv-hint">{hint}</span>}
+      </summary>
+
+      {explain.note && <p className="mv-note">{explain.note}</p>}
+
+      {/* forage's own rules come last in the daemon and first here: when one
+          fired it is the actual answer, and the matcher's reasoning below is
+          only context for what it overrode. */}
+      {overrides.map((o, i) => (
+        <p
+          key={i}
+          className={
+            "mv-override " + (o.verdict === "refused" ? "is-no" : "is-yes")
+          }
+        >
+          {o.verdict === "refused" ? "Refused: " : "Accepted: "}
+          {o.reason}
+        </p>
+      ))}
+
+      {explain.veto && <p className="mv-override is-no">Refused: {explain.veto}</p>}
+
+      {gates.length > 0 && (
+        <>
+          <div className="mv-caption">
+            Ways this release could be accepted as the scene you're viewing
+          </div>
+          {shared.length > 0 && (
+            <ul className="mv-blockers mv-shared">
+              {shared.map((b, i) => (
+                <li key={i}>{b} — which rules out every path below that needs it.</li>
+              ))}
+            </ul>
+          )}
+          <ul className="mv-gates">
+            {gates.map((g) => {
+              const own = (g.blockers ?? []).filter((b) => !shared.includes(b));
+              return (
+                <li
+                  key={g.name}
+                  className={"mv-gate " + (g.passed ? "is-pass" : "is-fail")}
+                >
+                  <span className="mv-gate-head">
+                    <span className="mv-mark" aria-hidden="true">
+                      {g.passed ? "✓" : "✗"}
+                    </span>
+                    <span className="mv-gate-label">{g.label}</span>
+                  </span>
+                  {own.length > 0 && (
+                    <ul className="mv-blockers">
+                      {own.map((b, i) => (
+                        <li key={i}>{b}</li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
+      {cands.length > 0 && (
+        <>
+          <div className="mv-caption">
+            Scenes the matcher weighed for this release name
+          </div>
+          <div className="mv-cands-scroll">
+            <table className="mv-cands">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th title="The matcher's overall confidence that this release is this scene">
+                    Match
+                  </th>
+                  <th title="How much of the release name and this scene's title are the same words (0 to 1)">
+                    Title fit
+                  </th>
+                  <th>Scene</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cands.map((c) => (
+                  <tr
+                    key={c.scene_id}
+                    className={c.is_target ? "is-target" : undefined}
+                  >
+                    <td className="mv-rank">{c.rank}</td>
+                    <td className="mv-num">
+                      {(c.confidence * 100).toFixed(0)}%
+                    </td>
+                    <td className="mv-num">{c.title_overlap.toFixed(2)}</td>
+                    <td>
+                      <span className="mv-cand-title">
+                        {c.title || "(untitled)"}
+                      </span>
+                      {c.is_target && (
+                        <span className="mv-you">the scene you're viewing</span>
+                      )}
+                      <span className="mv-cand-meta">
+                        {[c.date, c.studio, (c.cast ?? []).join(", ")]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        {c.date_far_off && (
+                          <span className="mv-far"> date 2+ years off</span>
+                        )}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {reasons && reasons.length > 0 && (
+        <>
+          <div className="mv-caption">
+            What this scene scored on, component by component
+          </div>
+          <ReasonChips reasons={reasons} />
+        </>
+      )}
     </details>
   );
 }

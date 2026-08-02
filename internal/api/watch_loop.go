@@ -260,7 +260,9 @@ func (s *Server) checkWatch(ctx context.Context, w watches.Watch) {
 	if err != nil || len(releases) == 0 {
 		return
 	}
-	cands := s.verifyReleases(ctx, m, w.StashDBID, scene.Title, releases)
+	// No explanation: these rows are serialised into the watch table, where
+	// the payload would be stored dead weight nobody renders.
+	cands := s.verifyReleases(ctx, m, w.StashDBID, scene.Title, releases, false)
 	// Never offer a release that's already been grabbed: a completed grab
 	// that identified as a DIFFERENT scene (mismatched) leaves this watch
 	// hunting, the re-check re-finds the exact release the user already

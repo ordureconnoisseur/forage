@@ -457,6 +457,70 @@ export interface SceneRelease {
   score?: number;
   rejected?: boolean;
   score_hits?: { label: string; points: number; reject?: boolean }[];
+  // The decision behind `verified`: the matcher's ranked candidates and which
+  // acceptance path did or did not carry this release. Sent only by the
+  // interactive release list (watch rows store this type and would carry the
+  // payload as dead weight).
+  explain?: MatchExplain;
+}
+
+// ── Why a release did or did not verify ────────────────────────────
+//
+// The verdict badge is one bit standing in for four acceptance paths and a
+// dozen thresholds. These types carry the reasoning behind it, computed from
+// candidates the daemon already had in hand.
+
+// MatchExplainGate is one acceptance path. `blockers` lists every requirement
+// it failed, each phrased with the measured value and the bar it missed.
+export interface MatchExplainGate {
+  name: string;
+  label: string;
+  passed: boolean;
+  blockers?: string[];
+}
+
+// MatchExplainCandidate is one scene the matcher considered, at its true rank.
+export interface MatchExplainCandidate {
+  rank: number;
+  scene_id: string;
+  title: string;
+  date?: string;
+  studio?: string;
+  cast?: string[];
+  confidence: number;
+  title_overlap: number;
+  // The candidate's date is 2+ years off the release name's, under every
+  // reading of it.
+  date_far_off?: boolean;
+  // The scene the user is looking at.
+  is_target?: boolean;
+}
+
+// MatchExplainPosition is where the viewed scene landed. `found` false means
+// it was never retrieved for this release name at all, which is a different
+// problem from losing to a sibling.
+export interface MatchExplainPosition {
+  found: boolean;
+  rank: number;
+  candidates: number;
+}
+
+export interface MatchExplain {
+  // The FINAL verdict, after the overrides below.
+  verified: boolean;
+  path?: string;
+  path_label?: string;
+  // A rule that refused the release regardless of the gates, so a gate can
+  // read as passed next to a "not verified" badge.
+  veto?: string;
+  // No gate trace at all: the matcher errored, or found no candidate scenes.
+  note?: string;
+  // forage's own rules layered on the matcher's answer (pack, streaming-link
+  // spam, photo set, JAV code).
+  overrides?: { verdict: "verified" | "refused"; reason: string }[];
+  gates?: MatchExplainGate[];
+  position: MatchExplainPosition;
+  candidates?: MatchExplainCandidate[];
 }
 
 export interface SceneReleasesResponse {

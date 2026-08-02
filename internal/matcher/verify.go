@@ -210,9 +210,27 @@ func Verify(cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyRe
 // VerifyWith is Verify against an explicit threshold set. Sweeps and the
 // replay harness call this; production calls Verify.
 func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releaseName string) VerifyResult {
+	ex := verifyTrace(cfg, cands, sceneID, sceneTitle, releaseName, false)
+	return VerifyResult{Verified: ex.Verified, Confidence: ex.Confidence}
+}
+
+// verifyTrace is the ONE implementation of the verdict. VerifyWith reads the
+// summary off it and ExplainVerifyWith returns the whole trace, so the
+// explanation the UI shows cannot drift from the badge it explains — the same
+// drift risk this file's header calls out between the release page and the
+// bench.
+//
+// full=false reproduces the old short-circuit exactly: gate checks stop at
+// their first blocker and gate evaluation stops at the first acceptance, so a
+// threshold sweep (1,570 corpus entries per arm) does not start paying for
+// dateAnchored and blocker formatting it never displays. full=true evaluates
+// everything, which is what makes a refusal legible: the user needs every
+// unmet requirement, not just the first one.
+func verifyTrace(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releaseName string, full bool) VerifyExplanation {
 	var conf, overlap float64
 	var targetDateFarOff bool
 	found := false
+	rank := 0                     // 1-based rank of the viewed scene, 0 = not a candidate
 	var relTokens map[string]bool // lazily built for rival overlap
 	var rivalMaxOverlap float64   // highest CAST-STRIPPED title overlap among OTHER candidates
 	var runnerUpConf float64      // highest CONFIDENCE among OTHER candidates
@@ -221,6 +239,7 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 			conf = cands[i].Confidence
 			overlap = cands[i].TitleOverlap
 			targetDateFarOff = cands[i].DateFarOff
+			rank = i + 1
 			found = true
 			continue
 		}
@@ -238,12 +257,39 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 	frac, nTok := TitleContainment(sceneTitle, releaseName)
 	isTop := found && len(cands) > 0 && cands[0].Scene.ID == sceneID
 
+	ex := VerifyExplanation{
+		Confidence: conf,
+		Signals: VerifySignals{
+			Found:            found,
+			Rank:             rank,
+			Candidates:       len(cands),
+			Confidence:       conf,
+			TitleOverlap:     overlap,
+			RunnerUpConf:     runnerUpConf,
+			RivalMaxOverlap:  rivalMaxOverlap,
+			DateFarOff:       targetDateFarOff,
+			TitleTokens:      nTok,
+			TitleContainment: frac,
+		},
+	}
+	if len(cands) > 0 {
+		ex.Signals.TopSceneID = cands[0].Scene.ID
+		ex.Signals.TopSceneTitle = cands[0].Scene.Title
+		ex.Signals.TopConfidence = cands[0].Confidence
+	}
+
 	// A BTS cut shares its main scene's cast, date, studio and title, so
 	// every weighted signal ties and the ranking is arbitrary. The release
 	// naming one of the two is the only fact that separates them.
 	if cfg.RefuseBehindTheScenes && looksBehindTheScenes(sceneTitle) &&
 		!looksBehindTheScenes(releaseName) {
-		return VerifyResult{Verified: false, Confidence: conf}
+		ex.Veto = "This scene is a behind-the-scenes cut and the release name does not say BTS. A BTS entry shares its main scene's cast, date, studio and title, so nothing else can separate the two."
+		if !full {
+			return ex
+		}
+		// Keep tracing: knowing the release WOULD have verified on cast and
+		// date, and was refused only by the BTS rule, is the whole point of
+		// showing the user the gates. The veto still decides the verdict.
 	}
 
 	// rivalOwnsTitle: some OTHER candidate's distinctive title is spelled
@@ -286,6 +332,8 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 		}
 	}
 
+	ex.Signals.RivalOwnsTitle = rivalOwnsTitle
+
 	// Ranking path: the viewed scene is the single best pick. Normally we
 	// require a real title overlap (so it's #1 for the title, not merely a
 	// shared performer), backed by either a real overall match (conf floor)
@@ -307,7 +355,44 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 	// free, not because it is load-bearing, and the fallback is not visibly
 	// recovering scenes on this input. Sweep it with
 	// ShortTitleNeedsContainment before trusting either reading again.
-	if isTop {
+	//
+	// The four ranking paths and the containment path below are the switch
+	// cases this used to be, one `gate` call each, in the same order and with
+	// each case's conditions in the same order.
+
+	// msg formats blocker text, and only when we are explaining — see the
+	// gateMsg comment for why that matters to the sweeps.
+	msg := gateMsg(full)
+	// gate evaluates one acceptance path and records it. When we are not
+	// explaining, evaluation stops at the first path that accepts, exactly as
+	// the switch this replaced fell through; the accepted path also sets the
+	// verdict, unless a veto already refused.
+	accepted := false
+	gate := func(name, label string, checks ...verifyCheck) {
+		if accepted && !full {
+			return
+		}
+		g := evalGate(full, name, label, checks...)
+		ex.Gates = append(ex.Gates, g)
+		if !g.Passed || accepted {
+			return
+		}
+		accepted = true
+		if ex.Veto != "" {
+			return
+		}
+		ex.Verified = true
+		ex.Path = name
+		ex.PathLabel = label
+		if name == GateContainment && conf < frac {
+			// The release literally names the scene, which is stronger
+			// evidence than the weighted score it happened to earn.
+			ex.Confidence = frac
+			ex.Signals.Confidence = frac
+		}
+	}
+
+	{
 		shortTitle := nTok > 0 && nTok <= cfg.ShortTitleMaxTokens
 		// The strong-title-overlap shortcut verifies on the title ALONE (no
 		// performer/date corroboration), so it must only fire when the title
@@ -316,8 +401,10 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 		// any release that lists the same acts but points at no specific
 		// scene — require at least one non-generic shared token before
 		// trusting the title by itself.
-		strongTitle := overlap >= cfg.StrongTitleOverlap &&
-			distinctiveTitleHits(sceneTitle, releaseName) >= 1
+		strongTitle := func() bool {
+			return overlap >= cfg.StrongTitleOverlap &&
+				distinctiveTitleHits(sceneTitle, releaseName) >= 1
+		}
 		// Date veto: a confidently-far release date (>= dateVetoDays off the
 		// scene under every plausible reading) vetoes ONLY the two title/
 		// coincidence paths below. A same-studio daily episode years off the
@@ -347,45 +434,115 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 		// scores within a few hundredths. marginOK requires the viewed scene
 		// to actually stand out before either path trusts its confidence.
 		marginOK := cfg.TopMargin <= 0 || conf >= runnerUpConf+cfg.TopMargin
-		switch {
-		case dateOK && overlap >= cfg.RankMinTitleOverlap &&
-			(conf >= cfg.TitleMinConf || strongTitle):
-			return VerifyResult{Verified: true, Confidence: conf}
-		case dateOK && shortTitle && conf >= cfg.ShortTitleMinConf &&
-			(!cfg.ShortTitleNeedsContainment || frac >= cfg.TitleMinContainment):
-			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= cfg.StrongMatchConf && !rivalOwnsTitle && marginOK &&
-			(dateOK || !cfg.StrongMatchNeedsDate) &&
-			rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin:
-			// Title overlap is negligible (tag-soup release name, or an
-			// episode tag the release omits) but performer+date+studio/cast
-			// corroborate at identity level. Trust the strong overall match —
-			// unless a sibling candidate matches the title clearly better,
-			// which means the title is discriminating between same-cast
-			// scenes and must not be overridden.
-			return VerifyResult{Verified: true, Confidence: conf}
-		case conf >= cfg.DateAnchorMinConf && !rivalOwnsTitle && marginOK &&
-			dateAnchored(cands, sceneID, releaseName) &&
-			rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin:
-			// Date-anchored: the release literally states this scene's
-			// exact date and NO other candidate shares that date, so the
-			// date is doing the discriminating a title would normally do —
-			// for releases that carry no title at all. The uniqueness
-			// requirement is what keeps same-day multi-site postings (and
-			// same-day PMV/compilation siblings) honest: when several
-			// candidates share the date it can't separate them, and this
-			// path refuses rather than guessing.
-			return VerifyResult{Verified: true, Confidence: conf}
+
+		// isTopCheck is shared: every ranking path needed `isTop`, which the
+		// old code expressed as one enclosing if.
+		isTopCheck := func() (bool, string) {
+			return isTop, notTopBlocker(msg, cands, found, rank)
 		}
+		dateCheck := func() (bool, string) { return dateOK, msg.f(farDateBlocker) }
+
+		gate(GateRankTitle, "Ranked first, and the title agrees",
+			isTopCheck,
+			dateCheck,
+			func() (bool, string) {
+				return overlap >= cfg.RankMinTitleOverlap,
+					msg.ratio("the title overlap with this scene", overlap, cfg.RankMinTitleOverlap)
+			},
+			func() (bool, string) {
+				if conf >= cfg.TitleMinConf || strongTitle() {
+					return true, ""
+				}
+				return false, weakTitleBlocker(msg, cfg, conf, overlap, sceneTitle, releaseName)
+			},
+		)
+
+		gate(GateShortTitle, "Ranked first, with a title too short to score on overlap",
+			isTopCheck,
+			dateCheck,
+			func() (bool, string) {
+				return shortTitle, msg.f(
+					"this path only covers titles of %d significant word(s) or fewer, and this one has %d",
+					cfg.ShortTitleMaxTokens, nTok)
+			},
+			func() (bool, string) {
+				return conf >= cfg.ShortTitleMinConf,
+					msg.ratio("the match confidence", conf, cfg.ShortTitleMinConf)
+			},
+			func() (bool, string) {
+				return !cfg.ShortTitleNeedsContainment || frac >= cfg.TitleMinContainment,
+					msg.ratio("the share of the title's words the release name repeats", frac, cfg.TitleMinContainment)
+			},
+		)
+
+		// Title overlap is negligible (tag-soup release name, or an episode
+		// tag the release omits) but performer+date+studio/cast corroborate at
+		// identity level. Trust the strong overall match — unless a sibling
+		// candidate matches the title clearly better, which means the title is
+		// discriminating between same-cast scenes and must not be overridden.
+		gate(GateStrongMatch, "Ranked first, and performer/date/studio corroborate on their own",
+			isTopCheck,
+			func() (bool, string) {
+				return conf >= cfg.StrongMatchConf,
+					msg.ratio("the match confidence", conf, cfg.StrongMatchConf)
+			},
+			func() (bool, string) { return !rivalOwnsTitle, msg.f(rivalOwnsTitleBlocker) },
+			func() (bool, string) { return marginOK, marginBlocker(msg, cfg, conf, runnerUpConf) },
+			func() (bool, string) {
+				return dateOK || !cfg.StrongMatchNeedsDate, msg.f(farDateBlocker)
+			},
+			func() (bool, string) {
+				return rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin,
+					rivalOverlapBlocker(msg, rivalMaxOverlap, overlap, cfg.StrongMatchRivalTitleMargin)
+			},
+		)
+
+		// Date-anchored: the release literally states this scene's exact date
+		// and NO other candidate shares that date, so the date is doing the
+		// discriminating a title would normally do — for releases that carry
+		// no title at all. The uniqueness requirement is what keeps same-day
+		// multi-site postings (and same-day PMV/compilation siblings) honest:
+		// when several candidates share the date it can't separate them, and
+		// this path refuses rather than guessing.
+		gate(GateDateAnchor, "The release states this scene's exact date, and only this scene's",
+			isTopCheck,
+			func() (bool, string) {
+				return conf >= cfg.DateAnchorMinConf,
+					msg.ratio("the match confidence", conf, cfg.DateAnchorMinConf)
+			},
+			func() (bool, string) { return !rivalOwnsTitle, msg.f(rivalOwnsTitleBlocker) },
+			func() (bool, string) { return marginOK, marginBlocker(msg, cfg, conf, runnerUpConf) },
+			func() (bool, string) {
+				anchored := dateAnchored(cands, sceneID, releaseName)
+				ex.Signals.DateAnchored = anchored
+				return anchored, msg.f("the release name does not read as this scene's exact date, " +
+					"or another candidate shares that date and it cannot tell them apart")
+			},
+			func() (bool, string) {
+				return rivalMaxOverlap <= overlap+cfg.StrongMatchRivalTitleMargin,
+					rivalOverlapBlocker(msg, rivalMaxOverlap, overlap, cfg.StrongMatchRivalTitleMargin)
+			},
+		)
 	}
 
-	// Containment path: the release names the scene outright.
-	if nTok >= cfg.TitleMinTokens && frac >= cfg.TitleMinContainment && conf >= cfg.TitleMinConf {
-		if conf < frac {
-			conf = frac
-		}
-		return VerifyResult{Verified: true, Confidence: conf}
-	}
+	// Containment path: the release names the scene outright. The one path
+	// that does NOT require the viewed scene to be ranked first.
+	gate(GateContainment, "The release name spells out this scene's title",
+		func() (bool, string) {
+			return nTok >= cfg.TitleMinTokens, msg.f(
+				"this scene's title has %d significant word(s) and this path needs %d, "+
+					"so a title this short cannot claim every release it appears in",
+				nTok, cfg.TitleMinTokens)
+		},
+		func() (bool, string) {
+			return frac >= cfg.TitleMinContainment,
+				msg.ratio("the share of the title's words the release name repeats", frac, cfg.TitleMinContainment)
+		},
+		func() (bool, string) {
+			return conf >= cfg.TitleMinConf,
+				msg.ratio("the match confidence", conf, cfg.TitleMinConf)
+		},
+	)
 
-	return VerifyResult{Verified: false, Confidence: conf}
+	return ex
 }
