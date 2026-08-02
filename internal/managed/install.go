@@ -63,8 +63,20 @@ type release struct {
 // wantSHA256 returns the SHA256 the release publishes for this asset, or an
 // error if it publishes none. This is the digest the download is checked
 // against before extraction, so an unparseable one has to be fatal: this
-// archive gets unpacked and then executed as a child process, and it is the
-// only place forage runs code it fetched off the internet.
+// archive gets unpacked and then executed as a child process.
+//
+// Scope, because the obvious stronger sentence is false. This is the only
+// archive forage fetches and execs ITSELF. It is not the only fetched code
+// that can end up running under forage. supervise() in prowlarr.go is built
+// around Prowlarr's own updater replacing the app dir and exiting, treating
+// the restart as the upgrade completing, so the loop re-execs whatever the
+// updater left in appDir() and those bytes never pass through this function.
+// seedConfig() writes no UpdateMechanism or UpdateAutomatically, so that
+// updater is at Prowlarr's defaults rather than pinned off, and the UI links
+// straight into the Prowlarr web app through the proxy. Verifying this
+// download closes the first hop, not the supply chain: an auditor reading
+// only this comment and concluding the whole exec path is covered would be
+// wrong.
 //
 // GitHub's release API carries a per-asset "digest" field and that is the
 // ONLY digest Prowlarr publishes. Probed against v2.5.2.5491 on 2026-08-02:
@@ -88,22 +100,41 @@ type release struct {
 func (a releaseAsset) wantSHA256() (string, error) {
 	sum, ok := strings.CutPrefix(a.Digest, "sha256:")
 	if !ok {
-		return "", fmt.Errorf("release asset %q publishes no sha256 digest (digest=%q); refusing to install unverified", a.Name, a.Digest)
+		return "", fmt.Errorf("release asset %q publishes no sha256 digest (digest=%q); refusing to install unverified", clipRemote(a.Name), clipRemote(a.Digest))
 	}
 	if _, err := hex.DecodeString(sum); err != nil || len(sum) != 64 {
-		return "", fmt.Errorf("release asset %q has a malformed sha256 digest %q; refusing to install unverified", a.Name, a.Digest)
+		return "", fmt.Errorf("release asset %q has a malformed sha256 digest %q; refusing to install unverified", clipRemote(a.Name), clipRemote(a.Digest))
 	}
 	return strings.ToLower(sum), nil
 }
 
-// resolveLatest asks GitHub for the newest Prowlarr release and picks this
-// platform's portable asset.
-func resolveLatest(ctx context.Context, hc *http.Client) (tag string, asset releaseAsset, err error) {
+// clipRemote bounds a string that came off the release API before it goes
+// into an error. These errors end up in Status.Detail, which the JSON API
+// hands to the UI verbatim, so a remote field is remote input being rendered
+// on our page: cap it rather than pass through whatever length arrives.
+func clipRemote(s string) string {
+	const max = 96
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
+}
+
+// resolveLatest asks the releases API at apiURL for the newest Prowlarr
+// release and picks this platform's portable asset.
+//
+// apiURL is a parameter rather than the const it almost always is because
+// the ordering guarantee in Install (verify, then extract) is only worth
+// something if a test can drive Install end to end, and that needs the
+// release JSON and the asset to come from somewhere a test controls. The
+// production caller passes prowlarrReleasesAPI and nothing else can reach
+// this from outside the package.
+func resolveLatest(ctx context.Context, hc *http.Client, apiURL string) (tag string, asset releaseAsset, err error) {
 	suffix := assetSuffix()
 	if suffix == "" {
 		return "", releaseAsset{}, fmt.Errorf("no official Prowlarr build for %s/%s", runtime.GOOS, runtime.GOARCH)
 	}
-	req, err := http.NewRequestWithContext(ctx, "GET", prowlarrReleasesAPI, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", apiURL, nil)
 	if err != nil {
 		return "", releaseAsset{}, err
 	}
@@ -172,7 +203,7 @@ func download(ctx context.Context, hc *http.Client, asset releaseAsset, destPath
 	}
 	f, err := os.Create(destPath)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("download: %w", err)
 	}
 	defer f.Close()
 	h := sha256.New()

@@ -130,6 +130,35 @@ func TestSeedConfigRoundtrip(t *testing.T) {
 	}
 }
 
+// TestSeededConfigLeavesProwlarrsUpdaterAtDefaults pins the fact that the
+// wantSHA256 comment in install.go leans on. That comment scopes the digest
+// check to "the only archive forage fetches and execs itself", and the
+// reason it cannot claim more is exactly this: we do not write
+// UpdateMechanism or UpdateAutomatically, so Prowlarr's built-in updater is
+// live, and supervise() re-execs whatever it writes into appDir() without
+// forage ever seeing those bytes.
+//
+// What this catches, honestly: someone pinning the updater off here and not
+// going back to widen the comment. It does not verify that Prowlarr honours
+// those element names, and it proves nothing about what the updater does.
+// If you are here because this test failed, the fix is to update the
+// wantSHA256 comment to match what is now true, not to delete the assert.
+func TestSeededConfigLeavesProwlarrsUpdaterAtDefaults(t *testing.T) {
+	p := NewProwlarr(t.TempDir(), testLogger())
+	if err := p.seedConfig(); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(p.configDir(), "config.xml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, elem := range []string{"UpdateMechanism", "UpdateAutomatically", "UpdateScriptPath"} {
+		if strings.Contains(string(raw), elem) {
+			t.Errorf("seeded config now sets %s; install.go's wantSHA256 comment says we leave the updater alone and needs revisiting", elem)
+		}
+	}
+}
+
 // TestSuperviseAdoptsExistingListener: when something already answers on
 // the managed port (an updater relaunch), the supervisor must adopt it —
 // state becomes running, and no second process is spawned (the fake

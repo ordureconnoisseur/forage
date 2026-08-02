@@ -46,6 +46,9 @@ const (
 type Prowlarr struct {
 	root string // <data>/managed/prowlarr
 	log  *slog.Logger
+	// releasesURL is prowlarrReleasesAPI everywhere except in tests, which
+	// point it at a local server so Install can be exercised end to end.
+	releasesURL string
 
 	mu         sync.Mutex
 	state      State
@@ -64,9 +67,10 @@ type Prowlarr struct {
 // immediately; it does not start anything.
 func NewProwlarr(dataDir string, log *slog.Logger) *Prowlarr {
 	p := &Prowlarr{
-		root:  filepath.Join(dataDir, "managed", "prowlarr"),
-		log:   log,
-		state: StateAbsent,
+		root:        filepath.Join(dataDir, "managed", "prowlarr"),
+		log:         log,
+		state:       StateAbsent,
+		releasesURL: prowlarrReleasesAPI,
 	}
 	if p.Installed() {
 		p.state = StateStopped
@@ -206,7 +210,7 @@ func (p *Prowlarr) Install(ctx context.Context) error {
 
 	p.setState(StateDownloading, "resolving latest release")
 	hc := httpClientForDownloads()
-	tag, asset, err := resolveLatest(ctx, hc)
+	tag, asset, err := resolveLatest(ctx, hc, p.releasesURL)
 	if err != nil {
 		return fail(err)
 	}
@@ -226,7 +230,10 @@ func (p *Prowlarr) Install(ctx context.Context) error {
 		p.mu.Unlock()
 	})
 	if err != nil {
-		return fail(fmt.Errorf("download %s: %w", asset.Name, err))
+		// Deliberately unwrapped. download's verification errors already begin
+		// with the asset name, so wrapping them in "download <name>:" reached
+		// the UI as "Install failed: download X.zip: X.zip failed sha256 ...".
+		return fail(err)
 	}
 
 	p.setState(StateInstalling, "extracting "+asset.Name)
