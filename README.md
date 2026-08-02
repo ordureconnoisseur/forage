@@ -249,6 +249,12 @@ Every API route except `/` (the app), `/healthz` (liveness), and `/session` (coo
 
 See [Configuration reference](#configuration-reference) for the token's precedence (UI value overrides env). A lost token can be recovered from `data/config.json` on the daemon host.
 
+A few things the daemon does on its own once a credential is set:
+
+- **Failed logins are rate limited.** Ten bad passwords (or ten bad API keys) from one address inside five minutes and further attempts get `429` with a `Retry-After` until the window ends. There is no account lockout — the budget refills by itself, so a mistyped password can never lock you out for good — and a successful login clears the count.
+- **Changing or clearing the password needs the current one.** A session cookie lasts a week and survives restarts, so without this a lifted cookie could be spent on setting a new password and taking the daemon over. First-time setup is exempt (there's nothing to prove yet), and so is a request authenticating with the admin token, which is the recovery path if you forget the password. Otherwise: clear `passwordHash` in `data/config.json` on the host.
+- **The app is served with security headers**: a Content-Security-Policy (with `frame-ancestors 'none'`), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, so no other site can frame the UI and click-jack a logged-in session.
+
 ### In-app configuration
 
 Every credential and connection setting is editable from the plugin's Settings panel — `.env` is a *bootstrap* path for first run, and the UI overrides it from then on. Saving writes `./data/config.json`; the daemon hot-swaps each client on save (no restart). Each section has a **Test** button that probes connectivity first, and a `source` indicator per field flags when an env value is overriding your saved config. Secrets are masked in the API response (`••••••`) until you type a new value.

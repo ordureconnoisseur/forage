@@ -137,6 +137,9 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		configstore.Patch
 		Password *string `json:"password"`
+		// CurrentPassword re-proves the caller knows the password they are
+		// replacing. Write-only, never stored; see authorizePasswordChange.
+		CurrentPassword *string `json:"currentPassword"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
@@ -144,6 +147,9 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	patch := body.Patch
 	if body.Password != nil {
+		if !s.authorizePasswordChange(w, r, body.CurrentPassword) {
+			return
+		}
 		if *body.Password == "" {
 			// Empty password clears the hash → turns password login off
 			// (falls back to env/default at compose time, like other

@@ -237,12 +237,11 @@ func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 //  3. forage_token cookie that is a valid (unexpired) session id — the web
 //     path, incl. <img> loads and navigation.
 func (s *Server) requestAuthorized(r *http.Request) bool {
+	if s.bearerIsAdminToken(r) {
+		return true
+	}
 	auth := r.Header.Get("Authorization")
 	if provided := strings.TrimPrefix(auth, "Bearer "); provided != auth {
-		if token := s.effectiveAdminToken(); token != "" &&
-			subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1 {
-			return true
-		}
 		if key := s.effectiveStashAPIKey(); key != "" &&
 			subtle.ConstantTimeCompare([]byte(provided), []byte(key)) == 1 {
 			return true
@@ -251,6 +250,46 @@ func (s *Server) requestAuthorized(r *http.Request) bool {
 	if c, err := r.Cookie(sessionCookieName); err == nil && s.sessionValid(c.Value) {
 		return true
 	}
+	return false
+}
+
+// bearerIsAdminToken reports whether this request presented the ADMIN
+// token (the API key) as its Bearer credential. Deliberately narrower than
+// requestAuthorized: the Stash API key and a session cookie both satisfy
+// the gate, but only the admin token is forage's own root secret, and the
+// password-change path (postConfig) uses that distinction as its
+// account-recovery escape hatch.
+func (s *Server) bearerIsAdminToken(r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	provided := strings.TrimPrefix(auth, "Bearer ")
+	if provided == auth {
+		return false
+	}
+	token := s.effectiveAdminToken()
+	return token != "" &&
+		subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1
+}
+
+// loginThrottleKey buckets failed credential checks by kind and client
+// address. Kind keeps the /login, /session and password-change budgets
+// independent so one misbehaving client can't spend another path's.
+func loginThrottleKey(kind string, r *http.Request) string {
+	ip, _ := clientIP(r)
+	return kind + ":" + ip
+}
+
+// throttleOK reports whether a credential check may proceed. When the
+// caller has spent its budget it writes the 429 (with Retry-After, so a
+// client can back off instead of spinning) and returns false.
+func (s *Server) throttleOK(w http.ResponseWriter, r *http.Request, key, method string) bool {
+	wait, blocked := s.logins.blocked(key)
+	if !blocked {
+		return true
+	}
+	secs := int(wait.Seconds()) + 1
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	s.logAuth(r, slog.LevelWarn, "auth-throttled", "method", method, "retryAfterSec", secs)
+	writeErr(w, http.StatusTooManyRequests, "too many failed attempts; try again later")
 	return false
 }
 
@@ -423,6 +462,12 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
 // bcrypt compare regardless of whether the username matched so the timing
 // (and the error) doesn't leak which half was wrong.
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
+	// Throttle first: the point is to make guessing cost time, and the
+	// bcrypt compare below is the expensive part we don't want to run.
+	throttleKey := loginThrottleKey("password", r)
+	if !s.throttleOK(w, r, throttleKey, "password") {
+		return
+	}
 	hash := s.effectivePasswordHash()
 	if hash == "" {
 		// No password configured — password login isn't available on this
@@ -444,6 +489,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	userOK := subtle.ConstantTimeCompare([]byte(body.Username), []byte(s.effectiveUsername())) == 1
 	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) == nil
 	if !userOK || !passOK {
+		s.logins.fail(throttleKey)
 		// The attempted username is logged (spray detection needs it) but
 		// NOT which half was wrong — that stays as undisclosed in the log
 		// as it is in the response.
@@ -452,6 +498,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "incorrect username or password")
 		return
 	}
+	s.logins.succeed(throttleKey)
 
 	id, err := s.newSession()
 	if err != nil {
@@ -462,6 +509,50 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	s.logAuth(r, slog.LevelInfo, "auth-success", "method", "password",
 		"username", logSafe(body.Username))
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// authorizePasswordChange guards the password field of POST /config.
+// Being logged in used to be enough to replace the login password: a
+// session cookie lifted from a browser (they last 7 days and now survive
+// daemon restarts) could be turned into permanent exclusive access by
+// setting a new password, or into a lockout by clearing it. Changing or
+// clearing an EXISTING password now costs the current one.
+//
+// Two deliberate exemptions, both about not locking the owner out of their
+// own daemon:
+//
+//   - No password configured yet. First-time setup has nothing to prove,
+//     and demanding a current password there would make the login
+//     un-settable.
+//   - The request authenticated with the ADMIN TOKEN as its Bearer
+//     credential. That is forage's root secret and is recoverable from
+//     data/config.json on the host, so it is the recovery path for a
+//     forgotten password. The Stash API key does NOT qualify even though
+//     the gate accepts it: it is a borrowed credential any Stash plugin can
+//     read, and letting it mint a new forage password would quietly upgrade
+//     it into standalone permanent access.
+//
+// Writes the error response and returns false when the change is refused.
+func (s *Server) authorizePasswordChange(w http.ResponseWriter, r *http.Request, current *string) bool {
+	existing := s.effectivePasswordHash()
+	if existing == "" || s.bearerIsAdminToken(r) {
+		return true
+	}
+	// Throttled like a login: otherwise a stolen cookie could brute-force
+	// the current password here, at the one endpoint that would then hand
+	// over the account.
+	key := loginThrottleKey("password-change", r)
+	if !s.throttleOK(w, r, key, "password-change") {
+		return false
+	}
+	if current == nil || bcrypt.CompareHashAndPassword([]byte(existing), []byte(*current)) != nil {
+		s.logins.fail(key)
+		s.logAuth(r, slog.LevelWarn, "auth-failure", "method", "password-change")
+		writeErr(w, http.StatusForbidden, "current password is required to change or clear it")
+		return false
+	}
+	s.logins.succeed(key)
+	return true
 }
 
 // postSession is the API-key→cookie handshake for clients that
@@ -479,6 +570,13 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": false})
 		return
 	}
+	// Guessing a Bearer key is the same attack as guessing a password, so
+	// it draws on the same budget — but from a separate bucket, so a plugin
+	// stuck retrying a stale key can't throttle the human out of /login.
+	throttleKey := loginThrottleKey("token", r)
+	if !s.throttleOK(w, r, throttleKey, "token") {
+		return
+	}
 	var body struct {
 		Token string `json:"token"`
 	}
@@ -494,12 +592,14 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	keyOK := stashKey != "" &&
 		subtle.ConstantTimeCompare([]byte(body.Token), []byte(stashKey)) == 1
 	if !tokenOK && !keyOK {
+		s.logins.fail(throttleKey)
 		// No token value in the log, not even a prefix: it's a bearer
 		// secret, and a near-miss would be as good as the real thing.
 		s.logAuth(r, slog.LevelWarn, "auth-failure", "method", "token")
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
+	s.logins.succeed(throttleKey)
 	id, err := s.newSession()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start session")

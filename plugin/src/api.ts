@@ -1467,16 +1467,24 @@ export async function fetchConfig(): Promise<ConfigFieldsResponse> {
   return r.json();
 }
 
+// saveConfig posts a config patch. currentPassword is write-only and sits
+// outside the patch because it is proof, not a setting: the daemon demands
+// it before it will change or clear an EXISTING login password, so a stolen
+// session cookie can't be spent on taking the account over.
 export async function saveConfig(
   patch: ConfigPatch,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; currentPassword?: string } = {},
 ): Promise<SaveConfigResponse> {
   const qs = opts.force ? "?force=true" : "";
   const r = await fetch(foragerBase() + "/config" + qs, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
-    body: JSON.stringify(patch),
+    body: JSON.stringify(
+      opts.currentPassword !== undefined
+        ? { ...patch, currentPassword: opts.currentPassword }
+        : patch,
+    ),
   });
   const body = await r.json().catch(() => ({}));
   // 422 is a normal "probes failed" response the caller renders inline; any

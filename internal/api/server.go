@@ -167,6 +167,11 @@ type Server struct {
 	sessionKeyMu sync.RWMutex
 	sessionKey   []byte
 
+	// logins throttles failed credential checks per client so password (and
+	// API-key) guessing costs an attacker wall-clock time. In-memory and
+	// self-expiring; see login_limit.go. Zero value ready to use.
+	logins loginLimiter
+
 	// sceneTitles memoises StashDB scene id → display title, so the Grabs
 	// list can label a scene-attempt group with its real title instead of a
 	// bare id. Titles are immutable, so entries effectively never go stale;
@@ -254,6 +259,7 @@ func New(opts Options) *Server {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	r.Use(securityHeadersMiddleware)
 	r.Use(s.corsMiddleware)
 
 	// Public, unauthenticated routes. /healthz must stay open so the
@@ -475,6 +481,10 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 	// the build actually changed.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("ETag", uiETag)
+	// Set before the 304 branch: a revalidation updates the cached
+	// response's headers, so a policy change has to reach the browser even
+	// when the body doesn't.
+	w.Header().Set("Content-Security-Policy", uiCSP)
 	if match := r.Header.Get("If-None-Match"); match != "" && match == uiETag {
 		w.WriteHeader(http.StatusNotModified)
 		return

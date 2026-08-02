@@ -122,6 +122,12 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   // Confirm-password field (local only — never sent; the daemon receives
   // just `password` once it matches).
   const [pwConfirm, setPwConfirm] = useState("");
+  // Current password. Sent alongside a new one (as `currentPassword`, never
+  // stored) because the daemon refuses to change or clear an existing login
+  // password without it — otherwise a lifted session cookie could be spent
+  // on taking the account over. Not part of the patch: it is proof, not a
+  // setting, and an empty patch must still read as "nothing to save".
+  const [pwCurrent, setPwCurrent] = useState("");
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     connection: true,
     stash: true,
@@ -320,6 +326,15 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
       setSaveMsg("passwords don't match");
       return;
     }
+    // Catch the missing current password here rather than letting the
+    // daemon 403 it: a rejected save shows a bare error, and the rest of
+    // the patch would have been thrown away with it.
+    const pwIsSet = data?.fields["passwordHash"]?.hasSecret ?? false;
+    if (patch.password !== undefined && pwIsSet && !pwCurrent) {
+      setSaveFailed(true);
+      setSaveMsg("enter your current password to change it");
+      return;
+    }
     setSaving(true);
     setSaveMsg(null);
     setSaveFailed(false);
@@ -340,7 +355,11 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         patch.username !== undefined
           ? patch.username
           : ((data?.fields["username"]?.value as string) || "");
-      const r = await saveConfig(patch, { force });
+      const r = await saveConfig(patch, {
+        force,
+        currentPassword:
+          patch.password !== undefined && pwCurrent ? pwCurrent : undefined,
+      });
       if (r.results) setProbes(r.results);
       if (!r.ok) {
         setSaveFailed(true);
@@ -365,6 +384,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         setPatch({});
         setCatsRaw(null);
         setPwConfirm("");
+        setPwCurrent("");
         const note = pwChange
           ? "saved — password updated"
           : tokenChange !== undefined
@@ -1071,6 +1091,15 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             />
             <SourceBadge field={data?.fields["username"]} />
           </Field>
+          {(data?.fields["passwordHash"]?.hasSecret ?? false) && (
+            <Field label="Current password">
+              <SecretInput
+                value={pwCurrent}
+                onChange={setPwCurrent}
+                placeholder="required to change or clear the password"
+              />
+            </Field>
+          )}
           <Field label="Password">
             <SecretInput
               value={patch.password ?? ""}
@@ -1094,9 +1123,13 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             The daemon stores only a bcrypt hash, never the password itself.
             Leave the password blank to keep the current one; clear it (type
             a space then delete, then save with the field empty) only via{" "}
-            <strong>Save changes</strong>. After setting a password this
-            browser stays signed in automatically; other devices sign in
-            with the same credentials.
+            <strong>Save changes</strong>. Once a password is set, changing
+            or clearing it needs the current one — so a stolen browser
+            session can't take the account over. Forgotten it? Clear{" "}
+            <code>passwordHash</code> in <code>data/config.json</code> on the
+            daemon host, or save a new one while authenticating with the API
+            key below. After setting a password this browser stays signed in
+            automatically; other devices sign in with the same credentials.
           </p>
 
           <h4 className="settings-subhead">API key</h4>
