@@ -40,7 +40,7 @@ func TestExplainCandidatesAlwaysIncludesTheViewedScene(t *testing.T) {
 		t.Errorf("viewed scene missing from the table; last row is %q (target=%v)", last.SceneID, last.IsTarget)
 	}
 	if last.Rank != 8 {
-		t.Errorf("viewed scene shown at rank %d, expected its TRUE rank 8 — a renumbered row would hide how far it lost by", last.Rank)
+		t.Errorf("viewed scene shown at rank %d, expected its TRUE rank 8; a renumbered row would hide how far it lost by", last.Rank)
 	}
 	for i := 0; i < maxExplainCandidates; i++ {
 		if got[i].Rank != i+1 {
@@ -92,6 +92,89 @@ func TestMatchExplainReportsForageOverrides(t *testing.T) {
 	}
 	if len(me.Overrides) != 1 || me.Overrides[0].Verdict != "refused" {
 		t.Errorf("override not carried: %+v", me.Overrides)
+	}
+}
+
+// TestHoistSharedBlockersStatesTheCommonReasonOnce covers both halves of why
+// the hoist moved to the daemon: the sentence must appear once rather than on
+// every failing path, and the paths it was lifted from must not keep a copy.
+func TestHoistSharedBlockersStatesTheCommonReasonOnce(t *testing.T) {
+	const notTop = "the matcher ranks this scene #3 of 10, behind \"Other\" at 0.81"
+	gates := []matcher.VerifyGate{
+		{Name: "rank-title", Blockers: []string{notTop, "title overlap too low"}},
+		{Name: "short-title", Blockers: []string{notTop}},
+		{Name: "strong-match", Blockers: []string{notTop, "confidence too low"}},
+		{Name: "date-anchor", Blockers: []string{notTop}},
+		{Name: "containment", Blockers: []string{"title too short"}},
+	}
+	shared, out := hoistSharedBlockers(gates)
+	if len(shared) != 1 || shared[0] != notTop {
+		t.Fatalf("shared = %v, expected exactly the not-top sentence", shared)
+	}
+	for _, g := range out {
+		for _, b := range g.Blockers {
+			if b == notTop {
+				t.Errorf("gate %q still carries the hoisted sentence", g.Name)
+			}
+		}
+	}
+	// A gate whose every reason was hoisted keeps its slot with no blockers;
+	// the UI reads that as "stopped only by the reason above". A nil-vs-empty
+	// slip here would serialise "blockers":[] on four gates per release.
+	for _, g := range out {
+		if g.Name == "short-title" && g.Blockers != nil {
+			t.Errorf("short-title blockers = %v, expected nil", g.Blockers)
+		}
+	}
+	if len(out) != len(gates) {
+		t.Errorf("hoisting dropped a gate: %d in, %d out", len(gates), len(out))
+	}
+}
+
+// TestHoistSharedBlockersLeavesNarrowOnesAlone is the other side of the rule.
+// A reason two paths happen to share is not a general fact about the release,
+// and hoisting it prints "which rules out every path below that needs it"
+// above something that ruled out two of five.
+func TestHoistSharedBlockersLeavesNarrowOnesAlone(t *testing.T) {
+	const twice = "confidence too low"
+	gates := []matcher.VerifyGate{
+		{Name: "rank-title", Blockers: []string{twice}},
+		{Name: "short-title", Blockers: []string{twice}},
+		{Name: "strong-match", Passed: true},
+		{Name: "date-anchor", Blockers: []string{"no date anchor"}},
+		{Name: "containment", Blockers: []string{"title too short"}},
+	}
+	shared, out := hoistSharedBlockers(gates)
+	if len(shared) != 0 {
+		t.Errorf("hoisted %v from only 2 of 4 failing paths", shared)
+	}
+	for _, g := range out {
+		if g.Name == "rank-title" && len(g.Blockers) != 1 {
+			t.Errorf("rank-title lost its reason: %v", g.Blockers)
+		}
+	}
+}
+
+// TestGateLabelsCoverEveryGate guards the split that took the labels out of the
+// per-release payload: the response sends a name→label table once, so a gate
+// whose name is missing from it renders in the UI as a raw identifier.
+func TestGateLabelsCoverEveryGate(t *testing.T) {
+	labels := matcher.GateLabels()
+	cands := []matcher.Candidate{{
+		Scene:      stashdb.Scene{ID: "s1", Title: "Some Scene Title Here"},
+		Confidence: 0.2,
+	}}
+	me := newMatchExplain(cands, "s1", "Some Scene Title Here", "unrelated.release.mp4", false, nil, "")
+	if len(me.Gates) == 0 {
+		t.Fatal("no gates traced")
+	}
+	for _, g := range me.Gates {
+		if labels[g.Name] == "" {
+			t.Errorf("gate %q has no label in the response table", g.Name)
+		}
+	}
+	if len(labels) != len(me.Gates) {
+		t.Errorf("label table has %d entries for %d gates", len(labels), len(me.Gates))
 	}
 }
 

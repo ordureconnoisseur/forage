@@ -470,11 +470,17 @@ export interface SceneRelease {
 // dozen thresholds. These types carry the reasoning behind it, computed from
 // candidates the daemon already had in hand.
 
-// MatchExplainGate is one acceptance path. `blockers` lists every requirement
-// it failed, each phrased with the measured value and the bar it missed.
+// MatchExplainGate is one acceptance path. `blockers` lists the requirements it
+// failed that are specific to it, each phrased with the measured value and the
+// bar it missed; the ones most failing paths share are lifted out into
+// MatchExplain.shared_blockers. `blockers` can therefore be empty on a failing
+// gate, meaning the shared reasons are the whole story for it.
+//
+// No label: the human name of each path arrives once per response as
+// SceneReleasesResponse.gate_labels, keyed by this name. The five labels are
+// ~300 identical bytes and this type is repeated per release.
 export interface MatchExplainGate {
   name: string;
-  label: string;
   passed: boolean;
   blockers?: string[];
 }
@@ -486,7 +492,9 @@ export interface MatchExplainCandidate {
   title: string;
   date?: string;
   studio?: string;
+  // Capped by the daemon; cast_more is how many names were left off.
   cast?: string[];
+  cast_more?: number;
   confidence: number;
   title_overlap: number;
   // The candidate's date is 2+ years off the release name's, under every
@@ -518,6 +526,10 @@ export interface MatchExplain {
   // forage's own rules layered on the matcher's answer (pack, streaming-link
   // spam, photo set, JAV code).
   overrides?: { verdict: "verified" | "refused"; reason: string }[];
+  // Reasons at least three of the failing paths gave, stated once instead of
+  // repeated down the list. Hoisted by the daemon, not here, so the rule is
+  // testable and the sentence is not serialised four times per release.
+  shared_blockers?: string[];
   gates?: MatchExplainGate[];
   position: MatchExplainPosition;
   candidates?: MatchExplainCandidate[];
@@ -533,6 +545,9 @@ export interface SceneReleasesResponse {
     performers: MissingPerformer[];
   };
   releases: SceneRelease[];
+  // Human label per gate name, sent once for the whole response rather than on
+  // every release's explanation. Absent when no release carries one.
+  gate_labels?: Record<string, string>;
 }
 
 // ── Images ─────────────────────────────────────────────────────────

@@ -67,6 +67,12 @@ type sceneReleasesResponse struct {
 		Performers []missingPerformer `json:"performers"`
 	} `json:"scene"`
 	Releases []sceneRelease `json:"releases"`
+	// GateLabels is the human label for each acceptance path, keyed by gate
+	// name. Sent once per response instead of on every release's explanation:
+	// the five labels are ~300 identical bytes, and this response carries one
+	// explanation per release. Present only when some release has an
+	// explanation to label.
+	GateLabels map[string]string `json:"gate_labels,omitempty"`
 }
 
 type sceneRelease struct {
@@ -109,7 +115,7 @@ type sceneRelease struct {
 	// Explain is the full decision behind Verified: the matcher's ranked
 	// candidates and which acceptance gate did (or did not) carry this
 	// release. Built from candidates already in hand, and ONLY for the
-	// interactive release list — watch rows store this struct as JSON, where
+	// interactive release list. Watch rows store this struct as JSON, where
 	// it would be dead weight (that table already shed 13.9 MB of candidate
 	// payload once).
 	Explain *matchExplain `json:"explain,omitempty"`
@@ -221,7 +227,20 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// keeps this list's leading release identical to the watcher's auto-pick.
 	rankReleases(out)
 
+	// Bound the explanation payload. Ranking first is what makes the cut
+	// defensible: the rows that keep an explanation are the verified ones and
+	// then the best of the rest, which is the order the user reads in.
+	if n := trimExplanations(out, maxExplainedReleases); n > 0 {
+		s.log.Debug("explanations trimmed", "scene", id, "releases", len(out), "dropped", n)
+	}
+
 	resp := sceneReleasesResponse{Releases: out}
+	for i := range out {
+		if out[i].Explain != nil {
+			resp.GateLabels = matcher.GateLabels()
+			break
+		}
+	}
 	resp.Scene.StashDBID = scene.ID
 	resp.Scene.Title = scene.Title
 	resp.Scene.Date = scene.Date
@@ -432,6 +451,38 @@ func seedTier(r sceneRelease) int {
 	default:
 		return 0
 	}
+}
+
+// maxExplainedReleases bounds how many rows of one response carry a "why this
+// verdict" payload.
+//
+// A Prowlarr fan-out over a popular performer can return a few hundred
+// releases (this file's own searchSceneReleases comment says so) and the first
+// version of this feature attached an explanation to every one of them, with no
+// cap and no compression. Measured mean was 2,222 B per release, so ~650 KB
+// added to a single response, the same unbounded-payload shape the watch table
+// already shed 13.9 MB of.
+//
+// The trade, stated plainly: past this rank a release shows the older reason
+// chips and no panel. That is a real loss for someone digging through the deep
+// tail of an unverified list, and it is taken deliberately, because an
+// unbounded response is a worse failure than a truncated one. 120 covers the
+// whole verified section plus a long tail in every search shape observed.
+const maxExplainedReleases = 120
+
+// trimExplanations drops Explain past the cap and reports how many it dropped.
+// Call AFTER ranking: on an unranked list this would keep whichever releases
+// Prowlarr happened to return first.
+func trimExplanations(out []sceneRelease, max int) int {
+	dropped := 0
+	for i := range out {
+		if i < max || out[i].Explain == nil {
+			continue
+		}
+		out[i].Explain = nil
+		dropped++
+	}
+	return dropped
 }
 
 // rankReleases sorts a verified release list into the canonical order

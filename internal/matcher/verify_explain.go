@@ -52,7 +52,7 @@ type VerifySignals struct {
 
 	Confidence   float64 `json:"confidence"`
 	TitleOverlap float64 `json:"title_overlap"`
-	// RunnerUpConf is the best confidence among the OTHER candidates — the
+	// RunnerUpConf is the best confidence among the OTHER candidates, which is the
 	// number the TopMargin guard compares against.
 	RunnerUpConf float64 `json:"runner_up_conf"`
 	// RivalMaxOverlap is the best cast-stripped title overlap among the other
@@ -82,7 +82,7 @@ type VerifyExplanation struct {
 	// Path/PathLabel name the gate that accepted. Empty on a refusal.
 	Path      string `json:"path,omitempty"`
 	PathLabel string `json:"path_label,omitempty"`
-	// Veto, when set, refused the release regardless of the gates — so a gate
+	// Veto, when set, refused the release regardless of the gates, so a gate
 	// may read as passed while the verdict is no. That combination is exactly
 	// what a user needs to see, not a contradiction to hide.
 	Veto    string        `json:"veto,omitempty"`
@@ -101,12 +101,33 @@ func ExplainVerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle,
 	return verifyTrace(cfg, cands, sceneID, sceneTitle, releaseName, true)
 }
 
+// GateLabels is every acceptance path's human label, keyed by gate name.
+//
+// A caller that serialises many traces at once (the release list sends one per
+// release, and a search can return a few hundred) can send this table ONCE and
+// the names alone per trace. The five labels run to ~300 bytes and are
+// identical on every trace, which was measurably the largest avoidable term in
+// that payload.
+//
+// Derived by tracing an empty verification rather than by listing the strings
+// again: an explained trace evaluates every gate, so this cannot fall out of
+// step with the labels verifyTrace actually emits. Copying them into a second
+// table is exactly the drift this file exists to avoid.
+func GateLabels() map[string]string {
+	ex := ExplainVerify(nil, "", "", "")
+	out := make(map[string]string, len(ex.Gates))
+	for _, g := range ex.Gates {
+		out[g.Name] = g.Label
+	}
+	return out
+}
+
 // verifyCheck is one requirement of one gate: whether it holds, and (when
 // explaining) what to tell the user when it does not.
 type verifyCheck func() (ok bool, blocker string)
 
 // evalGate runs a gate's requirements in order. Without an explanation it
-// stops at the first unmet one — that is the short-circuit the && chains in
+// stops at the first unmet one: that is the short-circuit the && chains in
 // the switch this replaced gave for free, and the reason a threshold sweep
 // does not pay for work it will not read.
 func evalGate(full bool, name, label string, checks ...verifyCheck) VerifyGate {

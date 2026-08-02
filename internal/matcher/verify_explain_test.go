@@ -13,11 +13,20 @@ import (
 // than by a second implementation is that a badge saying "not verified" beside
 // a panel saying "verified via strong match" is worse than no panel. This
 // replays every recorded corpus entry against every candidate scene in it and
-// fails if the two answers ever differ — ~16,000 comparisons, no network.
+// fails if the two answers ever differ, ~16,000 comparisons, no network.
 //
-// It also guards the refactor that introduced the trace: the explained path
-// evaluates every gate instead of stopping at the first, so a gate whose
-// condition order was transcribed wrong shows up here as a changed verdict.
+// WHAT IT DOES NOT PROVE, despite an earlier version of this comment claiming
+// it did: that the switch-to-gates refactor is faithful to the code it
+// replaced. Both arms here are the SAME implementation. VerifyWith is
+// verifyTrace(full=false) and ExplainVerifyWith is verifyTrace(full=true), so a
+// condition transcribed wrong out of the old switch is present identically in
+// both and this test stays green. What it does cover is the difference between
+// the two modes: short-circuiting (checks stop at the first blocker, gates stop
+// at the first acceptance) must not change an answer, and the full pass
+// evaluates dateAnchored where the fast pass may not.
+//
+// The faithfulness claim lives in verify_oracle_test.go, which compares against
+// a verbatim copy of the pre-refactor VerifyWith.
 func TestExplainAgreesWithVerifyOnCorpus(t *testing.T) {
 	entries := loadCorpusFixture(t)
 	mismatches := 0
@@ -83,7 +92,7 @@ func TestExplainNamesTheAcceptingPath(t *testing.T) {
 		},
 		{
 			// Not ranked first (never a candidate at all), but the release
-			// spells the title out — the one path that does not need rank.
+			// spells the title out: the one path that does not need rank.
 			name: "containment",
 			cands: []Candidate{
 				{Scene: stashdb.Scene{ID: "other", Title: "Something Else Entirely"}, Confidence: 0.60},
@@ -103,7 +112,7 @@ func TestExplainNamesTheAcceptingPath(t *testing.T) {
 				t.Fatalf("expected verified, got refused (gates: %v)", gateSummary(ex))
 			}
 			if ex.Path != tt.wantPath {
-				t.Errorf("verified via %q, expected %q — the panel would name the wrong reason",
+				t.Errorf("verified via %q, expected %q; the panel would name the wrong reason",
 					ex.Path, tt.wantPath)
 			}
 			if ex.PathLabel == "" {

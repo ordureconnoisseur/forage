@@ -418,6 +418,7 @@ export default function SceneReleases({
                 grabs={grabs}
                 onGrab={grab}
                 bestKey={bestKey}
+                gateLabels={data.gate_labels}
               />
             </section>
           )}
@@ -435,7 +436,12 @@ export default function SceneReleases({
                 title token
               </h3>
               {showUnverified && (
-                <ReleaseList releases={unverified} grabs={grabs} onGrab={grab} />
+                <ReleaseList
+                  releases={unverified}
+                  grabs={grabs}
+                  onGrab={grab}
+                  gateLabels={data.gate_labels}
+                />
               )}
             </section>
           )}
@@ -541,6 +547,7 @@ function ReleaseList({
   grabs,
   onGrab,
   bestKey,
+  gateLabels,
 }: {
   releases: SceneRelease[];
   grabs: Record<string, GrabState>;
@@ -551,6 +558,7 @@ function ReleaseList({
     force?: boolean,
   ) => void;
   bestKey?: string | null;
+  gateLabels?: Record<string, string>;
 }) {
   return (
     <ul className="release-list">
@@ -669,7 +677,11 @@ function ReleaseList({
               {/* The verdict's reasoning. Falls back to the plain
                   component chips when the daemon sent no explanation. */}
               {r.explain ? (
-                <MatchVerdict explain={r.explain} reasons={r.reasons} />
+                <MatchVerdict
+                  explain={r.explain}
+                  reasons={r.reasons}
+                  gateLabels={gateLabels}
+                />
               ) : (
                 r.reasons &&
                 r.reasons.length > 0 && <MatchBreakdown reasons={r.reasons} />
@@ -747,7 +759,7 @@ function ReasonChips({ reasons }: { reasons: string[] }) {
 // MatchVerdict is the "why did (or didn't) this verify?" panel.
 //
 // The badge alone is one bit standing in for four acceptance paths and a dozen
-// thresholds, and a wrong answer looked exactly like a right one — the case
+// thresholds, and a wrong answer looked exactly like a right one. The case
 // that prompted this verified the WRONG scene at 73% with its date 1,593 days
 // off, and the top three candidates were 0.013 apart. Nothing on screen could
 // have shown that. So the panel says three things in order: what decided it,
@@ -759,44 +771,69 @@ function ReasonChips({ reasons }: { reasons: string[] }) {
 function MatchVerdict({
   explain,
   reasons,
+  gateLabels,
 }: {
   explain: MatchExplain;
   reasons?: string[];
+  // Gate name → human label, sent once per response. Missing entry falls back
+  // to the name, which is ugly but never blank.
+  gateLabels?: Record<string, string>;
 }) {
+  // The body is mounted only while the panel is open.
+  //
+  // <details> keeps its children in the DOM whether or not it is open, and
+  // there is one of these per release on a list that has no pagination and can
+  // run to a few hundred rows, so the first version put the whole body of every
+  // panel into the DOM at load.
+  //
+  // Measured, not estimated: renderToStaticMarkup of this component against a
+  // five-gate / six-candidate explanation emits 108 element nodes with the body
+  // mounted and 4 with it closed. At 300 releases that is 32,400 nodes against
+  // 1,200. Reproduce by exporting MatchVerdict, rendering it under
+  // react-dom/server with `useState(true)` and then `useState(false)`, and
+  // counting /<[a-zA-Z]/g in the output.
+  //
+  // The summary stays mounted either way, so the row still shows its verdict
+  // and hint without being opened.
+  const [open, setOpen] = useState(false);
+
   const gates = explain.gates ?? [];
   const cands = explain.candidates ?? [];
   const pos = explain.position;
   const overrides = explain.overrides ?? [];
   const verified = explain.verified;
+  const shared = explain.shared_blockers ?? [];
+  const label = (name: string) => gateLabels?.[name] ?? name;
 
   // Collapsed line: the single most useful fact, so the common question is
   // answered without opening anything.
+  //
+  // forage's own rules are tested FIRST because they are the last word in the
+  // daemon: they set `verified`, overriding whatever the matcher decided. Read
+  // in the other order the summary contradicted itself, which on the one line
+  // this feature exists to make trustworthy is worse than saying less. The
+  // cases: a JAV-code accept with no candidates read "Verified / nothing to
+  // compare against"; the same accept over a scene ranked third read "Verified
+  // / ranked #3 of 8"; and a behind-the-scenes veto plus a matching JAV code
+  // read "Verified / refused by a rule".
+  const accepted = overrides.some((o) => o.verdict === "verified");
+  const refused =
+    overrides.some((o) => o.verdict === "refused") || !!explain.veto;
   let hint = "";
-  if (verified && explain.path_label) hint = explain.path_label;
+  if (accepted) hint = "accepted by a rule";
+  else if (refused) hint = "refused by a rule";
+  else if (verified && explain.path_label) hint = explain.path_label;
   else if (explain.note) hint = "nothing to compare against";
-  else if (explain.veto || overrides.some((o) => o.verdict === "refused"))
-    hint = "refused by a rule";
   else if (!pos.found) hint = "not among the candidates";
   else if (pos.rank > 1) hint = `ranked #${pos.rank} of ${pos.candidates}`;
   else hint = "no acceptance path applied";
 
-  // Losing the top spot blocks four of the five paths, so the same sentence
-  // repeated down the whole list and buried each path's own reason. Hoist any
-  // blocker at least half the failing paths share, and state it once. Half
-  // rather than all: containment is the one path that does not need the top
-  // spot, so "all" never fires on the case this exists for.
-  const failing = gates.filter((g) => !g.passed);
-  const shared =
-    failing.length > 2
-      ? [...new Set(failing.flatMap((g) => g.blockers ?? []))].filter(
-          (b) =>
-            failing.filter((g) => (g.blockers ?? []).includes(b)).length * 2 >=
-            failing.length,
-        )
-      : [];
-
   return (
-    <details className="match-why match-verdict">
+    <details
+      className="match-why match-verdict"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
       <summary>
         <span className={"mv-verdict " + (verified ? "is-yes" : "is-no")}>
           {verified ? "Verified" : "Not verified"}
@@ -804,6 +841,8 @@ function MatchVerdict({
         {hint && <span className="mv-hint">{hint}</span>}
       </summary>
 
+      {open && (
+        <>
       {explain.note && <p className="mv-note">{explain.note}</p>}
 
       {/* forage's own rules come last in the daemon and first here: when one
@@ -831,13 +870,13 @@ function MatchVerdict({
           {shared.length > 0 && (
             <ul className="mv-blockers mv-shared">
               {shared.map((b, i) => (
-                <li key={i}>{b} — which rules out every path below that needs it.</li>
+                <li key={i}>{b}, which rules out every path below that needs it.</li>
               ))}
             </ul>
           )}
           <ul className="mv-gates">
             {gates.map((g) => {
-              const own = (g.blockers ?? []).filter((b) => !shared.includes(b));
+              const own = g.blockers ?? [];
               return (
                 <li
                   key={g.name}
@@ -847,14 +886,25 @@ function MatchVerdict({
                     <span className="mv-mark" aria-hidden="true">
                       {g.passed ? "✓" : "✗"}
                     </span>
-                    <span className="mv-gate-label">{g.label}</span>
+                    <span className="mv-gate-label">{label(g.name)}</span>
                   </span>
-                  {own.length > 0 && (
+                  {own.length > 0 ? (
                     <ul className="mv-blockers">
                       {own.map((b, i) => (
                         <li key={i}>{b}</li>
                       ))}
                     </ul>
+                  ) : (
+                    // Every reason this path gave was hoisted above. Saying so
+                    // beats a bare crossed-out label with nothing attached.
+                    !g.passed &&
+                    shared.length > 0 && (
+                      <ul className="mv-blockers">
+                        <li className="mv-only-shared">
+                          stopped only by the reason above
+                        </li>
+                      </ul>
+                    )
                   )}
                 </li>
               );
@@ -901,7 +951,15 @@ function MatchVerdict({
                         <span className="mv-you">the scene you're viewing</span>
                       )}
                       <span className="mv-cand-meta">
-                        {[c.date, c.studio, (c.cast ?? []).join(", ")]
+                        {[
+                          c.date,
+                          c.studio,
+                          // The daemon caps the cast list; a compilation in
+                          // the corpus carries 109 names, which used to be
+                          // sent in full and rendered as one very tall row.
+                          (c.cast ?? []).join(", ") +
+                            (c.cast_more ? ` +${c.cast_more} more` : ""),
+                        ]
                           .filter(Boolean)
                           .join(" · ")}
                         {c.date_far_off && (
@@ -923,6 +981,8 @@ function MatchVerdict({
             What this scene scored on, component by component
           </div>
           <ReasonChips reasons={reasons} />
+        </>
+      )}
         </>
       )}
     </details>

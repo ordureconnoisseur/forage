@@ -1413,7 +1413,7 @@ button {
   font-weight: 600;
 }
 
-/* Verdict panel — "why did (or didn't) this verify?".
+/* Verdict panel: "why did (or didn't) this verify?".
    Same <details> disclosure as .match-why (it reuses that class for the
    chevron + summary behaviour); everything below the summary sits on a
    recessed glass slab so the reasoning reads as an aside to the release row
@@ -1525,6 +1525,12 @@ button {
   padding-left: 12px;
   margin-bottom: 8px;
   color: var(--text-muted);
+}
+/* A failing path whose every reason was hoisted into .mv-shared. Dimmer than a
+   real blocker: it is a pointer, not a fact of its own. */
+.mv-only-shared {
+  font-style: italic;
+  opacity: 0.75;
 }
 .mv-blockers li::before {
   content: "";

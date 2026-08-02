@@ -216,7 +216,7 @@ func VerifyWith(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, releas
 
 // verifyTrace is the ONE implementation of the verdict. VerifyWith reads the
 // summary off it and ExplainVerifyWith returns the whole trace, so the
-// explanation the UI shows cannot drift from the badge it explains — the same
+// explanation the UI shows cannot drift from the badge it explains, the same
 // drift risk this file's header calls out between the release page and the
 // bench.
 //
@@ -360,7 +360,7 @@ func verifyTrace(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, relea
 	// cases this used to be, one `gate` call each, in the same order and with
 	// each case's conditions in the same order.
 
-	// msg formats blocker text, and only when we are explaining — see the
+	// msg formats blocker text, and only when we are explaining. See the
 	// gateMsg comment for why that matters to the sweeps.
 	msg := gateMsg(full)
 	// gate evaluates one acceptance path and records it. When we are not
@@ -477,7 +477,7 @@ func verifyTrace(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, relea
 
 		// Title overlap is negligible (tag-soup release name, or an episode
 		// tag the release omits) but performer+date+studio/cast corroborate at
-		// identity level. Trust the strong overall match — unless a sibling
+		// identity level. Trust the strong overall match, unless a sibling
 		// candidate matches the title clearly better, which means the title is
 		// discriminating between same-cast scenes and must not be overridden.
 		gate(GateStrongMatch, "Ranked first, and performer/date/studio corroborate on their own",
@@ -499,7 +499,7 @@ func verifyTrace(cfg VerifyConfig, cands []Candidate, sceneID, sceneTitle, relea
 
 		// Date-anchored: the release literally states this scene's exact date
 		// and NO other candidate shares that date, so the date is doing the
-		// discriminating a title would normally do — for releases that carry
+		// discriminating a title would normally do, for releases that carry
 		// no title at all. The uniqueness requirement is what keeps same-day
 		// multi-site postings (and same-day PMV/compilation siblings) honest:
 		// when several candidates share the date it can't separate them, and

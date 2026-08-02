@@ -311,6 +311,13 @@ func watchCandidatesJSON(cands []sceneRelease) json.RawMessage {
 	picks := make([]sceneRelease, 0, len(cands))
 	for _, c := range cands {
 		if c.Verified && !c.Rejected && c.DownloadURL != "" {
+			// Drop the verdict explanation before this row goes to the
+			// database. The watch loop passes explain=false so it should
+			// already be nil, but that was the ONLY thing keeping ~25 x 1.7 KB
+			// of prose per available watch out of a table this comment's own
+			// neighbour records shedding 13.9 MB from. A `false` at a call site
+			// is not an invariant; this is.
+			c.Explain = nil
 			picks = append(picks, c)
 		}
 	}
