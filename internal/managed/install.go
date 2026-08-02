@@ -20,9 +20,10 @@ import (
 
 // Release resolution + download + extraction for the managed Prowlarr
 // install. Everything comes from Prowlarr's official GitHub releases over
-// HTTPS; the downloaded bytes are SHA256-summed and the digest recorded
-// beside the install so "what exactly did forage download" always has an
-// answer.
+// HTTPS; the downloaded bytes are checked against the digest the release
+// publishes BEFORE anything is extracted, and the verified digest is then
+// recorded beside the install so "what exactly did forage download" always
+// has an answer.
 
 const prowlarrReleasesAPI = "https://api.github.com/repos/Prowlarr/Prowlarr/releases/latest"
 
@@ -50,11 +51,49 @@ type releaseAsset struct {
 	Name string `json:"name"`
 	URL  string `json:"browser_download_url"`
 	Size int64  `json:"size"`
+	// Digest is GitHub's per-asset checksum, formatted "sha256:<hex>".
+	Digest string `json:"digest"`
 }
 
 type release struct {
 	Tag    string         `json:"tag_name"`
 	Assets []releaseAsset `json:"assets"`
+}
+
+// wantSHA256 returns the SHA256 the release publishes for this asset, or an
+// error if it publishes none. This is the digest the download is checked
+// against before extraction, so an unparseable one has to be fatal: this
+// archive gets unpacked and then executed as a child process, and it is the
+// only place forage runs code it fetched off the internet.
+//
+// GitHub's release API carries a per-asset "digest" field and that is the
+// ONLY digest Prowlarr publishes. Probed against v2.5.2.5491 on 2026-08-02:
+// the release has no SHA256SUMS-style asset, no checksums in the release
+// body, and no build provenance
+// (GET /repos/Prowlarr/Prowlarr/attestations/sha256:... returns 404). The
+// digest field is real and correct, not a placeholder: the value reported
+// for osx-app-core-arm64.zip matched a full download of that asset byte for
+// byte.
+//
+// Residual risk, stated plainly because it is not small. GitHub computes
+// this digest itself at upload time, so checking it proves the bytes we
+// extract are the bytes GitHub stores under that release. It does not prove
+// the Prowlarr maintainers intended those bytes. It closes the transit,
+// CDN-substitution and silent-corruption holes; it does not defend against
+// a compromised release account or a compromised GitHub, both of which
+// would still hand us code we run. Closing that needs a publisher signature
+// Prowlarr does not currently produce, so pinning to the digest of the same
+// API response that named the asset is the strongest honest check available
+// here.
+func (a releaseAsset) wantSHA256() (string, error) {
+	sum, ok := strings.CutPrefix(a.Digest, "sha256:")
+	if !ok {
+		return "", fmt.Errorf("release asset %q publishes no sha256 digest (digest=%q); refusing to install unverified", a.Name, a.Digest)
+	}
+	if _, err := hex.DecodeString(sum); err != nil || len(sum) != 64 {
+		return "", fmt.Errorf("release asset %q has a malformed sha256 digest %q; refusing to install unverified", a.Name, a.Digest)
+	}
+	return strings.ToLower(sum), nil
 }
 
 // resolveLatest asks GitHub for the newest Prowlarr release and picks this
@@ -82,17 +121,43 @@ func resolveLatest(ctx context.Context, hc *http.Client) (tag string, asset rele
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
 		return "", releaseAsset{}, fmt.Errorf("decode release: %w", err)
 	}
+	asset, err = pickAsset(rel, suffix)
+	if err != nil {
+		return "", releaseAsset{}, err
+	}
+	return rel.Tag, asset, nil
+}
+
+// pickAsset finds this platform's portable asset in a release and refuses
+// one that publishes no usable digest. Rejecting here rather than after the
+// fetch means a digest-less release costs a JSON request, not a couple
+// hundred megabytes downloaded and then thrown away.
+func pickAsset(rel release, suffix string) (releaseAsset, error) {
 	for _, a := range rel.Assets {
 		if strings.HasSuffix(a.Name, suffix) {
-			return rel.Tag, a, nil
+			if _, err := a.wantSHA256(); err != nil {
+				return releaseAsset{}, err
+			}
+			return a, nil
 		}
 	}
-	return "", releaseAsset{}, fmt.Errorf("release %s has no %s asset", rel.Tag, suffix)
+	return releaseAsset{}, fmt.Errorf("release %s has no %s asset", rel.Tag, suffix)
 }
 
 // download streams the asset to destPath, reporting progress via onBytes
-// (done, total) and returning the SHA256 of everything written.
+// (done, total), verifies what landed against the digest the release
+// publishes, and returns that verified SHA256.
+//
+// The check lives in here rather than in the caller on purpose. The caller
+// extracts and then executes what this function wrote, so "did anyone
+// remember to verify" must not be a question a future caller can get wrong:
+// a download that does not match its published digest can only ever come
+// back as an error.
 func download(ctx context.Context, hc *http.Client, asset releaseAsset, destPath string, onBytes func(done, total int64)) (string, error) {
+	want, err := asset.wantSHA256()
+	if err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, "GET", asset.URL, nil)
 	if err != nil {
 		return "", err
@@ -135,7 +200,18 @@ func download(ctx context.Context, hc *http.Client, asset releaseAsset, destPath
 			return "", fmt.Errorf("download read: %w", rerr)
 		}
 	}
-	return hex.EncodeToString(h.Sum(nil)), f.Close()
+	if err := f.Close(); err != nil {
+		return "", err
+	}
+	got := hex.EncodeToString(h.Sum(nil))
+	if got != want {
+		// Deliberately no "install anyway" path. The next thing that would
+		// happen to these bytes is extraction and then exec, so bytes that
+		// are not the ones the release published are not a degraded install,
+		// they are an unknown program.
+		return "", fmt.Errorf("%s failed sha256 verification: downloaded %s, release publishes %s", asset.Name, got, want)
+	}
+	return got, nil
 }
 
 // extract unpacks the archive into destDir, stripping the top-level

@@ -72,7 +72,7 @@ func NewProwlarr(dataDir string, log *slog.Logger) *Prowlarr {
 		p.state = StateStopped
 		p.loadSeededConfig()
 		if v, err := os.ReadFile(filepath.Join(p.root, "version.txt")); err == nil {
-			// First line is the release tag; the rest is the download's
+			// First line is the release tag; the rest is the verified
 			// sha256 audit record.
 			p.version, _, _ = strings.Cut(strings.TrimSpace(string(v)), "\n")
 		}
@@ -216,6 +216,10 @@ func (p *Prowlarr) Install(ctx context.Context) error {
 	archive := filepath.Join(p.root, "download.tmp")
 	defer os.Remove(archive)
 	p.log.Info("downloading managed prowlarr", "tag", tag, "asset", asset.Name, "bytes", asset.Size)
+	// download verifies the bytes against the digest published with the
+	// release before returning, so reaching the extract below means the
+	// archive is the one GitHub serves for this tag. Nothing is unpacked or
+	// executed on the failure path.
 	sum, err := download(ctx, hc, asset, archive, func(done, total int64) {
 		p.mu.Lock()
 		p.doneBytes, p.totalBytes = done, total
