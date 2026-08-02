@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 func writeFile(t *testing.T, path string, size int) {
@@ -108,6 +110,22 @@ func TestPlaceStillRetriesAnEmptySource(t *testing.T) {
 	}
 	if _, err := p.Place(rel, "Someone"); err == nil {
 		t.Error("an empty source must error so the poller retries once it populates")
+	}
+}
+
+// The library allowlist's video half is BUILT from torrentmeta.VideoExtensions
+// (see placeableExts), so this holds by construction today and is asserted
+// anyway: the arrangement it replaced was two hand-written lists that drifted
+// apart in silence. torrentmeta's was the narrower, and it is the list the
+// grab layer screens a release against BEFORE downloading it, so forage
+// refused .3gp/.mpv/.m2v/.m4p releases that this list would have placed
+// without complaint. If anyone re-copies the list, this fails.
+func TestEveryVideoContainerIsPlaceable(t *testing.T) {
+	for _, ext := range torrentmeta.VideoExtensions() {
+		if !Placeable("scene" + ext) {
+			t.Errorf("torrentmeta counts %s as a video but the library refuses it: "+
+				"a release of these is refused before download and could never be placed anyway", ext)
+		}
 	}
 }
 

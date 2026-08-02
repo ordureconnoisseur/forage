@@ -28,7 +28,7 @@ func bencodeMultiFile(name string, files ...string) []byte {
 }
 
 // screenRig serves a fixed .torrent body at /download and counts calls to
-// qBit's add endpoint — the difference between "refused before spending the
+// qBit's add endpoint: the difference between "refused before spending the
 // bandwidth" and "downloaded the junk anyway".
 type screenRig struct {
 	mu       sync.Mutex
@@ -105,20 +105,67 @@ func TestAddTorrentAcceptsVideoWithJunk(t *testing.T) {
 	}
 }
 
-// A rar'd release's file list says "no video" and is wrong — the video is
-// inside the archive. Refusing on the list alone would drop legitimate packed
-// releases.
-func TestAddTorrentAcceptsArchivedRelease(t *testing.T) {
+// A rar'd release is refused HERE, before the transfer, and that is the whole
+// point: forage has no unpacker, so the poller refuses the same release after
+// downloading it (refuseUnplaceableDownload) and placer.Placeable rejects
+// every archive extension inside a folder. Accepting it here only meant
+// spending the bandwidth first. The two screens have to agree, and this is
+// the direction they agree in.
+func TestAddTorrentRefusesArchivedRelease(t *testing.T) {
 	rig := &screenRig{body: bencodeMultiFile("Packed.Release", "rls.rar", "rls.r00", "rls.sfv")}
 	srv := rig.server()
 	defer srv.Close()
 
 	c := New(srv.URL, "", "")
+	_, err := c.AddTorrent(context.Background(), srv.URL+"/download", "forage")
+	if !errors.Is(err, torrentmeta.ErrNoVideo) {
+		t.Fatalf("err = %v, want torrentmeta.ErrNoVideo in the chain", err)
+	}
+	// The reason lands on the Grabs card verbatim, so it has to be the true
+	// one: a packed release may be exactly what it claimed to be.
+	if !strings.Contains(err.Error(), "unpacker") {
+		t.Errorf("reason = %q, want it to say forage cannot unpack rather than imply the release is fake", err)
+	}
+	if n := rig.added(); n != 0 {
+		t.Errorf("qbit add called %d times; the release must never reach the client", n)
+	}
+}
+
+// The other side of it: an archive riding along with a video changes nothing.
+// Refusing that would cost the user the scene.
+func TestAddTorrentAcceptsVideoWithArchive(t *testing.T) {
+	rig := &screenRig{body: bencodeMultiFile("Real.Release", "scene.mkv", "extras.rar")}
+	srv := rig.server()
+	defer srv.Close()
+
+	c := New(srv.URL, "", "")
 	if _, err := c.AddTorrent(context.Background(), srv.URL+"/download", "forage"); err != nil {
-		t.Fatalf("a packed release must still be added: %v", err)
+		t.Fatalf("a release with a video in it must be added: %v", err)
 	}
 	if n := rig.added(); n != 1 {
 		t.Errorf("qbit add called %d times, want 1", n)
+	}
+}
+
+// The unusual containers placer.placeableExts accepts must survive the
+// pre-download screen too. When torrentmeta kept its own narrower video list,
+// a .3gp/.mpv/.m2v/.m4p release was refused here and would have been placed
+// happily one layer later: a false refusal, which costs the user a scene.
+func TestAddTorrentAcceptsUnusualContainersThePlacerPlaces(t *testing.T) {
+	for _, name := range []string{"scene.3gp", "scene.mpv", "scene.m2v", "scene.m4p"} {
+		t.Run(name, func(t *testing.T) {
+			rig := &screenRig{body: bencodeMultiFile("Old.Release", name, "cover.jpg")}
+			srv := rig.server()
+			defer srv.Close()
+
+			c := New(srv.URL, "", "")
+			if _, err := c.AddTorrent(context.Background(), srv.URL+"/download", "forage"); err != nil {
+				t.Fatalf("%s is on the library's allowlist, so it must not be refused here: %v", name, err)
+			}
+			if n := rig.added(); n != 1 {
+				t.Errorf("qbit add called %d times, want 1", n)
+			}
+		})
 	}
 }
 

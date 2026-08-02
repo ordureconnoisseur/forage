@@ -349,7 +349,7 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 		// says there is nothing to place, so no retry, no backoff and no
 		// indexer failover can change the answer. Checked ahead of every
 		// retry classifier below, both because it must not be deferred and
-		// because isTransientFetchErr matches on substrings — a "(429 files,
+		// because isTransientFetchErr matches on substrings: a "(429 files,
 		// …)" refusal would otherwise read as a rate limit and be re-fetched.
 		if errors.Is(err, torrentmeta.ErrNoVideo) {
 			s.log.Info("grab refused before downloading",

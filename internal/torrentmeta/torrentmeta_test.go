@@ -122,26 +122,49 @@ func TestLacksVideo(t *testing.T) {
 		},
 		{
 			// A normal release. The junk rides along and the placer's
-			// allowlist drops it at placement — refusing here would throw
+			// allowlist drops it at placement, and refusing here would throw
 			// away the scene with the passengers.
 			"video plus junk",
 			bencodeMultiFile("Real.Release.XXX.1080p", "scene.mp4", "Setup.exe", "info.nfo"),
 			false,
 		},
 		{
-			// Packed releases hide their video behind an archive: the file
-			// list genuinely says "no video" and is genuinely wrong.
+			// A packed release IS refused, and that is the deliberate answer,
+			// not an oversight. forage has no unpacker, and placer.Placeable
+			// rejects every archive extension, so a rar set could not have
+			// reached the library however far it was carried; the earlier
+			// exemption only meant paying for the transfer before refusing it
+			// at placement instead. Downloading to hand-unpack is what this
+			// gives up, and the refusal on the grab says so.
 			"rar set",
 			bencodeMultiFile("Packed.Release", "release.rar", "release.r00", "release.r01", "release.sfv"),
+			true,
+		},
+		{"multipart numeric archive", bencodeMultiFile("Packed", "x.001", "x.002"), true},
+		{
+			// The other half of that policy: an archive next to a video is
+			// harmless. The video is what forage came for.
+			"video plus archive",
+			bencodeMultiFile("Real.Release", "scene.mkv", "extras.rar"),
 			false,
 		},
-		{"multipart numeric archive", bencodeMultiFile("Packed", "x.001", "x.002"), false},
 		{"single-file video", []byte("d4:infod6:lengthi1024e4:name9:movie.mp4ee"), false},
 		{"single-file executable", []byte("d4:infod6:lengthi1024e4:name9:Setup.exeee"), true},
+		{"single-file archive", []byte("d4:infod6:lengthi1024e4:name11:release.raree"), true},
+		{
+			// An unusual container the placer accepts must not be refused
+			// here. This is the divergence that made the two lists one:
+			// placeableExts carried .3gp/.mpv/.m2v/.m4p and this list did
+			// not, so forage refused, before downloading, releases it would
+			// have placed without complaint.
+			"unusual container the library accepts",
+			bencodeMultiFile("Old.Release", "scene.3gp", "cover.jpg"),
+			false,
+		},
 		{
 			// No files and no length: the info dict told us nothing. This is
 			// the shape a magnet's unresolved metadata arrives in, and it
-			// must NOT be refused — unknown is not empty.
+			// must NOT be refused: unknown is not empty.
 			"unknown file list",
 			[]byte("d4:infod4:name4:packee"),
 			false,

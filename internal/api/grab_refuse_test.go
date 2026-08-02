@@ -109,7 +109,7 @@ func (s *screenServer) queuedGrab(t *testing.T, client string) int64 {
 
 // The grab layer's half of the pre-download screen: a refused release must
 // settle as failed with a reason the user can read, and must not be deferred
-// for retry — no backoff or indexer failover can put a video into a release
+// for retry, because no backoff or indexer failover can put a video into a release
 // that has none.
 func TestTorrentGrabRefusedBeforeDownloading(t *testing.T) {
 	s, base := newScreenServer(t, bencodeMultiFile("Totally.Legit.XXX.1080p", "Setup.exe", "Read Me.txt"))
@@ -169,7 +169,7 @@ func TestUsenetGrabIsNeverScreened(t *testing.T) {
 
 	g, _ := s.grabs.Get(context.Background(), id)
 	if g.Status != "queued" {
-		t.Fatalf("status = %q, want queued — an NZB exposes no file list to judge (reason=%q)", g.Status, g.Reason)
+		t.Fatalf("status = %q, want queued: an NZB exposes no file list to judge (reason=%q)", g.Status, g.Reason)
 	}
 	if g.ClientID != "SABnzbd_nzo_test" {
 		t.Errorf("client_id = %q, want the nzo_id: the add must have gone through", g.ClientID)
@@ -200,7 +200,7 @@ func uploadTorrent(t *testing.T, s *Server, data []byte) *httptest.ResponseRecor
 }
 
 // The hand-uploaded .torrent path parses the same metadata, so it screens the
-// same way — and being a live request, it can tell the user to their face
+// same way, and being a live request it can tell the user to their face
 // instead of leaving a failed grab to find later.
 func TestManualTorrentUploadRefusedWhenNoVideo(t *testing.T) {
 	s, _ := newScreenServer(t, nil)

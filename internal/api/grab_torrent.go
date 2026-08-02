@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -52,9 +51,7 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 	// hand. Refusing before the qBit add and before the insert means the
 	// user gets told to their face rather than finding a failed grab later.
 	if meta.LacksVideo() {
-		writeErr(w, http.StatusUnprocessableEntity, fmt.Sprintf(
-			"%s (%d files, none of them video or an archive that could hold one)",
-			torrentmeta.ErrNoVideo, meta.FileCount))
+		writeErr(w, http.StatusUnprocessableEntity, meta.NoVideoError().Error())
 		return
 	}
 

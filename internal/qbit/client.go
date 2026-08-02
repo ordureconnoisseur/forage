@@ -405,7 +405,7 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 
 	// Screen the release BEFORE qBit ever sees it. The .torrent we just
 	// fetched carries the whole file list, so a release with no video in it
-	// is knowable now, for the cost of a few KB — where taking it means
+	// is knowable now, for the cost of a few KB, where taking it means
 	// downloading it in full, placing nothing, failing confirmation and
 	// being culled hours later. Every byte of that was avoidable.
 	//
@@ -413,8 +413,7 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 	// here (a magnet has no list until its metadata resolves), and a parse
 	// error is left to qBit to judge, exactly as before.
 	if meta, perr := torrentmeta.Parse(body); perr == nil && meta.LacksVideo() {
-		return "", fmt.Errorf("%w (%d files, none of them video or an archive that could hold one)",
-			torrentmeta.ErrNoVideo, meta.FileCount)
+		return "", meta.NoVideoError()
 	}
 
 	// The info-hash (a) lets the grab link to its torrent without the

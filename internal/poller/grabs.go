@@ -738,6 +738,12 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 		if reason := refuseUnplaceableDownload(srcPath); reason != "" {
 			g.Status = "failed"
 			g.Reason = reason
+			// Left as found, these say "retrying" about a settled decision:
+			// next_retry_at is exposed in the grabs JSON and the card reads it.
+			// The api's refusal writer goes through failGrab, which clears both,
+			// and two writers of the same prefix must leave the same shape.
+			g.NextRetryAt = 0
+			g.FailKind = ""
 			dirty = true
 			readyToPlace = false
 			p.log.Warn("refused download: not a file forage places",

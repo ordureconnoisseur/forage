@@ -26,8 +26,8 @@ var ErrStaleUpdate = errors.New("grabs: update lost optimistic lock (row changed
 
 // RefusedPrefix marks a Reason that records forage's own DECISION not to
 // take a release (junk content), as distinct from something that failed.
-// Both writers use it — the api's pre-download screen of a fetched .torrent
-// and the poller's post-download screen of a single file — so the user can
+// Both writers use it, the api's pre-download screen of a fetched .torrent
+// and the poller's post-download screen of a single file, so the user can
 // tell refusal from failure at a glance, and so the retry paths can key on
 // one string: re-driving a refused release only re-downloads the same junk.
 const RefusedPrefix = "refused: "
@@ -767,12 +767,23 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 // known ids, so it can't be re-picked-up as a fresh grab. Scoped to unplaced
 // failures: a grab with a placed_path already reached the library and is healed
 // on its placed path, not re-downloaded.
+//
+// REFUSALS ARE EXCLUDED. "Failed, unplaced, and the download is still sitting
+// healthy in the client" is also the exact shape of a grab forage itself
+// decided against (RefusedPrefix): the download completed fine, we simply
+// will not put it in the library. Reviving one restores it to "completed",
+// the placement gate refuses it again, and the row churns two writes a tick
+// forever - which also re-arms notifyFailedGrabs' UpdatedAt watermark, so the
+// user gets the same push every couple of minutes until they delete the row.
+// A refused grab keeps its client_id, so KnownClientIDs still shields its
+// torrent from being adopted a second time as a fresh orphan.
 func (r *Repo) Recoverable(ctx context.Context, client string) (map[string]Grab, error) {
 	rows, err := r.query(ctx, `
 		SELECT * FROM grabs
 		WHERE client = ? AND status = 'failed'
 		  AND (placed_path IS NULL OR placed_path = '')
-		  AND client_id IS NOT NULL AND client_id != ''`, client)
+		  AND client_id IS NOT NULL AND client_id != ''
+		  AND (reason IS NULL OR reason NOT LIKE ?)`, client, RefusedPrefix+"%")
 	if err != nil {
 		return nil, err
 	}
