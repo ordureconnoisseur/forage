@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,10 +19,11 @@ import (
 // against a throwaway copy of the repo layout.
 //
 // What it proves: argument construction, the refresh's staging and rollback,
-// and the exit-status handling. What it does NOT prove: that `docker exec`,
-// `docker cp` and `scp` behave as assumed against a real remote host. Only a
-// live run settles that, and the local-docker path (FORAGE_BENCH_HOST unset) is
-// the one exercised here.
+// and the exit-status handling, over both the local-docker path and (for
+// quoting) a faked ssh. What it does NOT prove: that real `docker exec`,
+// `docker cp` and `scp` behave as assumed against a real remote host, or that
+// the remote `bash -lc` finds what it needs on a login PATH. Only a live run
+// settles those, and none of them has had one.
 
 // benchHarness is a throwaway tree shaped like the repo, with the script in it
 // and a fake PATH in front.
@@ -180,7 +182,7 @@ exit 0
 }
 
 // Every value the script splices into a command reaches a shell, because
-// on_host hands the lot to `bash -lc`. Four of them used to go in unquoted.
+// on_host hands the lot to `bash -c`. Four of them used to go in unquoted.
 //
 // The corpus path here contains a space and a semicolon; if quoting is wrong it
 // arrives as several arguments, or runs as a second command.
@@ -327,6 +329,53 @@ exit 0
 	}
 	if got := readFile(t, h.fixture()); got != "OLD FIXTURE" {
 		t.Errorf("a breached run was recorded as the new baseline: fixture is %q\n%s", got, out)
+	}
+}
+
+// `matcher-bench --gate` without --verify used to exit 0 having gated nothing:
+// both flags are read inside the verify branch and were otherwise accepted and
+// ignored. A gate that silently does not gate is worse than no gate.
+//
+// Built and executed rather than unit-tested because the refusal is an
+// os.Exit before config.Load, which is the point: it must cost a second rather
+// than a database open and a matcher construction.
+func TestBenchRefusesToGateWithoutVerify(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go toolchain to build the binary with")
+	}
+	bin := filepath.Join(t.TempDir(), "matcher-bench")
+	if runtime.GOOS == "windows" {
+		bin += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", bin, ".")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building matcher-bench: %v\n%s", err, out)
+	}
+
+	for _, tt := range []struct {
+		name string
+		args []string
+		said string
+	}{
+		{"gate without verify", []string{"--gate"}, "--gate needs --verify"},
+		{"dump without verify", []string{"--dump=/tmp/x.json.gz"}, "--dump needs --verify"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			out, err := exec.Command(bin, tt.args...).CombinedOutput()
+			if err == nil {
+				t.Fatalf("exited 0 having gated nothing\n%s", out)
+			}
+			var ee *exec.ExitError
+			if !asExitError(err, &ee) {
+				t.Fatalf("could not run the built binary: %v\n%s", err, out)
+			}
+			if ee.ExitCode() != 2 {
+				t.Errorf("exit %d, want 2\n%s", ee.ExitCode(), out)
+			}
+			if !strings.Contains(string(out), tt.said) {
+				t.Errorf("output does not say %q:\n%s", tt.said, out)
+			}
+		})
 	}
 }
 
