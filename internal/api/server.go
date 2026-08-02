@@ -23,6 +23,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/configstore"
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/invariants"
 	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/matcher"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
@@ -61,6 +62,7 @@ type Server struct {
 	version      string
 	adoptNow     func(context.Context) (int, int) // force-adopt callback (poller.AdoptNow) → (adopted, skippedRecent); may be nil
 	pollerHealth func() map[string]any            // poller telemetry for /healthz; may be nil
+	invariants   func() *invariants.Report        // last invariant-checker report; may be nil
 	startedAt    time.Time                        // process start, for /diag uptime
 
 	// Managed-Prowlarr wiring (nil when not applicable — Docker, tests).
@@ -208,6 +210,11 @@ type Options struct {
 	// time/duration, library-mount health) for /healthz. May be nil (tests),
 	// in which case healthz simply omits the block.
 	PollerHealth func() map[string]any
+	// Invariants returns the invariant checker's most recent report (see
+	// internal/invariants), or nil before its first pass. Backs
+	// GET /invariants, the /healthz digest and the /diag bundle. May be nil
+	// (tests), in which case those blocks are omitted.
+	Invariants func() *invariants.Report
 	// ManagedProwlarr is the managed-install manager; nil when managed mode
 	// doesn't apply (Docker, tests).
 	ManagedProwlarr *managed.Prowlarr
@@ -241,6 +248,7 @@ func New(opts Options) *Server {
 		version:      opts.Version,
 		adoptNow:     opts.AdoptNow,
 		pollerHealth: opts.PollerHealth,
+		invariants:   opts.Invariants,
 		managed:      opts.ManagedProwlarr,
 		startedAt:    time.Now(),
 		pendingAdds:  opts.PendingAdds,
@@ -309,6 +317,9 @@ func (s *Server) Router() http.Handler {
 		r.Post("/grabs/{id}/retry", s.postGrabRetry)
 		r.Delete("/grabs/{id}", s.deleteGrab)
 		r.Post("/duplicates/{id}/resolve", s.postResolveDuplicate)
+		// Full invariant report, samples included (the /healthz digest is
+		// counts only because it is unauthenticated).
+		r.Get("/invariants", s.getInvariants)
 		r.Get("/destructions", s.getDestructions)
 		r.Post("/destructions/{id}/restore", s.postRestoreDestruction)
 		r.Post("/watches", s.postWatch)
@@ -560,6 +571,19 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 	// daemon or a dropped mount instead of a mysteriously idle Grabs tab.
 	if s.pollerHealth != nil {
 		payload["poller"] = s.pollerHealth()
+	}
+	// Invariant checker digest (see internal/invariants): the joins forage's
+	// data model implies, and how many rows currently break one. This is the
+	// counterweight to how the four re-filing gaps were found: by a human
+	// reading the database on a hunch, weeks after each started leaking.
+	//
+	// Names and counts only, and no sample details: this endpoint is
+	// unauthenticated, and the samples carry library paths and release
+	// titles. The full report is on GET /invariants, behind auth.
+	if s.invariants != nil {
+		if sum := s.invariants().Summary(); sum != nil {
+			payload["invariants"] = sum
+		}
 	}
 	// Destruction-journal tallies (counts only — no titles or paths, this
 	// endpoint is unauthenticated): whether the daemon has been deleting,

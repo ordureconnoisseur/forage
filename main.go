@@ -141,6 +141,7 @@ func main() {
 		Grabs:           grabsRepo,
 		Watches:         watchesRepo,
 		PollerHealth:    p.Health,
+		Invariants:      p.Invariants,
 		Log:             log.With("component", "api"),
 		Version:         Version,
 		AdoptNow:        p.AdoptNow,

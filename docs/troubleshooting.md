@@ -76,6 +76,12 @@ guess.
 retention window (7 days by default). Every deletion forage performed or
 refused is journalled there, with the full file list.
 
+**Files keep landing in `Unsorted`, or a grab points at a file that isn't
+there** — `/healthz` `invariants` says how many rows currently contradict
+forage's own data model, and `GET /invariants` names them with what is wrong
+with each. The suite runs every 30 minutes and only ever reports:
+[docs/invariants.md](invariants.md) lists what it checks and why.
+
 **The daemon seems idle** — `/healthz` `poller.lastTickAt` should move
 every poll interval; `libraryOk: false` means the daemon can't see the
 library mount and has paused placement and refused destroys on purpose.
