@@ -75,6 +75,14 @@ func (s *Server) getDiag(w http.ResponseWriter, r *http.Request) {
 	if totals, err := s.grabs.Totals(r.Context()); err == nil {
 		bundle["grabTotals"] = totals
 	}
+	// Full invariant report, samples included. This bundle is the paste-into-
+	// a-bug-report artefact, and "which rows are inconsistent" is exactly the
+	// kind of thing a reporter cannot be expected to go and find.
+	if s.invariants != nil {
+		if rep := s.invariants(); rep != nil {
+			bundle["invariants"] = rep
+		}
+	}
 	if all, err := s.grabs.CountDestructionsByOutcome(r.Context(), 0); err == nil {
 		day, _ := s.grabs.CountDestructionsByOutcome(r.Context(), time.Now().Add(-24*time.Hour).Unix())
 		bundle["destructions"] = map[string]any{"total": all, "last24h": day}

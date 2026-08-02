@@ -24,6 +24,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
+	"github.com/ordureconnoisseur/forager/internal/invariants"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
@@ -174,6 +175,15 @@ type Poller struct {
 	// lastSeedCull gates the hourly seeding cull (see cull.go). Owned by
 	// the single-goroutine tick.
 	lastSeedCull time.Time
+
+	// Invariant checker (see invariants.go). lastInvariants gates its slow
+	// cadence and is tick-owned; the checker itself is built lazily by the
+	// tick but READ by request goroutines through Invariants(), so it takes
+	// a lock. It holds the rotating cursors for its two bounded checks,
+	// which is why it is cached rather than rebuilt per pass.
+	lastInvariants time.Time
+	invariantMu    sync.Mutex
+	invariants     *invariants.Checker
 
 	// Health telemetry, read by /healthz from request goroutines while the
 	// tick goroutine writes it — hence its own lock, unlike the tick-owned
@@ -503,6 +513,14 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		p.lastSeedCull = time.Now()
 		p.cullSeededTorrents(ctx)
 	}
+
+	// Invariant checker (see invariants.go): assert the joins forage's data
+	// model implies and report every row that breaks one. Reads only. Above
+	// the nothing-active early return for the same reason as the passes
+	// above it, and more so than any of them: an idle library is precisely
+	// when the only thing left to find is something quietly inconsistent.
+	phase("invariants")
+	p.runInvariants(ctx)
 
 	if len(active) == 0 {
 		return nil
