@@ -4,6 +4,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"strconv"
@@ -36,10 +37,21 @@ const (
 	// a floor left at the old value would let that improvement be undone
 	// silently, which is the entire point of having a floor.
 	corpusMinClean = 0.87
-	// corpusMaxFalseVerifies caps the precision side outright. Measured
-	// 127, down from 145. A change that trades recall for a flood of false
-	// verifies would otherwise pass both rates above.
-	corpusMaxFalseVerifies = 140
+	// corpusMaxFalseVerifyRate caps the precision side outright. Measured
+	// 127 false verifies in 1,570 entries, 0.0809, down from 145. A change
+	// that trades recall for a flood of false verifies would otherwise pass
+	// both rates above.
+	//
+	// A RATE, and it was an absolute count of 140 until that was found to be a
+	// floor which tightens itself. The fixture is re-recorded from the daemon's
+	// confirmed grabs, which only grow: at exactly this quality a corpus of
+	// 1,731 entries produces 140 false verifies, so a ~10% growth between
+	// refreshes reds push CI for a quality change of zero, and the refresh
+	// script's advice ("the floors may now be loose, ratchet them") points the
+	// operator the wrong way when it happens. floors.go spends a paragraph on
+	// why the scheduled gate uses rates; this gate had not taken its own
+	// advice. TestCorpusFloorsSurviveCorpusGrowth is the regression test.
+	corpusMaxFalseVerifyRate = 0.09
 )
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
@@ -109,26 +121,64 @@ func loadCorpusFixture(t *testing.T) []ReplayEntry {
 	return fixtureEntries
 }
 
+// corpusGateBreaches is this gate's judgement on a score, factored out so the
+// growth test below can exercise the arithmetic the gate actually uses rather
+// than a restatement of it that is free to drift from it.
+func corpusGateBreaches(s ReplayScore) []string {
+	var out []string
+	if s.RecallRate() < corpusMinRecall {
+		out = append(out, fmt.Sprintf("recall %.4f below floor %.2f: the verifier now refuses scenes it used to accept",
+			s.RecallRate(), corpusMinRecall))
+	}
+	if s.CleanRate() < corpusMinClean {
+		out = append(out, fmt.Sprintf("clean rate %.4f below floor %.2f: fewer entries resolve to exactly one scene",
+			s.CleanRate(), corpusMinClean))
+	}
+	if r := s.FalseVerifyRate(); r > corpusMaxFalseVerifyRate {
+		out = append(out, fmt.Sprintf("false verify rate %.4f (%d in %d) above cap %.2f: the verifier accepts more wrong scenes",
+			r, s.FalseVerifies, s.Entries, corpusMaxFalseVerifyRate))
+	}
+	return out
+}
+
 func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	entries := loadCorpusFixture(t)
 	if len(entries) < 1000 {
 		t.Fatalf("fixture holds %d entries, expected the full corpus", len(entries))
 	}
 	s := scoreOnce("default", DefaultVerifyConfig, entries)
-	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (in %d entries)",
-		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.EntriesWithFalse)
+	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (rate %.4f, in %d entries)",
+		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.FalseVerifyRate(), s.EntriesWithFalse)
 
-	if s.RecallRate() < corpusMinRecall {
-		t.Errorf("recall %.4f below floor %.2f: the verifier now refuses scenes it used to accept",
-			s.RecallRate(), corpusMinRecall)
+	for _, b := range corpusGateBreaches(s) {
+		t.Error(b)
 	}
-	if s.CleanRate() < corpusMinClean {
-		t.Errorf("clean rate %.4f below floor %.2f: fewer entries resolve to exactly one scene",
-			s.CleanRate(), corpusMinClean)
-	}
-	if s.FalseVerifies > corpusMaxFalseVerifies {
-		t.Errorf("false verifies %d above cap %d: the verifier accepts more wrong scenes",
-			s.FalseVerifies, corpusMaxFalseVerifies)
+}
+
+// The corpus only ever grows: it is rebuilt from the daemon's confirmed grabs
+// on every `make bench-refresh`, and the user keeps grabbing. A floor expressed
+// as an absolute count therefore tightens itself, and goes red on the most
+// ordinary event in this repo's workflow while the quality it claims to measure
+// has not moved at all.
+//
+// ScoreReplay sums independently over entries, so N copies of the fixture score
+// exactly N times each component. Scaling the score arithmetically rather than
+// concatenating the slice keeps this free: the memoised full-corpus scoring is
+// already the most expensive thing in this package, and doing it eleven more
+// times to prove multiplication would be its own kind of dishonest.
+func TestCorpusFloorsSurviveCorpusGrowth(t *testing.T) {
+	entries := loadCorpusFixture(t)
+	s := scoreOnce("default", DefaultVerifyConfig, entries)
+	for _, mult := range []int{2, 5, 10} {
+		grown := ReplayScore{
+			Entries:          s.Entries * mult,
+			Recall:           s.Recall * mult,
+			FalseVerifies:    s.FalseVerifies * mult,
+			EntriesWithFalse: s.EntriesWithFalse * mult,
+		}
+		if b := corpusGateBreaches(grown); len(b) != 0 {
+			t.Errorf("a corpus %dx the size at IDENTICAL quality breached the gate: %v\nA floor that fails on corpus growth alone fails on the normal case; express it as a rate.", mult, b)
+		}
 	}
 }
 
@@ -293,8 +343,8 @@ func TestCorpusGateCatchesBothFailureDirections(t *testing.T) {
 	acceptAll.TitleMinContainment = 0
 	acceptAll.TitleMinConf = 0
 	acceptAll.StrongMatchConf = 0
-	if got := ScoreReplay(acceptAll, entries); got.FalseVerifies <= corpusMaxFalseVerifies {
-		t.Errorf("a verifier that accepts everything produced %d false verifies, under the cap",
-			got.FalseVerifies)
+	if got := ScoreReplay(acceptAll, entries); got.FalseVerifyRate() <= corpusMaxFalseVerifyRate {
+		t.Errorf("a verifier that accepts everything produced a false verify rate of %.4f (%d in %d), under the cap",
+			got.FalseVerifyRate(), got.FalseVerifies, got.Entries)
 	}
 }

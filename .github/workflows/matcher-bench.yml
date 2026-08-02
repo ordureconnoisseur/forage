@@ -90,13 +90,23 @@ jobs:
           FORAGE_BENCH_CONTAINER: ${{ vars.BENCH_CONTAINER || 'forager' }}
         run: bash scripts/matcher-bench.sh
 
-      - name: Failure CSV
+      # The per-failure rows are NOT uploaded as an artifact. The same file is
+      # gitignored two lines below its neighbours' note that it holds "IDs and
+      # personal release-name history; never commit", and shipping it to GitHub
+      # artifact storage under default retention would have been the same data
+      # leaving the same machine by a different door. It stays in the runner's
+      # workspace, which is the maintainer's own host, and `make bench` puts it
+      # there too. Only the row count travels.
+      - name: Failure rows
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-failures
-          path: verify.failures.csv
-          if-no-files-found: ignore
+        run: |
+          if [ -f verify.failures.csv ]; then
+            echo "verify.failures.csv: $(($(wc -l < verify.failures.csv) - 1)) rows, on this runner." >> "$GITHUB_STEP_SUMMARY"
+            echo "It holds real release names and scene ids, so it is not uploaded." >> "$GITHUB_STEP_SUMMARY"
+            echo "Inspect one with: matcher-bench --explain='<release>' --expect='<scene id>'" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No verify.failures.csv: the bench did not get far enough to write one." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   report:
     name: What was actually measured

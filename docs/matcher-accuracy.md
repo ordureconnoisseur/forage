@@ -65,6 +65,17 @@ over it, prints recall / clean / false-verify rate against the recorded floors,
 and exits non-zero on a breach. Other knobs are documented at the top of
 `scripts/matcher-bench.sh`.
 
+Exit status is worth reading rather than just testing for zero: **3** is a
+breached floor, i.e. a real result. Anything else (1, 2, 127, 255) means the
+bench did not produce a measurement at all, and the script says which it was.
+They are separated because reporting an unreachable host as a failed gate sends
+you to read accuracy numbers that were never computed.
+
+The failure rows land in `./verify.failures.csv`, gitignored: they hold real
+release names and scene ids. The scheduled workflow does not upload them as an
+artifact either, for the same reason; only the row count goes into the run
+summary.
+
 **`-include-downloads` must stay off.** It folds qBit/SAB download names into
 the corpus. Those are post-renamed *filenames*; in production the matcher only
 ever sees Prowlarr release titles at search time. Every verifier threshold was
@@ -81,7 +92,14 @@ read a file from). It holds:
   40 rows sails past every *rate* below it.
 - `min_recall`, `min_clean`, `max_false_verify_rate`: rates, because the
   corpus is rebuilt each run and grows as you grab more, so an absolute cap on
-  false verifies would tighten itself into a false alarm.
+  false verifies would tighten itself into a false alarm. The per-push gate's
+  cap in `corpus_gate_test.go` is a rate for the same reason;
+  `TestCorpusFloorsSurviveCorpusGrowth` is what keeps it one.
+- `max_match_error_rate`: how much of the corpus may fail to reach StashDB
+  before the run stops being a measurement. Errored entries are excluded from
+  every rate above rather than counted as recall misses, and the gate names
+  them separately: an outage and a retrieval regression need different work,
+  and the gate used to report the first as the second.
 
 Slack is deliberately wider than the replay gate's. The replay gate scores a
 fixed recording, so its numbers are deterministic; this one depends on StashDB,
@@ -91,6 +109,15 @@ that gets muted.
 `clean` is the honest single number: the fraction of releases that verified the
 right scene **and nothing else**. An entry where the correct scene verifies
 alongside two wrong ones has not been identified.
+
+**Provenance.** The floors currently in the file were not set from a live run.
+They are the committed fixture replayed under the shipped verifier, which
+`TestPipelineFloorsMeasuredMatchTheCommittedFixture` asserts against the file's
+own `measured` block, so the block cannot drift into fiction. The candidates in
+that fixture did come from a real Match run, but at commit `627749f`, and
+`16bcab6` has since changed `fold()` in the retrieval path (invalid-UTF-8 input
+only, so the delta is expected to be nil, and expected is not measured). Treat
+the first live run as the measurement that replaces them.
 
 Ratchet the floors when a change earns it, in the same commit as the run that
 justifies it.
@@ -126,6 +153,13 @@ rather than a fixture edit plus a hand-copy of four constants into
 
 `bench-refresh` will not write the fixture if the run breached a floor.
 Recording a regressed run as the new baseline is how a gate stops being a gate.
+
+Both files move into place together or not at all: a half-applied refresh (new
+recording, old sidecar) is exactly the state `TestCorpusFixtureMatchesTheLiveRun`
+rejects, and it would look from the outside like a completed refresh. A run
+where some entries failed Match still refreshes cleanly: those entries are
+absent from the recording, absent from the sidecar's count, and named in the
+sidecar's `match_errors`, so the fixture never disagrees with its own numbers.
 
 ## Wiring up the self-hosted runner (optional)
 

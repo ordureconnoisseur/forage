@@ -48,6 +48,18 @@ type PipelineFloors struct {
 	MinRecall          float64 `json:"min_recall"`
 	MinClean           float64 `json:"min_clean"`
 	MaxFalseVerifyRate float64 `json:"max_false_verify_rate"`
+	// MaxMatchErrorRate is the share of the corpus whose live Match call may
+	// fail before the run stops being a measurement at all.
+	//
+	// It exists because errored entries used to be scored as recall misses. A
+	// StashDB outage, a rate limit or the run's 60-minute deadline then read as
+	// "the pipeline no longer finds scenes it used to find", with no number
+	// anywhere to tell the two apart. Now they are excluded from every rate and
+	// counted here, so the gate names the actual cause.
+	//
+	// Unset means zero, which fails on a single error. That is the safe
+	// direction for a file somebody hand-edits.
+	MaxMatchErrorRate float64 `json:"max_match_error_rate"`
 
 	// Measured is what the run these floors were set from actually scored.
 	// Kept so the slack between floor and measurement is visible in the file
@@ -92,6 +104,17 @@ func (s ReplayScore) FalseVerifyRate() float64 {
 	return float64(s.FalseVerifies) / float64(s.Entries)
 }
 
+// MatchErrorRate is the share of ATTEMPTED entries whose Match call failed.
+// The denominator is attempted, not scored, so a run where nine entries in ten
+// errored reports 0.9 rather than 9.0.
+func (s ReplayScore) MatchErrorRate() float64 {
+	attempted := s.Entries + s.MatchErrors
+	if attempted == 0 {
+		return 0
+	}
+	return float64(s.MatchErrors) / float64(attempted)
+}
+
 // Check returns one line per breached floor, empty when the run is acceptable.
 //
 // Returning every breach rather than the first is deliberate: recall and
@@ -99,10 +122,26 @@ func (s ReplayScore) FalseVerifyRate() float64 {
 // so in one run instead of hiding the second failure behind the first.
 func (f PipelineFloors) Check(s ReplayScore) []string {
 	var breaches []string
-	if s.Entries < f.MinEntries {
+	// Reported first, and deliberately so: when Match was failing, every other
+	// line below describes the subset that happened to get through, and a
+	// reader who sees "recall down" first will go looking for a code change
+	// that does not exist.
+	if r := s.MatchErrorRate(); r > f.MaxMatchErrorRate {
 		breaches = append(breaches, fmt.Sprintf(
-			"corpus holds %d entries, below the floor of %d: the corpus shrank, so every rate below is measured on the wrong thing",
-			s.Entries, f.MinEntries))
+			"Match failed for %d of %d entries (rate %.4f, cap %.4f): those entries were not scored at all, so this is an outage report before it is an accuracy result. Check StashDB reachability and the run's deadline before reading anything below as a regression",
+			s.MatchErrors, s.Entries+s.MatchErrors, r, f.MaxMatchErrorRate))
+	}
+	if s.Entries < f.MinEntries {
+		msg := fmt.Sprintf(
+			"corpus scored %d entries, below the floor of %d: every rate below is measured on the wrong thing",
+			s.Entries, f.MinEntries)
+		// Distinguishing "the corpus shrank" from "the corpus is fine and the
+		// run could not reach StashDB" is the whole difference between an
+		// accuracy investigation and an infrastructure one.
+		if s.MatchErrors > 0 {
+			msg += fmt.Sprintf(" (%d further entries failed Match and are not counted here, so the corpus itself may be intact)", s.MatchErrors)
+		}
+		breaches = append(breaches, msg)
 	}
 	if r := s.RecallRate(); r < f.MinRecall {
 		breaches = append(breaches, fmt.Sprintf(

@@ -115,6 +115,17 @@ type ReplayScore struct {
 	Recall           int // expected scene verified
 	FalseVerifies    int // other candidates that also verified
 	EntriesWithFalse int // entries with at least one of those
+
+	// MatchErrors is entries the pipeline was never able to ask about: the
+	// live Match call failed (StashDB 5xx, rate limit, the run's context
+	// deadline). They are NOT in Entries, so they move no rate above.
+	//
+	// Offline replay always leaves this zero, because a recorded candidate set
+	// cannot fail. It lives here anyway so the scheduled live gate and the
+	// per-push replay gate keep scoring into one struct: the alternative was a
+	// second shape for live runs, and two shapes is how "recall" came to mean
+	// two different things in two files.
+	MatchErrors int
 }
 
 func (s ReplayScore) RecallRate() float64 {
@@ -236,12 +247,21 @@ type ReplayMeta struct {
 	Commit string `json:"commit,omitempty"`
 	// Corpus names the input set, so a refresh built with different
 	// build-corpus flags is visible rather than inferred from the entry count.
-	Corpus           string       `json:"corpus,omitempty"`
-	Entries          int          `json:"entries"`
-	Recall           int          `json:"recall"`
-	FalseVerifies    int          `json:"false_verifies"`
-	EntriesWithFalse int          `json:"entries_with_false"`
-	Config           VerifyConfig `json:"config"`
+	Corpus string `json:"corpus,omitempty"`
+	// Entries is the number of entries in the dump beside this file, and
+	// therefore the number the run actually scored. Not the number it set out
+	// to score: see MatchErrors.
+	Entries          int `json:"entries"`
+	Recall           int `json:"recall"`
+	FalseVerifies    int `json:"false_verifies"`
+	EntriesWithFalse int `json:"entries_with_false"`
+	// MatchErrors is how many corpus rows the recording run could not reach
+	// StashDB for, and so left out of the dump entirely. Provenance, not an
+	// assertion: it is here so a fixture that is 40 entries short of the corpus
+	// says why rather than looking like the corpus shrank. Omitted, and so
+	// zero, in recordings taken before the field existed.
+	MatchErrors int          `json:"match_errors,omitempty"`
+	Config      VerifyConfig `json:"config"`
 }
 
 // ReplayMetaPath returns the sidecar path for a dump path: the dump's

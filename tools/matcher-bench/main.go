@@ -56,6 +56,13 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
+// gateBreachExit is the status --gate uses for a breached floor, kept distinct
+// from the 1 that every other failure path here exits with. scripts/matcher-
+// bench.sh needs to tell "the pipeline regressed" from "ssh could not reach the
+// host", and reporting the second as the first is how a green box of a problem
+// gets opened at the wrong end.
+const gateBreachExit = 3
+
 func main() {
 	var (
 		limit       = flag.Int("limit", 500, "max labeled scenes to bench (0 = all)")
@@ -68,12 +75,26 @@ func main() {
 		expectID    = flag.String("expect", "", "with --explain: the expected StashDB scene id, highlighted and verify-checked")
 		dumpPath    = flag.String("dump", "", "with --verify: record every entry's candidates to this path (.gz compresses). Verify is pure given its candidates, so a dump lets threshold sweeps and a CI regression gate replay the corpus offline instead of paying two StashDB round trips per release (26 minutes a run). A <name>.meta.json sidecar is written beside it holding this run's numbers and verifier config, which is what makes refreshing the committed fixture one command.")
 		dumpCommit  = flag.String("dump-commit", "", "with --dump: the forage commit being benched, recorded in the sidecar so a surprising number can be traced back to a tree")
-		gate        = flag.Bool("gate", false, "with --verify: fail (exit 1) when the run breaches the recorded full-pipeline floors in internal/matcher/pipeline_floors.json. This is the scheduled regression gate; the per-push gate only replays frozen candidates and so guards Verify alone.")
+		gate        = flag.Bool("gate", false, "with --verify: fail (exit 3) when the run breaches the recorded full-pipeline floors in internal/matcher/pipeline_floors.json. This is the scheduled regression gate; the per-push gate only replays frozen candidates and so guards Verify alone.")
 		floorsPath  = flag.String("floors", "", "with --gate: read floors from this JSON file instead of the ones compiled into the binary. For trying a proposed ratchet without rebuilding.")
 	)
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	// Both flags are read only inside the verify branch, so without --verify
+	// they were accepted and ignored: `matcher-bench --gate` exited 0 having
+	// gated nothing, which is the worst possible outcome for a gate. Refuse
+	// before touching the config or the database, so the mistake costs a
+	// second rather than a matcher construction.
+	if *gate && !*verify {
+		fmt.Fprintln(os.Stderr, "matcher-bench: --gate needs --verify. The floors describe a Match+Verify run; without --verify this would have exited 0 having gated nothing.")
+		os.Exit(2)
+	}
+	if *dumpPath != "" && !*verify {
+		fmt.Fprintln(os.Stderr, "matcher-bench: --dump needs --verify. The replay fixture is recorded from the verify pass.")
+		os.Exit(2)
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -194,16 +215,23 @@ func main() {
 		if err := writeVerifyFailures(csvPath, vr.Failures, *maxFailures); err != nil {
 			log.Error("write verify csv", "err", err)
 		}
+		// A refresh that could not write its fixture must not exit 0. The
+		// driving script decides whether to replace the committed fixture from
+		// this process's status, and a warning in a 26-minute log is not
+		// something anyone reads.
+		dumpFailed := false
 		if *dumpPath != "" {
 			if err := writeDump(log, *dumpPath, *dumpCommit, describeCorpus(*corpusPath, len(gt)), vr); err != nil {
 				log.Error("write replay dump", "err", err)
+				dumpFailed = true
 			}
 		}
 		printVerify(os.Stdout, vr, csvPath)
-		if *gate {
-			if !checkFloors(os.Stdout, log, *floorsPath, vr) {
-				os.Exit(1)
-			}
+		if *gate && !checkFloors(os.Stdout, log, *floorsPath, vr) {
+			os.Exit(gateBreachExit)
+		}
+		if dumpFailed {
+			os.Exit(1)
 		}
 		return
 	}
@@ -552,8 +580,23 @@ type verifyResult struct {
 	// Replay is the recorded candidate set, populated only when --dump is
 	// given. Kept on the result rather than written inline so the writer
 	// stays with the other output paths.
-	Replay           []matcher.ReplayEntry
-	Total            int
+	Replay []matcher.ReplayEntry
+	// Total is the number of entries SCORED: the ones whose Match call
+	// returned. It is incremented as results arrive, alongside the Replay
+	// append, which is the point.
+	//
+	// It used to be set to len(entries) before the run. Two things followed,
+	// both silent. The rates below deflated by the error count, because an
+	// entry the matcher was never able to answer for cannot be recalled but
+	// stayed in the denominator anyway. And --dump wrote a sidecar claiming
+	// more entries than the fixture beside it held, which is exactly what
+	// TestCorpusFixtureMatchesTheLiveRun rejects, so one transient StashDB 5xx
+	// in a 26-minute refresh committed a self-inconsistent pair and left push
+	// CI red until somebody spent another 26 minutes.
+	Total int
+	// MatchErrors is entries whose Match call failed. Counted, never scored:
+	// see recordMatchError.
+	MatchErrors      int
 	Recall           int // expected scene verified
 	NoExpectedCand   int // expected scene wasn't even a candidate
 	FalseVerifies    int // total wrong-scene verifications across all entries
@@ -620,19 +663,94 @@ func runExplain(ctx context.Context, m *matcher.Matcher, release, expectID strin
 	tw.Flush()
 }
 
-func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entries []stash.LabeledScene, concurrency int, dump bool) *verifyResult {
-	r := &verifyResult{Total: len(entries), PerSource: map[string]*sourceStats{}}
-	srcStat := func(src string) *sourceStats {
-		if src == "" {
-			src = "(unlabeled)"
-		}
-		st := r.PerSource[src]
-		if st == nil {
-			st = &sourceStats{}
-			r.PerSource[src] = st
-		}
-		return st
+// releaseMatcher is the slice of *matcher.Matcher the verify pass uses.
+//
+// It is an interface so the run loop can be driven offline. Nothing could
+// before: runVerify needed a live StashDB and a populated SQLite, which is
+// precisely why an accounting bug in it (a Match error left in the denominator
+// and out of the dump) survived review and a full test suite.
+type releaseMatcher interface {
+	Match(ctx context.Context, releaseName string) ([]matcher.Candidate, error)
+}
+
+func (r *verifyResult) srcStat(src string) *sourceStats {
+	if src == "" {
+		src = "(unlabeled)"
 	}
+	if r.PerSource == nil {
+		r.PerSource = map[string]*sourceStats{}
+	}
+	st := r.PerSource[src]
+	if st == nil {
+		st = &sourceStats{}
+		r.PerSource[src] = st
+	}
+	return st
+}
+
+// recordMatchError books an entry the pipeline could not be asked about.
+//
+// Deliberately not a recall miss and deliberately not in Total: the matcher was
+// never given the chance to answer, so scoring it as a failure to find the
+// scene reports a StashDB outage as a retrieval regression, and the gate's
+// message ("no longer finds scenes it used to find") would be confidently
+// wrong about its own cause.
+func (r *verifyResult) recordMatchError() { r.MatchErrors++ }
+
+// recordEntry scores one successful Match and, when recording, appends it to
+// the dump. Total, Replay and the per-source counters move together here so
+// they cannot drift apart the way they did when Total was set up front.
+func (r *verifyResult) recordEntry(e stash.LabeledScene, cands []matcher.Candidate, dump bool) {
+	r.Total++
+	if dump {
+		r.Replay = append(r.Replay, matcher.RecordCandidates(e.Basename, e.StashDBID, cands))
+	}
+	var expTitle string
+	var expConf float64
+	expFound := false
+	for _, c := range cands {
+		if c.Scene.ID == e.StashDBID {
+			expTitle = c.Scene.Title
+			expConf = c.Confidence
+			expFound = true
+			break
+		}
+	}
+	st := r.srcStat(e.Source)
+	st.Total++
+	if matcher.Verify(cands, e.StashDBID, expTitle, e.Basename).Verified {
+		r.Recall++
+		st.Recall++
+	} else {
+		if !expFound {
+			r.NoExpectedCand++
+		}
+		r.Failures = append(r.Failures, verifyFailure{
+			Release: e.Basename, Kind: "recall_miss", ExpectedID: e.StashDBID,
+			ExpectedWasCandidate: expFound, ExpectedConf: expConf,
+		})
+	}
+	falseHere := 0
+	for _, c := range cands {
+		if c.Scene.ID == e.StashDBID {
+			continue
+		}
+		if vr := matcher.Verify(cands, c.Scene.ID, c.Scene.Title, e.Basename); vr.Verified {
+			falseHere++
+			r.Failures = append(r.Failures, verifyFailure{
+				Release: e.Basename, Kind: "false_verify", ExpectedID: e.StashDBID,
+				FalseSceneID: c.Scene.ID, FalseSceneTitle: c.Scene.Title, Conf: vr.Confidence,
+			})
+		}
+	}
+	if falseHere > 0 {
+		r.FalseVerifies += falseHere
+		r.EntriesWithFalse++
+	}
+}
+
+func runVerify(ctx context.Context, log *slog.Logger, m releaseMatcher, entries []stash.LabeledScene, concurrency int, dump bool) *verifyResult {
+	r := &verifyResult{PerSource: map[string]*sourceStats{}}
 	if concurrency < 1 {
 		concurrency = 1
 	}
@@ -676,59 +794,14 @@ func runVerify(ctx context.Context, log *slog.Logger, m *matcher.Matcher, entrie
 			}
 			processed.Add(1)
 			e := entries[rr.idx]
+			mu.Lock()
 			if rr.err != nil {
+				r.recordMatchError()
+				mu.Unlock()
 				log.Warn("match error", "id", e.ID, "err", rr.err)
 				continue
 			}
-			cands := rr.cands
-			if dump {
-				mu.Lock()
-				r.Replay = append(r.Replay, matcher.RecordCandidates(e.Basename, e.StashDBID, cands))
-				mu.Unlock()
-			}
-			var expTitle string
-			var expConf float64
-			expFound := false
-			for _, c := range cands {
-				if c.Scene.ID == e.StashDBID {
-					expTitle = c.Scene.Title
-					expConf = c.Confidence
-					expFound = true
-					break
-				}
-			}
-			mu.Lock()
-			st := srcStat(e.Source)
-			st.Total++
-			if matcher.Verify(cands, e.StashDBID, expTitle, e.Basename).Verified {
-				r.Recall++
-				st.Recall++
-			} else {
-				if !expFound {
-					r.NoExpectedCand++
-				}
-				r.Failures = append(r.Failures, verifyFailure{
-					Release: e.Basename, Kind: "recall_miss", ExpectedID: e.StashDBID,
-					ExpectedWasCandidate: expFound, ExpectedConf: expConf,
-				})
-			}
-			falseHere := 0
-			for _, c := range cands {
-				if c.Scene.ID == e.StashDBID {
-					continue
-				}
-				if vr := matcher.Verify(cands, c.Scene.ID, c.Scene.Title, e.Basename); vr.Verified {
-					falseHere++
-					r.Failures = append(r.Failures, verifyFailure{
-						Release: e.Basename, Kind: "false_verify", ExpectedID: e.StashDBID,
-						FalseSceneID: c.Scene.ID, FalseSceneTitle: c.Scene.Title, Conf: vr.Confidence,
-					})
-				}
-			}
-			if falseHere > 0 {
-				r.FalseVerifies += falseHere
-				r.EntriesWithFalse++
-			}
+			r.recordEntry(e, rr.cands, dump)
 			mu.Unlock()
 		}
 	}
@@ -756,7 +829,14 @@ func writeVerifyFailures(path string, rows []verifyFailure, max int) error {
 func printVerify(w *os.File, r *verifyResult, csvPath string) {
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "metric\tvalue")
-	fmt.Fprintf(tw, "entries\t%d\n", r.Total)
+	fmt.Fprintf(tw, "entries scored\t%d\n", r.Total)
+	// Printed unconditionally, second, and before anything derived from the
+	// scored set. When Match is failing, every rate under this line describes
+	// the subset that got through, and a reader who has to go hunting in the
+	// log for a Warn line to learn that will instead read a retrieval
+	// regression that is not there.
+	fmt.Fprintf(tw, "match errors (NOT scored, excluded from every rate below)\t%d  (%.4f)\n",
+		r.MatchErrors, r.score().MatchErrorRate())
 	fmt.Fprintf(tw, "recall (expected verified)\t%d  (%.3f)\n", r.Recall, ratio(r.Recall, r.Total))
 	fmt.Fprintf(tw, "  of which expected not a candidate\t%d\n", r.NoExpectedCand)
 	fmt.Fprintf(tw, "entries with >=1 false verify\t%d  (%.3f)\n", r.EntriesWithFalse, ratio(r.EntriesWithFalse, r.Total))
@@ -806,6 +886,7 @@ func (r *verifyResult) score() matcher.ReplayScore {
 		Recall:           r.Recall,
 		FalseVerifies:    r.FalseVerifies,
 		EntriesWithFalse: r.EntriesWithFalse,
+		MatchErrors:      r.MatchErrors,
 	}
 }
 
@@ -824,22 +905,41 @@ func describeCorpus(corpusPath string, entries int) string {
 // The entries are sorted first: runVerify appends in worker-completion order,
 // so two runs over the same corpus produce byte-different files. That makes a
 // refreshed fixture impossible to eyeball and turns every refresh into an
-// unreviewable blob. ScoreReplay sums over entries, so order changes nothing
+// unreviewable blob. SliceStable rather than Slice because a corpus can hold
+// two rows with the same release string, and an unstable sort reorders those
+// between runs, which is the byte-identity claim broken in the one case the
+// sort exists to fix. ScoreReplay sums over entries, so order changes nothing
 // it measures.
 func writeDump(log *slog.Logger, path, commit, corpus string, vr *verifyResult) error {
-	sort.Slice(vr.Replay, func(i, j int) bool { return vr.Replay[i].Release < vr.Replay[j].Release })
+	// The fixture and its sidecar must describe the same set of entries.
+	// TestCorpusFixtureMatchesTheLiveRun compares the fixture's length against
+	// the sidecar's entry count, so a skew here does not fail here: it fails on
+	// somebody else's push, days later, and can only be cleared by another
+	// 26-minute run. Refusing to write is recoverable; writing the broken pair
+	// is not. The counts are taken from the recorded slice and the scored
+	// counter, which recordEntry moves together, so this fires only if that
+	// invariant is broken again.
+	if len(vr.Replay) != vr.Total {
+		return fmt.Errorf(
+			"refusing to write a fixture that disagrees with its own sidecar: %d recorded entries but %d scored. Nothing was written",
+			len(vr.Replay), vr.Total)
+	}
+	sort.SliceStable(vr.Replay, func(i, j int) bool { return vr.Replay[i].Release < vr.Replay[j].Release })
 	if err := matcher.SaveReplay(path, vr.Replay); err != nil {
 		return err
 	}
 	metaPath := matcher.ReplayMetaPath(path)
 	meta := matcher.ReplayMeta{
-		RecordedAt:       time.Now().UTC().Truncate(time.Second),
-		Commit:           commit,
-		Corpus:           corpus,
-		Entries:          vr.Total,
+		RecordedAt: time.Now().UTC().Truncate(time.Second),
+		Commit:     commit,
+		Corpus:     corpus,
+		// From the recorded slice, not a counter: this number's whole job is
+		// to describe the file next to it.
+		Entries:          len(vr.Replay),
 		Recall:           vr.Recall,
 		FalseVerifies:    vr.FalseVerifies,
 		EntriesWithFalse: vr.EntriesWithFalse,
+		MatchErrors:      vr.MatchErrors,
 		Config:           matcher.DefaultVerifyConfig,
 	}
 	if err := matcher.SaveReplayMeta(metaPath, meta); err != nil {
@@ -873,7 +973,10 @@ func checkFloors(w io.Writer, log *slog.Logger, floorsPath string, vr *verifyRes
 	fmt.Fprintf(w, "\nfull-pipeline gate (floors measured %s):\n", floors.MeasuredAt)
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "metric\tthis run\tfloor")
-	fmt.Fprintf(tw, "entries\t%d\t>= %d\n", s.Entries, floors.MinEntries)
+	fmt.Fprintf(tw, "entries scored\t%d\t>= %d\n", s.Entries, floors.MinEntries)
+	// The gate's own output has to carry the error count, or a reader deciding
+	// whether recall really moved has to go and find the run's stderr.
+	fmt.Fprintf(tw, "match errors\t%d (%.4f)\t<= %.4f\n", s.MatchErrors, s.MatchErrorRate(), floors.MaxMatchErrorRate)
 	fmt.Fprintf(tw, "recall\t%.4f\t>= %.4f\n", s.RecallRate(), floors.MinRecall)
 	fmt.Fprintf(tw, "clean\t%.4f\t>= %.4f\n", s.CleanRate(), floors.MinClean)
 	fmt.Fprintf(tw, "false verify rate\t%.4f\t<= %.4f\n", s.FalseVerifyRate(), floors.MaxFalseVerifyRate)

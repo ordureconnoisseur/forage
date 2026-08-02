@@ -1,6 +1,8 @@
 package matcher
 
-import "testing"
+import (
+	"testing"
+)
 
 // The committed floors file has to parse and mean something. It is embedded,
 // so a malformed edit compiles fine and only fails 26 minutes into a scheduled
@@ -23,6 +25,8 @@ func TestPipelineFloorsAreSane(t *testing.T) {
 			"same, for the precision-aware number that is the honest headline"},
 		{"false verify cap set", f.MaxFalseVerifyRate > 0,
 			"a cap of zero fails every run, so it would be turned off rather than fixed"},
+		{"match error cap in range", f.MaxMatchErrorRate > 0 && f.MaxMatchErrorRate < 0.5,
+			"zero fails a 26-minute run on one transient StashDB 5xx, and half the corpus erroring is not a run worth scoring at all"},
 		{"clean not above recall", f.MinClean <= f.MinRecall,
 			"clean is recall minus the entries that also verified something wrong, so a clean floor above the recall floor can never be met"},
 		{"provenance recorded", f.MeasuredAt != "" && f.Note != "",
@@ -55,16 +59,89 @@ func TestPipelineFloorsAreSane(t *testing.T) {
 	}
 }
 
+// The `measured` block has to be a measurement of something this repo ships.
+//
+// TestPipelineFloorsAreSane above compares the hand-written floors against the
+// hand-written `measured` block in the same hand-written file, which asserts
+// the file back to itself: it would pass just as green on fabricated numbers.
+// Nobody has run a live full-pipeline bench at this commit (see the file's
+// note), so the only checkable claim the block makes is the one it actually
+// makes: these are the committed fixture's candidate sets scored by the shipped
+// verifier. This checks that claim, and it is what stops a future hand-edit of
+// floors-plus-measured from passing while describing nothing.
+//
+// Four decimal places because that is the precision the file is written to.
+//
+// What this does NOT prove: that the numbers describe live retrieval today. The
+// fixture's candidates were recorded at 627749f and 16bcab6 has since touched
+// fold() in the retrieval path. Only a live run settles that, and this test
+// cannot do one.
+func TestPipelineFloorsMeasuredMatchTheCommittedFixture(t *testing.T) {
+	f, err := DefaultPipelineFloors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := loadCorpusFixture(t)
+	s := scoreOnce("default", DefaultVerifyConfig, entries)
+
+	if s.Entries != f.Measured.Entries {
+		t.Errorf("floors say the run scored %d entries, the committed fixture holds %d",
+			f.Measured.Entries, s.Entries)
+	}
+	round4 := func(v float64) float64 { return float64(int64(v*1e4+0.5)) / 1e4 }
+	for _, tt := range []struct {
+		name            string
+		got, claimed    float64
+		whatItDescribes string
+	}{
+		{"recall", s.RecallRate(), f.Measured.Recall, "the expected scene verifies"},
+		{"clean", s.CleanRate(), f.Measured.Clean, "the expected scene verifies and nothing else does"},
+		{"false verify rate", s.FalseVerifyRate(), f.Measured.FalseVerifyRate, "wrong scenes accepted per entry"},
+	} {
+		if round4(tt.got) != tt.claimed {
+			t.Errorf("pipeline_floors.json claims measured %s = %.4f (%s), but scoring the committed fixture under the shipped verifier gives %.4f. Either the verifier changed and the block is now stale, or the block was never measured. Write %.4f, or re-derive the floors from a real run.",
+				tt.name, tt.claimed, tt.whatItDescribes, tt.got, round4(tt.got))
+		}
+	}
+}
+
+// The floors and the committed fixture must name the same recording.
+//
+// The floors were seeded from the fixture, so a floors file stamped with one
+// commit and a fixture recorded at another is a provenance claim that is simply
+// false, and provenance is the only thing standing behind numbers nobody has
+// re-run live.
+func TestPipelineFloorsNameTheCommittedRecording(t *testing.T) {
+	f, err := DefaultPipelineFloors()
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta := loadCorpusMeta(t)
+	if f.Commit == "" {
+		t.Fatal("pipeline_floors.json names no commit, so nothing says which tree it was seeded from")
+	}
+	if meta.Commit != f.Commit {
+		t.Errorf("floors say they were seeded at %s but the committed fixture was recorded at %s: one of the two is describing a recording that is not in this tree",
+			f.Commit, meta.Commit)
+	}
+}
+
 // Check must be able to fail on each axis independently. A gate that only
 // reports the first breach hides the second, and recall and precision trade
 // against each other, so a bad change usually moves both.
 func TestPipelineFloorsCheckCatchesEachAxis(t *testing.T) {
 	floors := PipelineFloors{
 		MinEntries: 100, MinRecall: 0.90, MinClean: 0.80, MaxFalseVerifyRate: 0.10,
+		MaxMatchErrorRate: 0.02,
 	}
-	// 1000 entries, 950 recalled, 100 entries carrying a false verify, 120
-	// false verifies total: recall 0.95, clean 0.85, false rate 0.12.
-	pass := ReplayScore{Entries: 1000, Recall: 950, FalseVerifies: 90, EntriesWithFalse: 100}
+	// 1000 entries scored, 950 recalled, 80 of those also verified a wrong
+	// scene, 90 false verifies between them: recall 0.950, clean 0.870, false
+	// rate 0.090, no match errors. Inside every floor, and internally
+	// consistent, which the previous version of this comment was not: it
+	// described 100 entries carrying 120 false verifies, a rate of 0.12 that
+	// would breach this case's own 0.10 cap and fail the assertion it was
+	// annotating, over a literal that said 90.
+	pass := ReplayScore{Entries: 1000, Recall: 950, FalseVerifies: 90, EntriesWithFalse: 80}
 	if got := floors.Check(pass); len(got) != 0 {
 		t.Errorf("a run inside every floor was reported as a breach: %v", got)
 	}
@@ -80,6 +157,13 @@ func TestPipelineFloorsCheckCatchesEachAxis(t *testing.T) {
 		// Recall dumped AND wrong scenes flooding in: both must be named, or
 		// the second gets fixed only after the first is, one run per week.
 		{"both directions", ReplayScore{Entries: 1000, Recall: 700, FalseVerifies: 300, EntriesWithFalse: 250}, 3},
+		// StashDB unreachable for 5% of the corpus. The scored 950 are
+		// pristine, so without the error axis this run passes every floor and
+		// reports an outage as a clean bill of health.
+		{"match errors", ReplayScore{Entries: 950, Recall: 950, MatchErrors: 50}, 1},
+		// A handful of transient failures in a 26-minute run is not a
+		// regression and must not read as one.
+		{"a few match errors tolerated", ReplayScore{Entries: 990, Recall: 950, MatchErrors: 10}, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
