@@ -75,11 +75,17 @@ const (
 
 	// forwardedFailBudget is the per-client allowance. Set well above what
 	// a browser can spend by accident and far below anything useful for
-	// guessing: the worst legitimate case is a tab whose 7-day cookie
-	// expired mid-session, which spends one failure per in-flight poll
-	// before the client's 401 handler routes it to the login gate: a
-	// handful, not twenty. Scopes are separate (see authScope), so those
-	// gate failures cannot spend the login form's budget.
+	// guessing. Scopes are separate (see authScope), so gate failures from a
+	// stale cookie cannot spend the login form's budget.
+	//
+	// The original reasoning here was that the worst legitimate case is "a
+	// handful, not twenty": one failure per in-flight poll before the 401
+	// handler routes to the login gate. That underestimated it. The SPA runs
+	// several independent pollers (watches, grabs, notifications) plus
+	// whatever the open view is fetching, so a cookie expiring mid-session
+	// can spend a dozen in one tick, and a tab left open overnight spends
+	// them every poll interval until someone looks at it. Twenty is reached
+	// in normal use, which is why noteAuthSuccess now has to clear it.
 	forwardedFailBudget = 20
 
 	// peerFailBudget is the un-spoofable ceiling per transport peer. Six
@@ -239,4 +245,27 @@ func (s *Server) noteAuthFailure(scope authScope, r *http.Request) {
 func (s *Server) noteAuthSuccess(scope authScope, r *http.Request) {
 	fwd, _ := authKeys(scope, r)
 	s.authLimit.succeed(fwd)
+	// Proving the password clears this client's OTHER scopes too.
+	//
+	// Scope separation stops a stale cookie burning the gate's budget from
+	// blocking the login form, which is what lets the owner in. It does not
+	// get them back to work: throttled() runs before requestAuthorized, so
+	// once the gate scope is over budget nothing can call noteAuthSuccess on
+	// it, and a brand-new valid cookie is answered 429 for the remainder of
+	// the five-minute window. Measured, not theorised: 25 gate failures, a
+	// successful POST /login, then GET /config with the fresh cookie
+	// returned 429 with Retry-After 300. The correct admin token as a Bearer
+	// did too. That is a lockout, and this limiter exists precisely because
+	// forage deliberately has no lockout.
+	//
+	// A password success is the strongest evidence available that the caller
+	// is the owner, so it is the right thing to reset on. It cannot be used
+	// to buy attempts: reaching it costs a correct password, and the login
+	// scope has its own budget which is NOT reset here.
+	if scope == scopeLogin {
+		for _, other := range []authScope{scopeGate, scopeSession, scopeConfig} {
+			k, _ := authKeys(other, r)
+			s.authLimit.succeed(k)
+		}
+	}
 }
