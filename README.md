@@ -255,7 +255,7 @@ Two ways past that, both deliberate. A daemon with no password and no API key se
 
 **Repeated wrong credentials get 429, on every path that checks one.** That means the login form, the `/session` key handshake, the current-password check above, *and* the `Authorization: Bearer` check that fronts every data route, the last one being where anything guessing an API key would actually knock. Roughly twenty failures from one client in five minutes and further attempts are refused without being checked at all; each path has its own budget, so a browser with a stale cookie spending one cannot stop you signing in on another.
 
-There is no lockout, on purpose: the window runs from the first failure, so more attempts cannot extend it, it clears itself within five minutes, and a successful sign-in clears it immediately. Nothing ever needs unlocking by hand.
+There is no lockout, on purpose: the window runs from the first failure, so more attempts cannot extend it, and it clears itself within five minutes. Getting the credential right clears your own count straight away (the shared per-connection count described next only decays with time). Nothing ever needs unlocking by hand.
 
 One honest limitation. Behind a reverse proxy or `tailscale serve`, every request arrives from the same address, and the `X-Forwarded-For` that says who is really calling is set by the caller, so forage counts failures against both, and the per-connection count is the one an attacker cannot dodge. The cost is that it is shared: a sustained spray through your proxy can make you wait too, for up to five minutes. That is the price of a limit that cannot be stepped around by inventing a header, and forage would rather have a real one than a decorative one.
 
