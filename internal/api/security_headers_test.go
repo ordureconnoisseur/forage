@@ -10,7 +10,7 @@ import (
 )
 
 // TestSecurityHeadersOnEveryResponse: the headers have to be on the
-// responses an attacker would use, not just the happy ones — the SPA
+// responses an attacker would use, not just the happy ones: the SPA
 // document, the unauthenticated /healthz, a 401, and the CORS preflight
 // that corsMiddleware answers before any handler runs.
 func TestSecurityHeadersOnEveryResponse(t *testing.T) {
@@ -45,7 +45,7 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 
 // TestSPACarriesCSPIncludingOn304: a revalidation sends no body, but the
 // browser reuses the cached document, so a 304 that dropped the policy
-// would leave that reused document unprotected — and after the no-cache
+// would leave that reused document unprotected, and after the no-cache
 // ETag work landed, the 304 is the common case, not the rare one.
 func TestSPACarriesCSPIncludingOn304(t *testing.T) {
 	s := gatedServer(t)
@@ -61,7 +61,7 @@ func TestSPACarriesCSPIncludingOn304(t *testing.T) {
 		t.Fatal("no Content-Security-Policy on the SPA document")
 	}
 	if !strings.Contains(csp, "frame-ancestors 'none'") {
-		t.Errorf("policy has no frame-ancestors 'none' — clickjacking is what this is for: %s", csp)
+		t.Errorf("policy has no frame-ancestors 'none'; clickjacking is what this is for: %s", csp)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -92,8 +92,8 @@ func TestCSPIsNotSetOnAPIResponses(t *testing.T) {
 
 // TestUICSPIsHashed is the canary for the fail-open in
 // security_headers.go. If a future bundle stops matching the shape the
-// extraction assumes, script-src silently degrades to 'unsafe-inline' —
-// the app keeps working, which is the right call at runtime, but nobody
+// extraction assumes, script-src silently degrades to 'unsafe-inline'.
+// The app keeps working, which is the right call at runtime, but nobody
 // would ever notice. Here, CI notices.
 func TestUICSPIsHashed(t *testing.T) {
 	if !uiCSPHashed {

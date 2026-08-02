@@ -10,6 +10,7 @@ import {
   prowlarrProxyHref,
   foragerBase,
   Health,
+  needsCurrentPassword,
   saveConfig,
   setAdminToken,
   setForagerBase,
@@ -166,6 +167,14 @@ export default function Setup({
   const [stashdbAutoFilled, setStashdbAutoFilled] = useState(false);
   const [credErr, setCredErr] = useState<string | null>(null);
   const [savingCreds, setSavingCreds] = useState(false);
+  // The Stash API key is one of the values the daemon accepts as a Bearer
+  // credential, so writing it needs the current forage password, on a
+  // daemon that already has one. That is an unusual order to do things in
+  // (a password set before Stash was ever configured) but it is reachable,
+  // and without this the wizard would dead-end there with an error and no
+  // input to answer it. Hidden until the daemon actually asks.
+  const [credPassword, setCredPassword] = useState("");
+  const [credProofDemanded, setCredProofDemanded] = useState(false);
 
   // Indexer step
   const [prowlarrUrl, setProwlarrUrl] = useState("");
@@ -341,7 +350,7 @@ export default function Setup({
           stashdbUrl,
           stashdbApiKey: stashdbKey,
         },
-        { force },
+        { force, currentPassword: credPassword || undefined },
       );
       if (!r.ok) {
         setCredErr(
@@ -350,9 +359,14 @@ export default function Setup({
         );
         return;
       }
+      setCredProofDemanded(false);
+      setCredPassword("");
       await refreshHealth();
       setStep("indexer");
     } catch (e) {
+      if (needsCurrentPassword(e)) {
+        setCredProofDemanded(true);
+      }
       setCredErr((e as Error).message);
     } finally {
       setSavingCreds(false);
@@ -751,6 +765,22 @@ export default function Setup({
               <TestLabel test={stashdbTest} />
             </div>
 
+            {credProofDemanded && (
+              <label className="setup-field">
+                <span>Your current forage password</span>
+                <input
+                  type="password"
+                  value={credPassword}
+                  autoComplete="current-password"
+                  placeholder="the password you signed in with"
+                  onChange={(e) => setCredPassword(e.target.value)}
+                />
+                <span className="setup-autofill-note">
+                  The Stash API key doubles as a way in to forage, so
+                  setting it asks for your forage password first.
+                </span>
+              </label>
+            )}
             {credErr && <div className="setup-err">{credErr}</div>}
             <div className="setup-actions">
               <button

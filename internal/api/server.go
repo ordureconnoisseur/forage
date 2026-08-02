@@ -497,7 +497,7 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 	// Set before the 304 branch: a revalidation returns no body, but the
 	// browser reuses the cached one, and a 304 that omitted the policy
 	// would leave that reused document unprotected. Only the SPA gets a
-	// CSP — see security_headers.go for why it is not global.
+	// CSP; see security_headers.go for why it is not global.
 	w.Header().Set("Content-Security-Policy", uiCSP)
 	if match := r.Header.Get("If-None-Match"); match != "" && match == uiETag {
 		w.WriteHeader(http.StatusNotModified)

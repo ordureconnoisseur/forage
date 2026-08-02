@@ -30,19 +30,24 @@ import (
 //	  go test ./internal/api -run TestCSPDoesNotBreakTheUI -v
 //
 // The "policy that should break it" case is the control, and it is not
-// decoration. Without it, "the page rendered" proves nothing — a run where
+// decoration. Without it, "the page rendered" proves nothing: a run where
 // Chrome ignored the header entirely would pass just as happily. It
 // asserts that a policy which SHOULD blank the app does blank it, and that
 // the violations get logged, which is what makes the silence in the first
 // case meaningful.
 //
-// Recorded result on 2026-08-02, Chrome 141, bundle 520,588 bytes: the
-// shipped policy rendered the full app shell (5,302 bytes of DOM under
-// #root) and logged no violations; the control left #root empty and logged
-// three (inline script blocked, inline style blocked, data: favicon
-// blocked). Chrome's own error text for the blocked script names the hash
-// it wanted, and it matched uiScriptSrc exactly — an independent check of
-// the hash by the thing that has to accept it.
+// Recorded result on 2026-08-02, Chrome 141, bundle 522,143 bytes: the
+// shipped policy rendered the app shell (3,872 bytes of DOM under #root)
+// and logged no violations; the control left #root empty and logged three
+// (inline script blocked, inline style blocked, data: favicon blocked).
+// Chrome's own error text for the blocked script names the hash it wanted,
+// and it matched uiScriptSrc exactly: an independent check of the hash by
+// the one implementation that has to accept it.
+//
+// Those three numbers are printed by the t.Logf below on every run, so a
+// reader can re-measure rather than trust this paragraph. They go stale
+// the moment the bundle is rebuilt, and this comment has already been
+// wrong once for exactly that reason.
 func TestCSPDoesNotBreakTheUI(t *testing.T) {
 	chrome := os.Getenv("FORAGE_CSP_BROWSER")
 	if chrome == "" {
@@ -69,6 +74,9 @@ func TestCSPDoesNotBreakTheUI(t *testing.T) {
 			defer srv.Close()
 
 			dom, violations := runChrome(t, chrome, srv.URL)
+			inner, _ := rootInner(dom)
+			t.Logf("bundle %d bytes, %d bytes rendered under #root, %d CSP violations",
+				len(indexHTML), len(inner), len(violations))
 			if got := renderedSomething(dom); got != c.wantRender {
 				t.Errorf("app rendered = %v, want %v\npolicy: %s\nDOM near #root:\n%s",
 					got, c.wantRender, c.csp, nearRoot(dom))

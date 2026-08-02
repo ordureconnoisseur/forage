@@ -18,7 +18,7 @@
 //
 // THE KEY, AND WHY IT IS NOT JUST clientIP(). clientIP honours the
 // left-most X-Forwarded-For entry when the transport peer is loopback or
-// RFC1918 — which is exactly the deployment the README recommends
+// RFC1918, which is exactly the deployment the README recommends
 // (`tailscale serve`, or a reverse proxy, talking to 127.0.0.1). Proxies
 // that append rather than replace (Go's httputil.ReverseProxy, nginx's
 // $proxy_add_x_forwarded_for, Caddy) leave that entry client-controlled,
@@ -26,7 +26,7 @@
 // every failure is counted twice:
 //
 //   - against the FORWARDED key (scope + peer + clientIP). Fine-grained,
-//     and correct when the proxy is honest — one bad client behind your
+//     and correct when the proxy is honest: one bad client behind your
 //     proxy does not spend anyone else's budget.
 //   - against the PEER key (scope + transport peer). Un-spoofable, because
 //     it is the address the TCP connection actually came from. This is the
@@ -35,7 +35,7 @@
 // The honest cost of that: behind a reverse proxy, every client shares one
 // peer key, so a sustained spray through your proxy can make you wait too,
 // for up to authFailWindow. There is no way to avoid that and still have a
-// limit an attacker cannot step around by inventing a header — the daemon
+// limit an attacker cannot step around by inventing a header: the daemon
 // genuinely cannot tell the two of you apart. It is bounded, it expires on
 // its own, and the alternative (a control that looks like protection and
 // isn't) is worse.
@@ -44,8 +44,8 @@
 // failure and never grown: at most clientSlots + peerSlots records exist
 // at any time, whatever an attacker does. A key hashes to one slot and
 // evicts whatever was there if that record has expired or belongs to
-// another key. This replaces the obvious sketch — a map plus a sweep of
-// expired entries — which does not bound anything, because inside one
+// another key. This replaces the obvious sketch (a map plus a sweep of
+// expired entries), which does not bound anything, because inside one
 // window nothing is expired: an attacker rotating X-Forwarded-For grows it
 // without limit and makes every failure pay an O(n) scan under the mutex.
 //
@@ -53,7 +53,7 @@
 // each other, which weakens the limit for both (each keeps resetting the
 // other's count). The peer and forwarded tables are separate so that a
 // key an attacker CHOOSES (the forwarded one) can never evict a key they
-// cannot choose (their own peer address) — otherwise grinding a
+// cannot choose (their own peer address); otherwise grinding a
 // forwarded value that collides with your own peer slot would reset the
 // ceiling that is supposed to hold you.
 package api
@@ -77,7 +77,7 @@ const (
 	// a browser can spend by accident and far below anything useful for
 	// guessing: the worst legitimate case is a tab whose 7-day cookie
 	// expired mid-session, which spends one failure per in-flight poll
-	// before the client's 401 handler routes it to the login gate — a
+	// before the client's 401 handler routes it to the login gate: a
 	// handful, not twenty. Scopes are separate (see authScope), so those
 	// gate failures cannot spend the login form's budget.
 	forwardedFailBudget = 20
@@ -225,7 +225,7 @@ func (s *Server) throttled(scope authScope, w http.ResponseWriter, r *http.Reque
 	s.logAuth(r, slog.LevelWarn, "auth-throttled",
 		"scope", string(scope), "retryAfterSeconds", secs)
 	writeErr(w, http.StatusTooManyRequests,
-		"too many failed attempts — try again in "+strconv.Itoa(secs)+"s")
+		"too many failed attempts, try again in "+strconv.Itoa(secs)+"s")
 	return true
 }
 

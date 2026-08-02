@@ -177,7 +177,7 @@ func (s *Store) Set(patch Patch) error {
 	return nil
 }
 
-// Merged returns base with patch's non-nil fields overlaid — exactly what
+// Merged returns base with patch's non-nil fields overlaid: exactly what
 // Set would persist, without persisting it.
 //
 // Exported because the /config credential guard has to answer "would this

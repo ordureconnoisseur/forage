@@ -147,35 +147,38 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	patch := body.Patch
-	if body.Password != nil {
-		if *body.Password == "" {
-			// Empty password clears the hash → turns password login off
-			// (falls back to env/default at compose time, like other
-			// cleared fields).
-			empty := ""
-			patch.PasswordHash = &empty
-		} else {
-			hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "could not hash password")
-				return
-			}
-			h := string(hashed)
-			patch.PasswordHash = &h
-		}
+	if body.Password != nil && *body.Password == "" {
+		// Empty password clears the hash → turns password login off
+		// (falls back to env/default at compose time, like other
+		// cleared fields). Free to compute, so fold it in now and let the
+		// value comparison below judge it like any other field.
+		empty := ""
+		patch.PasswordHash = &empty
 	}
+	// A NEW password is deliberately NOT hashed yet. bcrypt is ~100ms, and
+	// hashing before the guard would hand an unproven caller that much of
+	// the daemon's CPU per request, for free, on a route they can retry as
+	// fast as they like: exactly the work the throttle exists to refuse.
+	// So declare it a credential change without computing it, and hash
+	// only once the caller has proven they may.
+	settingPassword := body.Password != nil && *body.Password != ""
 	force := r.URL.Query().Get("force") == "true"
 
 	// Credential guard, BEFORE any probe or save: a patch that would move
 	// any value the auth gate accepts as proof of identity has to prove
 	// ownership first. Computed by comparing the composed config as it is
 	// against the composed config as the patch would leave it, so it does
-	// not matter which wire field carried the change — `password`,
+	// not matter which wire field carried the change: `password`,
 	// `passwordHash`, `adminToken`, `stashApiKey`, or something added
 	// later. See credentials.go for why it is done by value and not by
 	// field name.
 	oldCfg := s.composedConfig()
 	changedCreds := changedCredentials(oldCfg, s.previewConfig(patch))
+	if settingPassword {
+		// Always a change, even if it is the same password: the hash is
+		// re-salted, so there is no such thing as a no-op here.
+		changedCreds = alsoChanged(changedCreds, "passwordHash")
+	}
 	if len(changedCreds) > 0 {
 		// currentPassword is checked with bcrypt and a caller holding a
 		// session cookie can retry it forever, so it is a guessing surface
@@ -195,6 +198,17 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		}
 		s.noteAuthSuccess(scopeConfig, r)
 		s.logCredentialChange(r, changedCreds, proof)
+	}
+
+	// Proven, so the bcrypt cost is now the caller's to spend.
+	if settingPassword {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not hash password")
+			return
+		}
+		h := string(hashed)
+		patch.PasswordHash = &h
 	}
 
 	// Compose what the resulting config WOULD be if we applied the
@@ -218,7 +232,7 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// oldCfg was snapshotted before the probes ran, above: the stashChanged
-	// comparison below must be old-vs-new. `preview` is useless for that —
+	// comparison below must be old-vs-new. `preview` is useless for that:
 	// it is already oldStored+patch, which is exactly what the store holds
 	// after Set, so comparing it against the post-save compose was always
 	// false and a Stash/StashDB credential change never invalidated the
@@ -231,7 +245,7 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Any credential change rotates the session signing key, revoking every
-	// outstanding cookie — the change wouldn't mean much if a session
+	// outstanding cookie, since the change wouldn't mean much if a session
 	// minted under the old credential kept working. The caller's own
 	// browser gets a fresh cookie in the same response so saving a new
 	// password doesn't dump them at the login screen; everyone else stays
@@ -437,7 +451,7 @@ func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 }
 
 // previewConfig returns what the composed Config would be if `patch`
-// were saved — without actually persisting it. Used by /config/test, by
+// were saved, without actually persisting it. Used by /config/test, by
 // the credential guard, and by /config save (for change detection).
 //
 // It delegates the merge to configstore.Merged rather than replaying it.

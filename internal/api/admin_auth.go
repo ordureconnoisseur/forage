@@ -216,9 +216,9 @@ func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		// This is the path every Bearer client authenticates on — the API
-		// key, the Stash key, and the session cookie are all compared here
-		// — so this is where the throttle has to be. Fronting only /login
+		// This is the path every Bearer client authenticates on: the API
+		// key, the Stash key, and the session cookie are all compared
+		// here, so this is where the throttle has to be. Fronting only /login
 		// and /session leaves token guessing unlimited.
 		if s.throttled(scopeGate, w, r) {
 			return

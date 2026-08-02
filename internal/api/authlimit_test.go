@@ -20,7 +20,7 @@ import (
 // forwarded value through net.ParseIP and silently falls back to the peer
 // when it fails, so a made-up string that is not an IP produces one shared
 // key and a test that proves nothing. The first cut of these tests used
-// "198.51.100.7:1234", which is exactly that mistake — every one of 50,000
+// "198.51.100.7:1234", which is exactly that mistake: every one of 50,000
 // "distinct" keys collapsed onto the peer's.
 func forgedIP(i int) string {
 	return "10." + strconv.Itoa(i>>16&255) + "." +
@@ -42,7 +42,7 @@ func gatedServer(t *testing.T) *Server {
 // TestGateThrottlesBearerGuessing is the measurement the previous attempt
 // failed. On that branch the throttle fronted only POST /login and POST
 // /session; a reviewer sent 500 requests to /config with a wrong Bearer
-// and got 500 × 401 and zero 429s, because every real Bearer client
+// and got 500 x 401 and zero 429s, because every real Bearer client
 // authenticates through adminAuthMiddleware, which had no throttle at all.
 //
 // This drives the same shape: wrong Bearers at a gated route, from one
@@ -74,20 +74,20 @@ func TestGateThrottlesBearerGuessing(t *testing.T) {
 		}
 	}
 	if got429 == 0 {
-		t.Fatalf("500 wrong Bearers produced %d × 401 and zero 429s — the gate is not throttled",
+		t.Fatalf("500 wrong Bearers produced %d x 401 and zero 429s: the gate is not throttled",
 			got401)
 	}
 	if got401 > forwardedFailBudget {
 		t.Errorf("%d guesses were evaluated before the throttle bit, budget is %d",
 			got401, forwardedFailBudget)
 	}
-	t.Logf("500 wrong Bearers → %d × 401, %d × 429", got401, got429)
+	t.Logf("500 wrong Bearers: %d x 401, %d x 429", got401, got429)
 }
 
 // TestThrottleSurvivesForwardedForSpoofing is the other half of what the
 // previous attempt got wrong. clientIP honours the left-most
-// X-Forwarded-For when the peer is loopback or RFC1918 — the deployment
-// the README recommends — so a limiter keyed on it alone is stepped around
+// X-Forwarded-For when the peer is loopback or RFC1918 (the deployment
+// the README recommends), so a limiter keyed on it alone is stepped around
 // by rotating one header. Measured on that branch: 200 wrong-password
 // posts from 127.0.0.1 with a rotating X-Forwarded-For produced zero 429s
 // and 200 distinct buckets.
@@ -122,7 +122,7 @@ func TestThrottleSurvivesForwardedForSpoofing(t *testing.T) {
 
 // TestThrottleMemoryIsBounded: the obvious implementation (a map plus a
 // sweep of expired records) grows without limit under exactly the attack
-// above, because inside one window nothing is expired — a reviewer
+// above, because inside one window nothing is expired: a reviewer
 // measured 50,000 retained records and ~0.28ms per failure at that size on
 // the previous attempt. This one is two fixed arrays, so the bound is
 // structural rather than hopeful.
@@ -154,10 +154,10 @@ func TestThrottleMemoryIsBounded(t *testing.T) {
 	// collapsed onto one key (see forgedIP) barely any slot would be
 	// occupied and the bound above would be vacuously true.
 	if live < clientSlots/2 {
-		t.Fatalf("only %d of %d slots occupied — the forged keys are not distinct, "+
+		t.Fatalf("only %d of %d slots occupied: the forged keys are not distinct, "+
 			"so this test is not exercising the attack", live, clientSlots)
 	}
-	t.Logf("50,000 distinct forged keys → %d fixed client slots, %d occupied", client, live)
+	t.Logf("50,000 distinct forged keys: %d fixed client slots, %d occupied", client, live)
 }
 
 // TestThrottleCoversEveryCredentialCheck drives all four places a secret
@@ -399,6 +399,6 @@ func TestBcryptIsNotEvaluatedWhenThrottled(t *testing.T) {
 	// is sub-millisecond. 20ms is a wide margin either way, so this does
 	// not turn into a flaky timing test on a loaded machine.
 	if elapsed > 20*time.Millisecond {
-		t.Fatalf("throttled request took %v — the bcrypt compare still ran", elapsed)
+		t.Fatalf("throttled request took %v: the bcrypt compare still ran", elapsed)
 	}
 }

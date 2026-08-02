@@ -3,7 +3,7 @@
 // forage served none of these, so its UI could be framed by any page and
 // clickjacked: a hostile tab on the same browser could stack an invisible
 // frame of forage over its own buttons and have you click "delete" on your
-// own library. Nothing in forage is framed by design — the Stash launcher
+// own library. Nothing in forage is framed by design: the Stash launcher
 // opens the daemon in a new tab (plugin/public/forage.entry.js uses
 // target="_blank"), so denying framing outright costs nothing.
 //
@@ -30,13 +30,13 @@ import (
 // securityHeadersMiddleware sets the headers that are safe on every
 // response.
 //
-//   - X-Content-Type-Options: nosniff — the API answers JSON, and the
+//   - X-Content-Type-Options: nosniff. The API answers JSON, and the
 //     image proxy streams bytes it fetched from Stash. Without nosniff a
 //     browser is free to re-interpret either as HTML.
-//   - Referrer-Policy: no-referrer — forage URLs carry performer and scene
+//   - Referrer-Policy: no-referrer. forage URLs carry performer and scene
 //     ids, and the UI links out to Stash and to indexers. No third party
 //     needs to learn which performer's page you were on.
-//   - X-Frame-Options: DENY — the belt to CSP frame-ancestors' braces,
+//   - X-Frame-Options: DENY. The belt to CSP frame-ancestors' braces,
 //     and the only one of the two that covers non-SPA responses.
 func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -52,8 +52,8 @@ func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 //
 // The SPA is one self-contained file: vite-plugin-singlefile inlines the
 // entire bundle into a single <script type="module"> and the whole
-// stylesheet into a single <style>. So the naive policy — script-src
-// 'self' — blanks the app completely, and script-src 'unsafe-inline'
+// stylesheet into a single <style>. So the naive policy (script-src
+// 'self') blanks the app completely, and script-src 'unsafe-inline'
 // permits exactly the thing CSP exists to stop.
 //
 // The way out is a hash: CSP matches an inline script by the sha256 of its
@@ -62,8 +62,8 @@ func (s *Server) securityHeadersMiddleware(next http.Handler) http.Handler {
 // remember. Styles keep 'unsafe-inline' because React writes style
 // attributes on elements at runtime and no hash can cover those.
 
-// uiInlineScript returns the body of the document's single inline script —
-// the bytes a browser hashes for CSP — and whether the document actually
+// uiInlineScript returns the body of the document's single inline script
+// (the bytes a browser hashes for CSP), and whether the document actually
 // looks the way this extraction assumes.
 //
 // The end of a script element is defined by the HTML parser as the first
@@ -101,8 +101,8 @@ func uiInlineScript(doc []byte) ([]byte, bool) {
 // (a second inline script, an external one), hashing whatever the scan
 // sliced would ship a confidently wrong hash and a blank UI for every
 // user. Failing open to 'unsafe-inline' keeps the app working and keeps
-// frame-ancestors, object-src and base-uri — the clickjacking controls,
-// which is what this change is for — fully in force. CI notices instead:
+// frame-ancestors, object-src and base-uri (the clickjacking controls,
+// which is what this change is for) fully in force. CI notices instead:
 // TestUICSPIsHashed fails the build the moment the policy silently
 // weakens.
 var uiScriptSrc, uiCSPHashed = func() (string, bool) {
@@ -118,7 +118,7 @@ var uiScriptSrc, uiCSPHashed = func() (string, bool) {
 //
 // Why each directive is what it is:
 //
-//	default-src 'self'      backstop for anything not named below —
+//	default-src 'self'      backstop for anything not named below,
 //	                        covers media-src, worker-src, manifest-src.
 //	                        Verified there is no <video>/<audio>, no
 //	                        `new Worker`, and no manifest in plugin/src.

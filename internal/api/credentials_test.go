@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/clientpool"
 	"github.com/ordureconnoisseur/forager/internal/config"
@@ -58,7 +59,7 @@ func credServer(t *testing.T) *Server {
 const ownerPassword = "correct horse"
 
 // cookieRequest is a POST /config carrying nothing but a valid session
-// cookie — the attacker's position: a lifted cookie, no credential.
+// cookie. That is the attacker's position: a lifted cookie, no credential.
 func cookieRequest(t *testing.T, s *Server, body string) *http.Request {
 	t.Helper()
 	id, err := s.newSession()
@@ -82,8 +83,8 @@ func postConfigWith(t *testing.T, s *Server, r *http.Request) *httptest.Response
 // change, plus the two fields that attempt never considered.
 //
 // Each case is a single POST /config carrying only a session cookie. Each
-// one must be refused, and — the part that matters more than the status
-// code — must leave the stored credential untouched. A guard that answers
+// one must be refused, and (the part that matters more than the status
+// code) must leave the stored credential untouched. A guard that answers
 // 403 and saves anyway would pass a status-only assertion.
 func TestCookieCannotChangeAnyCredential(t *testing.T) {
 	cases := []struct {
@@ -170,6 +171,65 @@ func credentialValue(s *Server, field string) string {
 	return authCredentials(s.composedConfig())[field]
 }
 
+// TestRefusedPasswordChangeDoesNoBcrypt pins the ORDER of the guard.
+//
+// The first cut of this handler hashed the incoming plaintext password
+// into the patch before the guard ran, because that is where the hashing
+// already lived. That meant an unproven caller could spend a bcrypt on
+// every request just by including a `password` field, as fast as they
+// liked: about 100ms of the daemon's CPU each, and the throttle behind it
+// was refusing work that had already been done.
+//
+// Timing is the only way to observe this from outside, so rather than
+// hard-code a threshold (the handler uses bcrypt.DefaultCost, whose cost
+// in wall-clock terms depends entirely on the machine), the test measures
+// one DefaultCost hash on THIS machine first and requires the refused
+// request to come in at a small fraction of it.
+func TestRefusedPasswordChangeDoesNoBcrypt(t *testing.T) {
+	start := time.Now()
+	if _, err := bcrypt.GenerateFromPassword([]byte("baseline"), bcrypt.DefaultCost); err != nil {
+		t.Fatal(err)
+	}
+	oneHash := time.Since(start)
+	t.Logf("one bcrypt.DefaultCost hash on this machine: %v", oneHash)
+
+	s := credServer(t)
+	start = time.Now()
+	rec := postConfigWith(t, s, cookieRequest(t, s, `{"password":"a new password"}`))
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	// Half a hash: comfortably above the microseconds the refusal actually
+	// takes (credServer's own stored hash is MinCost and is not even
+	// consulted, since no currentPassword was sent) and comfortably below
+	// the full hash a wrong ordering would pay.
+	if budget := oneHash / 2; elapsed > budget {
+		t.Fatalf("refused request took %v (budget %v, one hash is %v): it hashed "+
+			"the new password before deciding it was not allowed to",
+			elapsed, budget, oneHash)
+	}
+}
+
+// TestAcceptedPasswordChangeStillHashes is the other half: skipping the
+// work when refusing must not skip it when allowing.
+func TestAcceptedPasswordChangeStillHashes(t *testing.T) {
+	s := credServer(t)
+	rec := postConfigWith(t, s, cookieRequest(t, s,
+		`{"password":"brand new","currentPassword":"`+ownerPassword+`"}`))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body=%s)", rec.Code, rec.Body.String())
+	}
+	stored := s.effectivePasswordHash()
+	if !strings.HasPrefix(stored, "$2") {
+		t.Fatalf("stored password is not a bcrypt hash: %q", stored)
+	}
+	if bcrypt.CompareHashAndPassword([]byte(stored), []byte("brand new")) != nil {
+		t.Fatal("the new password does not verify against the stored hash")
+	}
+}
+
 // TestCurrentPasswordAuthorisesTheChange covers the path the owner
 // actually uses, and the one they must not be able to take by accident:
 // the right password lets the change through, the wrong one does not.
@@ -203,7 +263,7 @@ func TestCurrentPasswordAuthorisesTheChange(t *testing.T) {
 // TestAdminTokenBearerIsTheRecoveryPath keeps the escape hatch open: the
 // owner who forgot their password but still has the API key can set a new
 // one. This exemption is only safe because writing adminToken is itself
-// guarded now — TestCookieCannotChangeAnyCredential covers that half, and
+// guarded now: TestCookieCannotChangeAnyCredential covers that half, and
 // the two together are what stop it being circular.
 func TestAdminTokenBearerIsTheRecoveryPath(t *testing.T) {
 	s := credServer(t)
@@ -275,7 +335,7 @@ func TestOrdinarySaveNeedsNoProof(t *testing.T) {
 // worthless if sessions minted under the old one keep working. The
 // previous attempt keyed this off `body.Password != nil ||
 // patch.AdminToken != nil`, so a password swapped in through the raw
-// passwordHash field revoked nothing — the attacker's own cookie survived
+// passwordHash field revoked nothing: the attacker's own cookie survived
 // their own takeover. This drives it through passwordHash for that reason.
 func TestCredentialChangeRevokesOtherSessions(t *testing.T) {
 	s := credServer(t)
@@ -306,7 +366,7 @@ func TestCredentialChangeRevokesOtherSessions(t *testing.T) {
 // TestAuthCredentialsCoversTheGate ties the guard's idea of "a credential"
 // to the gate's. The guard is a value comparison over authCredentials, so
 // a credential the gate accepts but authCredentials omits would be
-// writable by anyone with a cookie, silently — which is exactly how
+// writable by anyone with a cookie, silently, which is exactly how
 // stashApiKey went unnoticed through two attempts at this change. This
 // fails if the two ever drift.
 func TestAuthCredentialsCoversTheGate(t *testing.T) {

@@ -3,8 +3,8 @@
 // The problem this file exists to solve: forage's session cookie is a
 // 7-day bearer of full API access, and POST /config could rewrite the
 // daemon's own login credentials. So anyone who got hold of a cookie
-// could turn a borrowed week into permanent, exclusive access — set their
-// own password, or set an API key only they know — and lock the owner out
+// could turn a borrowed week into permanent, exclusive access (set their
+// own password, or set an API key only they know) and lock the owner out
 // on the way past.
 //
 // The naive guard ("if the request sets the `password` field, ask for the
@@ -22,7 +22,7 @@
 // set of values the auth gate WOULD accept after the patch is applied,
 // compares it with the set it accepts now, and requires proof of ownership
 // if any of them moved. A new field can only escape it by being both a
-// credential AND absent from authCredentials — which
+// credential AND absent from authCredentials, which
 // TestAuthCredentialsCoversTheGate is there to catch.
 package api
 
@@ -43,17 +43,17 @@ import (
 // This is the single definition of "a credential" in forage. The gate
 // (requestAuthorized, postLogin, postSession) accepts exactly these:
 //
-//   - adminToken  — Bearer, the root secret (admin_auth.go requestAuthorized)
-//   - stashApiKey — Bearer, the same-Stash-trust path (same function). It is
+//   - adminToken:  Bearer, the root secret (admin_auth.go requestAuthorized)
+//   - stashApiKey: Bearer, the same-Stash-trust path (same function). It is
 //     a foreign secret forage stores for its own use, but the gate treats it
 //     as proof of identity, so writing it mints a bearer credential just as
 //     surely as writing adminToken does.
-//   - username / passwordHash — the pair POST /login checks.
+//   - username / passwordHash: the pair POST /login checks.
 //
 // Not listed, deliberately: every other stored secret (stashdbApiKey,
 // prowlarrApiKey, qbitPassword, sabApiKey, telegramBotToken). Those are
 // credentials for OTHER services. Losing one is bad, but it does not grant
-// access to forage, so changing one does not need to be re-authorised —
+// access to forage, so changing one does not need to be re-authorised,
 // and making it need to would put a password prompt in front of routine
 // settings edits.
 func authCredentials(c config.Config) map[string]string {
@@ -79,6 +79,22 @@ func changedCredentials(before, after config.Config) []string {
 	return out
 }
 
+// alsoChanged adds name to a changed-credentials list, keeping it sorted
+// and free of duplicates. Used for the one credential change that cannot
+// be detected by comparing values, because computing the new value is the
+// expensive thing we are refusing to do before the guard runs: a new
+// plaintext password.
+func alsoChanged(changed []string, name string) []string {
+	for _, c := range changed {
+		if c == name {
+			return changed
+		}
+	}
+	out := append(changed, name)
+	sort.Strings(out)
+	return out
+}
+
 // credentialProof describes how a request proved it may change a
 // credential, for the audit log. Empty when it did not.
 type credentialProof string
@@ -96,8 +112,8 @@ const (
 //
 // Accepted proofs, in order:
 //
-//  1. No credential is configured at all. The daemon is wide open — the
-//     middleware lets every request through — so there is no owner to
+//  1. No credential is configured at all. The daemon is wide open (the
+//     middleware lets every request through), so there is no owner to
 //     prove yourself to and nothing to protect. This is the first-run and
 //     open-tailnet case, and it is why setting a password for the first
 //     time on a fresh daemon works without one.
