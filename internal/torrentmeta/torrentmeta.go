@@ -25,6 +25,11 @@ type Meta struct {
 	TotalSize  int64
 	FileCount  int // every file in the torrent (videos + thumbs + nfos)
 	VideoCount int // files whose extension is a known video container
+	// ArchiveCount is files that could still turn into a video once
+	// unpacked (.rar, .zip, multipart .r00/.001, .iso). Counted apart from
+	// VideoCount because LacksVideo must not refuse a packed release: its
+	// file list says "no video" while its contents may be exactly that.
+	ArchiveCount int
 }
 
 // videoExts is the set of extensions counted as a "video" for pack
@@ -49,6 +54,69 @@ func isVideo(name string) bool {
 // torrent's files the same way the .torrent parser does.
 func IsVideo(name string) bool {
 	return isVideo(name)
+}
+
+// archiveExts is the set of container extensions whose CONTENTS are
+// unknown from the file list alone. Generous on purpose: every entry here
+// only ever weakens LacksVideo's refusal, so a miss costs a wasted
+// download while a wrong entry would cost the user a scene they wanted.
+var archiveExts = map[string]bool{
+	".rar": true, ".zip": true, ".7z": true, ".tar": true, ".gz": true,
+	".bz2": true, ".xz": true, ".iso": true, ".arj": true, ".cab": true,
+	".z": true, ".lzma": true, ".zst": true,
+}
+
+// isArchive reports whether a filename could hold a video inside it. Beyond
+// the named extensions it accepts the two multipart shapes scene releases
+// use — ".r00"..".r99" and ".001"..".999" — because a rar set's later parts
+// carry no recognisable extension at all.
+func isArchive(name string) bool {
+	i := strings.LastIndexByte(name, '.')
+	if i < 0 {
+		return false
+	}
+	ext := strings.ToLower(name[i:])
+	if archiveExts[ext] {
+		return true
+	}
+	switch {
+	case len(ext) == 4 && ext[1] == 'r' && isDigits(ext[2:]):
+		return true // .r00 .. .r99
+	case len(ext) == 4 && isDigits(ext[1:]):
+		return true // .001 .. .999
+	}
+	return false
+}
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// ErrNoVideo marks a release whose file list is known and provably carries
+// nothing a media library can use. Exported so the grab layer can tell this
+// refusal (forage decided against the release; no retry, no failover, and no
+// backoff can change the answer) from a failure.
+var ErrNoVideo = errors.New("this release has no video files in it, so forage did not download it")
+
+// LacksVideo reports whether downloading this torrent is provably pointless:
+// its file list is KNOWN, none of the files is a video, and none is an
+// archive that could unpack into one.
+//
+// The FileCount guard is the whole caution of this check. A magnet has no
+// file list until its metadata resolves, and an NZB never exposes one here;
+// both arrive as a zero FileCount, and "unknown" must never be read as
+// "empty" — a false refusal costs the user a scene, where a false accept
+// only costs bandwidth we were already spending.
+func (m *Meta) LacksVideo() bool {
+	if m == nil || m.FileCount == 0 {
+		return false
+	}
+	return m.VideoCount == 0 && m.ArchiveCount == 0
 }
 
 // maxDepth caps bencode container nesting. Real torrents nest only a
@@ -97,8 +165,13 @@ func Parse(b []byte) (*Meta, error) {
 			}
 			// Last path segment is the filename.
 			if path, ok := f["path"].([]any); ok && len(path) > 0 {
-				if seg, ok := path[len(path)-1].([]byte); ok && isVideo(string(seg)) {
-					m.VideoCount++
+				if seg, ok := path[len(path)-1].([]byte); ok {
+					switch name := string(seg); {
+					case isVideo(name):
+						m.VideoCount++
+					case isArchive(name):
+						m.ArchiveCount++
+					}
 				}
 			}
 		}
@@ -112,8 +185,11 @@ func Parse(b []byte) (*Meta, error) {
 		}
 		m.TotalSize = ln
 		m.FileCount = 1
-		if isVideo(m.Name) {
+		switch {
+		case isVideo(m.Name):
 			m.VideoCount = 1
+		case isArchive(m.Name):
+			m.ArchiveCount = 1
 		}
 	}
 	return m, nil

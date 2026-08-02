@@ -377,11 +377,17 @@ var placeableExts = map[string]bool{
 	".bmp": true, ".nfo": true, ".txt": true,
 }
 
-// isPlaceable reports whether a release file may enter the library. Extension
+// Placeable reports whether a release file may enter the library. Extension
 // only: content sniffing would be a stronger check and a much bigger promise,
 // and the threat here is what Windows does with a NAME, not what the bytes
 // turn out to be.
-func isPlaceable(name string) bool {
+//
+// Exported because the same question has to be asked one layer up. Inside
+// mirrorTree an unplaceable file is simply skipped, but a SINGLE-file
+// download has nothing to skip past: the placer's only choices are to place
+// it or to error forever, so the grab layer asks this before handing the file
+// over and refuses the grab instead. One list, two callers.
+func Placeable(name string) bool {
 	return placeableExts[strings.ToLower(filepath.Ext(name))]
 }
 
@@ -511,7 +517,7 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, int, error) {
 		// Refuse the passengers. Counted, not silent: a release that is
 		// ENTIRELY unplaceable must be distinguishable from one whose source
 		// has not finished moving in, or the caller retries it forever.
-		if !isPlaceable(d.Name()) {
+		if !Placeable(d.Name()) {
 			skipped++
 			if p.log != nil {
 				p.log.Info("placer skipped file type", "path", path,

@@ -729,8 +729,22 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 	// the file stays in the download client's complete dir and Stash
 	// confirmation works against that location instead.
 	pl := p.pool.Placer()
-	if g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" &&
-		p.libraryHealthy() && p.grabStillExists(ctx, g.ID) {
+	readyToPlace := g.Status == "completed" && g.PlacedPath == "" && pl.Configured() && srcPath != "" &&
+		p.libraryHealthy() && p.grabStillExists(ctx, g.ID)
+	// Screen the finished download before placing it: a single-file release
+	// that is itself an executable is refused here, permanently, because
+	// placement can only take it or retry it forever (see refuse_junk.go).
+	if readyToPlace {
+		if reason := refuseUnplaceableDownload(srcPath); reason != "" {
+			g.Status = "failed"
+			g.Reason = reason
+			dirty = true
+			readyToPlace = false
+			p.log.Warn("refused download: not a file forage places",
+				"id", g.ID, "src", srcPath, "reason", reason)
+		}
+	}
+	if readyToPlace {
 		// grabStillExists is re-checked immediately before the side-effecting
 		// place: a concurrent delete during the tick's earlier I/O would
 		// otherwise have us hardlink a file into the library for a grab being

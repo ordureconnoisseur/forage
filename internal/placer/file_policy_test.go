@@ -129,8 +129,8 @@ func TestIsPlaceable(t *testing.T) {
 		{"disc.iso", false}, {"half.mp4.part", false}, {"noextension", false},
 		{"", false},
 	} {
-		if got := isPlaceable(c.name); got != c.want {
-			t.Errorf("isPlaceable(%q) = %v, want %v", c.name, got, c.want)
+		if got := Placeable(c.name); got != c.want {
+			t.Errorf("Placeable(%q) = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

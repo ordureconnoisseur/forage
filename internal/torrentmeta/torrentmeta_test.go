@@ -1,6 +1,7 @@
 package torrentmeta
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,80 @@ func TestParseLargeFileSize(t *testing.T) {
 	}
 	if m.TotalSize != 53687091200 {
 		t.Fatalf("size = %d, want 53687091200", m.TotalSize)
+	}
+}
+
+// bencodeMultiFile builds a multi-file .torrent whose files are named by the
+// given paths, so a test can state a release's shape in one line.
+func bencodeMultiFile(name string, files ...string) []byte {
+	var b strings.Builder
+	b.WriteString("d4:infod5:filesl")
+	for _, f := range files {
+		fmt.Fprintf(&b, "d6:lengthi100e4:pathl%d:%see", len(f), f)
+	}
+	fmt.Fprintf(&b, "e4:name%d:%see", len(name), name)
+	return []byte(b.String())
+}
+
+// LacksVideo is the gate that decides whether a release is downloaded at all,
+// so each case here is a grab that either wastes a full transfer or never
+// happens. False negatives cost bandwidth; false POSITIVES cost the user a
+// scene they asked for, which is why "unknown" must never read as "empty".
+func TestLacksVideo(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		raw  []byte
+		want bool
+	}{
+		{
+			// The release the whole check exists for: a fake carrying an
+			// installer and a readme. Downloading it in full places nothing.
+			"only junk",
+			bencodeMultiFile("Totally.Legit.XXX.1080p", "Setup.exe", "Read Me.txt", "cover.jpg"),
+			true,
+		},
+		{
+			// A normal release. The junk rides along and the placer's
+			// allowlist drops it at placement — refusing here would throw
+			// away the scene with the passengers.
+			"video plus junk",
+			bencodeMultiFile("Real.Release.XXX.1080p", "scene.mp4", "Setup.exe", "info.nfo"),
+			false,
+		},
+		{
+			// Packed releases hide their video behind an archive: the file
+			// list genuinely says "no video" and is genuinely wrong.
+			"rar set",
+			bencodeMultiFile("Packed.Release", "release.rar", "release.r00", "release.r01", "release.sfv"),
+			false,
+		},
+		{"multipart numeric archive", bencodeMultiFile("Packed", "x.001", "x.002"), false},
+		{"single-file video", []byte("d4:infod6:lengthi1024e4:name9:movie.mp4ee"), false},
+		{"single-file executable", []byte("d4:infod6:lengthi1024e4:name9:Setup.exeee"), true},
+		{
+			// No files and no length: the info dict told us nothing. This is
+			// the shape a magnet's unresolved metadata arrives in, and it
+			// must NOT be refused — unknown is not empty.
+			"unknown file list",
+			[]byte("d4:infod4:name4:packee"),
+			false,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, err := Parse(c.raw)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := m.LacksVideo(); got != c.want {
+				t.Errorf("LacksVideo() = %v, want %v (meta %+v)", got, c.want, m)
+			}
+		})
+	}
+	// A nil Meta is what a caller holds when Parse failed; it must answer
+	// "don't refuse" rather than panic on the grab path.
+	var nilMeta *Meta
+	if nilMeta.LacksVideo() {
+		t.Error("a nil Meta must not refuse a release")
 	}
 }
 

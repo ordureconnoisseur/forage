@@ -24,6 +24,14 @@ import (
 // benign (re-loads next tick); API handlers re-Get + reapply + retry once.
 var ErrStaleUpdate = errors.New("grabs: update lost optimistic lock (row changed since load)")
 
+// RefusedPrefix marks a Reason that records forage's own DECISION not to
+// take a release (junk content), as distinct from something that failed.
+// Both writers use it — the api's pre-download screen of a fetched .torrent
+// and the poller's post-download screen of a single file — so the user can
+// tell refusal from failure at a glance, and so the retry paths can key on
+// one string: re-driving a refused release only re-downloads the same junk.
+const RefusedPrefix = "refused: "
+
 // Grab is the in-memory shape; columns map 1:1 onto the SQLite schema.
 // All optional fields are pointer-or-zero so they can be NULL on disk.
 type Grab struct {

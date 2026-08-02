@@ -345,6 +345,18 @@ func (s *Server) addTorrentAttempt(downloadURL, category, releaseTitle string, g
 	}
 	hash, err := qb.AddTorrent(ctx, downloadURL, category)
 	if err != nil {
+		// A refusal is terminal by construction: the release's own file list
+		// says there is nothing to place, so no retry, no backoff and no
+		// indexer failover can change the answer. Checked ahead of every
+		// retry classifier below, both because it must not be deferred and
+		// because isTransientFetchErr matches on substrings — a "(429 files,
+		// …)" refusal would otherwise read as a rate limit and be re-fetched.
+		if errors.Is(err, torrentmeta.ErrNoVideo) {
+			s.log.Info("grab refused before downloading",
+				"grab_id", grabID, "release", releaseTitle, "reason", err)
+			s.failGrab(context.Background(), grabID, grabs.RefusedPrefix+err.Error())
+			return
+		}
 		if isTransientFetchErr(err) && attempt < addMaxAttempts {
 			d := addBackoff(attempt)
 			s.log.Warn("torrent add rate-limited; auto-retrying",

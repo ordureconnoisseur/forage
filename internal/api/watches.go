@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -324,6 +325,10 @@ func contentDeadReason(reason string) bool {
 		// release is the only remedy. Observed looping 2026-07-14 before
 		// this marker existed.
 		"declined this torrent",
+		// forage's own refusal (grabs.RefusedPrefix): the release's file
+		// list, or the finished download itself, carried nothing placeable.
+		// Re-driving it downloads the identical junk.
+		grabs.RefusedPrefix,
 	} {
 		if strings.Contains(r, marker) {
 			return true

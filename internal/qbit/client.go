@@ -403,6 +403,20 @@ func (c *Client) addByFetchedFile(ctx context.Context, downloadURL, category str
 		return "", fmt.Errorf("indexer returned a non-torrent response (HTML/error page): likely the tracker's download cap or an expired session, not a bad torrent (%w) (%w)", ErrIndexerFetch, clienterr.ErrTransient)
 	}
 
+	// Screen the release BEFORE qBit ever sees it. The .torrent we just
+	// fetched carries the whole file list, so a release with no video in it
+	// is knowable now, for the cost of a few KB — where taking it means
+	// downloading it in full, placing nothing, failing confirmation and
+	// being culled hours later. Every byte of that was avoidable.
+	//
+	// Only a PARSED file list may refuse. The magnet paths above never reach
+	// here (a magnet has no list until its metadata resolves), and a parse
+	// error is left to qBit to judge, exactly as before.
+	if meta, perr := torrentmeta.Parse(body); perr == nil && meta.LacksVideo() {
+		return "", fmt.Errorf("%w (%d files, none of them video or an archive that could hold one)",
+			torrentmeta.ErrNoVideo, meta.FileCount)
+	}
+
 	// The info-hash (a) lets the grab link to its torrent without the
 	// poller's recent-additions guess, and (b) turns a "duplicate"
 	// refusal into a recoverable success when the torrent's already in
