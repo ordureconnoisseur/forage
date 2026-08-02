@@ -6,8 +6,10 @@ import (
 	"errors"
 	"io/fs"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The accuracy regression gate.
@@ -41,6 +43,12 @@ const (
 )
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
+
+// corpusFixtureMeta is the sidecar recording of the live run the fixture came
+// from: entry counts, the live Match+Verify result, and the verifier config
+// that produced it. Written by `matcher-bench --verify --dump`, so refreshing
+// the fixture refreshes the assertions below in the same command.
+var corpusFixtureMeta = ReplayMetaPath(corpusFixture)
 
 // The fixture is 1,570 entries of roughly ten candidates each, so one
 // ScoreReplay is ~16,000 Verify calls. CI runs `go test -race` and nothing
@@ -124,50 +132,115 @@ func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	}
 }
 
-// recordedConfig is the verifier as it stood when the fixture was recorded.
+// loadCorpusMeta returns the fixture's sidecar recording: the live run's
+// numbers and the verifier config that produced them.
 //
-// Pinned as a literal rather than referring to DefaultVerifyConfig, which was
-// the first version's mistake: it made the faithfulness check below fail
-// whenever the verifier legitimately improved, so it was really asserting
-// "nobody has changed anything" while claiming to assert "the replay is
-// faithful". Those are different questions and only the second is useful.
-var recordedConfig = VerifyConfig{
-	RankMinTitleOverlap:         0.15,
-	TitleMinTokens:              4,
-	TitleMinContainment:         0.80,
-	TitleMinConf:                0.30,
-	StrongTitleOverlap:          0.40,
-	ShortTitleMaxTokens:         2,
-	ShortTitleMinConf:           0.50,
-	StrongMatchConf:             0.70,
-	StrongMatchRivalTitleMargin: 0.15,
-	DateAnchorMinConf:           0.65,
-	StrongMatchNeedsDate:        false,
-	ShortTitleNeedsContainment:  true,
-	RefuseBehindTheScenes:       false,
-	TopMargin:                   0,
+// Those values used to be constants in this file, hand-copied from a bench
+// run's stdout. That made a fixture refresh a two-file edit, and the half
+// nobody remembers is this one: a refreshed fixture with stale constants fails
+// loudly, which teaches the next person not to refresh. Reading the recording
+// that the dump wrote alongside itself removes the choice.
+func loadCorpusMeta(t *testing.T) ReplayMeta {
+	t.Helper()
+	m, err := LoadReplayMeta(corpusFixtureMeta)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no fixture sidecar at %s; regenerate with matcher-bench --verify --dump", corpusFixtureMeta)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 // The fixture must reproduce the live bench, run under the config that
 // produced it. If replaying diverges, every offline experiment is measuring a
 // different verifier from the one that ran, and this whole apparatus is
 // decorative.
+//
+// The comparison uses the sidecar's recorded config, not DefaultVerifyConfig,
+// which was the first version's mistake: it made this check fail whenever the
+// verifier legitimately improved, so it was really asserting "nobody has
+// changed anything" while claiming to assert "the replay is faithful". Those
+// are different questions and only the second is useful.
 func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	s := scoreOnce("recorded", recordedConfig, entries)
-	// Recorded from matcher-bench --verify on 2026-07-31 against the same
-	// corpus build (commit 627749f, 1,570 confirmed search-grabs).
-	const (
-		liveEntries       = 1570
-		liveRecall        = 1496
-		liveFalseVerifies = 145
-		liveEntriesFalse  = 128
-	)
-	if s.Entries != liveEntries || s.Recall != liveRecall ||
-		s.FalseVerifies != liveFalseVerifies || s.EntriesWithFalse != liveEntriesFalse {
-		t.Errorf("replay diverged from the live run:\n  got  entries=%d recall=%d false=%d entriesWithFalse=%d\n  want entries=%d recall=%d false=%d entriesWithFalse=%d",
+	meta := loadCorpusMeta(t)
+	s := scoreOnce("recorded", meta.Config, entries)
+	if s.Entries != meta.Entries || s.Recall != meta.Recall ||
+		s.FalseVerifies != meta.FalseVerifies || s.EntriesWithFalse != meta.EntriesWithFalse {
+		t.Errorf("replay diverged from the live run recorded %s:\n  got  entries=%d recall=%d false=%d entriesWithFalse=%d\n  want entries=%d recall=%d false=%d entriesWithFalse=%d",
+			meta.RecordedAt.Format("2006-01-02"),
 			s.Entries, s.Recall, s.FalseVerifies, s.EntriesWithFalse,
-			liveEntries, liveRecall, liveFalseVerifies, liveEntriesFalse)
+			meta.Entries, meta.Recall, meta.FalseVerifies, meta.EntriesWithFalse)
+	}
+}
+
+// The sidecar must describe every knob the verifier has.
+//
+// Adding a VerifyConfig field and leaving the sidecar alone gives the recorded
+// config that field's zero value, so the faithfulness check above would replay
+// a verifier nobody ever ran: it would either fail for a reason its message
+// cannot explain, or pass by luck when the zero value happens to be the
+// shipped one. Comparing key sets says the real thing instead: the recording
+// predates the knob, re-record it.
+func TestFixtureSidecarDescribesEveryVerifierKnob(t *testing.T) {
+	raw, err := os.ReadFile(corpusFixtureMeta)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no fixture sidecar at %s", corpusFixtureMeta)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Config map[string]json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := json.Marshal(DefaultVerifyConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]json.RawMessage
+	if err := json.Unmarshal(shipped, &want); err != nil {
+		t.Fatal(err)
+	}
+	for k := range want {
+		if _, ok := doc.Config[k]; !ok {
+			t.Errorf("sidecar config is missing %q: the verifier grew a knob since the fixture was recorded, so the recording no longer describes a verifier that ran. Re-record with `make bench-refresh`.", k)
+		}
+	}
+	for k := range doc.Config {
+		if _, ok := want[k]; !ok {
+			t.Errorf("sidecar config carries %q, which VerifyConfig no longer has: re-record the fixture", k)
+		}
+	}
+}
+
+// The fixture is a snapshot of a moving distribution: StashDB gains and edits
+// scenes, and the corpus is rebuilt from the user's confirmed grabs, whose mix
+// of indexers and release groups shifts. A gate replaying a two-year-old
+// recording still passes, and still says nothing about today's input.
+//
+// Opt-in via env rather than always-on, because a test that turns red on a
+// calendar date breaks the build for someone who changed nothing, and a build
+// that goes red for no reason is a build people learn to force through. The
+// weekly scheduled workflow sets the variable; push CI does not.
+func TestReplayFixtureIsNotStale(t *testing.T) {
+	v := os.Getenv("FORAGE_FIXTURE_MAX_AGE_DAYS")
+	if v == "" {
+		t.Skip("FORAGE_FIXTURE_MAX_AGE_DAYS unset; freshness is checked by the scheduled bench workflow")
+	}
+	maxDays, err := strconv.Atoi(v)
+	if err != nil || maxDays <= 0 {
+		t.Fatalf("FORAGE_FIXTURE_MAX_AGE_DAYS=%q is not a positive integer", v)
+	}
+	meta := loadCorpusMeta(t)
+	ageDays := time.Since(meta.RecordedAt).Hours() / 24
+	t.Logf("fixture recorded %s, %.0f days ago", meta.RecordedAt.Format("2006-01-02"), ageDays)
+	if ageDays > float64(maxDays) {
+		t.Errorf("corpus fixture is %.0f days old, budget is %d: the frozen gate no longer resembles current matcher input. Re-record with `make bench-refresh`.",
+			ageDays, maxDays)
 	}
 }
 
@@ -175,7 +248,7 @@ func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 // the ratchet the floors above imply, stated directly against the same data.
 func TestShippedConfigBeatsTheRecording(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	was := scoreOnce("recorded", recordedConfig, entries)
+	was := scoreOnce("recorded", loadCorpusMeta(t).Config, entries)
 	now := scoreOnce("default", DefaultVerifyConfig, entries)
 	t.Logf("recorded: recall %d clean %.4f false %d | shipped: recall %d clean %.4f false %d",
 		was.Recall, was.CleanRate(), was.FalseVerifies,

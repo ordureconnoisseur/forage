@@ -1,0 +1,133 @@
+name: Matcher accuracy (weekly)
+
+# Two halves of the matcher pipeline, guarded very differently.
+#
+# Push CI replays a frozen candidate set through Verify. That is real, cheap
+# and deterministic, but it protects Verify and NOTHING ELSE: the candidates
+# were recorded before whatever change is being tested, so a regression in
+# retrieval, query construction or the confidence weights cannot show up. The
+# headline accuracy figure is Match AND Verify together.
+#
+# The full pipeline needs live StashDB, the daemon's SQLite performer/studio
+# caches, and the daemon's grab history to build a corpus from. None of that is
+# reachable from a GitHub-hosted runner, and a full run is ~26 minutes. So this
+# workflow is honest about which half it can do where:
+#
+#   replay-gate    always runs here. Re-checks the frozen gate AND fails when
+#                  the recording has gone stale, which is the failure mode a
+#                  frozen fixture actually has.
+#   full-pipeline  runs only when the repo variable BENCH_RUNNER names a
+#                  self-hosted runner on a host with the forage container.
+#                  Unset, it is skipped and the summary says so in as many
+#                  words, rather than leaving a green tick that proves less
+#                  than a reader would assume.
+#
+# Without a self-hosted runner, the full pipeline is measured by running
+# `make bench` against your own instance. See docs/matcher-accuracy.md.
+
+on:
+  schedule:
+    # Mondays, 04:17 UTC. Off the hour because scheduled runs on the hour queue
+    # behind everyone else's cron.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      fixture_max_age_days:
+        description: 'Fail if the committed replay fixture is older than this many days'
+        required: false
+        default: '120'
+
+permissions:
+  contents: read
+
+jobs:
+  replay-gate:
+    name: Frozen replay + fixture freshness
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # No -race: this is pure single-goroutine scoring, and the race detector
+      # makes it 10-50x slower for nothing. Push CI runs the same tests under
+      # -race because it runs the whole suite that way.
+      - name: Replay gate
+        run: go test ./internal/matcher/ -run 'Corpus|Fixture|Shipped|PipelineFloors' -count=1 -v
+
+      # The staleness ratchet. A gate replaying a two-year-old recording still
+      # passes and still says nothing about today's input: StashDB edits scenes
+      # and the corpus is rebuilt from the user's grabs, so both halves of the
+      # input move without anyone touching this repo. The check is env-gated so
+      # push CI never turns red on a calendar date.
+      - name: Fixture freshness
+        env:
+          FORAGE_FIXTURE_MAX_AGE_DAYS: ${{ inputs.fixture_max_age_days || '120' }}
+        run: go test ./internal/matcher/ -run TestReplayFixtureIsNotStale -count=1 -v
+
+  full-pipeline:
+    name: Live Match + Verify (self-hosted)
+    # vars.BENCH_RUNNER is the label of a self-hosted runner on a host that can
+    # reach the forage container. Unset means no such runner exists, and a job
+    # pinned to a runner nobody registered queues for 24 hours before failing,
+    # which reads as an infrastructure fault rather than a missing setup step.
+    if: vars.BENCH_RUNNER != ''
+    runs-on: ${{ vars.BENCH_RUNNER || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # Everything the bench needs (StashDB key, Stash key, the caches, the
+      # grab history) already lives in the running container's environment, so
+      # the runner needs no secrets of its own, only docker access.
+      # The script exits non-zero when a floor in
+      # internal/matcher/pipeline_floors.json is breached.
+      - name: Bench
+        env:
+          FORAGE_BENCH_CONTAINER: ${{ vars.BENCH_CONTAINER || 'forager' }}
+        run: bash scripts/matcher-bench.sh
+
+      - name: Failure CSV
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verify-failures
+          path: verify.failures.csv
+          if-no-files-found: ignore
+
+  report:
+    name: What was actually measured
+    needs: [replay-gate, full-pipeline]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      # The point of this job. A weekly run that only exercised the frozen
+      # replay has guarded Verify and not retrieval, and saying that out loud
+      # every week is the difference between a known gap and a forgotten one.
+      - name: Summary
+        env:
+          REPLAY: ${{ needs.replay-gate.result }}
+          PIPELINE: ${{ needs.full-pipeline.result }}
+        run: |
+          {
+            echo "## Matcher accuracy, weekly"
+            echo
+            echo "| half | what it guards | result |"
+            echo "| --- | --- | --- |"
+            echo "| Frozen replay | Verify only, over recorded candidates | \`$REPLAY\` |"
+            echo "| Full pipeline | Match (retrieval + scoring) AND Verify, live | \`$PIPELINE\` |"
+            echo
+            if [ "$PIPELINE" != "success" ] && [ "$PIPELINE" != "failure" ]; then
+              echo "> **Retrieval and scoring were NOT measured this week.**"
+              echo "> No self-hosted bench runner is configured, so only the frozen"
+              echo "> replay ran, and a frozen replay cannot see a regression in"
+              echo "> query construction, retrieval or the confidence weights."
+              echo ">"
+              echo "> Measure it by hand with \`make bench\` against a live instance,"
+              echo "> or set the repo variable \`BENCH_RUNNER\` to a self-hosted runner"
+              echo "> label. See \`docs/matcher-accuracy.md\`."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

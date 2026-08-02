@@ -1,0 +1,15 @@
+{
+  "note": "Full-pipeline (Match+Verify) floors, enforced by `matcher-bench --verify --gate` on a schedule, not on push: the run needs live StashDB and the daemon's caches and takes ~26 minutes. See docs/matcher-accuracy.md. Seeded from the 2026-07-31 live bench recording (1,570 confirmed search-grabs, build-corpus with -include-downloads OFF) replayed under the shipped verifier, because the verifier gained RefuseBehindTheScenes after that recording was taken; retrieval is by definition identical to the live run, so the recall figure is a live figure and the precision figures are the shipped verifier's on live candidates. Slack is deliberate and larger than the replay gate's: StashDB is a third party that edits and deletes scenes, and the corpus is rebuilt from the daemon's confirmed grabs on every run, so both halves of the input move without anyone touching this repo. Tighten when a run earns it.",
+  "measured_at": "2026-07-31",
+  "commit": "627749f",
+  "min_entries": 1400,
+  "min_recall": 0.93,
+  "min_clean": 0.86,
+  "max_false_verify_rate": 0.1,
+  "measured": {
+    "entries": 1570,
+    "recall": 0.9529,
+    "clean": 0.8803,
+    "false_verify_rate": 0.0809
+  }
+}

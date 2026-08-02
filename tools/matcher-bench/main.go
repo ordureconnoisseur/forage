@@ -23,6 +23,12 @@
 // Or in the deployed forager container against the real corpus:
 //
 //	docker exec forager /matcher-bench --corpus=/data/corpus.yaml --concurrency=8
+//
+// With --verify --gate it is the scheduled full-pipeline regression gate: it
+// fails when the live run breaches the floors in
+// internal/matcher/pipeline_floors.json. That is the half of the pipeline the
+// per-push test cannot see, since replaying frozen candidates guards Verify
+// alone. Drive it with scripts/matcher-bench.sh; see docs/matcher-accuracy.md.
 package main
 
 import (
@@ -31,6 +37,7 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -59,7 +66,10 @@ func main() {
 		verify      = flag.Bool("verify", false, "verification mode: per entry assert the expected scene verifies (recall) and other candidates do NOT (precision) — exercises matcher.Verify, the release-page badge logic")
 		explain     = flag.String("explain", "", "match ONE release string and dump every candidate (rank, conf, title overlap, reasons, verify outcome) — the failure-CSV microscope")
 		expectID    = flag.String("expect", "", "with --explain: the expected StashDB scene id, highlighted and verify-checked")
-		dumpPath    = flag.String("dump", "", "with --verify: record every entry's candidates to this JSON path. Verify is pure given its candidates, so a dump lets threshold sweeps and a CI regression gate replay the corpus offline instead of paying two StashDB round trips per release (26 minutes a run).")
+		dumpPath    = flag.String("dump", "", "with --verify: record every entry's candidates to this path (.gz compresses). Verify is pure given its candidates, so a dump lets threshold sweeps and a CI regression gate replay the corpus offline instead of paying two StashDB round trips per release (26 minutes a run). A <name>.meta.json sidecar is written beside it holding this run's numbers and verifier config, which is what makes refreshing the committed fixture one command.")
+		dumpCommit  = flag.String("dump-commit", "", "with --dump: the forage commit being benched, recorded in the sidecar so a surprising number can be traced back to a tree")
+		gate        = flag.Bool("gate", false, "with --verify: fail (exit 1) when the run breaches the recorded full-pipeline floors in internal/matcher/pipeline_floors.json. This is the scheduled regression gate; the per-push gate only replays frozen candidates and so guards Verify alone.")
+		floorsPath  = flag.String("floors", "", "with --gate: read floors from this JSON file instead of the ones compiled into the binary. For trying a proposed ratchet without rebuilding.")
 	)
 	flag.Parse()
 
@@ -185,13 +195,16 @@ func main() {
 			log.Error("write verify csv", "err", err)
 		}
 		if *dumpPath != "" {
-			if err := matcher.SaveReplay(*dumpPath, vr.Replay); err != nil {
+			if err := writeDump(log, *dumpPath, *dumpCommit, describeCorpus(*corpusPath, len(gt)), vr); err != nil {
 				log.Error("write replay dump", "err", err)
-			} else {
-				log.Info("replay dump written", "path", *dumpPath, "entries", len(vr.Replay))
 			}
 		}
 		printVerify(os.Stdout, vr, csvPath)
+		if *gate {
+			if !checkFloors(os.Stdout, log, *floorsPath, vr) {
+				os.Exit(1)
+			}
+		}
 		return
 	}
 
@@ -748,6 +761,12 @@ func printVerify(w *os.File, r *verifyResult, csvPath string) {
 	fmt.Fprintf(tw, "  of which expected not a candidate\t%d\n", r.NoExpectedCand)
 	fmt.Fprintf(tw, "entries with >=1 false verify\t%d  (%.3f)\n", r.EntriesWithFalse, ratio(r.EntriesWithFalse, r.Total))
 	fmt.Fprintf(tw, "total false verifies\t%d\n", r.FalseVerifies)
+	// Clean is recall minus the entries that ALSO verified a wrong scene. It
+	// is the honest single number, and it is what the scheduled gate floors
+	// on, so it belongs in the normal report rather than only under --gate:
+	// recall alone reads as an improvement when a change simply started
+	// verifying everything.
+	fmt.Fprintf(tw, "clean (right scene and nothing else)\t%.4f\n", r.score().CleanRate())
 	fmt.Fprintf(tw, "elapsed\t%s\n", r.Elapsed.Round(time.Millisecond))
 	fmt.Fprintf(tw, "failures csv\t%s\n", csvPath)
 	tw.Flush()
@@ -774,4 +793,100 @@ func ratio(n, d int) float64 {
 		return 0
 	}
 	return float64(n) / float64(d)
+}
+
+// score reshapes a live verify run into the same struct the offline replay
+// scorer produces, so the scheduled full-pipeline gate and the per-push replay
+// gate are comparing identical quantities. They were computed by two different
+// bits of arithmetic before, which is how a "recall" in one place can quietly
+// stop meaning what it means in the other.
+func (r *verifyResult) score() matcher.ReplayScore {
+	return matcher.ReplayScore{
+		Entries:          r.Total,
+		Recall:           r.Recall,
+		FalseVerifies:    r.FalseVerifies,
+		EntriesWithFalse: r.EntriesWithFalse,
+	}
+}
+
+// describeCorpus records what the run was measured on, so a sidecar built with
+// different build-corpus flags is visible in a diff rather than inferred from
+// an entry count that happens to look plausible.
+func describeCorpus(corpusPath string, entries int) string {
+	if corpusPath == "" {
+		return fmt.Sprintf("%d labeled scenes from the Stash library (filenames, NOT production matcher input)", entries)
+	}
+	return fmt.Sprintf("%d entries from %s", entries, filepath.Base(corpusPath))
+}
+
+// writeDump writes the replay fixture and its sidecar.
+//
+// The entries are sorted first: runVerify appends in worker-completion order,
+// so two runs over the same corpus produce byte-different files. That makes a
+// refreshed fixture impossible to eyeball and turns every refresh into an
+// unreviewable blob. ScoreReplay sums over entries, so order changes nothing
+// it measures.
+func writeDump(log *slog.Logger, path, commit, corpus string, vr *verifyResult) error {
+	sort.Slice(vr.Replay, func(i, j int) bool { return vr.Replay[i].Release < vr.Replay[j].Release })
+	if err := matcher.SaveReplay(path, vr.Replay); err != nil {
+		return err
+	}
+	metaPath := matcher.ReplayMetaPath(path)
+	meta := matcher.ReplayMeta{
+		RecordedAt:       time.Now().UTC().Truncate(time.Second),
+		Commit:           commit,
+		Corpus:           corpus,
+		Entries:          vr.Total,
+		Recall:           vr.Recall,
+		FalseVerifies:    vr.FalseVerifies,
+		EntriesWithFalse: vr.EntriesWithFalse,
+		Config:           matcher.DefaultVerifyConfig,
+	}
+	if err := matcher.SaveReplayMeta(metaPath, meta); err != nil {
+		return err
+	}
+	log.Info("replay dump written", "path", path, "meta", metaPath, "entries", len(vr.Replay))
+	return nil
+}
+
+// checkFloors is the scheduled full-pipeline regression gate. Returns false
+// when the run breached a floor.
+//
+// It prints the floors even on success. A gate whose numbers are only visible
+// when it fails is a gate nobody knows the margin of, and the margin is what
+// tells you a change is drifting before it trips.
+func checkFloors(w io.Writer, log *slog.Logger, floorsPath string, vr *verifyResult) bool {
+	var (
+		floors matcher.PipelineFloors
+		err    error
+	)
+	if floorsPath != "" {
+		floors, err = matcher.LoadPipelineFloors(floorsPath)
+	} else {
+		floors, err = matcher.DefaultPipelineFloors()
+	}
+	if err != nil {
+		log.Error("load pipeline floors", "err", err)
+		return false
+	}
+	s := vr.score()
+	fmt.Fprintf(w, "\nfull-pipeline gate (floors measured %s):\n", floors.MeasuredAt)
+	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "metric\tthis run\tfloor")
+	fmt.Fprintf(tw, "entries\t%d\t>= %d\n", s.Entries, floors.MinEntries)
+	fmt.Fprintf(tw, "recall\t%.4f\t>= %.4f\n", s.RecallRate(), floors.MinRecall)
+	fmt.Fprintf(tw, "clean\t%.4f\t>= %.4f\n", s.CleanRate(), floors.MinClean)
+	fmt.Fprintf(tw, "false verify rate\t%.4f\t<= %.4f\n", s.FalseVerifyRate(), floors.MaxFalseVerifyRate)
+	tw.Flush()
+
+	breaches := floors.Check(s)
+	if len(breaches) == 0 {
+		fmt.Fprintln(w, "gate: PASS")
+		return true
+	}
+	fmt.Fprintln(w, "gate: FAIL")
+	for _, b := range breaches {
+		fmt.Fprintf(w, "  - %s\n", b)
+	}
+	return false
 }

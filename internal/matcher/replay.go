@@ -1,8 +1,14 @@
 package matcher
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
@@ -154,24 +160,129 @@ func ScoreReplay(cfg VerifyConfig, entries []ReplayEntry) ReplayScore {
 	return s
 }
 
-// LoadReplay reads a dump written by matcher-bench --dump.
+// LoadReplay reads a dump written by matcher-bench --dump. A .gz path is
+// decompressed, so the committed fixture can be fed straight to verify-sweep
+// without an unzip step in between.
 func LoadReplay(path string) ([]ReplayEntry, error) {
-	b, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
+	defer f.Close()
+	var r io.Reader = f
+	if strings.HasSuffix(path, ".gz") {
+		gz, err := gzip.NewReader(f)
+		if err != nil {
+			return nil, err
+		}
+		defer gz.Close()
+		r = gz
+	}
 	var out []ReplayEntry
-	if err := json.Unmarshal(b, &out); err != nil {
+	if err := json.NewDecoder(r).Decode(&out); err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// SaveReplay writes a dump.
+// SaveReplay writes a dump, compressing when the path ends in .gz.
+//
+// The gzip branch exists so refreshing the committed fixture is one command.
+// The corpus is ~9 MB of candidate JSON raw and under a megabyte gzipped, and
+// the previous refresh recipe (dump plain, gzip by hand, then hand-edit the
+// numbers pinned in corpus_gate_test.go) is the kind of ceremony that leaves a
+// fixture unrefreshed for a year while the input distribution moves under it.
 func SaveReplay(path string, entries []ReplayEntry) error {
-	b, err := json.Marshal(entries)
+	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0o644)
+	var w io.Writer = f
+	var gz *gzip.Writer
+	if strings.HasSuffix(path, ".gz") {
+		gz = gzip.NewWriter(f)
+		w = gz
+	}
+	enc := json.NewEncoder(w)
+	if err := enc.Encode(entries); err != nil {
+		f.Close()
+		return err
+	}
+	if gz != nil {
+		if err := gz.Close(); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	return f.Close()
+}
+
+// ReplayMeta describes the live Match+Verify run a dump was recorded from.
+//
+// It exists because the numbers it holds used to be hand-copied constants in
+// corpus_gate_test.go. That made refreshing the fixture a two-file edit where
+// forgetting the second file leaves the gate asserting a run that no longer
+// exists, and it silently discouraged refreshing at all. Recording them beside
+// the dump makes a refresh one command and keeps the assertion honest.
+//
+// Config is the verifier as it stood at record time. Pinning it here rather
+// than pointing at DefaultVerifyConfig is deliberate: the faithfulness check
+// asks "does replaying reproduce the live run", which is a question about the
+// config that ran, not about the config shipping today.
+type ReplayMeta struct {
+	RecordedAt time.Time `json:"recorded_at"`
+	// Commit is the forage build the recording came from, when known. Purely
+	// for tracing a surprising number back to a tree.
+	Commit string `json:"commit,omitempty"`
+	// Corpus names the input set, so a refresh built with different
+	// build-corpus flags is visible rather than inferred from the entry count.
+	Corpus           string       `json:"corpus,omitempty"`
+	Entries          int          `json:"entries"`
+	Recall           int          `json:"recall"`
+	FalseVerifies    int          `json:"false_verifies"`
+	EntriesWithFalse int          `json:"entries_with_false"`
+	Config           VerifyConfig `json:"config"`
+}
+
+// ReplayMetaPath returns the sidecar path for a dump path: the dump's
+// extensions (.json, .json.gz) are replaced with .meta.json, so the pair
+// always travels together in one directory.
+func ReplayMetaPath(dumpPath string) string {
+	base := strings.TrimSuffix(dumpPath, ".gz")
+	base = strings.TrimSuffix(base, ".json")
+	return base + ".meta.json"
+}
+
+// LoadReplayMeta reads a sidecar written by SaveReplayMeta.
+func LoadReplayMeta(path string) (ReplayMeta, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ReplayMeta{}, err
+	}
+	var m ReplayMeta
+	// Unknown fields are an error: a sidecar carrying a key this build does
+	// not understand is a sidecar written by a different tool version, and
+	// quietly ignoring it would let the gate assert against a partially-read
+	// recording.
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&m); err != nil {
+		return ReplayMeta{}, err
+	}
+	return m, nil
+}
+
+// SaveReplayMeta writes the sidecar, indented, because it is a committed file
+// a human reads in a diff.
+func SaveReplayMeta(path string, m ReplayMeta) error {
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	return os.WriteFile(path, append(b, '\n'), 0o644)
 }

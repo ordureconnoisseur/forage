@@ -1,0 +1,25 @@
+{
+  "recorded_at": "2026-07-31T00:00:00Z",
+  "commit": "627749f",
+  "corpus": "1570 confirmed search-grabs (tools/build-corpus, -include-downloads OFF)",
+  "entries": 1570,
+  "recall": 1496,
+  "false_verifies": 145,
+  "entries_with_false": 128,
+  "config": {
+    "RankMinTitleOverlap": 0.15,
+    "TitleMinTokens": 4,
+    "TitleMinContainment": 0.8,
+    "TitleMinConf": 0.3,
+    "StrongTitleOverlap": 0.4,
+    "ShortTitleMaxTokens": 2,
+    "ShortTitleMinConf": 0.5,
+    "StrongMatchConf": 0.7,
+    "StrongMatchRivalTitleMargin": 0.15,
+    "DateAnchorMinConf": 0.65,
+    "StrongMatchNeedsDate": false,
+    "ShortTitleNeedsContainment": true,
+    "RefuseBehindTheScenes": false,
+    "TopMargin": 0
+  }
+}
