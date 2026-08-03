@@ -819,9 +819,20 @@ function MatchVerdict({
   const accepted = overrides.some((o) => o.verdict === "verified");
   const refused =
     overrides.some((o) => o.verdict === "refused") || !!explain.veto;
+  //
+  // Each rule hint is gated on the verdict it would imply, because testing
+  // them purely in daemon order reintroduced the contradiction in a new
+  // place. verifyReleases builds overrides in that order: the JAV-code accept
+  // fires on !verified, then the pack / link-spam / image-set refusals fire on
+  // verified. A JAV-coded release that also reads as a pack therefore ends up
+  // with overrides [verified, refused] and a FINAL verified of false, and the
+  // summary rendered "Not verified" beside "accepted by a rule". Confirmed in
+  // a browser, not reasoned: titles like "SSIS-123 Mega Pack" reach it.
+  //
+  // So the rule is simply that the hint may never disagree with the badge.
   let hint = "";
-  if (accepted) hint = "accepted by a rule";
-  else if (refused) hint = "refused by a rule";
+  if (verified && accepted) hint = "accepted by a rule";
+  else if (!verified && refused) hint = "refused by a rule";
   else if (verified && explain.path_label) hint = explain.path_label;
   else if (explain.note) hint = "nothing to compare against";
   else if (!pos.found) hint = "not among the candidates";
