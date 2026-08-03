@@ -60,6 +60,52 @@ func TestHasLiveGrabForRelease(t *testing.T) {
 	}
 }
 
+// Recoverable feeds the adopt sweep's revive branch, which flips a grab back
+// to completed/downloading whenever the client still holds a healthy download
+// behind it. A REFUSED grab has that exact shape (failed, never placed, torrent
+// alive and finished in qBit) while being the one case that must never come
+// back: revive returns it to "completed", the placement gate refuses it again,
+// and the pair repeats twice a tick for the daemon's lifetime, re-arming the
+// failed-grab notification every couple of minutes with it.
+func TestRecoverableSkipsRefusedGrabs(t *testing.T) {
+	r := newTestRepo(t)
+	ctx := context.Background()
+
+	// Identical rows but for the reason, so only the RefusedPrefix can be
+	// what separates them.
+	spurious, err := r.Insert(ctx, Grab{
+		ReleaseTitle: "Real.Release.XXX.1080p", Client: "qbit", ClientID: "hash-transient",
+		Status: "failed", Reason: "qbit state=error", GrabbedAt: 1,
+	})
+	if err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if _, err := r.Insert(ctx, Grab{
+		ReleaseTitle: "Totally.Legit.XXX.1080p", Client: "qbit", ClientID: "hash-refused",
+		Status: "failed", Reason: RefusedPrefix + "the whole download is one .exe file", GrabbedAt: 1,
+	}); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	got, err := r.Recoverable(ctx, "qbit")
+	if err != nil {
+		t.Fatalf("Recoverable: %v", err)
+	}
+	if _, ok := got["hash-refused"]; ok {
+		t.Error("a refused grab was offered for revival; the adopt sweep would resurrect it every tick")
+	}
+	// The other half matters just as much: this query exists to rescue grabs a
+	// transient client error false-failed, and over-filtering would strand a
+	// finished download forever.
+	g, ok := got["hash-transient"]
+	if !ok {
+		t.Fatal("the genuinely false-failed grab is no longer recoverable; its download would strand")
+	}
+	if g.ID != spurious {
+		t.Errorf("recovered grab id = %d, want %d", g.ID, spurious)
+	}
+}
+
 // TestUpdateOptimisticLock pins the rev compare-and-set: two readers load the
 // same row; the first write wins and bumps rev; the second (stale) write is
 // rejected with ErrStaleUpdate rather than silently clobbering — the

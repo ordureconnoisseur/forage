@@ -25,15 +25,31 @@ type Meta struct {
 	TotalSize  int64
 	FileCount  int // every file in the torrent (videos + thumbs + nfos)
 	VideoCount int // files whose extension is a known video container
+	// ArchiveCount is packed files (.rar, .zip, multipart .r00/.001, .iso).
+	// forage has no unpacker, so these are not videos-in-waiting; the count
+	// exists so a refusal can say "all archives" instead of "no video".
+	ArchiveCount int
 }
 
-// videoExts is the set of extensions counted as a "video" for pack
-// classification. Lower-case, leading dot.
+// videoExts is the set of extensions counted as a "video". Lower-case,
+// leading dot.
+//
+// This is forage's ONLY video-container list. The placer builds the video
+// half of its library allowlist from it (see placer.placeableExts), because
+// the two questions are the same question asked at different times: "is
+// there a video in this release" before downloading, and "may this file
+// enter the library" after. When this list was the narrower of the two, a
+// release whose only container was .3gp/.mpv/.m2v/.m4p was refused before
+// download even though the placer would have accepted it happily. That is
+// the expensive direction to be wrong in: a false refusal costs the user a
+// scene, a false accept costs bandwidth we were already spending. So: be
+// generous here, and let one list feed both callers.
 var videoExts = map[string]bool{
 	".mp4": true, ".mkv": true, ".avi": true, ".wmv": true, ".mov": true,
 	".m4v": true, ".ts": true, ".m2ts": true, ".mpg": true, ".mpeg": true,
 	".flv": true, ".webm": true, ".vob": true, ".rm": true, ".rmvb": true,
 	".divx": true, ".asf": true, ".mts": true, ".f4v": true, ".ogv": true,
+	".3gp": true, ".mpv": true, ".m2v": true, ".m4p": true,
 }
 
 func isVideo(name string) bool {
@@ -49,6 +65,114 @@ func isVideo(name string) bool {
 // torrent's files the same way the .torrent parser does.
 func IsVideo(name string) bool {
 	return isVideo(name)
+}
+
+// VideoExtensions returns every video-container extension, lower-case with a
+// leading dot, in no particular order. Exported for the placer, which builds
+// its allowlist from this rather than keeping a second copy: see videoExts.
+func VideoExtensions() []string {
+	out := make([]string, 0, len(videoExts))
+	for ext := range videoExts {
+		out = append(out, ext)
+	}
+	return out
+}
+
+// archiveExts is the set of container extensions whose CONTENTS are unknown
+// from the file list alone. Being on this list does NOT save a release from
+// refusal (see LacksVideo); it only changes what the user is told, because
+// "12 files, all of them archives" explains the refusal where "no video"
+// sounds like a mistake.
+var archiveExts = map[string]bool{
+	".rar": true, ".zip": true, ".7z": true, ".tar": true, ".gz": true,
+	".bz2": true, ".xz": true, ".iso": true, ".arj": true, ".cab": true,
+	".z": true, ".lzma": true, ".zst": true,
+}
+
+// isArchive reports whether a filename is a packed container. Beyond the
+// named extensions it accepts the two multipart shapes scene releases use,
+// ".r00".."r99" and ".001"..".999", because a rar set's later parts carry no
+// recognisable extension at all.
+func isArchive(name string) bool {
+	i := strings.LastIndexByte(name, '.')
+	if i < 0 {
+		return false
+	}
+	ext := strings.ToLower(name[i:])
+	if archiveExts[ext] {
+		return true
+	}
+	switch {
+	case len(ext) == 4 && ext[1] == 'r' && isDigits(ext[2:]):
+		return true // .r00 .. .r99
+	case len(ext) == 4 && isDigits(ext[1:]):
+		return true // .001 .. .999
+	}
+	return false
+}
+
+func isDigits(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// IsArchive reports whether a filename is a packed container forage cannot
+// open. Exported for the poller's post-download refusal, which says so in
+// the reason it shows the user: "a single .rar" needs a different sentence
+// from "a single .exe".
+func IsArchive(name string) bool {
+	return isArchive(name)
+}
+
+// ErrNoVideo marks a release whose file list is known and provably carries
+// nothing a media library can use. Exported so the grab layer can tell this
+// refusal (forage decided against the release; no retry, no failover, and no
+// backoff can change the answer) from a failure.
+var ErrNoVideo = errors.New("this release has no video files in it, so forage did not download it")
+
+// LacksVideo reports whether downloading this torrent is provably pointless:
+// its file list is KNOWN and none of the files is a video container.
+//
+// An archive does NOT save a release, and the version of this that exempted
+// them was wrong. The exemption assumed a .rar might unpack into a scene, but
+// forage has no unpacker anywhere in it, and the library allowlist refuses
+// every archive extension (placer.Placeable), so an archive-only release
+// cannot reach the library no matter how it is downloaded. The exemption's
+// only effect was to pay for the download and then refuse the same release
+// afterwards, in poller/refuse_junk.go, with the bandwidth already spent.
+// What is given up by refusing early is the chance to unpack the download by
+// hand out of the client's complete dir; the refusal is shown on the grab, so
+// that is a visible loss rather than a silent one.
+//
+// ArchiveCount is still counted, purely to explain the refusal (NoVideoError).
+//
+// The FileCount guard is the caution that remains. A magnet has no file list
+// until its metadata resolves, and an NZB never exposes one here; both arrive
+// as a zero FileCount, and "unknown" must never be read as "empty", because a
+// false refusal costs the user a scene where a false accept only costs
+// bandwidth we were already spending.
+func (m *Meta) LacksVideo() bool {
+	if m == nil || m.FileCount == 0 {
+		return false
+	}
+	return m.VideoCount == 0
+}
+
+// NoVideoError is the refusal LacksVideo justifies, worded from the counts so
+// the Grabs card says why. Wraps ErrNoVideo: callers key on that identity.
+func (m *Meta) NoVideoError() error {
+	if m == nil {
+		return ErrNoVideo
+	}
+	if m.ArchiveCount > 0 {
+		return fmt.Errorf("%w (%d files, %d of them archives, and forage has no unpacker)",
+			ErrNoVideo, m.FileCount, m.ArchiveCount)
+	}
+	return fmt.Errorf("%w (%d files, none of them video)", ErrNoVideo, m.FileCount)
 }
 
 // maxDepth caps bencode container nesting. Real torrents nest only a
@@ -97,8 +221,13 @@ func Parse(b []byte) (*Meta, error) {
 			}
 			// Last path segment is the filename.
 			if path, ok := f["path"].([]any); ok && len(path) > 0 {
-				if seg, ok := path[len(path)-1].([]byte); ok && isVideo(string(seg)) {
-					m.VideoCount++
+				if seg, ok := path[len(path)-1].([]byte); ok {
+					switch name := string(seg); {
+					case isVideo(name):
+						m.VideoCount++
+					case isArchive(name):
+						m.ArchiveCount++
+					}
 				}
 			}
 		}
@@ -112,8 +241,11 @@ func Parse(b []byte) (*Meta, error) {
 		}
 		m.TotalSize = ln
 		m.FileCount = 1
-		if isVideo(m.Name) {
+		switch {
+		case isVideo(m.Name):
 			m.VideoCount = 1
+		case isArchive(m.Name):
+			m.ArchiveCount = 1
 		}
 	}
 	return m, nil

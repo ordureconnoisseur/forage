@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
@@ -329,7 +330,22 @@ func contentDeadReason(reason string) bool {
 			return true
 		}
 	}
-	return false
+	// forage's own refusal (grabs.RefusedPrefix): the release's file list, or
+	// the finished download itself, carried nothing placeable. Re-driving it
+	// downloads the identical junk.
+	//
+	// Matched as a PREFIX, not with Contains. "refused: " is a generic phrase
+	// and two existing production errors carry it verbatim mid-string:
+	//
+	//   qbit login refused: %s          (internal/qbit/client.go)
+	//   sab %s refused: %s              (internal/sabnzbd/client.go)
+	//
+	// Both are infrastructure failures that the same release survives on a
+	// retry, and Contains would have declared them content-dead: a wrong qBit
+	// password would quietly mark every watch it touched as unfixable. The two
+	// writers of this marker both put it at the start, so a prefix test costs
+	// nothing and cannot collide with prose.
+	return strings.HasPrefix(r, grabs.RefusedPrefix)
 }
 
 // postWatchGrab grabs the auto-picked (best) release recorded on a watch and

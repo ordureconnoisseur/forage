@@ -1,6 +1,7 @@
 package torrentmeta
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -87,6 +88,103 @@ func TestParseLargeFileSize(t *testing.T) {
 	}
 	if m.TotalSize != 53687091200 {
 		t.Fatalf("size = %d, want 53687091200", m.TotalSize)
+	}
+}
+
+// bencodeMultiFile builds a multi-file .torrent whose files are named by the
+// given paths, so a test can state a release's shape in one line.
+func bencodeMultiFile(name string, files ...string) []byte {
+	var b strings.Builder
+	b.WriteString("d4:infod5:filesl")
+	for _, f := range files {
+		fmt.Fprintf(&b, "d6:lengthi100e4:pathl%d:%see", len(f), f)
+	}
+	fmt.Fprintf(&b, "e4:name%d:%see", len(name), name)
+	return []byte(b.String())
+}
+
+// LacksVideo is the gate that decides whether a release is downloaded at all,
+// so each case here is a grab that either wastes a full transfer or never
+// happens. False negatives cost bandwidth; false POSITIVES cost the user a
+// scene they asked for, which is why "unknown" must never read as "empty".
+func TestLacksVideo(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		raw  []byte
+		want bool
+	}{
+		{
+			// The release the whole check exists for: a fake carrying an
+			// installer and a readme. Downloading it in full places nothing.
+			"only junk",
+			bencodeMultiFile("Totally.Legit.XXX.1080p", "Setup.exe", "Read Me.txt", "cover.jpg"),
+			true,
+		},
+		{
+			// A normal release. The junk rides along and the placer's
+			// allowlist drops it at placement, and refusing here would throw
+			// away the scene with the passengers.
+			"video plus junk",
+			bencodeMultiFile("Real.Release.XXX.1080p", "scene.mp4", "Setup.exe", "info.nfo"),
+			false,
+		},
+		{
+			// A packed release IS refused, and that is the deliberate answer,
+			// not an oversight. forage has no unpacker, and placer.Placeable
+			// rejects every archive extension, so a rar set could not have
+			// reached the library however far it was carried; the earlier
+			// exemption only meant paying for the transfer before refusing it
+			// at placement instead. Downloading to hand-unpack is what this
+			// gives up, and the refusal on the grab says so.
+			"rar set",
+			bencodeMultiFile("Packed.Release", "release.rar", "release.r00", "release.r01", "release.sfv"),
+			true,
+		},
+		{"multipart numeric archive", bencodeMultiFile("Packed", "x.001", "x.002"), true},
+		{
+			// The other half of that policy: an archive next to a video is
+			// harmless. The video is what forage came for.
+			"video plus archive",
+			bencodeMultiFile("Real.Release", "scene.mkv", "extras.rar"),
+			false,
+		},
+		{"single-file video", []byte("d4:infod6:lengthi1024e4:name9:movie.mp4ee"), false},
+		{"single-file executable", []byte("d4:infod6:lengthi1024e4:name9:Setup.exeee"), true},
+		{"single-file archive", []byte("d4:infod6:lengthi1024e4:name11:release.raree"), true},
+		{
+			// An unusual container the placer accepts must not be refused
+			// here. This is the divergence that made the two lists one:
+			// placeableExts carried .3gp/.mpv/.m2v/.m4p and this list did
+			// not, so forage refused, before downloading, releases it would
+			// have placed without complaint.
+			"unusual container the library accepts",
+			bencodeMultiFile("Old.Release", "scene.3gp", "cover.jpg"),
+			false,
+		},
+		{
+			// No files and no length: the info dict told us nothing. This is
+			// the shape a magnet's unresolved metadata arrives in, and it
+			// must NOT be refused: unknown is not empty.
+			"unknown file list",
+			[]byte("d4:infod4:name4:packee"),
+			false,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			m, err := Parse(c.raw)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			if got := m.LacksVideo(); got != c.want {
+				t.Errorf("LacksVideo() = %v, want %v (meta %+v)", got, c.want, m)
+			}
+		})
+	}
+	// A nil Meta is what a caller holds when Parse failed; it must answer
+	// "don't refuse" rather than panic on the grab path.
+	var nilMeta *Meta
+	if nilMeta.LacksVideo() {
+		t.Error("a nil Meta must not refuse a release")
 	}
 }
 

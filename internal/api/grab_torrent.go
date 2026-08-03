@@ -46,6 +46,14 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnprocessableEntity, "not a valid .torrent: "+err.Error())
 		return
 	}
+	// Same screen the searched-release path applies inside the qBit client
+	// (see addByFetchedFile), just earlier: here the bytes are already in
+	// hand. Refusing before the qBit add and before the insert means the
+	// user gets told to their face rather than finding a failed grab later.
+	if meta.LacksVideo() {
+		writeErr(w, http.StatusUnprocessableEntity, meta.NoVideoError().Error())
+		return
+	}
 
 	folder := strings.TrimSpace(r.FormValue("name"))
 	if folder == "" {

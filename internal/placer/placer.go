@@ -23,6 +23,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/ordureconnoisseur/forager/internal/torrentmeta"
 )
 
 type Placer struct {
@@ -362,26 +364,44 @@ func copyFile(src, dest string) error {
 // Generous on video containers on purpose. Stash will only make scenes from
 // some of these, but placing an unusual container costs nothing and refusing
 // one strands a legitimate grab.
-var placeableExts = map[string]bool{
-	// video
-	".mp4": true, ".mkv": true, ".avi": true, ".wmv": true, ".m4v": true,
-	".mov": true, ".mpg": true, ".mpeg": true, ".ts": true, ".flv": true,
-	".webm": true, ".m2ts": true, ".mts": true, ".vob": true, ".divx": true,
-	".rm": true, ".rmvb": true, ".asf": true, ".3gp": true, ".ogv": true,
-	".f4v": true, ".mpv": true, ".m2v": true, ".m4p": true,
-	// subtitles: Stash reads these next to the scene
-	".srt": true, ".sub": true, ".idx": true, ".vtt": true, ".ass": true,
-	".ssa": true,
-	// artwork and release notes: inert, and some tooling expects them
-	".jpg": true, ".jpeg": true, ".png": true, ".webp": true, ".gif": true,
-	".bmp": true, ".nfo": true, ".txt": true,
-}
+//
+// The video half is TAKEN from torrentmeta rather than written out again.
+// The grab layer refuses a release whose file list holds no video before it
+// downloads anything, and it asks torrentmeta that question; a second copy
+// here drifted from that one and refused .3gp/.mpv/.m2v/.m4p releases the
+// placer would have accepted. Two lists answering one question is the bug,
+// so there is one list. Nothing dangerous can arrive this way without
+// TestIsPlaceable failing: it asserts the executable/shortcut set stays out.
+//
+// The non-video half stays literal here, because "what else may sit next to
+// a scene" is the library's business alone.
+var placeableExts = func() map[string]bool {
+	m := make(map[string]bool, 40)
+	for _, ext := range torrentmeta.VideoExtensions() {
+		m[ext] = true
+	}
+	for _, ext := range []string{
+		// subtitles: Stash reads these next to the scene
+		".srt", ".sub", ".idx", ".vtt", ".ass", ".ssa",
+		// artwork and release notes: inert, and some tooling expects them
+		".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".nfo", ".txt",
+	} {
+		m[ext] = true
+	}
+	return m
+}()
 
-// isPlaceable reports whether a release file may enter the library. Extension
+// Placeable reports whether a release file may enter the library. Extension
 // only: content sniffing would be a stronger check and a much bigger promise,
 // and the threat here is what Windows does with a NAME, not what the bytes
 // turn out to be.
-func isPlaceable(name string) bool {
+//
+// Exported because the same question has to be asked one layer up. Inside
+// mirrorTree an unplaceable file is simply skipped, but a SINGLE-file
+// download has nothing to skip past: the placer's only choices are to place
+// it or to error forever, so the grab layer asks this before handing the file
+// over and refuses the grab instead. One list, two callers.
+func Placeable(name string) bool {
 	return placeableExts[strings.ToLower(filepath.Ext(name))]
 }
 
@@ -511,7 +531,7 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, int, error) {
 		// Refuse the passengers. Counted, not silent: a release that is
 		// ENTIRELY unplaceable must be distinguishable from one whose source
 		// has not finished moving in, or the caller retries it forever.
-		if !isPlaceable(d.Name()) {
+		if !Placeable(d.Name()) {
 			skipped++
 			if p.log != nil {
 				p.log.Info("placer skipped file type", "path", path,
