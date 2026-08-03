@@ -146,11 +146,11 @@ const tb = 1099511627776.0
 
 func report(entries []Entry) {
 	type agg struct {
-		files, seeding  int
-		bytes, freeable int64
+		files, seeding, linked int
+		bytes, freeable        int64
 	}
 	by := map[string]*agg{}
-	var total, reclaimable int64
+	var total, freed int64
 	var reclaimFiles int
 	for _, e := range entries {
 		a := by[e.Bucket]
@@ -164,26 +164,31 @@ func report(entries []Entry) {
 		if e.Seeding {
 			a.seeding++
 		}
-		if e.Reclaimable() {
-			a.freeable += e.Size
-			reclaimable += e.Size
+		if e.Hardlinked {
+			a.linked++
+		}
+		if f := e.Frees(); f > 0 {
+			a.freeable += f
+			freed += f
 			reclaimFiles++
 		}
 	}
 	order := []string{BucketSuperseded, BucketDuplicate, BucketVariant,
 		BucketElsewhere, BucketOrphan, BucketInProgress, BucketNonMedia}
-	fmt.Printf("\n%-14s %8s %10s %8s %12s\n", "bucket", "files", "size", "seeding", "reclaimable")
+	fmt.Printf("\n%-14s %8s %10s %8s %9s %10s\n",
+		"bucket", "files", "size", "seeding", "hardlink", "frees")
 	for _, b := range order {
 		a := by[b]
 		if a == nil {
 			continue
 		}
-		fmt.Printf("%-14s %8d %9.2fT %8d %11.2fT\n",
-			b, a.files, float64(a.bytes)/tb, a.seeding, float64(a.freeable)/tb)
+		fmt.Printf("%-14s %8d %9.2fT %8d %9d %9.2fT\n",
+			b, a.files, float64(a.bytes)/tb, a.seeding, a.linked, float64(a.freeable)/tb)
 	}
 	fmt.Printf("\ntotal %d files, %.2f TB\n", len(entries), float64(total)/tb)
-	fmt.Printf("reclaimable: %d files, %.2f TB (redundant AND not seeding)\n",
-		reclaimFiles, float64(reclaimable)/tb)
+	fmt.Printf("would actually free: %d files, %.2f TB\n", reclaimFiles, float64(freed)/tb)
+	fmt.Println("(redundant, not seeding, and NOT a hardlink of the library copy:")
+	fmt.Println(" deleting a hardlink drops a name, not the bytes.)")
 	if a := by[BucketOrphan]; a != nil && a.files > 0 {
 		fmt.Printf("\n%d files (%.2f TB) are the ONLY copy and were never filed.\n",
 			a.files, float64(a.bytes)/tb)

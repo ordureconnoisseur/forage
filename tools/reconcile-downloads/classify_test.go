@@ -93,6 +93,50 @@ func TestSeedingIsNeverReclaimableHoweverRedundant(t *testing.T) {
 	}
 }
 
+// The mistake this pins: a hardlinked duplicate is redundant, is safe to
+// remove, and frees NOTHING. Both names point at one inode, so unlinking the
+// download-side name drops the link count from 2 to 1 and the bytes stay.
+// Reporting its size as recovered space promised 4.28 TB on the reference
+// library when the real figure was 1.28 TB, and acting on it would have
+// deleted thousands of files and recovered almost none of it.
+func TestHardlinkedDuplicateFreesNothing(t *testing.T) {
+	lib := NewIndex()
+	lib.Add("/library/Perf/scene.mp4", 3000, 77, true)
+
+	linked := Classify("/dl/scene.mp4", 3000, 77, true, lib, nil, false)
+	if linked.Bucket != BucketDuplicate || !linked.Hardlinked {
+		t.Fatalf("want a hardlinked duplicate, got %+v", linked)
+	}
+	if !linked.Reclaimable() {
+		t.Error("it is still safe to unlink")
+	}
+	if got := linked.Frees(); got != 0 {
+		t.Errorf("Frees() = %d, want 0: the library still holds the same inode", got)
+	}
+
+	// A separate copy of the same name and size DOES free its bytes.
+	copied := Classify("/dl/scene.mp4", 3000, 12345, true, lib, nil, false)
+	if copied.Hardlinked {
+		t.Fatal("a different inode is a real second copy, not a hardlink")
+	}
+	if got := copied.Frees(); got != 3000 {
+		t.Errorf("Frees() = %d, want 3000 for a genuine duplicate copy", got)
+	}
+}
+
+// Nothing that is seeding or unique frees anything, whatever its size.
+func TestFreesIsZeroForSeedingAndForOrphans(t *testing.T) {
+	lib := libWith([2]interface{}{"scene.mp4", 900})
+	seeding := Classify("/dl/scene.mp4", 3000, 0, false, lib, nil, true)
+	if got := seeding.Frees(); got != 0 {
+		t.Errorf("seeding Frees() = %d, want 0", got)
+	}
+	orphan := Classify("/dl/only-copy.mp4", 3000, 0, false, NewIndex(), nil, false)
+	if got := orphan.Frees(); got != 0 {
+		t.Errorf("orphan Frees() = %d, want 0", got)
+	}
+}
+
 func TestClassifyInProgressBeatsEverything(t *testing.T) {
 	// Identical to a library file, but SAB is still writing it.
 	lib := libWith([2]interface{}{"pack.mp4", 10})
