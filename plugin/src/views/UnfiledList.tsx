@@ -1,0 +1,271 @@
+import { useEffect, useMemo, useState } from "react";
+import {
+  fetchUnfiled,
+  fileUnfiled,
+  type UnfiledResponse,
+  type UnfiledScene,
+} from "../api";
+
+// Unfiled: library scenes that are not under a performer folder.
+//
+// Three buckets, because the work each implies is different, and one of them
+// does not drain. `unknown` is content no metadata source has ever identified,
+// which for a library that is largely amateur and OnlyFans material is
+// PERMANENT rather than pending. So it is browsable and counted, and it is
+// deliberately not a badge, not a "needs attention" number, and not sorted to
+// the top: a figure that can never reach zero, presented as work, gets ignored
+// within a fortnight and takes the two actionable counts beside it down with
+// it.
+//
+// The list is Stash-driven. Every count forage produced before this asked its
+// grabs table, which knows only what forage fetched: 560 rows against 5,325
+// scenes under Unsorted, and none of the 194 files that were lying loose in
+// the library root.
+
+type Bucket = "filable" | "identified" | "unknown";
+
+const BUCKETS: { key: Bucket; label: string; blurb: string }[] = [
+  {
+    key: "filable",
+    label: "Ready to file",
+    blurb:
+      "Stash names a performer, so these can be filed now. Normally empty: the daemon files these itself when a grab confirms.",
+  },
+  {
+    key: "identified",
+    label: "No performer",
+    blurb:
+      "A metadata source knows the scene but nobody is attached to it. Add a performer in Stash, or file it by hand below.",
+  },
+  {
+    key: "unknown",
+    label: "Unidentified",
+    blurb:
+      "Nothing has ever identified these. For amateur and subscription content that is usually permanent, so this is a place to browse rather than a queue to clear.",
+  },
+];
+
+// leaf trims the library root off a path so the table reads as filenames
+// rather than as 90 characters of identical prefix.
+function leaf(path: string, root: string): string {
+  let p = path;
+  if (root && p.toLowerCase().startsWith(root.toLowerCase())) {
+    p = p.slice(root.length);
+  }
+  return p.replace(/^[\\/]+/, "");
+}
+
+export default function UnfiledList() {
+  const [bucket, setBucket] = useState<Bucket>("identified");
+  const [data, setData] = useState<UnfiledResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [performer, setPerformer] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchUnfiled(bucket)
+      .then((r) => {
+        if (cancelled) return;
+        setData(r);
+        setError(null);
+        setSelected(new Set());
+      })
+      .catch((e) => !cancelled && setError((e as Error).message))
+      .finally(() => !cancelled && setLoading(false));
+    return () => {
+      cancelled = true;
+    };
+  }, [bucket, reloadKey]);
+
+  const rows = useMemo(() => {
+    const all = data?.scenes ?? [];
+    const needle = q.trim().toLowerCase();
+    if (!needle) return all;
+    return all.filter(
+      (s) =>
+        s.path.toLowerCase().includes(needle) ||
+        (s.title ?? "").toLowerCase().includes(needle) ||
+        (s.performers ?? []).some((p) => p.toLowerCase().includes(needle)),
+    );
+  }, [data, q]);
+
+  const toggle = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  // The destination defaults to the suggestion when every selected row agrees,
+  // which is the common case for a performer whose scenes all landed loose.
+  // It stays editable, because the suggestion is Stash's opinion and the point
+  // of this screen is that Stash does not always have one.
+  const commonSuggestion = useMemo(() => {
+    const names = new Set(
+      rows.filter((r) => selected.has(r.scene_id) && r.suggested).map((r) => r.suggested!),
+    );
+    return names.size === 1 ? [...names][0] : "";
+  }, [rows, selected]);
+
+  useEffect(() => {
+    if (commonSuggestion) setPerformer(commonSuggestion);
+  }, [commonSuggestion]);
+
+  const file = async () => {
+    const ids = [...selected];
+    const name = performer.trim();
+    if (!ids.length || !name || busy) return;
+    setBusy(true);
+    try {
+      const r = await fileUnfiled(ids, name);
+      const failed = r.results.filter((x) => x.error);
+      setToast(
+        failed.length === 0
+          ? `Filed ${r.moved} under ${name}. Stash is rescanning that folder.`
+          : `Filed ${r.moved}, skipped ${r.skipped}. First reason: ${failed[0].error}`,
+      );
+      setReloadKey((k) => k + 1);
+    } catch (e) {
+      setToast("Couldn't file: " + (e as Error).message);
+    } finally {
+      setBusy(false);
+      window.setTimeout(() => setToast(null), 6000);
+    }
+  };
+
+  const counts = data?.counts ?? {};
+  const root = data?.library_root ?? "";
+  const active = BUCKETS.find((b) => b.key === bucket)!;
+
+  return (
+    <div>
+      <div className="page-header">
+        <h2>Unfiled</h2>
+        <div className="meta">
+          Library scenes that are not under a performer folder.
+        </div>
+      </div>
+
+      <div className="controls unfiled-buckets" role="group" aria-label="Bucket">
+        {BUCKETS.map((b) => (
+          <button
+            key={b.key}
+            type="button"
+            className={"grab-chip" + (b.key === bucket ? " active chip-any" : "")}
+            onClick={() => setBucket(b.key)}
+          >
+            <span className="chip-label">{b.label}</span>
+            <span className="unfiled-count">{counts[b.key] ?? 0}</span>
+          </button>
+        ))}
+      </div>
+      <p className="unfiled-blurb">{active.blurb}</p>
+
+      <div className="controls">
+        <input
+          type="text"
+          placeholder="Filter by filename, title, performer…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+        <span className="count">
+          {rows.length} / {data?.scenes.length ?? 0}
+        </span>
+      </div>
+
+      {toast && <div className="ms-toast">{toast}</div>}
+      {error && <div className="empty error">Couldn't load: {error}</div>}
+      {loading && !data && <div className="empty">Loading…</div>}
+
+      {data && rows.length === 0 && !loading && (
+        <div className="empty">
+          {bucket === "filable"
+            ? "Nothing waiting to be filed, which is what this bucket should normally look like."
+            : "Nothing here."}
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <>
+          <ul className="watch-list unfiled-list">
+            {rows.map((s) => (
+              <UnfiledRow
+                key={s.scene_id}
+                s={s}
+                root={root}
+                checked={selected.has(s.scene_id)}
+                onToggle={() => toggle(s.scene_id)}
+              />
+            ))}
+          </ul>
+
+          {/* The action bar only exists once something is selected: an
+              always-present destination field on a browsing screen invites
+              filing a row you happened to be reading. */}
+          {selected.size > 0 && (
+            <div className="watch-foot unfiled-actions">
+              <span className="unfiled-selected">{selected.size} selected</span>
+              <input
+                type="text"
+                className="unfiled-performer"
+                placeholder="File under performer…"
+                value={performer}
+                onChange={(e) => setPerformer(e.target.value)}
+              />
+              <button
+                className="collection-cta"
+                disabled={busy || !performer.trim()}
+                onClick={file}
+                title="Move these files under that performer's folder"
+              >
+                {busy ? "Filing…" : `File ${selected.size} →`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function UnfiledRow({
+  s,
+  root,
+  checked,
+  onToggle,
+}: {
+  s: UnfiledScene;
+  root: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <li className={"watch-card unfiled-card" + (checked ? " is-selected" : "")}>
+      <label className="unfiled-pick">
+        <input type="checkbox" checked={checked} onChange={onToggle} />
+      </label>
+      <div className="unfiled-body">
+        <div className="unfiled-name" title={s.path}>
+          {leaf(s.path, root)}
+        </div>
+        <div className="unfiled-meta">
+          {s.title && <span className="unfiled-title">{s.title}</span>}
+          {s.suggested && (
+            <span className="unfiled-suggest">suggests {s.suggested}</span>
+          )}
+          {!s.identified && (
+            <span className="unfiled-unknown">not identified</span>
+          )}
+        </div>
+      </div>
+    </li>
+  );
+}

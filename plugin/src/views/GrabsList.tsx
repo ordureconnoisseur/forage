@@ -675,6 +675,18 @@ export default function GrabsList({
               {retryingAll ? "Retrying…" : `↻ Retry ${totals.failed} failed`}
             </button>
           )}
+          {/* Unfiled lives next to Deletions rather than in the main nav: it
+              is a place you go on purpose, not a queue that should be shouting
+              a number at you. Most of what it holds is unidentified amateur
+              content that will never be identifiable, so a badge here would be
+              a count that can never reach zero. */}
+          <a
+            className="grab-adopt-btn"
+            href="#/unfiled"
+            title="Library scenes that are not under a performer folder, and the ones Stash can name a performer for"
+          >
+            Unfiled ↗
+          </a>
           <a
             className="grab-adopt-btn"
             href="#/deletions"

@@ -238,6 +238,56 @@ export function addPerformerFromStashDB(
   });
 }
 
+// ── Unfiled (library scenes not under a performer folder) ────────────
+//
+// Driven by Stash and the filesystem, NOT by the grabs table. Filing state is
+// a property of the library: forage's own records cover only what it fetched,
+// which on the reference library was 560 rows against 5,325 scenes under
+// Unsorted, and none of the 194 files that were sitting loose in the root.
+
+export interface UnfiledScene {
+  scene_id: string;
+  title?: string;
+  path: string;
+  // "filable" (Stash names a performer), "identified" (a metadata source
+  // knows the scene but nobody is attached), or "unknown" (nothing has ever
+  // identified it, which for amateur content is permanent, not pending).
+  bucket: "filable" | "identified" | "unknown";
+  suggested?: string;
+  performers?: string[];
+  identified: boolean;
+}
+
+export interface UnfiledResponse {
+  scenes: UnfiledScene[];
+  counts: Record<string, number>;
+  library_root: string;
+}
+
+export function fetchUnfiled(bucket?: string): Promise<UnfiledResponse> {
+  const q = bucket ? "?bucket=" + encodeURIComponent(bucket) : "";
+  return get<UnfiledResponse>("/unfiled" + q);
+}
+
+export interface FileUnfiledResult {
+  moved: number;
+  skipped: number;
+  results: { scene_id: string; from?: string; to?: string; error?: string }[];
+}
+
+// Moves the named scenes' files under a performer folder. Never overwrites;
+// the daemon queues a Stash rescan of the destination afterwards so the
+// scenes re-attach by hash rather than becoming duplicates.
+export function fileUnfiled(
+  sceneIDs: string[],
+  performer: string,
+): Promise<FileUnfiledResult> {
+  return postJSON("/unfiled/file", {
+    scene_ids: sceneIDs,
+    performer,
+  });
+}
+
 export interface DiscoverScene {
   stashdb_id: string;
   title?: string;

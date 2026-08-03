@@ -8083,3 +8083,106 @@ code.grab-fact-v,
 .discover-box option:disabled {
   opacity: 0.45;
 }
+
+/* ── Unfiled ─────────────────────────────────────────────────────────
+   Library scenes not under a performer folder. Styled from the pieces the
+   Watching and Grabs views already use (chips for the bucket switch, the
+   watch-card shell for rows, the footer bar for the action) rather than as
+   a new idiom: this is one more way to look at the library, not a new kind
+   of thing. */
+.unfiled-buckets {
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* The count sits INSIDE the chip and stays quiet. Deliberately not a badge:
+   the largest bucket is content nothing will ever identify, so a number
+   styled as an alert would be permanently red and permanently ignored. */
+.unfiled-count {
+  margin-left: 8px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+.grab-chip.active .unfiled-count {
+  opacity: 0.85;
+}
+.unfiled-blurb {
+  margin: 8px 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-dim, #9aa);
+  max-width: 62ch;
+}
+.unfiled-list {
+  gap: 6px;
+}
+/* Denser than a watch card: there is no artwork here and the useful content
+   is one line of filename, so the card's 132px thumb column would be an
+   empty stripe down a list of several hundred rows. */
+.unfiled-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 9px 12px;
+}
+.unfiled-card.is-selected {
+  border-color: var(--accent, #22c55e);
+  background: rgba(34, 197, 94, 0.06);
+}
+.unfiled-pick {
+  display: flex;
+  align-items: center;
+  padding-top: 2px;
+  cursor: pointer;
+}
+.unfiled-body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* Wraps rather than truncating. These are the release names the matcher
+   works on, and the distinguishing part of two files from one studio is
+   frequently at the end. */
+.unfiled-name {
+  font-size: 13px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.unfiled-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-dim, #9aa);
+}
+.unfiled-suggest {
+  color: var(--accent-bright, #22c55e);
+  opacity: 0.85;
+}
+.unfiled-unknown {
+  opacity: 0.55;
+}
+/* The action bar appears only with a selection, so it is sticky rather than
+   in flow: on a list of several hundred the selection is usually made well
+   below the fold, and a destination field at the bottom of the document is
+   the same mistake the Watching drawer made. */
+.unfiled-actions {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  gap: 10px;
+  padding: 10px 0 10px 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05)),
+    var(--bg-0);
+  border-top: 1px solid var(--glass-border);
+}
+.unfiled-selected {
+  font-size: 12px;
+  color: var(--text-dim, #9aa);
+  white-space: nowrap;
+}
+.unfiled-performer {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 320px;
+}

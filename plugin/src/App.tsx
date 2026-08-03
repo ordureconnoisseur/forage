@@ -5,6 +5,7 @@ import MissingScenes from "./views/MissingScenes";
 import SceneReleases from "./views/SceneReleases";
 import GrabsList from "./views/GrabsList";
 import DeletionsList from "./views/DeletionsList";
+import UnfiledList from "./views/UnfiledList";
 import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
 import Setup from "./views/Setup";
@@ -56,6 +57,7 @@ type Route =
   // a filtered Grabs (the Watching tab points at a batch's finished work,
   // whose real download state lives here rather than on the watch).
   | { kind: "grabs"; q?: string }
+  | { kind: "unfiled" }
   | { kind: "deletions" };
 
 function parseRoute(hash: string): Route {
@@ -83,6 +85,9 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "grabs") {
     return { kind: "grabs", q: query.get("q") || undefined };
+  }
+  if (parts[0] === "unfiled") {
+    return { kind: "unfiled" };
   }
   if (parts[0] === "deletions") {
     return { kind: "deletions" };
@@ -504,6 +509,7 @@ export default function App() {
         {ready && route.kind === "grabs" && (
           <GrabsList onPickScene={goScene} initialQ={route.q} />
         )}
+        {ready && route.kind === "unfiled" && <UnfiledList />}
         {ready && route.kind === "deletions" && <DeletionsList />}
         {loading && (
           <div className="app-loading" role="status" aria-live="polite">
