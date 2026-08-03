@@ -144,8 +144,16 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		folder = p.unfiledDir()
 	}
 	destDir := filepath.Join(p.libraryRoot, folder)
-	if err := os.MkdirAll(destDir, 0o755); err != nil {
+	if err := os.MkdirAll(destDir, DirMode()); err != nil {
 		return Result{}, fmt.Errorf("mkdir dest: %w", err)
+	}
+	Adopt(destDir, true)
+	// Fail fast rather than filling the library: a copy-mode placement of
+	// a large release onto a nearly-full filesystem otherwise thrashes it
+	// for minutes before dying. Hardlinks write no bytes, so this only
+	// gates the copy path.
+	if err := p.checkSpaceFor(srcPath, destDir, info.Size()); err != nil {
+		return Result{}, err
 	}
 	p.sweepStalePartials(destDir)
 
@@ -315,7 +323,7 @@ func copyFile(src, dest string) error {
 	// place, which left copy-fallback placements unreadable to a Stash
 	// running as a different uid (hardlinks were unaffected, since they
 	// share the source's mode). Open up to the conventional 0644.
-	if err := tmp.Chmod(0o644); err != nil {
+	if err := tmp.Chmod(fileMode); err != nil {
 		cleanup()
 		return err
 	}
@@ -326,6 +334,22 @@ func copyFile(src, dest string) error {
 	if err := tmp.Sync(); err != nil {
 		cleanup()
 		return err
+	}
+	// A short copy is corruption, and the rename below would make it look
+	// complete — the exact shape of the CIFS truncation this box has seen.
+	// Compare against the source BEFORE the temp is allowed to become the
+	// real file, so a bad copy never reaches the library at all.
+	if si, serr := in.Stat(); serr == nil {
+		ti, terr := tmp.Stat()
+		if terr != nil {
+			cleanup()
+			return fmt.Errorf("could not verify the copy of %s: %w", src, terr)
+		}
+		if ti.Size() != si.Size() {
+			cleanup()
+			return fmt.Errorf("copy of %s was short (%d of %d bytes); refusing to publish a truncated file",
+				src, ti.Size(), si.Size())
+		}
 	}
 	if err := tmp.Close(); err != nil {
 		_ = os.Remove(tmpName)
@@ -520,7 +544,7 @@ func (p *Placer) mirrorTree(src, dest string) (string, int, int, error) {
 			if isSampleDirName(d.Name()) {
 				return fs.SkipDir
 			}
-			return os.MkdirAll(filepath.Join(dest, rel), 0o755)
+			return os.MkdirAll(filepath.Join(dest, rel), DirMode())
 		}
 		// Un-hide the leaf so dot-hidden clips become scannable scenes; keep the
 		// directory structure as-is (dirMirrors reverses the leaf un-hide).

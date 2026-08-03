@@ -29,3 +29,8 @@ func freeSpace(path string) (uint64, error) {
 	}
 	return avail, nil
 }
+
+// sameDevice reports whether two paths share a volume. Windows is a dev
+// platform for the daemon, so this is the conservative answer: assume
+// they don't, which only means the space check always runs.
+func sameDevice(a, b string) bool { return false }

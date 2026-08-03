@@ -175,6 +175,40 @@ func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, erro
 
 // Version returns qBittorrent's version string ("v5.1.4"). Used as a
 // boot probe + by the manual probe tool. Hits /api/v2/app/version.
+// TransferInfo is qBit's own view of its network health — the
+// leak-guard's primary signal. connection_status: "connected" |
+// "firewalled" | "disconnected". In the gluetun-porn sidecar setup a dead tunnel
+// leaves the WebUI reachable (docker-proxy) while the client itself
+// has NO network: connection_status flips to disconnected and DHT
+// drains, which is exactly what the guard watches for.
+type TransferInfo struct {
+	ConnectionStatus string `json:"connection_status"`
+	DHTNodes         int    `json:"dht_nodes"`
+	DlSpeed          int64  `json:"dl_info_speed"`
+	UpSpeed          int64  `json:"up_info_speed"`
+}
+
+// GetTransferInfo fetches /api/v2/transfer/info.
+func (c *Client) GetTransferInfo(ctx context.Context) (*TransferInfo, error) {
+	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/transfer/info", nil)
+	})
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != 200 {
+		return nil, clienterr.Status("qbit transfer info", resp.StatusCode, body)
+	}
+	var ti TransferInfo
+	if err := json.Unmarshal(body, &ti); err != nil {
+		return nil, fmt.Errorf("qbit transfer info decode: %w", err)
+	}
+	return &ti, nil
+}
+
+
 func (c *Client) Version(ctx context.Context) (string, error) {
 	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/app/version", nil)
