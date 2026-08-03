@@ -536,20 +536,34 @@ func sqlChecks(now int64) []sqlCheck {
 			args: []any{now - int64(confirmStampWindow.Seconds())},
 		},
 		{
-			// Two grabs on one download. ByClientID returns whichever it
-			// finds first, so the poller advances both rows off one
-			// torrent's state, and a purge of either RemoveAll's a path the
-			// other still claims. Adoption's known-id set is supposed to
-			// make this unreachable, which is exactly why a row here means
-			// something upstream is wrong.
+			// Two LIVE grabs on one download. ByClientID returns whichever it
+			// finds first, so the poller advances both rows off one torrent's
+			// state, and a purge of either RemoveAll's a path the other still
+			// claims.
+			//
+			// Scoped to grabs the poller still acts on, which is the only
+			// shape that can do harm. Unscoped it reported 39 groups covering
+			// 90 grabs on the reference library, every one of them settled
+			// (40 confirmed, 48 mismatched, 2 orphaned) and none of them
+			// fixable. That is the permanent-backlog failure this package's
+			// own docs rule out: a check nobody can action is a check nobody
+			// reads, and it takes the actionable lines beside it down with it.
+			//
+			// Those 90 are not a bug. qBit deduplicates by infohash, so the
+			// same torrent grabbed twice under two release names (21 of the 39
+			// groups carry an identical title, the rest are the same content
+			// listed by different sites) legitimately lands both rows on one
+			// client id. It is worth knowing when it happens live; it is not
+			// worth reporting forever once both rows have settled.
 			name:      "client_id.shared_by_several_grabs",
 			kind:      "client_id",
-			statement: "one download-client id backs at most one grab",
+			statement: "one download-client id backs at most one grab the poller still acts on",
 			query: `
 				SELECT client || ':' || client_id,
-				       'download-client id shared by ' || COUNT(*) || ' grabs: ' || GROUP_CONCAT(id)
+				       'download-client id shared by ' || COUNT(*) || ' live grabs: ' || GROUP_CONCAT(id)
 				  FROM grabs
 				 WHERE COALESCE(client_id, '') != ''
+				   AND status IN ('queued', 'downloading', 'completed', 'placed', 'scanned')
 				 GROUP BY client, client_id
 				HAVING COUNT(*) > 1`,
 		},

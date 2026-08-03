@@ -298,12 +298,20 @@ func TestInvariants(t *testing.T) {
 			breaks: "two grabs advance off one torrent's state, and purging " +
 				"either deletes a path the other still claims as its copy",
 			seed: func(t *testing.T, dbh *sql.DB) {
-				insertGrab(t, dbh, 70, cols{"client_id": "dupehash", "performer_name": "A"})
-				insertGrab(t, dbh, 71, cols{"client_id": "dupehash", "performer_name": "A"})
-				insertGrab(t, dbh, 72, cols{"client_id": "solohash", "performer_name": "A"})
+				// LIVE, so the poller still advances both off one torrent.
+				insertGrab(t, dbh, 70, cols{"client_id": "dupehash", "status": "downloading", "performer_name": "A"})
+				insertGrab(t, dbh, 71, cols{"client_id": "dupehash", "status": "placed", "performer_name": "A"})
+				insertGrab(t, dbh, 72, cols{"client_id": "solohash", "status": "downloading", "performer_name": "A"})
+				// SETTLED duplicates are not a violation: qBit deduplicates by
+				// infohash, so the same torrent grabbed twice under two release
+				// names legitimately shares a client id, and once both rows have
+				// finished nothing can act on them. Reporting those forever is
+				// how a check stops being read.
+				insertGrab(t, dbh, 73, cols{"client_id": "oldhash", "status": "confirmed", "performer_name": "A"})
+				insertGrab(t, dbh, 74, cols{"client_id": "oldhash", "status": "mismatched", "performer_name": "A"})
 			},
 			wantID:   "client_id qbit:dupehash",
-			cleanIDs: []string{"client_id qbit:solohash"},
+			cleanIDs: []string{"client_id qbit:solohash", "client_id qbit:oldhash"},
 		},
 		{
 			invariant: "watch.available_without_release",
