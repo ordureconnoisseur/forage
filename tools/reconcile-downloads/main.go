@@ -204,10 +204,14 @@ func writeTSV(path string, entries []Entry) error {
 		return entries[i].Size > entries[j].Size
 	})
 	var b strings.Builder
-	b.WriteString("bucket\tseeding\treclaimable\tsize\tlibrary_size\tpath\n")
+	// frees, not size: a hardlinked duplicate is reclaimable and returns
+	// nothing, so a caller filtering this file for a cleanup must see the
+	// difference in the row rather than have to know it.
+	b.WriteString("bucket\tseeding\thardlinked\treclaimable\tfrees\tsize\tlibrary_size\tpath\n")
 	for _, e := range entries {
-		fmt.Fprintf(&b, "%s\t%t\t%t\t%d\t%d\t%s\n",
-			e.Bucket, e.Seeding, e.Reclaimable(), e.Size, e.LibrarySize, e.Path)
+		fmt.Fprintf(&b, "%s\t%t\t%t\t%t\t%d\t%d\t%d\t%s\n",
+			e.Bucket, e.Seeding, e.Hardlinked, e.Reclaimable(), e.Frees(),
+			e.Size, e.LibrarySize, e.Path)
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o644)
 }
