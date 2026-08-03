@@ -135,9 +135,24 @@ benchmark of input nobody sees any more, still passing.
 - `internal/matcher/testdata/corpus-replay.meta.json`: the sidecar holding that run's
   numbers and the verifier config that produced them.
 
-The sidecar is what the gate asserts against, so a refresh is one command
-rather than a fixture edit plus a hand-copy of four constants into
-`corpus_gate_test.go`. Three tests keep it honest:
+The sidecar is what the per-push gate asserts against, so the four constants
+that used to live in `corpus_gate_test.go` no longer need hand-copying.
+
+**A refresh is not one command, and the second step is not optional.**
+`pipeline_floors.json` carries a `measured` block and the `commit` it was
+recorded at, and two tests pin both to the committed fixture. Re-recording
+moves the entry count and all three rates, so those tests fail on every
+refresh by design: the alternative is a floors file quietly describing a
+recording it no longer matches, which is the exact failure this whole
+apparatus exists to prevent. The failure output prints every value to write,
+so the fix is one file edit and a re-run.
+
+Do not confuse that with the three floors themselves. `min_recall`,
+`min_clean` and `max_false_verify_rate` are rates, so a corpus that grows at
+unchanged quality does not move them, and they should only ever change on
+purpose.
+
+Five tests keep the fixture honest:
 
 - `TestCorpusFixtureMatchesTheLiveRun`: replaying the fixture under the
   recorded config must reproduce the live run's numbers. If it does not, every
