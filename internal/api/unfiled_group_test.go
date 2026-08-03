@@ -111,8 +111,45 @@ func TestGroupUnfiledPrefersTheFolderNameForTheSuggestion(t *testing.T) {
 	}
 }
 
-// When the folder name says nothing, whatever Stash managed to name inside it
-// is still better than nothing.
+// A pack is named from its members only when they broadly agree. The naive
+// version took the most-named performer, so one tagged file proposed a
+// destination for the whole folder: "Adorable Alice Video Pack" is 489 files
+// with exactly one identified, as Ember Snow's, and that row suggested moving
+// all 489 under Ember Snow.
+func TestGroupUnfiledIgnoresALoneMemberPerformer(t *testing.T) {
+	dir := root + `\Unsorted\Adorable Alice Video Pack\`
+	found := []stash.UnfiledScene{
+		scene("1", dir+"a.mp4", stash.ScenePerformer{Name: "Ember Snow", SceneCount: 40}),
+	}
+	for i := 2; i <= 6; i++ {
+		id := string(rune('0' + i))
+		found = append(found, scene(id, dir+id+".mp4"))
+	}
+	items, _ := groupUnfiled(found, root, "", noSuggest)
+	if items[0].Suggested != "" {
+		t.Errorf("suggested %q off a single tagged member out of 6", items[0].Suggested)
+	}
+}
+
+func TestPackConsensus(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		in   map[string]int
+		want string
+	}{
+		{"clear majority", map[string]int{"Honey": 8, "Guest": 1}, "Honey"},
+		{"exactly half is not a majority", map[string]int{"A": 2, "B": 2}, ""},
+		{"a lone name decides nothing", map[string]int{"Solo": 1}, ""},
+		{"two agreeing is enough", map[string]int{"Pair": 2}, "Pair"},
+		{"nobody named", map[string]int{}, ""},
+	} {
+		if got := packConsensus(c.in); got != c.want {
+			t.Errorf("%s: packConsensus(%v) = %q, want %q", c.name, c.in, got, c.want)
+		}
+	}
+}
+
+// When the members do agree, that is a real answer.
 func TestGroupUnfiledFallsBackToMemberPerformers(t *testing.T) {
 	found := []stash.UnfiledScene{
 		scene("1", root+`\Unsorted\[OnlyFans] @oh_honey69\a.mp4`,

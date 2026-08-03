@@ -157,7 +157,7 @@ func groupUnfiled(found []stash.UnfiledScene, root string, want string,
 		// metadata, which for 93 of 103 packs names nobody at all.
 		if s := suggestFor(p.item.Name); s != "" {
 			p.item.Suggested = s
-		} else if best := mostNamed(p.names); best != "" {
+		} else if best := packConsensus(p.names); best != "" {
 			p.item.Suggested = best
 		}
 		for n := range p.names {
@@ -190,12 +190,28 @@ func groupUnfiled(found []stash.UnfiledScene, root string, want string,
 	return out, counts
 }
 
-func mostNamed(m map[string]int) string {
-	best, n := "", 0
+// packConsensus names a pack from its members only when they broadly agree.
+//
+// The naive version took the most-named performer, and one tagged file then
+// proposed a destination for the whole folder: "Adorable Alice Video Pack" is
+// 489 files of which Stash has identified exactly one, as Ember Snow's, and
+// that single row suggested moving all 489 under Ember Snow. A suggestion that
+// pre-fills a destination has to be right, because the cost of wrong here is
+// hundreds of misfiled files.
+//
+// So: a clear majority of the members Stash could name, and never off a single
+// one. Anything less says nothing, and the one-click chips still offer every
+// candidate for a person to choose from.
+func packConsensus(m map[string]int) string {
+	total, best, n := 0, "", 0
 	for k, v := range m {
+		total += v
 		if v > n || (v == n && k < best) {
 			best, n = k, v
 		}
+	}
+	if total < 2 || n*2 <= total {
+		return ""
 	}
 	return best
 }
