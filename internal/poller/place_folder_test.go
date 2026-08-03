@@ -60,14 +60,27 @@ func TestPlacementPerformerKeepsTheCapturedName(t *testing.T) {
 }
 
 // The case that produced 5,325 Unsorted scenes: a confirmed grab whose watch
-// recorded no performer to file under, but whose scene has a cast.
+// recorded no performer, but whose scene has a cast the library HAS.
 func TestPlacementPerformerFallsBackToTheCast(t *testing.T) {
 	p := newTestPoller(t)
 	seedWatch(t, p, "scene-1", `["Suraya Ndia","Some Guy"]`)
+	seedLocalPerformer(t, p, "Suraya Ndia", "31")
 
 	g := &grabs.Grab{PredictedStashDBID: "scene-1"}
 	if got := p.placementPerformer(context.Background(), g); got != "Suraya Ndia" {
-		t.Errorf("got %q, want the billed lead rather than Unsorted", got)
+		t.Errorf("got %q, want the local performer from the cast", got)
+	}
+}
+
+// And when none of that cast is a Stash record, Unsorted. Naming a folder
+// after someone the library does not have buys a tidy path and nothing else.
+func TestPlacementPerformerRefusesAPerformerTheLibraryDoesNotHave(t *testing.T) {
+	p := newTestPoller(t)
+	seedWatch(t, p, "scene-2", `["Nobody Local","Also Unknown"]`)
+
+	g := &grabs.Grab{PredictedStashDBID: "scene-2"}
+	if got := p.placementPerformer(context.Background(), g); got != "" {
+		t.Errorf("got %q, want empty so the placer files it under Unsorted", got)
 	}
 }
 
@@ -89,6 +102,7 @@ func TestPlacementPerformerPrefersOneInTheLibrary(t *testing.T) {
 func TestPlacementPerformerUsesTheActualSceneWhenPredictionMisses(t *testing.T) {
 	p := newTestPoller(t)
 	seedWatch(t, p, "real-scene", `["Aspen Reign"]`)
+	seedLocalPerformer(t, p, "Aspen Reign", "44")
 
 	g := &grabs.Grab{PredictedStashDBID: "never-watched", ActualStashDBID: "real-scene"}
 	if got := p.placementPerformer(context.Background(), g); got != "Aspen Reign" {

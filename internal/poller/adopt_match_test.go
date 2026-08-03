@@ -30,21 +30,27 @@ func TestCastFolderPrefersALocalPerformer(t *testing.T) {
 	}
 }
 
-// Nobody local: the billed lead still beats Unsorted, and the performer page
-// offers to add them.
-func TestCastFolderFallsBackToTheBilledLead(t *testing.T) {
+// Nobody local: Unsorted, not the billed lead.
+//
+// A folder named after a performer Stash has never heard of is one nothing
+// else in the system can reason about: it never appears on the performer
+// page, is never counted as owned, and the next pass cannot tell it from a
+// typo. The library already carries 280 such folders and they are precisely
+// the ones nothing can act on.
+func TestCastFolderRefusesAPerformerTheLibraryDoesNotHave(t *testing.T) {
 	p := newTestPoller(t)
 	got := p.castFolder(context.Background(),
 		sceneCand("s1", "Some Scene", 0.9, "First Billed", "Second Billed"))
-	if got != "First Billed" {
-		t.Errorf("got %q, want the billed lead", got)
+	if got != "" {
+		t.Errorf("got %q, want empty: neither performer is a Stash record", got)
 	}
 }
 
 // A credited alias is how the scene actually bills them, so it wins over the
-// canonical name for the folder.
+// canonical name, provided the library has it.
 func TestCastFolderUsesTheCreditedName(t *testing.T) {
 	p := newTestPoller(t)
+	seedLocalPerformer(t, p, "Stage Name", "12")
 	c := sceneCand("s1", "Some Scene", 0.9)
 	c.Scene.Performers = []stashdb.ScenePerformer{{Name: "Real Name", As: "Stage Name"}}
 	if got := p.castFolder(context.Background(), c); got != "Stage Name" {
