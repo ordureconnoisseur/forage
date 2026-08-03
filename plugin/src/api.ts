@@ -457,6 +457,82 @@ export interface SceneRelease {
   score?: number;
   rejected?: boolean;
   score_hits?: { label: string; points: number; reject?: boolean }[];
+  // The decision behind `verified`: the matcher's ranked candidates and which
+  // acceptance path did or did not carry this release. Sent only by the
+  // interactive release list (watch rows store this type and would carry the
+  // payload as dead weight).
+  explain?: MatchExplain;
+}
+
+// ── Why a release did or did not verify ────────────────────────────
+//
+// The verdict badge is one bit standing in for four acceptance paths and a
+// dozen thresholds. These types carry the reasoning behind it, computed from
+// candidates the daemon already had in hand.
+
+// MatchExplainGate is one acceptance path. `blockers` lists the requirements it
+// failed that are specific to it, each phrased with the measured value and the
+// bar it missed; the ones most failing paths share are lifted out into
+// MatchExplain.shared_blockers. `blockers` can therefore be empty on a failing
+// gate, meaning the shared reasons are the whole story for it.
+//
+// No label: the human name of each path arrives once per response as
+// SceneReleasesResponse.gate_labels, keyed by this name. The five labels are
+// ~300 identical bytes and this type is repeated per release.
+export interface MatchExplainGate {
+  name: string;
+  passed: boolean;
+  blockers?: string[];
+}
+
+// MatchExplainCandidate is one scene the matcher considered, at its true rank.
+export interface MatchExplainCandidate {
+  rank: number;
+  scene_id: string;
+  title: string;
+  date?: string;
+  studio?: string;
+  // Capped by the daemon; cast_more is how many names were left off.
+  cast?: string[];
+  cast_more?: number;
+  confidence: number;
+  title_overlap: number;
+  // The candidate's date is 2+ years off the release name's, under every
+  // reading of it.
+  date_far_off?: boolean;
+  // The scene the user is looking at.
+  is_target?: boolean;
+}
+
+// MatchExplainPosition is where the viewed scene landed. `found` false means
+// it was never retrieved for this release name at all, which is a different
+// problem from losing to a sibling.
+export interface MatchExplainPosition {
+  found: boolean;
+  rank: number;
+  candidates: number;
+}
+
+export interface MatchExplain {
+  // The FINAL verdict, after the overrides below.
+  verified: boolean;
+  path?: string;
+  path_label?: string;
+  // A rule that refused the release regardless of the gates, so a gate can
+  // read as passed next to a "not verified" badge.
+  veto?: string;
+  // No gate trace at all: the matcher errored, or found no candidate scenes.
+  note?: string;
+  // forage's own rules layered on the matcher's answer (pack, streaming-link
+  // spam, photo set, JAV code).
+  overrides?: { verdict: "verified" | "refused"; reason: string }[];
+  // Reasons at least three of the failing paths gave, stated once instead of
+  // repeated down the list. Hoisted by the daemon, not here, so the rule is
+  // testable and the sentence is not serialised four times per release.
+  shared_blockers?: string[];
+  gates?: MatchExplainGate[];
+  position: MatchExplainPosition;
+  candidates?: MatchExplainCandidate[];
 }
 
 export interface SceneReleasesResponse {
@@ -469,6 +545,9 @@ export interface SceneReleasesResponse {
     performers: MissingPerformer[];
   };
   releases: SceneRelease[];
+  // Human label per gate name, sent once for the whole response rather than on
+  // every release's explanation. Absent when no release carries one.
+  gate_labels?: Record<string, string>;
 }
 
 // ── Images ─────────────────────────────────────────────────────────

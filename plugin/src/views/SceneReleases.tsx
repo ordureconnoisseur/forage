@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   fetchSceneReleases,
   postGrab,
+  type MatchExplain,
   type MissingPerformer,
   type SceneRelease,
   type SceneReleasesResponse,
@@ -417,6 +418,7 @@ export default function SceneReleases({
                 grabs={grabs}
                 onGrab={grab}
                 bestKey={bestKey}
+                gateLabels={data.gate_labels}
               />
             </section>
           )}
@@ -434,7 +436,12 @@ export default function SceneReleases({
                 title token
               </h3>
               {showUnverified && (
-                <ReleaseList releases={unverified} grabs={grabs} onGrab={grab} />
+                <ReleaseList
+                  releases={unverified}
+                  grabs={grabs}
+                  onGrab={grab}
+                  gateLabels={data.gate_labels}
+                />
               )}
             </section>
           )}
@@ -540,6 +547,7 @@ function ReleaseList({
   grabs,
   onGrab,
   bestKey,
+  gateLabels,
 }: {
   releases: SceneRelease[];
   grabs: Record<string, GrabState>;
@@ -550,6 +558,7 @@ function ReleaseList({
     force?: boolean,
   ) => void;
   bestKey?: string | null;
+  gateLabels?: Record<string, string>;
 }) {
   return (
     <ul className="release-list">
@@ -665,8 +674,17 @@ function ReleaseList({
                   )}
                 </div>
               )}
-              {r.reasons && r.reasons.length > 0 && (
-                <MatchBreakdown reasons={r.reasons} />
+              {/* The verdict's reasoning. Falls back to the plain
+                  component chips when the daemon sent no explanation. */}
+              {r.explain ? (
+                <MatchVerdict
+                  explain={r.explain}
+                  reasons={r.reasons}
+                  gateLabels={gateLabels}
+                />
+              ) : (
+                r.reasons &&
+                r.reasons.length > 0 && <MatchBreakdown reasons={r.reasons} />
               )}
             </div>
 
@@ -708,23 +726,276 @@ function MatchBreakdown({ reasons }: { reasons: string[] }) {
   return (
     <details className="match-why">
       <summary>Match breakdown</summary>
-      <ul className="match-why-list">
-        {reasons.map((reason, i) => {
-          const sep = reason.indexOf(":");
-          const label = sep >= 0 ? reason.slice(0, sep).trim() : reason;
-          const value = sep >= 0 ? reason.slice(sep + 1).trim() : "";
-          const miss = REASON_MISS.test(value);
-          return (
-            <li
-              key={i}
-              className={"match-why-row " + (miss ? "is-miss" : "is-hit")}
-            >
-              <span className="match-why-label">{label}</span>
-              {value && <span className="match-why-value">{value}</span>}
-            </li>
-          );
-        })}
-      </ul>
+      <ReasonChips reasons={reasons} />
+    </details>
+  );
+}
+
+// ReasonChips renders the matcher's per-component reason strings as tinted
+// pills. Shared by the plain breakdown and the verdict panel so a scene's
+// signals look the same wherever they appear.
+function ReasonChips({ reasons }: { reasons: string[] }) {
+  return (
+    <ul className="match-why-list">
+      {reasons.map((reason, i) => {
+        const sep = reason.indexOf(":");
+        const label = sep >= 0 ? reason.slice(0, sep).trim() : reason;
+        const value = sep >= 0 ? reason.slice(sep + 1).trim() : "";
+        const miss = REASON_MISS.test(value);
+        return (
+          <li
+            key={i}
+            className={"match-why-row " + (miss ? "is-miss" : "is-hit")}
+          >
+            <span className="match-why-label">{label}</span>
+            {value && <span className="match-why-value">{value}</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+// MatchVerdict is the "why did (or didn't) this verify?" panel.
+//
+// The badge alone is one bit standing in for four acceptance paths and a dozen
+// thresholds, and a wrong answer looked exactly like a right one. The case
+// that prompted this verified the WRONG scene at 73% with its date 1,593 days
+// off, and the top three candidates were 0.013 apart. Nothing on screen could
+// have shown that. So the panel says three things in order: what decided it,
+// which paths were tried and what stopped each, and the ranked field with what
+// every candidate scored.
+//
+// It expands on click and ships with the release list (no extra request): the
+// daemon builds it from candidates it already had.
+function MatchVerdict({
+  explain,
+  reasons,
+  gateLabels,
+}: {
+  explain: MatchExplain;
+  reasons?: string[];
+  // Gate name → human label, sent once per response. Missing entry falls back
+  // to the name, which is ugly but never blank.
+  gateLabels?: Record<string, string>;
+}) {
+  // The body is mounted only while the panel is open.
+  //
+  // <details> keeps its children in the DOM whether or not it is open, and
+  // there is one of these per release on a list that has no pagination and can
+  // run to a few hundred rows, so the first version put the whole body of every
+  // panel into the DOM at load.
+  //
+  // Measured, not estimated: renderToStaticMarkup of this component against a
+  // five-gate / six-candidate explanation emits 108 element nodes with the body
+  // mounted and 4 with it closed. At 300 releases that is 32,400 nodes against
+  // 1,200. Reproduce by exporting MatchVerdict, rendering it under
+  // react-dom/server with `useState(true)` and then `useState(false)`, and
+  // counting /<[a-zA-Z]/g in the output.
+  //
+  // The summary stays mounted either way, so the row still shows its verdict
+  // and hint without being opened.
+  const [open, setOpen] = useState(false);
+
+  const gates = explain.gates ?? [];
+  const cands = explain.candidates ?? [];
+  const pos = explain.position;
+  const overrides = explain.overrides ?? [];
+  const verified = explain.verified;
+  const shared = explain.shared_blockers ?? [];
+  const label = (name: string) => gateLabels?.[name] ?? name;
+
+  // Collapsed line: the single most useful fact, so the common question is
+  // answered without opening anything.
+  //
+  // forage's own rules are tested FIRST because they are the last word in the
+  // daemon: they set `verified`, overriding whatever the matcher decided. Read
+  // in the other order the summary contradicted itself, which on the one line
+  // this feature exists to make trustworthy is worse than saying less. The
+  // cases: a JAV-code accept with no candidates read "Verified / nothing to
+  // compare against"; the same accept over a scene ranked third read "Verified
+  // / ranked #3 of 8"; and a behind-the-scenes veto plus a matching JAV code
+  // read "Verified / refused by a rule".
+  const accepted = overrides.some((o) => o.verdict === "verified");
+  const refused =
+    overrides.some((o) => o.verdict === "refused") || !!explain.veto;
+  //
+  // Each rule hint is gated on the verdict it would imply, because testing
+  // them purely in daemon order reintroduced the contradiction in a new
+  // place. verifyReleases builds overrides in that order: the JAV-code accept
+  // fires on !verified, then the pack / link-spam / image-set refusals fire on
+  // verified. A JAV-coded release that also reads as a pack therefore ends up
+  // with overrides [verified, refused] and a FINAL verified of false, and the
+  // summary rendered "Not verified" beside "accepted by a rule". Confirmed in
+  // a browser, not reasoned: titles like "SSIS-123 Mega Pack" reach it.
+  //
+  // So the rule is simply that the hint may never disagree with the badge.
+  let hint = "";
+  if (verified && accepted) hint = "accepted by a rule";
+  else if (!verified && refused) hint = "refused by a rule";
+  else if (verified && explain.path_label) hint = explain.path_label;
+  else if (explain.note) hint = "nothing to compare against";
+  else if (!pos.found) hint = "not among the candidates";
+  else if (pos.rank > 1) hint = `ranked #${pos.rank} of ${pos.candidates}`;
+  else hint = "no acceptance path applied";
+
+  return (
+    <details
+      className="match-why match-verdict"
+      open={open}
+      onToggle={(e) => setOpen((e.currentTarget as HTMLDetailsElement).open)}
+    >
+      <summary>
+        <span className={"mv-verdict " + (verified ? "is-yes" : "is-no")}>
+          {verified ? "Verified" : "Not verified"}
+        </span>
+        {hint && <span className="mv-hint">{hint}</span>}
+      </summary>
+
+      {open && (
+        <>
+      {explain.note && <p className="mv-note">{explain.note}</p>}
+
+      {/* forage's own rules come last in the daemon and first here: when one
+          fired it is the actual answer, and the matcher's reasoning below is
+          only context for what it overrode. */}
+      {overrides.map((o, i) => (
+        <p
+          key={i}
+          className={
+            "mv-override " + (o.verdict === "refused" ? "is-no" : "is-yes")
+          }
+        >
+          {o.verdict === "refused" ? "Refused: " : "Accepted: "}
+          {o.reason}
+        </p>
+      ))}
+
+      {explain.veto && <p className="mv-override is-no">Refused: {explain.veto}</p>}
+
+      {gates.length > 0 && (
+        <>
+          <div className="mv-caption">
+            Ways this release could be accepted as the scene you're viewing
+          </div>
+          {shared.length > 0 && (
+            <ul className="mv-blockers mv-shared">
+              {shared.map((b, i) => (
+                <li key={i}>{b}, which rules out every path below that needs it.</li>
+              ))}
+            </ul>
+          )}
+          <ul className="mv-gates">
+            {gates.map((g) => {
+              const own = g.blockers ?? [];
+              return (
+                <li
+                  key={g.name}
+                  className={"mv-gate " + (g.passed ? "is-pass" : "is-fail")}
+                >
+                  <span className="mv-gate-head">
+                    <span className="mv-mark" aria-hidden="true">
+                      {g.passed ? "✓" : "✗"}
+                    </span>
+                    <span className="mv-gate-label">{label(g.name)}</span>
+                  </span>
+                  {own.length > 0 ? (
+                    <ul className="mv-blockers">
+                      {own.map((b, i) => (
+                        <li key={i}>{b}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    // Every reason this path gave was hoisted above. Saying so
+                    // beats a bare crossed-out label with nothing attached.
+                    !g.passed &&
+                    shared.length > 0 && (
+                      <ul className="mv-blockers">
+                        <li className="mv-only-shared">
+                          stopped only by the reason above
+                        </li>
+                      </ul>
+                    )
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        </>
+      )}
+
+      {cands.length > 0 && (
+        <>
+          <div className="mv-caption">
+            Scenes the matcher weighed for this release name
+          </div>
+          <div className="mv-cands-scroll">
+            <table className="mv-cands">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th title="The matcher's overall confidence that this release is this scene">
+                    Match
+                  </th>
+                  <th title="How much of the release name and this scene's title are the same words (0 to 1)">
+                    Title fit
+                  </th>
+                  <th>Scene</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cands.map((c) => (
+                  <tr
+                    key={c.scene_id}
+                    className={c.is_target ? "is-target" : undefined}
+                  >
+                    <td className="mv-rank">{c.rank}</td>
+                    <td className="mv-num">
+                      {(c.confidence * 100).toFixed(0)}%
+                    </td>
+                    <td className="mv-num">{c.title_overlap.toFixed(2)}</td>
+                    <td>
+                      <span className="mv-cand-title">
+                        {c.title || "(untitled)"}
+                      </span>
+                      {c.is_target && (
+                        <span className="mv-you">the scene you're viewing</span>
+                      )}
+                      <span className="mv-cand-meta">
+                        {[
+                          c.date,
+                          c.studio,
+                          // The daemon caps the cast list; a compilation in
+                          // the corpus carries 109 names, which used to be
+                          // sent in full and rendered as one very tall row.
+                          (c.cast ?? []).join(", ") +
+                            (c.cast_more ? ` +${c.cast_more} more` : ""),
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                        {c.date_far_off && (
+                          <span className="mv-far"> date 2+ years off</span>
+                        )}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+
+      {reasons && reasons.length > 0 && (
+        <>
+          <div className="mv-caption">
+            What this scene scored on, component by component
+          </div>
+          <ReasonChips reasons={reasons} />
+        </>
+      )}
+        </>
+      )}
     </details>
   );
 }

@@ -1413,6 +1413,203 @@ button {
   font-weight: 600;
 }
 
+/* Verdict panel: "why did (or didn't) this verify?".
+   Same <details> disclosure as .match-why (it reuses that class for the
+   chevron + summary behaviour); everything below the summary sits on a
+   recessed glass slab so the reasoning reads as an aside to the release row
+   rather than as more of the row. */
+.match-verdict > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.mv-verdict {
+  font-weight: 600;
+}
+.mv-verdict.is-yes {
+  color: var(--accent-bright);
+}
+.mv-verdict.is-no {
+  color: var(--amber);
+}
+.mv-hint {
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.match-verdict[open] > summary {
+  margin-bottom: 8px;
+}
+.match-verdict[open] {
+  padding: 0 0 2px;
+}
+.match-verdict > *:not(summary) {
+  margin-left: 16px;
+}
+
+.mv-note,
+.mv-override {
+  margin: 0 0 8px;
+  padding: 7px 11px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg);
+  line-height: 1.45;
+}
+.mv-override.is-no {
+  border-color: rgba(212, 161, 74, 0.4);
+  color: var(--amber);
+}
+.mv-override.is-yes {
+  border-color: rgba(var(--accent-rgb), 0.4);
+  color: var(--accent-bright);
+}
+
+.mv-caption {
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+  font-weight: 600;
+  margin: 10px 0 5px;
+}
+
+/* Acceptance paths. A failed path lists what stopped it, with the measured
+   value and the threshold, so the decision is readable without knowing the
+   verifier's numbers. */
+.mv-gates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.mv-gate-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.mv-mark {
+  flex: none;
+  width: 12px;
+  text-align: center;
+  font-weight: 700;
+}
+.mv-gate.is-pass .mv-mark,
+.mv-gate.is-pass .mv-gate-label {
+  color: var(--accent-bright);
+}
+.mv-gate.is-fail .mv-mark {
+  color: var(--text-dim);
+}
+.mv-gate.is-fail .mv-gate-label {
+  color: var(--text-muted);
+}
+.mv-blockers {
+  list-style: none;
+  margin: 3px 0 0;
+  padding: 0 0 0 19px;
+  color: var(--text-dim);
+  line-height: 1.45;
+}
+.mv-blockers li {
+  position: relative;
+  padding-left: 10px;
+}
+/* The reason common to every failing path, hoisted out of the list so it is
+   stated once instead of repeating down it. */
+.mv-shared {
+  padding-left: 12px;
+  margin-bottom: 8px;
+  color: var(--text-muted);
+}
+/* A failing path whose every reason was hoisted into .mv-shared. Dimmer than a
+   real blocker: it is a pointer, not a fact of its own. */
+.mv-only-shared {
+  font-style: italic;
+  opacity: 0.75;
+}
+.mv-blockers li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.6em;
+  width: 4px;
+  height: 1px;
+  background: currentColor;
+  opacity: 0.6;
+}
+
+/* Candidate field. Wide content scrolls inside its own lane so a long cast
+   list can't widen the release row. */
+.mv-cands-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg);
+}
+.mv-cands {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.mv-cands th {
+  text-align: left;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--glass-border);
+  white-space: nowrap;
+}
+.mv-cands td {
+  padding: 7px 10px;
+  vertical-align: top;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.mv-cands tr:last-child td {
+  border-bottom: 0;
+}
+.mv-cands .mv-rank,
+.mv-cands .mv-num {
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.mv-cands tr.is-target {
+  background: var(--accent-tint);
+}
+.mv-cands tr.is-target td {
+  color: var(--text);
+}
+.mv-cand-title {
+  display: block;
+  font-weight: 600;
+}
+.mv-cand-meta {
+  display: block;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.mv-you {
+  display: inline-block;
+  margin-top: 2px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(var(--accent-rgb), 0.45);
+  color: var(--accent-bright);
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.mv-far {
+  color: var(--amber);
+}
+
 .grab-btn {
   padding: 9px 16px;
   background: var(--accent);

@@ -264,12 +264,28 @@ func New(opts Options) *Server {
 	return s
 }
 
+// compressLevel is the gzip level for JSON responses. Named so the payload
+// budget test measures the level that actually ships. 5 rather than the default
+// 6: measured on a 300-release /scenes/{id}/releases body the levels give
+// 45,010 / 37,366 / 36,706 / 36,092 bytes at 1 / 5 / 6 / 9, so 6 buys 1.8% over
+// 5 and 9 buys 3.4%, none of which is worth extra CPU on a daemon that is also
+// running the matcher.
+const compressLevel = 5
+
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
 	// Before CORS so the 204 it short-circuits preflight with carries them
 	// too.
 	r.Use(s.securityHeadersMiddleware)
+	// Compress JSON only. /scenes/{id}/releases can carry a few hundred rows
+	// of highly repetitive prose (the verifier's explanation of each verdict),
+	// and it was going out uncompressed because nothing here compressed
+	// anything. Restricted to application/json on purpose: serveUI sets an
+	// ETag it computes over the uncompressed bundle, and compressing a
+	// response with a strong ETag is how you get a stale SPA served from a
+	// revalidation that thinks it matched.
+	r.Use(middleware.Compress(compressLevel, "application/json"))
 	r.Use(s.corsMiddleware)
 
 	// Public, unauthenticated routes. /healthz must stay open so the

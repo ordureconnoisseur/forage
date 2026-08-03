@@ -186,7 +186,7 @@ func (s *Server) resolveFailoverRelease(ctx context.Context, g *grabs.Grab) *sce
 		s.log.Warn("failover: release search", "grab_id", g.ID, "err", err)
 		return nil
 	}
-	out := s.verifyReleases(ctx, m, g.PredictedStashDBID, scene.Title, releases)
+	out := s.verifyReleases(ctx, m, g.PredictedStashDBID, scene.Title, releases, false)
 	// Shared ranking (rankReleases): the failover pick is exactly what the
 	// user would see at the top of the interactive list, minus the
 	// failed/benched indexers.

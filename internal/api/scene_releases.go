@@ -67,6 +67,12 @@ type sceneReleasesResponse struct {
 		Performers []missingPerformer `json:"performers"`
 	} `json:"scene"`
 	Releases []sceneRelease `json:"releases"`
+	// GateLabels is the human label for each acceptance path, keyed by gate
+	// name. Sent once per response instead of on every release's explanation:
+	// the five labels are ~300 identical bytes, and this response carries one
+	// explanation per release. Present only when some release has an
+	// explanation to label.
+	GateLabels map[string]string `json:"gate_labels,omitempty"`
 }
 
 type sceneRelease struct {
@@ -106,6 +112,13 @@ type sceneRelease struct {
 	Score     int           `json:"score"`
 	Rejected  bool          `json:"rejected,omitempty"`
 	ScoreHits []scoring.Hit `json:"score_hits,omitempty"`
+	// Explain is the full decision behind Verified: the matcher's ranked
+	// candidates and which acceptance gate did (or did not) carry this
+	// release. Built from candidates already in hand, and ONLY for the
+	// interactive release list. Watch rows store this struct as JSON, where
+	// it would be dead weight (that table already shed 13.9 MB of candidate
+	// payload once).
+	Explain *matchExplain `json:"explain,omitempty"`
 }
 
 // getSceneReleases finds Prowlarr releases for a specific StashDB
@@ -193,7 +206,9 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify which releases are this scene + shape them for the UI.
-	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases)
+	// explain=true: this is the interactive view, the one place a person is
+	// looking at a verdict and asking why.
+	out := s.verifyReleases(r.Context(), m, id, scene.Title, releases, true)
 
 	// Annotate failure history before ranking so the UI can badge dead
 	// releases (ranking itself is deliberately untouched: a dead badge
@@ -212,7 +227,20 @@ func (s *Server) getSceneReleases(w http.ResponseWriter, r *http.Request) {
 	// keeps this list's leading release identical to the watcher's auto-pick.
 	rankReleases(out)
 
+	// Bound the explanation payload. Ranking first is what makes the cut
+	// defensible: the rows that keep an explanation are the verified ones and
+	// then the best of the rest, which is the order the user reads in.
+	if n := trimExplanations(out, maxExplainedReleases); n > 0 {
+		s.log.Debug("explanations trimmed", "scene", id, "releases", len(out), "dropped", n)
+	}
+
 	resp := sceneReleasesResponse{Releases: out}
+	for i := range out {
+		if out[i].Explain != nil {
+			resp.GateLabels = matcher.GateLabels()
+			break
+		}
+	}
 	resp.Scene.StashDBID = scene.ID
 	resp.Scene.Title = scene.Title
 	resp.Scene.Date = scene.Date
@@ -425,6 +453,38 @@ func seedTier(r sceneRelease) int {
 	}
 }
 
+// maxExplainedReleases bounds how many rows of one response carry a "why this
+// verdict" payload.
+//
+// A Prowlarr fan-out over a popular performer can return a few hundred
+// releases (this file's own searchSceneReleases comment says so) and the first
+// version of this feature attached an explanation to every one of them, with no
+// cap and no compression. Measured mean was 2,222 B per release, so ~650 KB
+// added to a single response, the same unbounded-payload shape the watch table
+// already shed 13.9 MB of.
+//
+// The trade, stated plainly: past this rank a release shows the older reason
+// chips and no panel. That is a real loss for someone digging through the deep
+// tail of an unverified list, and it is taken deliberately, because an
+// unbounded response is a worse failure than a truncated one. 120 covers the
+// whole verified section plus a long tail in every search shape observed.
+const maxExplainedReleases = 120
+
+// trimExplanations drops Explain past the cap and reports how many it dropped.
+// Call AFTER ranking: on an unranked list this would keep whichever releases
+// Prowlarr happened to return first.
+func trimExplanations(out []sceneRelease, max int) int {
+	dropped := 0
+	for i := range out {
+		if i < max || out[i].Explain == nil {
+			continue
+		}
+		out[i].Explain = nil
+		dropped++
+	}
+	return dropped
+}
+
 // rankReleases sorts a verified release list into the canonical order
 // every consumer shows and picks from: verified first, then non-rejected,
 // then the betterRelease comparator. ONE definition on purpose, so the
@@ -477,7 +537,7 @@ func javCodeMatches(relTitle, sceneTitle string) bool {
 	return false
 }
 
-func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID, sceneTitle string, releases []prowlarr.Release) []sceneRelease {
+func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID, sceneTitle string, releases []prowlarr.Release, explain bool) []sceneRelease {
 	scorer := s.releaseScorer()
 	titles := make([]string, len(releases))
 	for i, rel := range releases {
@@ -491,6 +551,16 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		var bestOtherID, bestOtherTitle string
 		var bestOtherConf float64
 		var reasons []string
+		// Overrides/note feed the explanation only; they mirror decisions the
+		// code below already makes, so the UI cannot show a verdict the badge
+		// disagrees with.
+		var overrides []explainOverride
+		note := ""
+		if res.Err != nil {
+			note = "the matcher could not look this release up: " + res.Err.Error()
+		} else if len(res.Candidates) == 0 {
+			note = "the matcher retrieved no candidate scenes for this release name, so there was nothing to compare against"
+		}
 		if res.Err == nil && len(res.Candidates) > 0 {
 			vr := matcher.Verify(res.Candidates, sceneID, sceneTitle, rel.Title)
 			verified = vr.Verified
@@ -519,6 +589,10 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 				conf = javCodeConf
 			}
 			reasons = append(reasons, "jav code matches scene")
+			overrides = append(overrides, explainOverride{
+				Verdict: "verified",
+				Reason:  "the release and the scene share a JAV code, which identifies a scene outright",
+			})
 			bestOtherID, bestOtherTitle, bestOtherConf = "", "", 0
 		}
 		// A multi-scene PACK is never a single scene, even when it shares the
@@ -529,6 +603,10 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		if verified && isPackRelease(rel.Title) {
 			verified = false
 			reasons = append(reasons, "looks like a multi-scene pack, not this scene")
+			overrides = append(overrides, explainOverride{
+				Verdict: "refused",
+				Reason:  "the title reads as a multi-scene pack; it shares the performer name (which is what verified it) but grabbing it pulls tens of GB of other scenes",
+			})
 		}
 		// A title advertising a streaming link / "watch full video" is tube
 		// spam — a teaser or crushed rip, not the full release. Un-verify so it
@@ -536,6 +614,10 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		if verified && isLinkSpamRelease(rel.Title) {
 			verified = false
 			reasons = append(reasons, "title advertises a streaming link — looks like spam, not the full release")
+			overrides = append(overrides, explainOverride{
+				Verdict: "refused",
+				Reason:  "the title advertises a streaming link, which marks a teaser or a crushed rip rather than the full release",
+			})
 		}
 		// A photo/image set shares the scene's performer + date and so verifies
 		// on that overlap, but a watch tracks the VIDEO — never surface the
@@ -543,6 +625,14 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 		if verified && isImageSetRelease(rel.Title) {
 			verified = false
 			reasons = append(reasons, "looks like a photo image set, not the video scene")
+			overrides = append(overrides, explainOverride{
+				Verdict: "refused",
+				Reason:  "the title reads as a photo set; it shares the scene's performer and date, but this is the gallery, not the video",
+			})
+		}
+		var ex *matchExplain
+		if explain {
+			ex = newMatchExplain(res.Candidates, sceneID, sceneTitle, rel.Title, verified, overrides, note)
 		}
 		sc := scorer.Score(rel.Title, rel.Indexer, rel.Protocol)
 		out[res.Index] = sceneRelease{
@@ -565,6 +655,7 @@ func (s *Server) verifyReleases(ctx context.Context, m *matcher.Matcher, sceneID
 			Score:          sc.Score,
 			Rejected:       sc.Rejected,
 			ScoreHits:      sc.Hits,
+			Explain:        ex,
 		}
 	}
 	return out
