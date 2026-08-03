@@ -24,6 +24,19 @@ import {
 
 type Bucket = "filable" | "identified" | "unknown";
 
+// How many rows to mount at once.
+//
+// The unidentified bucket holds 4,224 scenes on the reference library and will
+// only grow. Every row is a <li> with a checkbox and two lines of text, so
+// mounting them all is tens of thousands of DOM nodes on a screen whose whole
+// purpose is browsing. The same review that landed the verifier panel rejected
+// its first version for exactly this.
+//
+// A cap rather than virtualisation because the interaction here is "filter
+// down to what you are looking for, select a handful, file them", not "scroll
+// 4,000 rows". The filter is the tool; this is the guard rail.
+const RENDER_CAP = 300;
+
 const BUCKETS: { key: Bucket; label: string; blurb: string }[] = [
   {
     key: "filable",
@@ -84,7 +97,7 @@ export default function UnfiledList() {
     };
   }, [bucket, reloadKey]);
 
-  const rows = useMemo(() => {
+  const matching = useMemo(() => {
     const all = data?.scenes ?? [];
     const needle = q.trim().toLowerCase();
     if (!needle) return all;
@@ -95,6 +108,8 @@ export default function UnfiledList() {
         (s.performers ?? []).some((p) => p.toLowerCase().includes(needle)),
     );
   }, [data, q]);
+  const rows = useMemo(() => matching.slice(0, RENDER_CAP), [matching]);
+  const hidden = matching.length - rows.length;
 
   const toggle = (id: string) =>
     setSelected((prev) => {
@@ -110,10 +125,12 @@ export default function UnfiledList() {
   // of this screen is that Stash does not always have one.
   const commonSuggestion = useMemo(() => {
     const names = new Set(
-      rows.filter((r) => selected.has(r.scene_id) && r.suggested).map((r) => r.suggested!),
+      matching
+        .filter((r) => selected.has(r.scene_id) && r.suggested)
+        .map((r) => r.suggested!),
     );
     return names.size === 1 ? [...names][0] : "";
-  }, [rows, selected]);
+  }, [matching, selected]);
 
   useEffect(() => {
     if (commonSuggestion) setPerformer(commonSuggestion);
@@ -177,7 +194,7 @@ export default function UnfiledList() {
           onChange={(e) => setQ(e.target.value)}
         />
         <span className="count">
-          {rows.length} / {data?.scenes.length ?? 0}
+          {matching.length} / {data?.scenes.length ?? 0}
         </span>
       </div>
 
@@ -206,6 +223,14 @@ export default function UnfiledList() {
               />
             ))}
           </ul>
+
+          {hidden > 0 && (
+            <p className="unfiled-blurb unfiled-capped">
+              Showing the first {RENDER_CAP} of {matching.length}. Narrow the
+              filter to reach the rest: this is a browsing surface, and
+              mounting several thousand rows to scroll past them helps nobody.
+            </p>
+          )}
 
           {/* The action bar only exists once something is selected: an
               always-present destination field on a browsing screen invites
