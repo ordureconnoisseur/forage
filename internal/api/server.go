@@ -357,6 +357,7 @@ func (s *Server) Router() http.Handler {
 		// deliberately not derived from the grabs table (see unfiled.go).
 		r.Get("/unfiled", s.getUnfiled)
 		r.Post("/unfiled/file", s.postUnfiledFile)
+		r.Post("/unfiled/suggest", s.postUnfiledSuggest)
 		r.Delete("/watches/{id}", s.deleteWatch)
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)

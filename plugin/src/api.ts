@@ -269,6 +269,22 @@ export function fetchUnfiled(bucket?: string): Promise<UnfiledResponse> {
   return get<UnfiledResponse>("/unfiled" + q);
 }
 
+// Ranked local performers for a selection of unfiled files, from the same
+// suggest.Performers the grab detail uses, so the two screens agree about who
+// a file probably belongs to.
+export interface UnfiledSuggestion {
+  stash_id: string;
+  name: string;
+  scene_count: number;
+  favorite: boolean;
+}
+
+export function suggestUnfiledPerformers(
+  sceneIDs: string[],
+): Promise<{ suggestions: UnfiledSuggestion[] }> {
+  return postJSON("/unfiled/suggest", { scene_ids: sceneIDs });
+}
+
 export interface FileUnfiledResult {
   moved: number;
   skipped: number;

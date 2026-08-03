@@ -8186,3 +8186,15 @@ code.grab-fact-v,
   min-width: 0;
   max-width: 320px;
 }
+/* Ranked performer guesses above the destination field. Same chip as the
+   bucket switch and the grab detail's suggestions, so "a name you can click"
+   looks the same wherever forage offers one. Full width above the row rather
+   than inline: on a phone the bar already holds a count, a field and a
+   button, and a fourth thing beside them wraps into nonsense. */
+.unfiled-suggestions {
+  flex: 1 0 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
