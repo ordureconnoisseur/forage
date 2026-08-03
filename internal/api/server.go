@@ -169,6 +169,11 @@ type Server struct {
 	sessionKeyMu sync.RWMutex
 	sessionKey   []byte
 
+	// authLimit is the credential-guessing throttle shared by every path
+	// that checks a secret (see authlimit.go). Zero value ready; its fixed
+	// tables are allocated on the first failed check.
+	authLimit authLimiter
+
 	// sceneTitles memoises StashDB scene id → display title, so the Grabs
 	// list can label a scene-attempt group with its real title instead of a
 	// bare id. Titles are immutable, so entries effectively never go stale;
@@ -262,6 +267,9 @@ func New(opts Options) *Server {
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
+	// Before CORS so the 204 it short-circuits preflight with carries them
+	// too.
+	r.Use(s.securityHeadersMiddleware)
 	r.Use(s.corsMiddleware)
 
 	// Public, unauthenticated routes. /healthz must stay open so the
@@ -486,6 +494,11 @@ func (s *Server) serveUI(w http.ResponseWriter, r *http.Request) {
 	// the build actually changed.
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("ETag", uiETag)
+	// Set before the 304 branch: a revalidation returns no body, but the
+	// browser reuses the cached one, and a 304 that omitted the policy
+	// would leave that reused document unprotected. Only the SPA gets a
+	// CSP; see security_headers.go for why it is not global.
+	w.Header().Set("Content-Security-Policy", uiCSP)
 	if match := r.Header.Get("If-None-Match"); match != "" && match == uiETag {
 		w.WriteHeader(http.StatusNotModified)
 		return

@@ -13,6 +13,7 @@ import {
   IndexerInfo,
   login,
   mixedContentBlocked,
+  needsCurrentPassword,
   ProbeResult,
   saveConfig,
   setAdminToken,
@@ -122,6 +123,16 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   // Confirm-password field (local only — never sent; the daemon receives
   // just `password` once it matches).
   const [pwConfirm, setPwConfirm] = useState("");
+  // Current-password proof for a credential change. Write-only: sent
+  // beside the patch, never stored, and never part of the patch itself.
+  const [currentPassword, setCurrentPassword] = useState("");
+  // Set when the daemon refuses a save for want of that proof. The client
+  // predicts when it is needed (credentialChangePending below), but the
+  // daemon decides: it compares composed values, so it can see a change
+  // the client cannot, e.g. a patch that clears a field back onto a
+  // different env value. This flag makes the field appear in that case
+  // instead of leaving the user with an error and no way to answer it.
+  const [proofDemanded, setProofDemanded] = useState(false);
   const [open, setOpen] = useState<Record<SectionKey, boolean>>({
     connection: true,
     stash: true,
@@ -180,6 +191,17 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
   }, [data, releaseAdvanced]);
 
   const blocked = mixedContentBlocked();
+
+  // The fields the daemon treats as proof of identity: the login pair, the
+  // API key, and the Stash API key (which requestAuthorized also accepts
+  // as a Bearer credential, so writing it mints one). Changing any of them
+  // needs the current password; changing anything else does not, and this
+  // is what keeps the prompt out of the way the rest of the time.
+  const credentialChangePending =
+    proofDemanded ||
+    (["password", "username", "adminToken", "stashApiKey"] as const).some(
+      (f) => patch[f] !== undefined,
+    );
 
   // Field helpers ──────────────────────────────────────────────────
 
@@ -340,7 +362,12 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         patch.username !== undefined
           ? patch.username
           : ((data?.fields["username"]?.value as string) || "");
-      const r = await saveConfig(patch, { force });
+      const r = await saveConfig(patch, {
+        force,
+        // Only when the patch touches a credential. Sending it otherwise
+        // would mean an empty box blocking ordinary settings saves.
+        currentPassword: credentialChangePending ? currentPassword : undefined,
+      });
       if (r.results) setProbes(r.results);
       if (!r.ok) {
         setSaveFailed(true);
@@ -365,6 +392,8 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         setPatch({});
         setCatsRaw(null);
         setPwConfirm("");
+        setCurrentPassword("");
+        setProofDemanded(false);
         const note = pwChange
           ? "saved — password updated"
           : tokenChange !== undefined
@@ -376,6 +405,12 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
       }
     } catch (e) {
       setSaveFailed(true);
+      if (needsCurrentPassword(e)) {
+        // Surface the field rather than only the sentence, so the user has
+        // something to do about it. Nothing was saved.
+        setProofDemanded(true);
+        setOpen((o) => ({ ...o, security: true }));
+      }
       setSaveMsg((e as Error).message);
     } finally {
       setSaving(false);
@@ -1059,6 +1094,30 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           isOpen={open.security}
           onToggle={() => setOpen((o) => ({ ...o, security: !o.security }))}
         >
+          {/*
+            Proof of ownership for a credential change. Only the fields the
+            daemon accepts as a login credential need it (the password,
+            the username, the API key, and the Stash API key) because a
+            session cookie is not proof: it is exactly what someone who
+            lifted your session would be holding. Everything else in this
+            panel saves without it, which is why this input is shown only
+            when the pending patch actually touches one of them.
+          */}
+          {credentialChangePending && (
+            <Field label="Current password">
+              <SecretInput
+                value={currentPassword}
+                onChange={setCurrentPassword}
+                placeholder="your current forage password"
+              />
+              <span className="settings-tip">
+                Needed to change a login credential. Signing in with a
+                borrowed session isn't enough to replace the password, the
+                username, the API key or the Stash key.
+              </span>
+            </Field>
+          )}
+
           <h4 className="settings-subhead">Login (username + password)</h4>
           <Field label="Username">
             <input

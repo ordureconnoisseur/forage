@@ -51,10 +51,16 @@ export function mixedContentBlocked(): boolean {
 // not just on the error string.
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  // Stable machine-readable reason, when the daemon sends one. Today the
+  // only value is "credential_proof_required", which the Settings panel
+  // and the setup wizard turn into a "current password" prompt rather
+  // than showing the raw sentence.
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -79,7 +85,7 @@ function fireUnauthorized(status: number) {
 async function throwForStatus(r: Response): Promise<never> {
   const e = await r.json().catch(() => ({ error: r.statusText }));
   fireUnauthorized(r.status);
-  throw new ApiError(r.status, e.error || `HTTP ${r.status}`);
+  throw new ApiError(r.status, e.error || `HTTP ${r.status}`, e.code);
 }
 
 async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
@@ -520,16 +526,21 @@ export function proxiedImageURL(path?: string | null): string | null {
 // to authenticate, since image loads can't carry the bearer header. The
 // daemon replies ok/required:false when no token is configured, so this is
 // safe to call unconditionally. Call on boot and whenever the token changes.
-export async function establishSession(): Promise<void> {
+// Returns the HTTP status, or 0 if the daemon was unreachable, so the
+// login gate can tell "key rejected" (401) from "you have been throttled"
+// (429) instead of blaming the key for both. Boot-time callers ignore it.
+export async function establishSession(): Promise<number> {
   try {
-    await fetch(foragerBase() + "/session", {
+    const r = await fetch(foragerBase() + "/session", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ token: adminToken() }),
       credentials: "include",
     });
+    return r.status;
   } catch {
     // Best-effort — images fall back to placeholders if this fails.
+    return 0;
   }
 }
 
@@ -1467,25 +1478,45 @@ export async function fetchConfig(): Promise<ConfigFieldsResponse> {
   return r.json();
 }
 
+// saveConfig POSTs a settings patch.
+//
+// `currentPassword` is write-only proof of ownership, sent alongside the
+// patch rather than inside it (the daemon never stores it). It is only
+// needed when the patch would change something the daemon accepts as a
+// login credential (the password, the username, the API key, or the
+// Stash API key) and the daemon answers 403 with
+// code "credential_proof_required" naming the fields when it is missing.
+// Everything else saves without it, so this must not be sent
+// unconditionally: it would put a password prompt in front of routine
+// settings edits.
 export async function saveConfig(
   patch: ConfigPatch,
-  opts: { force?: boolean } = {},
+  opts: { force?: boolean; currentPassword?: string } = {},
 ): Promise<SaveConfigResponse> {
   const qs = opts.force ? "?force=true" : "";
+  const body: Record<string, unknown> = { ...patch };
+  if (opts.currentPassword) body.currentPassword = opts.currentPassword;
   const r = await fetch(foragerBase() + "/config" + qs, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
     credentials: "include",
-    body: JSON.stringify(patch),
+    body: JSON.stringify(body),
   });
-  const body = await r.json().catch(() => ({}));
+  const resp = await r.json().catch(() => ({}));
   // 422 is a normal "probes failed" response the caller renders inline; any
   // other non-2xx (incl. a 401 once auth is on) is a hard error.
   if (!r.ok && r.status !== 422) {
     fireUnauthorized(r.status);
-    throw new ApiError(r.status, body.error || `HTTP ${r.status}`);
+    throw new ApiError(r.status, resp.error || `HTTP ${r.status}`, resp.code);
   }
-  return { ok: r.ok, ...body } as SaveConfigResponse;
+  return { ok: r.ok, ...resp } as SaveConfigResponse;
+}
+
+// needsCurrentPassword recognises the daemon's refusal to change a
+// credential without proof, so callers can prompt for one and retry
+// instead of showing a raw error.
+export function needsCurrentPassword(e: unknown): boolean {
+  return e instanceof ApiError && e.code === "credential_proof_required";
 }
 
 export async function testSection(

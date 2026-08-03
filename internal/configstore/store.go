@@ -177,6 +177,22 @@ func (s *Store) Set(patch Patch) error {
 	return nil
 }
 
+// Merged returns base with patch's non-nil fields overlaid: exactly what
+// Set would persist, without persisting it.
+//
+// Exported because the /config credential guard has to answer "would this
+// patch change a credential?" BEFORE saving, and the only safe way to
+// answer that is to run the same merge Set runs. The previous hand-rolled
+// copy of this logic in the API layer had drifted: it enumerated fields by
+// hand, so a patch field it had never heard of (passwordHash) slipped past
+// the guard and straight into the store. Anything that reasons about a
+// patch's effect must go through here.
+func Merged(base StoredConfig, patch Patch) StoredConfig {
+	out := cloneConfig(base)
+	applyPatch(&out, patch)
+	return out
+}
+
 // Path returns the absolute path the Store writes to. Useful for
 // diagnostics + telling the user where their JSON config lives.
 func (s *Store) Path() string {

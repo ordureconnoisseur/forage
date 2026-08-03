@@ -249,6 +249,18 @@ Every API route except `/` (the app), `/healthz` (liveness), and `/session` (coo
 
 See [Configuration reference](#configuration-reference) for the token's precedence (UI value overrides env). A lost token can be recovered from `data/config.json` on the daemon host.
 
+**Changing a credential needs the current password.** Signing in gets you a session cookie that lasts a week, and that cookie is a bearer token: whoever holds it can do whatever you can. So the four values forage accepts as proof of identity (your password, your username, the API key, and your Stash API key, which the API accepts as a Bearer credential too, so writing it mints one) cannot be changed by a request that only carries a cookie. Settings asks for your current password when you touch one of them, and a change also invalidates every outstanding session, including anyone else's.
+
+Two ways past that, both deliberate. A daemon with no password and no API key set is open anyway, so first-run setup and the wizard are unaffected. And a request that presents the API key or the Stash key as a `Bearer` token counts as proof on its own, and that is the recovery path if you forget your password. If you have lost all of them, edit `data/config.json` on the daemon host.
+
+**Repeated wrong credentials get 429, on every path that checks one.** That means the login form, the `/session` key handshake, the current-password check above, *and* the `Authorization: Bearer` check that fronts every data route, the last one being where anything guessing an API key would actually knock. Roughly twenty failures from one client in five minutes and further attempts are refused without being checked at all; each path has its own budget, so a browser with a stale cookie spending one cannot stop you signing in on another.
+
+There is no lockout, on purpose: the window runs from the first failure, so more attempts cannot extend it, and it clears itself within five minutes. Getting the credential right clears your own count straight away (the shared per-connection count described next only decays with time). Nothing ever needs unlocking by hand.
+
+One honest limitation. Behind a reverse proxy or `tailscale serve`, every request arrives from the same address, and the `X-Forwarded-For` that says who is really calling is set by the caller, so forage counts failures against both, and the per-connection count is the one an attacker cannot dodge. The cost is that it is shared: a sustained spray through your proxy can make you wait too, for up to five minutes. That is the price of a limit that cannot be stepped around by inventing a header, and forage would rather have a real one than a decorative one.
+
+**Response headers.** Every response carries `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`, and the app itself is served with a Content-Security-Policy whose `frame-ancestors 'none'` says the same thing again. forage is never framed by design (the Stash launcher opens it in a new tab), so nothing legitimate is lost, and a hostile page can no longer stack an invisible copy of your library over its own buttons.
+
 ### In-app configuration
 
 Every credential and connection setting is editable from the plugin's Settings panel — `.env` is a *bootstrap* path for first run, and the UI overrides it from then on. Saving writes `./data/config.json`; the daemon hot-swaps each client on save (no restart). Each section has a **Test** button that probes connectivity first, and a `source` indicator per field flags when an env value is overriding your saved config. Secrets are masked in the API response (`••••••`) until you type a new value.
@@ -445,7 +457,7 @@ All routes except `GET /` and `GET /healthz` require the admin token (as `Author
 | `POST`/`GET` | `/watches` | Add / list watches |
 | `DELETE` | `/watches/{id}` · `POST /watches/{id}/grab` | Stop watching; grab the found release |
 | `POST` | `/refresh` | Force a performer + studio cache rebuild |
-| `GET`/`POST` | `/config` · `POST /config/test/{section}` | Read/save config; probe a section before saving |
+| `GET`/`POST` | `/config` · `POST /config/test/{section}` | Read/save config; probe a section before saving. A save that would change `password`, `username`, `adminToken` or `stashApiKey` also needs a write-only `currentPassword` (or the API key as a Bearer), else 403 `credential_proof_required` |
 
 ---
 

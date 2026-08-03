@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -137,30 +138,78 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		configstore.Patch
 		Password *string `json:"password"`
+		// CurrentPassword is write-only proof of ownership for a credential
+		// change (see credentials.go). Never stored, never echoed.
+		CurrentPassword string `json:"currentPassword"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
 		return
 	}
 	patch := body.Patch
-	if body.Password != nil {
-		if *body.Password == "" {
-			// Empty password clears the hash → turns password login off
-			// (falls back to env/default at compose time, like other
-			// cleared fields).
-			empty := ""
-			patch.PasswordHash = &empty
-		} else {
-			hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "could not hash password")
-				return
-			}
-			h := string(hashed)
-			patch.PasswordHash = &h
-		}
+	if body.Password != nil && *body.Password == "" {
+		// Empty password clears the hash → turns password login off
+		// (falls back to env/default at compose time, like other
+		// cleared fields). Free to compute, so fold it in now and let the
+		// value comparison below judge it like any other field.
+		empty := ""
+		patch.PasswordHash = &empty
 	}
+	// A NEW password is deliberately NOT hashed yet. bcrypt is ~100ms, and
+	// hashing before the guard would hand an unproven caller that much of
+	// the daemon's CPU per request, for free, on a route they can retry as
+	// fast as they like: exactly the work the throttle exists to refuse.
+	// So declare it a credential change without computing it, and hash
+	// only once the caller has proven they may.
+	settingPassword := body.Password != nil && *body.Password != ""
 	force := r.URL.Query().Get("force") == "true"
+
+	// Credential guard, BEFORE any probe or save: a patch that would move
+	// any value the auth gate accepts as proof of identity has to prove
+	// ownership first. Computed by comparing the composed config as it is
+	// against the composed config as the patch would leave it, so it does
+	// not matter which wire field carried the change: `password`,
+	// `passwordHash`, `adminToken`, `stashApiKey`, or something added
+	// later. See credentials.go for why it is done by value and not by
+	// field name.
+	oldCfg := s.composedConfig()
+	changedCreds := changedCredentials(oldCfg, s.previewConfig(patch))
+	if settingPassword {
+		// Always a change, even if it is the same password: the hash is
+		// re-salted, so there is no such thing as a no-op here.
+		changedCreds = alsoChanged(changedCreds, "passwordHash")
+	}
+	if len(changedCreds) > 0 {
+		// currentPassword is checked with bcrypt and a caller holding a
+		// session cookie can retry it forever, so it is a guessing surface
+		// in its own right and gets its own budget. Its own, not the login
+		// form's: a locked-out attacker here must not be able to stop the
+		// owner signing in.
+		if s.throttled(scopeConfig, w, r) {
+			return
+		}
+		proof := s.provenCredentialChange(r, body.CurrentPassword)
+		if proof == proofNone {
+			s.noteAuthFailure(scopeConfig, r)
+			s.logAuth(r, slog.LevelWarn, "credential-change-refused",
+				"fields", strings.Join(changedCreds, ","))
+			writeCredentialProofRequired(w, changedCreds)
+			return
+		}
+		s.noteAuthSuccess(scopeConfig, r)
+		s.logCredentialChange(r, changedCreds, proof)
+	}
+
+	// Proven, so the bcrypt cost is now the caller's to spend.
+	if settingPassword {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(*body.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not hash password")
+			return
+		}
+		h := string(hashed)
+		patch.PasswordHash = &h
+	}
 
 	// Compose what the resulting config WOULD be if we applied the
 	// patch, then probe the changed sections.
@@ -182,30 +231,32 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Snapshot the PRE-save composed config: the stashChanged comparison
-	// below must be old-vs-new. `preview` is useless for that — it is
-	// already oldStored+patch, which is exactly what the store holds after
-	// Set, so comparing it against the post-save compose was always false
-	// and a Stash/StashDB credential change never invalidated the matcher:
-	// every matcher-backed path kept clients built from the old key until
-	// the daemon restarted.
-	oldCfg := s.composedConfig()
-
+	// oldCfg was snapshotted before the probes ran, above: the stashChanged
+	// comparison below must be old-vs-new. `preview` is useless for that:
+	// it is already oldStored+patch, which is exactly what the store holds
+	// after Set, so comparing it against the post-save compose was always
+	// false and a Stash/StashDB credential change never invalidated the
+	// matcher: every matcher-backed path kept clients built from the old
+	// key until the daemon restarted.
 	if err := s.store.Set(patch); err != nil {
 		s.log.Error("config save", "err", err)
 		writeErr(w, http.StatusInternalServerError, "save failed: "+err.Error())
 		return
 	}
 
-	// A login-credential change (password set/cleared, API key changed)
-	// rotates the session signing key so every outstanding cookie is
-	// revoked — the change wouldn't mean much if a session minted under
-	// the old credential kept working. The caller's own browser gets a
-	// fresh cookie in the same response so saving a new password doesn't
-	// dump them at the login screen; everyone else stays revoked. (The
-	// request was authorized by the middleware, so re-issuing is safe even
-	// if it authenticated by Bearer key.)
-	if body.Password != nil || patch.AdminToken != nil {
+	// Any credential change rotates the session signing key, revoking every
+	// outstanding cookie, since the change wouldn't mean much if a session
+	// minted under the old credential kept working. The caller's own
+	// browser gets a fresh cookie in the same response so saving a new
+	// password doesn't dump them at the login screen; everyone else stays
+	// revoked. (The request proved ownership above, so re-issuing is safe.)
+	//
+	// This keys off changedCreds, not off which wire field was set. The
+	// previous condition (`body.Password != nil || patch.AdminToken != nil`)
+	// meant a password swapped in via the raw `passwordHash` field revoked
+	// nothing at all: the attacker's own session survived their own
+	// takeover.
+	if len(changedCreds) > 0 {
 		s.rotateSessionKey()
 		if c, cerr := r.Cookie(sessionCookieName); cerr == nil && c.Value != "" {
 			if id, serr := s.newSession(); serr == nil {
@@ -400,111 +451,18 @@ func (s *Server) postStashDBFromStash(w http.ResponseWriter, r *http.Request) {
 }
 
 // previewConfig returns what the composed Config would be if `patch`
-// were saved — without actually persisting it. Used by /config/test
-// and by /config save (for change detection).
+// were saved, without actually persisting it. Used by /config/test, by
+// the credential guard, and by /config save (for change detection).
+//
+// It delegates the merge to configstore.Merged rather than replaying it.
+// The replay this replaced enumerated fields by hand and had already
+// drifted (downloadRoot, trashTtl, seedMaxAge, seedRatio, seedOverrides,
+// releasePrefs and releaseAdvanced were missing from it, so a /config/test
+// never saw them). That drift is survivable for a probe; it is not
+// survivable for the credential guard, which has to be sure it is looking
+// at the same merge Set will perform.
 func (s *Server) previewConfig(patch configstore.Patch) config.Config {
-	merged := s.store.Get()
-	// configstore.applyPatch is unexported; replay the merge logic
-	// here. Simpler than exposing it — only the API layer needs this.
-	if patch.StashURL != nil {
-		merged.StashURL = patch.StashURL
-	}
-	if patch.StashAPIKey != nil {
-		merged.StashAPIKey = patch.StashAPIKey
-	}
-	if patch.StashDBURL != nil {
-		merged.StashDBURL = patch.StashDBURL
-	}
-	if patch.StashDBAPIKey != nil {
-		merged.StashDBAPIKey = patch.StashDBAPIKey
-	}
-	if patch.ProwlarrURL != nil {
-		merged.ProwlarrURL = patch.ProwlarrURL
-	}
-	if patch.ProwlarrAPIKey != nil {
-		merged.ProwlarrAPIKey = patch.ProwlarrAPIKey
-	}
-	if patch.ProwlarrCategories != nil {
-		cats := append([]int(nil), (*patch.ProwlarrCategories)...)
-		merged.ProwlarrCategories = &cats
-	}
-	if patch.QbitURL != nil {
-		merged.QbitURL = patch.QbitURL
-	}
-	if patch.QbitUsername != nil {
-		merged.QbitUsername = patch.QbitUsername
-	}
-	if patch.QbitPassword != nil {
-		merged.QbitPassword = patch.QbitPassword
-	}
-	if patch.QbitCategory != nil {
-		merged.QbitCategory = patch.QbitCategory
-	}
-	if patch.SabURL != nil {
-		merged.SabURL = patch.SabURL
-	}
-	if patch.SabAPIKey != nil {
-		merged.SabAPIKey = patch.SabAPIKey
-	}
-	if patch.SabCategory != nil {
-		merged.SabCategory = patch.SabCategory
-	}
-	if patch.LibraryRoot != nil {
-		merged.LibraryRoot = patch.LibraryRoot
-	}
-	if patch.StashPathMapping != nil {
-		merged.StashPathMapping = patch.StashPathMapping
-	}
-	if patch.SabDeleteAfterPlace != nil {
-		merged.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
-	}
-	if patch.PackDedupKeep != nil {
-		merged.PackDedupKeep = patch.PackDedupKeep
-	}
-	if patch.ReleaseRules != nil {
-		merged.ReleaseRules = patch.ReleaseRules
-	}
-	if patch.HideMalePerformers != nil {
-		merged.HideMalePerformers = patch.HideMalePerformers
-	}
-	if patch.ExcludedSceneTags != nil {
-		tags := append([]string(nil), (*patch.ExcludedSceneTags)...)
-		merged.ExcludedSceneTags = &tags
-	}
-	if patch.PollInterval != nil {
-		merged.PollInterval = patch.PollInterval
-	}
-	if patch.OrphanAfter != nil {
-		merged.OrphanAfter = patch.OrphanAfter
-	}
-	if patch.CacheRefresh != nil {
-		merged.CacheRefresh = patch.CacheRefresh
-	}
-	if patch.AllowedOrigin != nil {
-		merged.AllowedOrigin = patch.AllowedOrigin
-	}
-	if patch.AdminToken != nil {
-		merged.AdminToken = patch.AdminToken
-	}
-	if patch.Username != nil {
-		merged.Username = patch.Username
-	}
-	if patch.PasswordHash != nil {
-		merged.PasswordHash = patch.PasswordHash
-	}
-	if patch.TelegramBotToken != nil {
-		merged.TelegramBotToken = patch.TelegramBotToken
-	}
-	if patch.TelegramChatID != nil {
-		merged.TelegramChatID = patch.TelegramChatID
-	}
-	if patch.NotifyWebhookURL != nil {
-		merged.NotifyWebhookURL = patch.NotifyWebhookURL
-	}
-	if patch.StashPublicURL != nil {
-		merged.StashPublicURL = patch.StashPublicURL
-	}
-	cfg, _ := config.Compose(s.bootstrap, merged)
+	cfg, _ := config.Compose(s.bootstrap, configstore.Merged(s.store.Get(), patch))
 	return cfg
 }
 

@@ -23,6 +23,26 @@ import AcornIcon from "../AcornIcon";
 //   - API key (the admin token) → the fallback for a token-only daemon, or
 //     for a client that only holds the key. Stores the token, establishes
 //     the cookie, and verifies against a gated endpoint before entering.
+// loginError turns a failed sign-in into something true.
+//
+// A 429 used to land here as "Incorrect username or password", because
+// any error carrying a status was rendered as that. The daemon has no
+// lockout by design, but a user who mistyped a few times and then typed
+// the right password would be told their password was wrong, for minutes,
+// with no mention of waiting: indistinguishable from the lockout that
+// deliberately does not exist.
+function loginError(e: unknown): string {
+  const status = (e as Error & { status?: number }).status;
+  if (status === 429) {
+    return (
+      (e as Error).message ||
+      "Too many attempts just now. Wait a moment and try again."
+    );
+  }
+  if (status) return "Incorrect username or password";
+  return "Couldn't reach the daemon, try again";
+}
+
 export default function Login({
   onAuthed,
   passwordSet,
@@ -53,10 +73,7 @@ export default function Login({
       // The session cookie is set; we're in.
       onAuthed();
     } catch (e) {
-      const msg = (e as Error & { status?: number }).status
-        ? "Incorrect username or password"
-        : "Couldn't reach the daemon — try again";
-      setErr(msg);
+      setErr(loginError(e));
     } finally {
       setBusy(false);
     }
@@ -72,7 +89,13 @@ export default function Login({
     setErr(null);
     setAdminToken(t);
     try {
-      await establishSession();
+      const status = await establishSession();
+      if (status === 429) {
+        // Don't drop the key: it may well be right, and the daemon just
+        // isn't answering credential checks from here for a minute.
+        setErr("Too many attempts just now. Wait a moment and try again.");
+        return;
+      }
       if (await verifyToken()) {
         onAuthed();
       } else {

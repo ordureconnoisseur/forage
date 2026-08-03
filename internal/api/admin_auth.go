@@ -211,13 +211,24 @@ func (s *Server) authRequired() bool {
 func (s *Server) adminAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !s.authRequired() {
+			// Open daemon: no credential is checked, so there is nothing to
+			// guess and nothing to throttle.
 			next.ServeHTTP(w, r)
+			return
+		}
+		// This is the path every Bearer client authenticates on: the API
+		// key, the Stash key, and the session cookie are all compared
+		// here, so this is where the throttle has to be. Fronting only /login
+		// and /session leaves token guessing unlimited.
+		if s.throttled(scopeGate, w, r) {
 			return
 		}
 		if s.requestAuthorized(r) {
+			s.noteAuthSuccess(scopeGate, r)
 			next.ServeHTTP(w, r)
 			return
 		}
+		s.noteAuthFailure(scopeGate, r)
 		// Info, not Warn: a browser whose cookie just expired trips this
 		// on every poll, and that shouldn't read as an attack. The
 		// credential-check failures below are the Warn-level signal.
@@ -423,10 +434,17 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, value string) {
 // bcrypt compare regardless of whether the username matched so the timing
 // (and the error) doesn't leak which half was wrong.
 func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
+	// Ahead of the hash lookup and the bcrypt compare: over budget, the
+	// guess is not evaluated at all, which is what stops both the guessing
+	// and the ~100ms of bcrypt each guess would otherwise cost the daemon.
+	if s.throttled(scopeLogin, w, r) {
+		return
+	}
 	hash := s.effectivePasswordHash()
 	if hash == "" {
 		// No password configured — password login isn't available on this
 		// daemon (it may still accept the API key via POST /session).
+		s.noteAuthFailure(scopeLogin, r)
 		s.logAuth(r, slog.LevelInfo, "auth-failure", "method", "password",
 			"reason", "password login not enabled")
 		writeErr(w, http.StatusUnauthorized, "password login is not enabled")
@@ -444,6 +462,7 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 	userOK := subtle.ConstantTimeCompare([]byte(body.Username), []byte(s.effectiveUsername())) == 1
 	passOK := bcrypt.CompareHashAndPassword([]byte(hash), []byte(body.Password)) == nil
 	if !userOK || !passOK {
+		s.noteAuthFailure(scopeLogin, r)
 		// The attempted username is logged (spray detection needs it) but
 		// NOT which half was wrong — that stays as undisclosed in the log
 		// as it is in the response.
@@ -452,6 +471,9 @@ func (s *Server) postLogin(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "incorrect username or password")
 		return
 	}
+	// Getting it right clears the record, so a run of mistypes followed by
+	// the correct password leaves no wait behind.
+	s.noteAuthSuccess(scopeLogin, r)
 
 	id, err := s.newSession()
 	if err != nil {
@@ -479,6 +501,11 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "required": false})
 		return
 	}
+	// The cheapest guessing surface in the daemon: no bcrypt in its path,
+	// and a success hands back a 7-day cookie.
+	if s.throttled(scopeSession, w, r) {
+		return
+	}
 	var body struct {
 		Token string `json:"token"`
 	}
@@ -494,12 +521,14 @@ func (s *Server) postSession(w http.ResponseWriter, r *http.Request) {
 	keyOK := stashKey != "" &&
 		subtle.ConstantTimeCompare([]byte(body.Token), []byte(stashKey)) == 1
 	if !tokenOK && !keyOK {
+		s.noteAuthFailure(scopeSession, r)
 		// No token value in the log, not even a prefix: it's a bearer
 		// secret, and a near-miss would be as good as the real thing.
 		s.logAuth(r, slog.LevelWarn, "auth-failure", "method", "token")
 		writeErr(w, http.StatusUnauthorized, "invalid token")
 		return
 	}
+	s.noteAuthSuccess(scopeSession, r)
 	id, err := s.newSession()
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not start session")
