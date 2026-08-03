@@ -120,7 +120,7 @@ export default function UnfiledList() {
     return all.filter(
       (s) =>
         s.path.toLowerCase().includes(needle) ||
-        (s.title ?? "").toLowerCase().includes(needle) ||
+        s.name.toLowerCase().includes(needle) ||
         (s.performers ?? []).some((p) => p.toLowerCase().includes(needle)),
     );
   }, [data, q]);
@@ -142,7 +142,7 @@ export default function UnfiledList() {
   const commonSuggestion = useMemo(() => {
     const names = new Set(
       matching
-        .filter((r) => selected.has(r.scene_id) && r.suggested)
+        .filter((r) => selected.has(r.key) && r.suggested)
         .map((r) => r.suggested!),
     );
     return names.size === 1 ? [...names][0] : "";
@@ -194,6 +194,11 @@ export default function UnfiledList() {
       window.setTimeout(() => setToast(null), 6000);
     }
   };
+
+  // What the button is actually about to move. One row can be 489 files.
+  const movingFiles = matching
+    .filter((r) => selected.has(r.key))
+    .reduce((n, r) => n + (r.files || 1), 0);
 
   const counts = data?.counts ?? {};
   const root = data?.library_root ?? "";
@@ -252,11 +257,11 @@ export default function UnfiledList() {
           <ul className="watch-list unfiled-list">
             {rows.map((s) => (
               <UnfiledRow
-                key={s.scene_id}
+                key={s.key}
                 s={s}
                 root={root}
-                checked={selected.has(s.scene_id)}
-                onToggle={() => toggle(s.scene_id)}
+                checked={selected.has(s.key)}
+                onToggle={() => toggle(s.key)}
               />
             ))}
           </ul>
@@ -314,7 +319,7 @@ export default function UnfiledList() {
                 onClick={file}
                 title="Move these files under that performer's folder"
               >
-                {busy ? "Filing…" : `File ${selected.size} →`}
+                {busy ? "Filing…" : `File ${selected.size} (${movingFiles} files) →`}
               </button>
             </div>
           )}
@@ -342,10 +347,18 @@ function UnfiledRow({
       </label>
       <div className="unfiled-body">
         <div className="unfiled-name" title={s.path}>
+          {s.kind === "pack" && <span className="unfiled-packtag">pack</span>}
           {leaf(s.path, root)}
         </div>
         <div className="unfiled-meta">
-          {s.title && <span className="unfiled-title">{s.title}</span>}
+          {/* A pack says how much rides on the decision. Filing "Adorable
+              Alice Video Pack" moves 489 files, and that should not be a
+              surprise discovered afterwards. */}
+          {s.kind === "pack" && (
+            <span className="unfiled-files">
+              {s.files} file{s.files === 1 ? "" : "s"}, moved together
+            </span>
+          )}
           {s.suggested && (
             <span className="unfiled-suggest">suggests {s.suggested}</span>
           )}

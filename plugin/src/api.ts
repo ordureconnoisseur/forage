@@ -245,12 +245,20 @@ export function addPerformerFromStashDB(
 // which on the reference library was 560 rows against 5,325 scenes under
 // Unsorted, and none of the 194 files that were sitting loose in the root.
 
+// One row is one DECISION, not one file. 4,139 of the 4,887 unfiled scenes on
+// the reference library sit inside 103 pack folders, and a pack moves as a
+// directory: filing its files individually guts a folder the poller's own
+// distribute step goes out of its way to preserve.
 export interface UnfiledScene {
-  scene_id: string;
-  title?: string;
+  kind: "file" | "pack";
+  // Opaque: a Stash scene id for a file, the folder path for a pack. The two
+  // must not be confused, so the UI never constructs one.
+  key: string;
+  name: string;
   path: string;
-  // "filable" (Stash names a performer), "identified" (a metadata source
-  // knows the scene but nobody is attached), or "unknown" (nothing has ever
+  files: number;
+  // "filable" (a performer is known), "identified" (a metadata source knows
+  // the scene but nobody is attached), or "unknown" (nothing has ever
   // identified it, which for amateur content is permanent, not pending).
   bucket: "filable" | "identified" | "unknown";
   suggested?: string;
@@ -280,28 +288,31 @@ export interface UnfiledSuggestion {
 }
 
 export function suggestUnfiledPerformers(
-  sceneIDs: string[],
+  keys: string[],
 ): Promise<{ suggestions: UnfiledSuggestion[] }> {
-  return postJSON("/unfiled/suggest", { scene_ids: sceneIDs });
+  return postJSON("/unfiled/suggest", { keys });
 }
 
 export interface FileUnfiledResult {
   moved: number;
   skipped: number;
-  results: { scene_id: string; from?: string; to?: string; error?: string }[];
+  results: {
+    key: string;
+    from?: string;
+    to?: string;
+    files?: number;
+    error?: string;
+  }[];
 }
 
 // Moves the named scenes' files under a performer folder. Never overwrites;
 // the daemon queues a Stash rescan of the destination afterwards so the
 // scenes re-attach by hash rather than becoming duplicates.
 export function fileUnfiled(
-  sceneIDs: string[],
+  keys: string[],
   performer: string,
 ): Promise<FileUnfiledResult> {
-  return postJSON("/unfiled/file", {
-    scene_ids: sceneIDs,
-    performer,
-  });
+  return postJSON("/unfiled/file", { keys, performer });
 }
 
 export interface DiscoverScene {
