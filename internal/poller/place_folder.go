@@ -57,13 +57,18 @@ func (p *Poller) placementPerformer(ctx context.Context, g *grabs.Grab) string {
 			return n
 		}
 	}
-	// Nobody local: use the billed lead. A named folder is still worth more
-	// than Unsorted, and the performer page offers to add them.
-	for _, n := range names {
-		if n != "" {
-			return n
-		}
-	}
+	// Nobody local: Unsorted.
+	//
+	// This used to fall back to the billed lead, on the reasoning that a named
+	// folder beats Unsorted. It does not. A performer folder that is not a
+	// Stash record is a folder nothing else in the system can reason about:
+	// it never appears on the performer page, never gets counted as owned,
+	// and the next pass has no way to tell it from a typo. The library has
+	// 280 such folders already (Cosplay, PMV, TS Webcam Collection 7) and
+	// they are exactly the ones nothing can act on.
+	//
+	// Unsorted is honest and reversible. Add the performer in Stash and the
+	// next pass files it properly.
 	return ""
 }
 

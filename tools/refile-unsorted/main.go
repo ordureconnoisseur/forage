@@ -294,11 +294,10 @@ func pick(dbh *sql.DB, names []string) (string, bool) {
 			return n, true
 		}
 	}
-	for _, n := range names {
-		if n != "" {
-			return n, false
-		}
-	}
+	// No fallback to a name the library does not have. A performer folder
+	// that is not a Stash record is one nothing else can reason about, so
+	// leaving the file in Unsorted is both honest and reversible: add the
+	// performer in Stash and the next pass files it properly.
 	return "", false
 }
 

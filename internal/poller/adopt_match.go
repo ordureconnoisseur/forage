@@ -96,12 +96,15 @@ func (p *Poller) identifyAdopted(ctx context.Context, releaseTitle string) adopt
 	}
 }
 
-// castFolder picks the folder name from a matched scene's cast, preferring a
-// performer the library already has. Same rule as placementPerformer, which is
-// deliberate: a scene should land in the same folder however forage came to
-// know what it was.
+// castFolder picks the folder name from a matched scene's cast: a performer
+// the library actually has, or nothing.
+//
+// Same rule as placementPerformer, deliberately, so a scene lands in the same
+// folder however forage came to know what it was. And the same refusal: a
+// folder named after someone Stash has never heard of is one nothing else in
+// the system can reason about. Unsorted is the honest answer, and it is the
+// reversible one.
 func (p *Poller) castFolder(ctx context.Context, c matcher.Candidate) string {
-	var first string
 	for _, perf := range c.Scene.Performers {
 		name := perf.Name
 		if perf.As != "" {
@@ -110,14 +113,11 @@ func (p *Poller) castFolder(ctx context.Context, c matcher.Candidate) string {
 		if name == "" {
 			continue
 		}
-		if first == "" {
-			first = name
-		}
 		if p.localPerformerID(ctx, name) != "" {
 			return name
 		}
 	}
-	return first
+	return ""
 }
 
 // matcherCache is embedded in Poller. Separate type so the lazily-built
