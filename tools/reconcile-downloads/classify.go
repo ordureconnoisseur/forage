@@ -85,6 +85,10 @@ type Entry struct {
 	Bucket      string `json:"bucket"`
 	Seeding     bool   `json:"seeding"`
 	LibrarySize int64  `json:"library_size,omitempty"`
+	// Hardlinked means this path and a library path are the SAME inode, so
+	// the bytes are stored once and counted once. Deleting this directory
+	// entry frees nothing at all.
+	Hardlinked bool `json:"hardlinked,omitempty"`
 }
 
 // Redundant reports whether the content exists somewhere else. It says nothing
@@ -101,6 +105,24 @@ func (e Entry) Redundant() bool {
 // elsewhere AND no torrent is serving this path. Deleting a seeding file is
 // how ten torrents on this library broke once already.
 func (e Entry) Reclaimable() bool { return e.Redundant() && !e.Seeding }
+
+// Frees is how many bytes actually come back if this entry is removed, which
+// is NOT the same as its size.
+//
+// A hardlinked duplicate shares one inode with the library file. Removing the
+// download-side name drops the link count from 2 to 1 and frees zero bytes,
+// because the library still references the same data. On the reference library
+// this is the difference between a report promising 4.28 TB and one promising
+// 1.28 TB: 3.00 TB of the "reclaimable" total was hardlinks that would have
+// freed nothing, and a cleanup run against that figure would have deleted
+// thousands of files, broken every torrent serving them, and recovered almost
+// no space.
+func (e Entry) Frees() int64 {
+	if !e.Reclaimable() || e.Hardlinked {
+		return 0
+	}
+	return e.Size
+}
 
 // Classify decides one file's bucket. library is the Stash library; extra
 // holds any other place the content may legitimately live, such as a second
@@ -119,7 +141,17 @@ func Classify(path string, size int64, fileID uint64, hasID bool,
 	}
 
 	name := IndexName(path)
-	if (hasID && library.FileIDs[fileID]) || library.NameSize[nameSize{name, size}] {
+	if hasID && library.FileIDs[fileID] {
+		// Same inode as a library file: one copy of the bytes, two names.
+		e.Bucket = BucketDuplicate
+		e.LibrarySize = size
+		e.Hardlinked = true
+		return e
+	}
+	if library.NameSize[nameSize{name, size}] {
+		// Same name and size but a DIFFERENT inode: a real second copy, made
+		// by the placer's cross-device fallback or by a manual copy. This one
+		// does free space.
 		e.Bucket = BucketDuplicate
 		e.LibrarySize = size
 		return e
