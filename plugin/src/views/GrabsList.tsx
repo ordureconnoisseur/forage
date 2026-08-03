@@ -141,6 +141,20 @@ function isUnmatched(g: Grab): boolean {
   return g.status === "confirmed" && g.kind !== "pack" && !g.actual_stashdb_id;
 }
 
+// PendingTorrent is one queued .torrent: its own inspection, its own
+// destination folder, and its own outcome. Per-row state is what lets one bad
+// torrent fail without taking the rest of a dropped batch with it.
+interface PendingTorrent {
+  key: number;
+  file: File;
+  inspect: TorrentInspect | null;
+  name: string;
+  reading: boolean;
+  adding: boolean;
+  done?: number;
+  err?: string | null;
+}
+
 export default function GrabsList({
   onPickScene,
   initialQ,
@@ -177,12 +191,15 @@ export default function GrabsList({
   const [adopting, setAdopting] = useState(false);
   const [retryingAll, setRetryingAll] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
-  const [addFile, setAddFile] = useState<File | null>(null);
-  const [addInspect, setAddInspect] = useState<TorrentInspect | null>(null);
-  const [addInspecting, setAddInspecting] = useState(false);
-  const [addName, setAddName] = useState("");
+  // The add form holds a QUEUE, not one file. Dropping a folder's worth of
+  // .torrents is the normal case for a private tracker, and making that five
+  // round trips through a picker is the thing drag-and-drop was supposed to
+  // fix. Each entry carries its own inspection and its own destination folder,
+  // because five torrents rarely belong to one performer.
+  const [queue, setQueue] = useState<PendingTorrent[]>([]);
   const [addBusy, setAddBusy] = useState(false);
   const [addErr, setAddErr] = useState<string | null>(null);
+  const queueKey = useRef(0);
   const fileRef = useRef<HTMLInputElement>(null);
   const lastFetch = useRef(0);
   // Whether the LAST SUCCESSFUL poll saw active grabs — drives the
@@ -285,44 +302,83 @@ export default function GrabsList({
   // Clear the add form back to empty — deselects the file, drops the
   // inspect result, and clears the folder. (Does not close the form.)
   const resetAddForm = useCallback(() => {
-    setAddFile(null);
-    setAddInspect(null);
-    setAddInspecting(false);
-    setAddName("");
+    setQueue([]);
     setAddErr(null);
     if (fileRef.current) fileRef.current.value = "";
   }, []);
 
   // Picking a file inspects it (parse name/size/counts + suggest a
   // performer folder) before any download — confirm-first.
-  // Taking a .torrent, from wherever it came: the file picker or a drop.
-  // Both paths run the same inspect so the pack/single detection and the
-  // folder suggestions are identical however the file arrived.
-  const acceptTorrent = useCallback(async (f: File | null) => {
-    setAddFile(f);
-    setAddInspect(null);
-    setAddName("");
-    setAddErr(null);
-    if (!f) return;
-    setAddInspecting(true);
-    try {
-      const ins = await inspectTorrentFile(f);
-      setAddInspect(ins);
-      setAddName(ins.suggested_performers[0]?.name ?? "");
-    } catch (e) {
-      setAddErr((e as Error).message);
-    } finally {
-      setAddInspecting(false);
+  // Taking .torrents, from wherever they came: the picker or a drop. Both
+  // paths land here so inspection, pack detection and folder suggestions are
+  // identical however the files arrived.
+  //
+  // Inspections run concurrently and each writes only its OWN row, so a slow
+  // or corrupt torrent never holds up the rest of the batch.
+  const acceptTorrents = useCallback((files: File[]) => {
+    const torrents = files.filter((f) =>
+      f.name.toLowerCase().endsWith(".torrent"),
+    );
+    if (torrents.length === 0) {
+      setAddErr(
+        files.length === 1
+          ? `${files[0].name} isn't a .torrent file`
+          : "none of those are .torrent files",
+      );
+      return;
+    }
+    setAddErr(
+      torrents.length < files.length
+        ? `ignored ${files.length - torrents.length} file(s) that aren't .torrent`
+        : null,
+    );
+    const added: PendingTorrent[] = torrents.map((file) => ({
+      key: (queueKey.current += 1),
+      file,
+      inspect: null,
+      name: "",
+      reading: true,
+      adding: false,
+    }));
+    setQueue((q) => [...q, ...added]);
+    for (const item of added) {
+      void inspectTorrentFile(item.file)
+        .then((ins) =>
+          setQueue((q) =>
+            q.map((it) =>
+              it.key === item.key
+                ? {
+                    ...it,
+                    reading: false,
+                    inspect: ins,
+                    // Pre-fill only when the name has not been touched, so a
+                    // late inspection cannot overwrite a choice already made.
+                    name: it.name || (ins.suggested_performers[0]?.name ?? ""),
+                  }
+                : it,
+            ),
+          ),
+        )
+        .catch((e: Error) =>
+          setQueue((q) =>
+            q.map((it) =>
+              it.key === item.key
+                ? { ...it, reading: false, err: e.message }
+                : it,
+            ),
+          ),
+        );
     }
   }, []);
 
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
 
-  const onPickTorrent = useCallback(
-    () => acceptTorrent(fileRef.current?.files?.[0] ?? null),
-    [acceptTorrent],
-  );
+  const onPickTorrent = useCallback(() => {
+    acceptTorrents(Array.from(fileRef.current?.files ?? []));
+    // Clear the input so picking the SAME file again still fires onChange.
+    if (fileRef.current) fileRef.current.value = "";
+  }, [acceptTorrents]);
 
   // Drag a .torrent anywhere onto the page.
   //
@@ -360,18 +416,7 @@ export default function GrabsList({
       dragDepth.current = 0;
       setDropping(false);
       setAddOpen(true);
-      const t = files.find((f) => f.name.toLowerCase().endsWith(".torrent"));
-      if (!t) {
-        setAddFile(null);
-        setAddInspect(null);
-        setAddErr(
-          files.length === 1
-            ? `${files[0].name} isn't a .torrent file`
-            : "none of those are .torrent files",
-        );
-        return;
-      }
-      void acceptTorrent(t);
+      acceptTorrents(files);
     };
     window.addEventListener("dragenter", onEnter);
     window.addEventListener("dragover", onOver);
@@ -383,28 +428,74 @@ export default function GrabsList({
       window.removeEventListener("dragleave", onLeave);
       window.removeEventListener("drop", onDropped);
     };
-  }, [acceptTorrent]);
+  }, [acceptTorrents]);
 
-  const submitTorrent = useCallback(async () => {
-    if (!addFile) {
-      setAddErr("choose a .torrent file first");
+  // Add every queued torrent, sequentially.
+  //
+  // Sequential rather than parallel because each add is a write to qBit and a
+  // row in forage's grabs table; ten at once buys nothing and makes a partial
+  // failure much harder to describe. Each row records its own outcome, so one
+  // rejected torrent leaves the other nine added and visibly says which failed
+  // rather than collapsing the batch into a single error.
+  const submitQueue = useCallback(async () => {
+    const pending = queue.filter((it) => it.done === undefined && !it.reading);
+    if (pending.length === 0) {
+      setAddErr("nothing to add yet");
       return;
     }
     setAddBusy(true);
     setAddErr(null);
-    try {
-      const res = await grabTorrentFile(addFile, addName.trim());
-      const label = addInspect?.name ? `"${addInspect.name}"` : "torrent";
-      resetAddForm();
-      setAddOpen(false);
-      setNotice(`Added ${label} → grab #${res.grab_id}`);
-      void refresh();
-    } catch (e) {
-      setAddErr((e as Error).message);
-    } finally {
-      setAddBusy(false);
+    let ok = 0;
+    for (const item of pending) {
+      setQueue((q) =>
+        q.map((it) =>
+          it.key === item.key ? { ...it, adding: true, err: null } : it,
+        ),
+      );
+      try {
+        const res = await grabTorrentFile(item.file, item.name.trim());
+        ok += 1;
+        setQueue((q) =>
+          q.map((it) =>
+            it.key === item.key
+              ? { ...it, adding: false, done: res.grab_id }
+              : it,
+          ),
+        );
+      } catch (e) {
+        setQueue((q) =>
+          q.map((it) =>
+            it.key === item.key
+              ? { ...it, adding: false, err: (e as Error).message }
+              : it,
+          ),
+        );
+      }
     }
-  }, [addFile, addName, addInspect, refresh, resetAddForm]);
+    setAddBusy(false);
+    if (ok > 0) {
+      setNotice(`Added ${ok} torrent${ok === 1 ? "" : "s"}`);
+      void refresh();
+    }
+    // Only close when everything landed; a failed row has to stay visible.
+    setQueue((q) => {
+      const left = q.filter((it) => it.done === undefined);
+      if (left.length === 0) {
+        setAddOpen(false);
+        if (fileRef.current) fileRef.current.value = "";
+        return [];
+      }
+      return q;
+    });
+  }, [queue, refresh]);
+
+  const setItemName = useCallback((key: number, name: string) => {
+    setQueue((q) => q.map((it) => (it.key === key ? { ...it, name } : it)));
+  }, []);
+
+  const dropItem = useCallback((key: number) => {
+    setQueue((q) => q.filter((it) => it.key !== key));
+  }, []);
 
   const handleDeleted = useCallback(
     (id: number, res: DeleteGrabResult) => {
@@ -608,79 +699,116 @@ export default function GrabsList({
             ref={fileRef}
             type="file"
             accept=".torrent"
+            multiple
             onChange={onPickTorrent}
           />
-          {addInspecting && (
-            <span className="grab-add-hint">Reading torrent…</span>
-          )}
-          {addInspect && (
-            <div className="torrent-inspect">
-              <div className="ti-summary">
-                <span className={"ti-kind " + addInspect.kind}>
-                  {addInspect.kind === "pack" ? "PACK" : "SINGLE"}
-                </span>
-                <strong className="ti-name">
-                  {addInspect.name || "(unnamed torrent)"}
-                </strong>
-                <span className="ti-meta">
-                  {addInspect.video_count} video
-                  {addInspect.video_count === 1 ? "" : "s"} ·{" "}
-                  {humanSize(addInspect.total_size, "?")}
-                </span>
-              </div>
-              {addInspect.suggested_performers.length > 0 ? (
-                <div className="ti-suggest">
-                  <span className="muted">Folder:</span>
-                  {addInspect.suggested_performers.map((p) => (
-                    <button
-                      key={p.stash_id}
-                      type="button"
-                      className={
-                        "ti-chip" + (addName === p.name ? " sel" : "")
-                      }
-                      onClick={() => setAddName(p.name)}
-                      title={`${p.scene_count} scenes in library`}
-                    >
-                      {p.favorite ? "★ " : ""}
-                      {p.name}
-                    </button>
-                  ))}
+          {queue.length > 0 && (
+            <div className="ti-queue">
+              {queue.map((it) => (
+                <div
+                  key={it.key}
+                  className={
+                    "ti-row" +
+                    (it.done !== undefined ? " done" : "") +
+                    (it.err ? " failed" : "")
+                  }
+                >
+                  <div className="ti-summary">
+                    {it.inspect ? (
+                      <span className={"ti-kind " + it.inspect.kind}>
+                        {it.inspect.kind === "pack" ? "PACK" : "SINGLE"}
+                      </span>
+                    ) : (
+                      <span className="ti-kind">…</span>
+                    )}
+                    <strong className="ti-name">
+                      {it.inspect?.name || it.file.name}
+                    </strong>
+                    {it.inspect && (
+                      <span className="ti-meta">
+                        {it.inspect.video_count} video
+                        {it.inspect.video_count === 1 ? "" : "s"} ·{" "}
+                        {humanSize(it.inspect.total_size, "?")}
+                      </span>
+                    )}
+                    {it.reading && <span className="ti-meta">reading…</span>}
+                    {it.adding && <span className="ti-meta">adding…</span>}
+                    {it.done !== undefined && (
+                      <span className="ti-meta">→ grab #{it.done}</span>
+                    )}
+                    {it.done === undefined && !it.adding && (
+                      <button
+                        type="button"
+                        className="ti-drop"
+                        onClick={() => dropItem(it.key)}
+                        title="Remove from the queue"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+                  {it.err && <div className="grab-add-err">{it.err}</div>}
+                  {it.done === undefined && (
+                    <div className="ti-rowfolder">
+                      {(it.inspect?.suggested_performers.length ?? 0) > 0 && (
+                        <div className="ti-suggest">
+                          {it.inspect?.suggested_performers.map((pf) => (
+                            <button
+                              key={pf.stash_id}
+                              type="button"
+                              className={
+                                "ti-chip" + (it.name === pf.name ? " sel" : "")
+                              }
+                              onClick={() => setItemName(it.key, pf.name)}
+                              title={`${pf.scene_count} scenes in library`}
+                            >
+                              {pf.favorite ? "★ " : ""}
+                              {pf.name}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <input
+                        type="text"
+                        placeholder="folder — default (manual)"
+                        value={it.name}
+                        onChange={(e) => setItemName(it.key, e.target.value)}
+                      />
+                    </div>
+                  )}
                 </div>
-              ) : (
-                <div className="ti-suggest muted">
-                  No library performer detected in the name — set a folder
-                  below.
-                </div>
-              )}
+              ))}
             </div>
           )}
-          <input
-            type="text"
-            placeholder="folder — default (manual)"
-            value={addName}
-            onChange={(e) => setAddName(e.target.value)}
-          />
           <button
             className="grab-add-go"
-            onClick={submitTorrent}
-            disabled={addBusy || addInspecting || !addFile}
+            onClick={submitQueue}
+            disabled={
+              addBusy ||
+              queue.length === 0 ||
+              queue.every((it) => it.done !== undefined || it.reading)
+            }
           >
-            {addBusy ? "Adding…" : "Add"}
+            {addBusy
+              ? "Adding…"
+              : queue.filter((it) => it.done === undefined).length > 1
+                ? `Add ${queue.filter((it) => it.done === undefined).length}`
+                : "Add"}
           </button>
-          {(addFile || addName) && (
+          {queue.length > 0 && (
             <button
               type="button"
               className="grab-add-clear"
               onClick={resetAddForm}
               disabled={addBusy}
-              title="Clear — deselect the torrent and clear the folder"
+              title="Clear the queue"
             >
               ✕ Clear
             </button>
           )}
           {addErr && <span className="grab-add-err">{addErr}</span>}
           <span className="grab-add-hint">
-            forage downloads it, then places into{" "}
+            Drop .torrent files anywhere. forage downloads each, places into{" "}
             <code>/Media/&lt;folder&gt;</code>, scans and identifies —
             auto-detecting pack vs single.
           </span>
