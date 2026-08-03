@@ -18,6 +18,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/cache"
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/configstore"
+	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -310,6 +311,9 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	// after the Pool reload so the clients are built from the just-saved
 	// credentials.
 	catResults := s.ensureDownloadCategories(r.Context(), newCfg)
+	// And keep that same folder out of Stash's library, for the layout where
+	// it lives inside the library root.
+	excl := s.ensureStashExclusion(r.Context(), newCfg)
 
 	out := map[string]any{
 		"ok":      true,
@@ -317,6 +321,9 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(catResults) > 0 {
 		out["categories"] = catResults
+	}
+	if excl != "" {
+		out["stash_exclusion"] = excl
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -505,4 +512,70 @@ func joinIssues(parts ...string) string {
 		}
 	}
 	return strings.Join(out, "; ")
+}
+
+// ensureStashExclusion keeps forage's download folder out of Stash's library,
+// when that folder sits inside a path Stash scans.
+//
+// Only then: with the download root a SIBLING of the library, Stash never
+// walks it and an exclusion would be noise. It becomes essential the moment
+// downloads live inside the library root, which is the layout worth
+// recommending, because it is the only one where a single folder from the user
+// guarantees one filesystem and therefore working hardlinks.
+//
+// forage writes the pattern rather than documenting it because Stash's
+// exclusion is a raw regex matched against a raw path and it fails SILENTLY.
+// The reference library's own hand-written rule used forward slashes against
+// Windows paths and excluded nothing at all; 29,045 images the user had ruled
+// out were indexed anyway, with no error and no count to notice. A rule that
+// important should not depend on someone getting a regex right, in the same
+// way the qBit and SAB categories above are not left to be typed by hand.
+//
+// Best-effort and non-fatal, like the categories: the config is saved either
+// way, and the result is reported so the UI can say what happened.
+func (s *Server) ensureStashExclusion(ctx context.Context, cfg config.Config) string {
+	dl := strings.TrimSpace(cfg.DownloadRoot)
+	if dl == "" {
+		return ""
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		return ""
+	}
+	// Stash's namespace, not forage's: the daemon says /data/porn/downloads
+	// where Stash says Z:\downloads, and the pattern is matched against what
+	// STASH stores.
+	stashDL := pathmap.Translate(dl, s.pool.Settings().StashPathMapping)
+	if stashDL == "" {
+		stashDL = dl
+	}
+	libCfg, err := sc.LibraryConfig(ctx)
+	if err != nil {
+		s.log.Warn("stash exclusion: read library config", "err", err)
+		return "failed: " + err.Error()
+	}
+	inside := false
+	for _, p := range libCfg.Paths {
+		if stash.PathInside(stashDL, p) {
+			inside = true
+			break
+		}
+	}
+	if !inside {
+		return "not needed (download folder is outside every Stash library path)"
+	}
+	pattern := stash.ExcludePattern(stashDL)
+	if pattern == "" {
+		return ""
+	}
+	added, err := sc.AddVideoExclude(ctx, pattern)
+	if err != nil {
+		s.log.Warn("stash exclusion: add", "pattern", pattern, "err", err)
+		return "failed: " + err.Error()
+	}
+	if !added {
+		return "already excluded"
+	}
+	s.log.Info("stash exclusion added", "pattern", pattern, "path", stashDL)
+	return "added " + pattern
 }
