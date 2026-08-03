@@ -275,11 +275,9 @@ const compressLevel = 5
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Recoverer)
-<<<<<<< HEAD
 	// Before CORS so the 204 it short-circuits preflight with carries them
 	// too.
 	r.Use(s.securityHeadersMiddleware)
-=======
 	// Compress JSON only. /scenes/{id}/releases can carry a few hundred rows
 	// of highly repetitive prose (the verifier's explanation of each verdict),
 	// and it was going out uncompressed because nothing here compressed
@@ -288,7 +286,6 @@ func (s *Server) Router() http.Handler {
 	// response with a strong ETag is how you get a stale SPA served from a
 	// revalidation that thinks it matched.
 	r.Use(middleware.Compress(compressLevel, "application/json"))
->>>>>>> 643cb88 (Prove the verifier refactor, and bound the payload it added)
 	r.Use(s.corsMiddleware)
 
 	// Public, unauthenticated routes. /healthz must stay open so the
