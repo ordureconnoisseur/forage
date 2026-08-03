@@ -10,6 +10,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
 	"github.com/ordureconnoisseur/forager/internal/stash"
+	"github.com/ordureconnoisseur/forager/internal/suggest"
 )
 
 // The Unfiled view: library scenes that are not under a performer folder.
@@ -104,12 +105,23 @@ func (s *Server) getUnfiled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	want := r.URL.Query().Get("bucket")
+	// ConfidentTopFolder, not the ranked picker. This suggestion pre-fills
+	// the destination for a selection, and one row here can be 489 files, so
+	// a confidently wrong name is far worse than none.
+	//
+	// Measured on the reference library with the ranked picker: "Adorable
+	// Alice Video Pack" suggested Ember Snow and "Ella Hollywood
+	// [Onlyfans.com]" suggested hungdoll. The conservative variant exists for
+	// exactly this. It answers only when the best match is a full multi-word
+	// name with no rival matching as many words, which is the same bar
+	// adoption uses before it auto-files a torrent, and for the same reason:
+	// a lone first-name hit is the false-positive class that mis-filed a
+	// batch of them.
+	//
+	// The ranked picker still drives the one-click chips, where a weaker
+	// guess is an option someone chooses rather than a default they inherit.
 	items, counts := groupUnfiled(found, stashRoot, want, func(name string) string {
-		ps := s.suggestPerformers(r.Context(), name)
-		if len(ps) == 0 {
-			return ""
-		}
-		return ps[0].Name
+		return suggest.ConfidentTopFolder(r.Context(), s.db, name)
 	})
 	out := unfiledResponse{Scenes: items, Counts: counts, LibraryRoot: stashRoot}
 	if out.Scenes == nil {
