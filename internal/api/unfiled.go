@@ -278,6 +278,82 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// postUnfiledSuggest ranks local performers for a selection of unfiled files.
+//
+//	POST /unfiled/suggest  {"scene_ids": [...]}
+//
+// Same ranking the grab detail offers for a mis-filed grab (suggest.Performers
+// over the release name), so the two screens agree about who a file is likely
+// to belong to. Reusing it matters: the naive version of this is a plain text
+// box, which asks the user to remember and retype a name the daemon can
+// already guess from the filename.
+//
+// Scoped to the SELECTION rather than returned per row. The list endpoint
+// already ships 4,887 rows on the reference library, and attaching six ranked
+// performers to each would multiply a payload that is mostly scrolled past.
+func (s *Server) postUnfiledSuggest(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SceneIDs []string `json:"scene_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
+		return
+	}
+	if len(req.SceneIDs) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"suggestions": []suggestedPerformer{}})
+		return
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		writeErr(w, http.StatusServiceUnavailable, "Stash isn't configured")
+		return
+	}
+	cfg := s.composedConfig()
+	stashRoot := pathmap.Translate(cfg.LibraryRoot, cfg.StashPathMapping)
+	if stashRoot == "" {
+		stashRoot = cfg.LibraryRoot
+	}
+	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
+		return
+	}
+	want := map[string]bool{}
+	for _, id := range req.SceneIDs {
+		want[id] = true
+	}
+
+	// Rank across the whole selection, best total first. A performer named by
+	// several of the selected files is a better answer than one named by the
+	// first, which is the case that matters when someone has just filtered to
+	// a name and selected everything it matched.
+	score := map[string]int{}
+	meta := map[string]suggestedPerformer{}
+	for _, f := range found {
+		if !want[f.ID] {
+			continue
+		}
+		for _, p := range s.suggestPerformers(r.Context(), filepath.Base(f.FilePath)) {
+			score[p.Name] += p.SceneCount + 1
+			meta[p.Name] = p
+		}
+	}
+	out := make([]suggestedPerformer, 0, len(meta))
+	for name := range meta {
+		out = append(out, meta[name])
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		if score[out[i].Name] != score[out[j].Name] {
+			return score[out[i].Name] > score[out[j].Name]
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > 6 {
+		out = out[:6]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"suggestions": out})
+}
+
 // sanitiseFolder strips what a filesystem will not take in a directory name.
 // Mirrors the placer's own cleaning; kept local so this endpoint does not
 // depend on the placer's unexported helper.

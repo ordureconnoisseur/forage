@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  fetchPerformers,
   fetchUnfiled,
   fileUnfiled,
+  suggestUnfiledPerformers,
   type UnfiledResponse,
   type UnfiledScene,
+  type UnfiledSuggestion,
 } from "../api";
 
 // Unfiled: library scenes that are not under a performer folder.
@@ -79,6 +82,19 @@ export default function UnfiledList() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // Ranked guesses for the CURRENT selection, from the same suggest.Performers
+  // the grab detail uses. A plain text box asked the user to remember and
+  // retype a name the daemon can already read off the filename.
+  const [suggestions, setSuggestions] = useState<UnfiledSuggestion[]>([]);
+  // Every local performer, for autocomplete. The ranked chips cover the likely
+  // answer; this covers the rest, so nobody has to spell a name from memory.
+  const [allPerformers, setAllPerformers] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchPerformers({ sort: "scene_count" })
+      .then((r) => setAllPerformers(r.performers.map((p) => p.name).filter(Boolean)))
+      .catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -135,6 +151,27 @@ export default function UnfiledList() {
   useEffect(() => {
     if (commonSuggestion) setPerformer(commonSuggestion);
   }, [commonSuggestion]);
+
+  // Ask the daemon who these files look like, whenever the selection changes.
+  // Debounced: ticking through a dozen rows should not be a dozen round trips,
+  // and each one re-reads the unfiled set server-side.
+  useEffect(() => {
+    const ids = [...selected];
+    if (ids.length === 0) {
+      setSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      suggestUnfiledPerformers(ids)
+        .then((r) => !cancelled && setSuggestions(r.suggestions ?? []))
+        .catch(() => !cancelled && setSuggestions([]));
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [selected]);
 
   const file = async () => {
     const ids = [...selected];
@@ -237,14 +274,40 @@ export default function UnfiledList() {
               filing a row you happened to be reading. */}
           {selected.size > 0 && (
             <div className="watch-foot unfiled-actions">
+              {suggestions.length > 0 && (
+                <div className="unfiled-suggestions">
+                  {suggestions.map((p) => (
+                    <button
+                      key={p.stash_id || p.name}
+                      type="button"
+                      className={
+                        "grab-chip" + (performer === p.name ? " active chip-any" : "")
+                      }
+                      onClick={() => setPerformer(p.name)}
+                      title={`${p.scene_count} scenes in your library`}
+                    >
+                      <span className="chip-label">
+                        {p.favorite ? "\u2665 " : ""}
+                        {p.name}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
               <span className="unfiled-selected">{selected.size} selected</span>
               <input
                 type="text"
                 className="unfiled-performer"
                 placeholder="File under performer…"
+                list="unfiled-performer-options"
                 value={performer}
                 onChange={(e) => setPerformer(e.target.value)}
               />
+              <datalist id="unfiled-performer-options">
+                {allPerformers.map((n) => (
+                  <option key={n} value={n} />
+                ))}
+              </datalist>
               <button
                 className="collection-cta"
                 disabled={busy || !performer.trim()}
