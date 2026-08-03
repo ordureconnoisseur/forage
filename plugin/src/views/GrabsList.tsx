@@ -295,8 +295,10 @@ export default function GrabsList({
 
   // Picking a file inspects it (parse name/size/counts + suggest a
   // performer folder) before any download — confirm-first.
-  const onPickTorrent = useCallback(async () => {
-    const f = fileRef.current?.files?.[0] ?? null;
+  // Taking a .torrent, from wherever it came: the file picker or a drop.
+  // Both paths run the same inspect so the pack/single detection and the
+  // folder suggestions are identical however the file arrived.
+  const acceptTorrent = useCallback(async (f: File | null) => {
     setAddFile(f);
     setAddInspect(null);
     setAddName("");
@@ -313,6 +315,75 @@ export default function GrabsList({
       setAddInspecting(false);
     }
   }, []);
+
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
+
+  const onPickTorrent = useCallback(
+    () => acceptTorrent(fileRef.current?.files?.[0] ?? null),
+    [acceptTorrent],
+  );
+
+  // Drag a .torrent anywhere onto the page.
+  //
+  // Window-level rather than a bordered drop zone, because a target you have
+  // to aim at is barely better than the file picker it replaces: the point is
+  // to drop the file the moment you have it, not to go and find where it goes.
+  // Dropping also OPENS the add form, so one gesture replaces click-add,
+  // click-browse, find-the-file, choose.
+  //
+  // preventDefault on dragover is what makes a drop possible at all, and
+  // without it the browser navigates away to render the .torrent instead.
+  useEffect(() => {
+    const hasFiles = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.items ?? []).some((i) => i.kind === "file");
+    const onEnter = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth.current += 1;
+      setDropping(true);
+    };
+    const onOver = (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+    };
+    // dragleave fires for every nested element the cursor crosses, so a depth
+    // counter is what keeps the overlay from flickering off mid-drag.
+    const onLeave = () => {
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDropping(false);
+    };
+    const onDropped = (e: DragEvent) => {
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length === 0) return;
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDropping(false);
+      setAddOpen(true);
+      const t = files.find((f) => f.name.toLowerCase().endsWith(".torrent"));
+      if (!t) {
+        setAddFile(null);
+        setAddInspect(null);
+        setAddErr(
+          files.length === 1
+            ? `${files[0].name} isn't a .torrent file`
+            : "none of those are .torrent files",
+        );
+        return;
+      }
+      void acceptTorrent(t);
+    };
+    window.addEventListener("dragenter", onEnter);
+    window.addEventListener("dragover", onOver);
+    window.addEventListener("dragleave", onLeave);
+    window.addEventListener("drop", onDropped);
+    return () => {
+      window.removeEventListener("dragenter", onEnter);
+      window.removeEventListener("dragover", onOver);
+      window.removeEventListener("dragleave", onLeave);
+      window.removeEventListener("drop", onDropped);
+    };
+  }, [acceptTorrent]);
 
   const submitTorrent = useCallback(async () => {
     if (!addFile) {
@@ -483,6 +554,14 @@ export default function GrabsList({
 
   return (
     <div>
+      {dropping && (
+        <div className="grab-drop-overlay">
+          <div className="grab-drop-card">
+            <strong>Drop a .torrent</strong>
+            <span>forage reads it, suggests a folder, and hands it to qBit</span>
+          </div>
+        </div>
+      )}
       {/* Toolbar: identity (title + stats) on the left, search +
           live count on the right — one row that uses the width. */}
       <div className="grab-toolbar">
