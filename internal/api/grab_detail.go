@@ -248,7 +248,7 @@ func (s *Server) planGrabStash(ctx context.Context, g *grabs.Grab) grabPurgeStas
 		for _, sm := range scenes {
 			targets = append(targets, targetFromMatch(sm))
 		}
-		out.Plan = destroy.Vet(targets)
+		out.Plan = destroy.VetWith(targets, s.seedingSet(ctx))
 		return out
 	}
 
@@ -269,7 +269,7 @@ func (s *Server) planGrabStash(ctx context.Context, g *grabs.Grab) grabPurgeStas
 		})
 		return out
 	}
-	out.Plan = destroy.Vet([]destroy.Target{targetFromMatch(*scene)})
+	out.Plan = destroy.VetWith([]destroy.Target{targetFromMatch(*scene)}, s.seedingSet(ctx))
 	return out
 }
 

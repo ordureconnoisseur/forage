@@ -18,14 +18,24 @@
 //     so even the automatic (poller) surface leaves a record of exactly
 //     what it was about to remove and why.
 //
-// The invariant Vet enforces today is the multi-file rule: Stash's
-// sceneDestroy(delete_file) removes EVERY file attached to a scene, and
-// Stash files a re-download with a matching fingerprint as a second file on
-// the existing scene — so destroying a scene that holds more than one file
-// deletes copies beyond the one in question, plus the scene record itself
-// (tags, o-counter, markers, watch history). Such scenes are refused, with
-// the evidence attached. Callers fall back to removing only their own file
-// from disk, which Stash reconciles on its next scan.
+// Two invariants are enforced here.
+//
+// The multi-file rule: Stash's sceneDestroy(delete_file) removes EVERY file
+// attached to a scene, and Stash files a re-download with a matching
+// fingerprint as a second file on the existing scene — so destroying a scene
+// that holds more than one file deletes copies beyond the one in question,
+// plus the scene record itself (tags, o-counter, markers, watch history).
+// Such scenes are refused, with the evidence attached. Callers fall back to
+// removing only their own file from disk, which Stash reconciles on its next
+// scan.
+//
+// The seeding rule (VetWith): a file a torrent is currently serving is
+// refused however redundant it otherwise is. This one is orthogonal to
+// everything else — a file can be a verified duplicate, correct to remove by
+// every library measure, and still be what a torrent is reading from. Removing
+// it corrupts nothing and breaks the torrent silently, which is discovered
+// weeks later when the ratio is already gone. Ten torrents on the reference
+// library died this way in a single batch operation.
 package destroy
 
 import (
@@ -36,6 +46,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/ordureconnoisseur/forager/internal/seeding"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -85,7 +96,29 @@ func (p Plan) Files() []File {
 // the resulting plan. It never errors: an unacceptable target becomes a
 // Refusal, because "cannot destroy this" is an answer for the user, not an
 // exception for the caller.
-func Vet(candidates []Target) Plan {
+//
+// Vet has no seeding information and therefore cannot protect a file a
+// torrent is serving. Callers that can reach the download client should use
+// VetWith instead.
+func Vet(candidates []Target) Plan { return VetWith(candidates, nil) }
+
+// VetWith is Vet plus the seeding invariant: a file a torrent is currently
+// serving is refused, however redundant it otherwise is.
+//
+// This is a separate axis from every other rule here. A file can be a
+// verified duplicate, safe by every other measure, and still be the thing a
+// torrent is reading from — removing it does not corrupt the library, it
+// silently kills a torrent, and the user finds out weeks later when the ratio
+// has already gone. Ten torrents on the reference library broke exactly this
+// way in one batch operation.
+//
+// A nil or empty Set means the client could not be reached. That refuses
+// nothing, because freezing every delete surface in forage on a qBittorrent
+// hiccup is a worse failure than the one being prevented, and forage's trash
+// (TrashTTL) already makes a wrong delete recoverable while a dead torrent is
+// merely annoying to repair. Callers that would rather stop than guess should
+// check Set.Known themselves.
+func VetWith(candidates []Target, seeded *seeding.Set) Plan {
 	var p Plan
 	for _, t := range candidates {
 		if t.SceneID == "" {
@@ -100,9 +133,29 @@ func Vet(candidates []Target) Plan {
 			})
 			continue
 		}
+		if path := seedingFile(t, seeded); path != "" {
+			p.Refused = append(p.Refused, Refusal{
+				Target: t,
+				Reason: fmt.Sprintf(
+					"a torrent is still seeding %s and removing it would break the torrent",
+					path),
+			})
+			continue
+		}
 		p.Approved = append(p.Approved, t)
 	}
 	return p
+}
+
+// seedingFile returns the first of a target's files that a torrent is
+// serving, or "" when none is.
+func seedingFile(t Target, seeded *seeding.Set) string {
+	for _, f := range t.Files {
+		if seeded.Covers(f.Path) {
+			return f.Path
+		}
+	}
+	return ""
 }
 
 // FromRefs groups one-ref-per-FILE SceneRefs (the shape

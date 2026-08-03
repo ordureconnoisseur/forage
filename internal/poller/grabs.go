@@ -1557,15 +1557,18 @@ func (p *Poller) dedupPack(ctx context.Context, sc *stash.Client, g *grabs.Grab,
 	recorded := 0
 	// This is the only UNATTENDED destroy in the codebase, so it routes
 	// through the destroy package like every interactive surface: the plan
-	// is vetted (a scene holding several files is refused — destroying it
-	// would take copies beyond the duplicate, see destroy.Vet) and every
+	// is vetted (a scene holding several files is refused, as is one a
+	// torrent is still seeding — see destroy.VetWith) and every
 	// destruction is logged with its full file paths before it runs, which
 	// is the automatic path's equivalent of the UI's deletion preview.
 	destroyed := map[string]bool{}
+	// One snapshot for the whole pack, not one per scene: a pack can hold
+	// hundreds of duplicates, and the answer must not shift mid-plan.
+	seeded := p.seedingSet(ctx)
 	destroyScenes := func(refs []stash.SceneRef, want map[string]bool) {
-		plan := destroy.Vet(destroy.FromRefs(refs, func(sceneID string) bool {
+		plan := destroy.VetWith(destroy.FromRefs(refs, func(sceneID string) bool {
 			return want[sceneID] && !destroyed[sceneID]
-		}))
+		}), seeded)
 		if keep == "log-only" {
 			// Dry run: the plan is logged — full file paths, refusals and
 			// all, the same record a real run would leave — and nothing is

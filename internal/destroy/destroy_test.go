@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
+	"github.com/ordureconnoisseur/forager/internal/seeding"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -192,5 +194,71 @@ func TestExecuteJournals(t *testing.T) {
 	}
 	if got := rec.finals[2]; got[0] != "failed" || got[1] == "" {
 		t.Errorf("bad finalised as %v, want failed with the error", got)
+	}
+}
+
+// A file a torrent is serving is refused however safe it looks by every other
+// measure. This is the invariant that did not exist when ten torrents on the
+// reference library were broken by one batch move.
+func TestVetWithRefusesASeededFile(t *testing.T) {
+	seeded := seeding.New([]string{
+		"/data/porn/downloads/complete/release.mp4",
+		"/data/porn/downloads/complete/a pack",
+	}, seeding.DefaultMinDepth)
+
+	candidates := []Target{
+		{SceneID: "1", Title: "seeded single", Files: []File{
+			{Path: "/data/porn/downloads/complete/release.mp4"}}},
+		{SceneID: "2", Title: "inside a seeded pack", Files: []File{
+			{Path: "/data/porn/downloads/complete/a pack/scene.mp4"}}},
+		{SceneID: "3", Title: "not seeded", Files: []File{
+			{Path: "/data/porn/Media/Performer/scene.mp4"}}},
+	}
+
+	p := VetWith(candidates, seeded)
+	if len(p.Approved) != 1 || p.Approved[0].SceneID != "3" {
+		t.Fatalf("approved %+v, want only the unseeded scene 3", p.Approved)
+	}
+	if len(p.Refused) != 2 {
+		t.Fatalf("refused %d, want 2", len(p.Refused))
+	}
+	for _, r := range p.Refused {
+		if !strings.Contains(r.Reason, "seeding") {
+			t.Errorf("refusal for %s reads %q, want it to name seeding as the cause",
+				r.Target.SceneID, r.Reason)
+		}
+	}
+}
+
+// The multi-file rule still applies, and it is reported as itself rather than
+// being masked by the newer check.
+func TestVetWithKeepsTheMultiFileRefusal(t *testing.T) {
+	p := VetWith([]Target{{SceneID: "1", Files: []File{
+		{Path: "/a.mp4"}, {Path: "/b.mp4"}}}}, seeding.New(nil, seeding.DefaultMinDepth))
+	if len(p.Refused) != 1 {
+		t.Fatalf("refused %d, want 1", len(p.Refused))
+	}
+	if !strings.Contains(p.Refused[0].Reason, "files attached") {
+		t.Errorf("reason = %q, want the multi-file rule", p.Refused[0].Reason)
+	}
+}
+
+// No seeding information must not quietly become "nothing is seeding" in a way
+// that CHANGES behaviour relative to plain Vet: both refuse nothing extra, so
+// a qBittorrent outage degrades to today's behaviour rather than freezing
+// every delete surface in forage.
+func TestVetWithNoSeedingInfoMatchesVet(t *testing.T) {
+	candidates := []Target{
+		{SceneID: "1", Files: []File{{Path: "/data/porn/downloads/complete/x.mp4"}}},
+	}
+	for name, got := range map[string]Plan{
+		"nil set":   VetWith(candidates, nil),
+		"empty set": VetWith(candidates, seeding.New([]string{""}, seeding.DefaultMinDepth)),
+		"plain Vet": Vet(candidates),
+	} {
+		if len(got.Approved) != 1 || len(got.Refused) != 0 {
+			t.Errorf("%s: approved %d refused %d, want 1 and 0",
+				name, len(got.Approved), len(got.Refused))
+		}
 	}
 }

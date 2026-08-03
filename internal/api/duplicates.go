@@ -207,9 +207,9 @@ func (s *Server) postResolveDuplicate(w http.ResponseWriter, r *http.Request) {
 				targetSet[sid] = true
 			}
 		}
-		plan := destroy.Vet(destroy.FromRefs(refs, func(sceneID string) bool {
+		plan := destroy.VetWith(destroy.FromRefs(refs, func(sceneID string) bool {
 			return targetSet[sceneID]
-		}))
+		}), s.seedingSet(r.Context()))
 		for _, ref := range plan.Refused {
 			// Refuse and leave the item pending (the error below blocks the
 			// resolve) rather than over-delete.
@@ -285,7 +285,7 @@ func (s *Server) postDestroyScene(w http.ResponseWriter, r *http.Request) {
 	for _, f := range info.Files {
 		target.Files = append(target.Files, destroy.File{Path: f.Path, Size: f.Size})
 	}
-	plan := destroy.Vet([]destroy.Target{target})
+	plan := destroy.VetWith([]destroy.Target{target}, s.seedingSet(r.Context()))
 	if plan.Empty() {
 		// Refused: a scene holding several files — Stash attaches a
 		// matching-fingerprint re-download as an extra FILE, and destroying
