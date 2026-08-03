@@ -31,3 +31,21 @@ export function filterGlyph(genders?: string[]): string | null {
   if (genders.every((g) => g === "INTERSEX")) return "⚥︎"; // ⚥
   return null;
 }
+
+/**
+ * The folder forage files into when it cannot attribute a scene to anyone.
+ *
+ * "Unfiled" is the name the product uses everywhere else (the /unfiled route,
+ * the Unfiled view), so it is what a fresh library gets. "Unsorted" is what
+ * older libraries call the same bin, and both are recognised forever: the
+ * daemon keeps writing whichever one a library already has, so a rename never
+ * splits one bin into two.
+ */
+export const UNFILED_FOLDERS = ["Unfiled", "Unsorted"] as const;
+
+/** Whether a performer/folder name is really the fallback bin, not a person. */
+export function isUnfiledFolder(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.trim().toLowerCase();
+  return UNFILED_FOLDERS.some((f) => f.toLowerCase() === n);
+}

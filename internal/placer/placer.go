@@ -123,7 +123,8 @@ func (p *Placer) HardlinkProbe(downloadDir string) HardlinkResult {
 // existing path without copying.
 //
 // performer is sanitised for filesystem safety. Empty performer falls
-// back to "Unsorted" so grabs missing the field don't pollute the root.
+// back to the unfiled folder (see unfiled.go) so grabs missing the field
+// don't pollute the root.
 func (p *Placer) Place(srcPath, performer string) (Result, error) {
 	if !p.Configured() {
 		return Result{}, errors.New("placer not configured")
@@ -132,13 +133,17 @@ func (p *Placer) Place(srcPath, performer string) (Result, error) {
 		return Result{}, errors.New("source path empty")
 	}
 	if performer == "" {
-		performer = "Unsorted"
+		performer = p.unfiledDir()
 	}
 	info, err := os.Stat(srcPath)
 	if err != nil {
 		return Result{}, fmt.Errorf("stat src: %w", err)
 	}
-	destDir := filepath.Join(p.libraryRoot, sanitise(performer))
+	folder := sanitise(performer)
+	if folder == "" {
+		folder = p.unfiledDir()
+	}
+	destDir := filepath.Join(p.libraryRoot, folder)
 	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return Result{}, fmt.Errorf("mkdir dest: %w", err)
 	}
@@ -252,12 +257,11 @@ func sanitise(name string) string {
 			b.WriteRune(r)
 		}
 	}
-	out := strings.TrimSpace(b.String())
-	out = strings.Trim(out, ".")
-	if out == "" {
-		return "Unsorted"
-	}
-	return out
+	// "" when the name sanitises away entirely. The CALLER substitutes the
+	// fallback, so a pathological name lands in the same bin as a missing
+	// one rather than inventing a second one on a library using the legacy
+	// folder.
+	return strings.Trim(strings.TrimSpace(b.String()), ".")
 }
 
 // linkOrCopy tries os.Link first (cheap, preserves seeding) and falls back to

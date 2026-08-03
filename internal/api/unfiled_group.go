@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -61,7 +62,7 @@ func packFolder(fullPath, root string) string {
 		rel = rel[len(root):]
 	}
 	parts := unfiledSep.Split(strings.TrimLeft(rel, `\/`), -1)
-	if len(parts) > 0 && strings.EqualFold(parts[0], "Unsorted") {
+	if len(parts) > 0 && isUnfiledFolder(parts[0]) {
 		parts = parts[1:]
 	}
 	if len(parts) > 1 {
@@ -214,4 +215,17 @@ func packConsensus(m map[string]int) string {
 		return ""
 	}
 	return best
+}
+
+// isUnfiledFolder reports whether a path segment is the library's fallback
+// bin under either spelling. It is skipped rather than treated as a pack:
+// the bin is forage's own, not a release, and grouping every loose file under
+// one row would hide hundreds of unrelated files behind it.
+func isUnfiledFolder(seg string) bool {
+	for _, f := range placer.UnfiledFolders() {
+		if strings.EqualFold(seg, f) {
+			return true
+		}
+	}
+	return false
 }

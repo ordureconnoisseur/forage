@@ -3,6 +3,7 @@ package api
 import (
 	"testing"
 
+	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -85,8 +86,11 @@ func TestSanitiseFolder(t *testing.T) {
 		{`Quote"Star*Q?`, "Quote_Star_Q_"},
 		{"Angle<Br>", "Angle_Br_"},
 		{"Pipe|Name", "Pipe_Name"},
-		{"", "Unsorted"},
-		{"   ", "Unsorted"},
+		// A name that sanitises away entirely takes the fallback bin's
+		// current spelling; the legacy one is still recognised everywhere it
+		// is READ, it is just no longer what fresh writes choose.
+		{"", placer.UnfiledFolder},
+		{"   ", placer.UnfiledFolder},
 	} {
 		if got := sanitiseFolder(c.in); got != c.want {
 			t.Errorf("sanitiseFolder(%q) = %q, want %q", c.in, got, c.want)

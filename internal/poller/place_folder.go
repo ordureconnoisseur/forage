@@ -10,7 +10,8 @@ import (
 
 // Choosing the folder a grab lands in.
 //
-// The placer files under <library>/<performer>/ and falls back to "Unsorted"
+// The placer files under <library>/<performer>/ and falls back to the
+// unfiled bin (placer.UnfiledFolder)
 // when it is handed an empty name. That fallback was doing far more work than
 // intended: on a sample of 300 recent grabs, 91 landed in Unsorted and every
 // one of them was CONFIRMED, meaning forage's prediction and the phash agreed

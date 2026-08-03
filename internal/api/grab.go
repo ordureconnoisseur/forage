@@ -29,7 +29,7 @@ type grabRequest struct {
 	// PerformerName is the folder forage will drop the finished file
 	// into under <library_root>. Plugin sets this from whichever
 	// performer page the user grabbed from. Optional — if missing the
-	// placer falls back to "Unsorted" so files don't get stranded.
+	// placer falls back to the unfiled bin so files don't get stranded.
 	PerformerName string `json:"performer_name"`
 	// Kind is "pack" for a performer pack grab (one torrent → many
 	// scenes), empty/"single" otherwise. VideoCount is the parsed video

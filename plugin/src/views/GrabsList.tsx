@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { humanSize } from "../format";
+import { humanSize, isUnfiledFolder } from "../format";
 import { peek, store } from "../swr";
 import {
   ACTIVE_STATUSES,
@@ -2639,7 +2639,7 @@ function GrabRow({
               whole pack into one performer folder, so it's reassignable too. */}
           <div className="grab-setperf">
               <span className="grab-setperf-label">
-                {g.performer_name && g.performer_name !== "Unsorted"
+                {g.performer_name && !isUnfiledFolder(g.performer_name)
                   ? "Performer"
                   : "Set performer"}
                 {g.performer_name && (
