@@ -8215,3 +8215,36 @@ code.grab-fact-v,
 .unfiled-files {
   color: var(--text-dim, #9aa);
 }
+
+/* Drop a .torrent anywhere on the Grabs page.
+   Full-viewport rather than a bordered target: a zone you have to aim at is
+   barely better than the file picker it replaces. Pointer-events stay off so
+   the overlay can never eat the drop it is advertising. */
+.grab-drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: rgba(10, 12, 16, 0.72);
+  backdrop-filter: blur(2px);
+}
+.grab-drop-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  align-items: center;
+  padding: 1.6rem 2.4rem;
+  border: 2px dashed rgba(255, 255, 255, 0.55);
+  border-radius: 12px;
+  background: rgba(24, 27, 34, 0.95);
+  text-align: center;
+}
+.grab-drop-card strong {
+  font-size: 1.15rem;
+}
+.grab-drop-card span {
+  opacity: 0.7;
+  font-size: 0.85rem;
+}
