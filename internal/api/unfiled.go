@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
+	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/suggest"
 )
@@ -97,7 +98,7 @@ func (s *Server) getUnfiled(w http.ResponseWriter, r *http.Request) {
 	if stashRoot == "" {
 		stashRoot = root
 	}
-	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot)
+	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot, placer.UnfiledFolders())
 	if err != nil {
 		s.log.Warn("unfiled: query", "root", stashRoot, "err", err)
 		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
@@ -184,7 +185,7 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 	if stashRoot == "" {
 		stashRoot = cfg.LibraryRoot
 	}
-	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot)
+	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot, placer.UnfiledFolders())
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
 		return
@@ -316,7 +317,7 @@ func (s *Server) postUnfiledSuggest(w http.ResponseWriter, r *http.Request) {
 	if stashRoot == "" {
 		stashRoot = cfg.LibraryRoot
 	}
-	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot)
+	found, err := sc.FindUnfiledScenes(r.Context(), stashRoot, placer.UnfiledFolders())
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
 		return
@@ -383,7 +384,8 @@ func sanitiseFolder(s string) string {
 		return r
 	}, s)
 	if s == "" {
-		return "Unsorted"
+		// A name that sanitises away entirely is no name at all.
+		return placer.UnfiledFolder
 	}
 	return s
 }

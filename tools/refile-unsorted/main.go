@@ -28,6 +28,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/db"
+	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -313,7 +314,8 @@ func sanitise(s string) string {
 		return r
 	}, s)
 	if s == "" {
-		return "Unsorted"
+		// A name that sanitises away entirely is no name at all.
+		return placer.UnfiledFolder
 	}
 	return s
 }

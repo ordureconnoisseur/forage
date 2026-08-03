@@ -18,7 +18,8 @@ import (
 //   - directly in the library root, which nothing should ever be, and which
 //     FindScenesUnderPath cannot express (anchoring on a directory boundary
 //     there matches the whole library)
-//   - anywhere under <root>/Unsorted
+//   - anywhere under a fallback folder: <root>/Unfiled, and <root>/Unsorted,
+//     which is what older libraries call the same bin
 //
 // Hence a regex rather than the substring filters used elsewhere. Note Stash's
 // plain `path` filter is WORD based, not substring, which has produced wrong
@@ -74,7 +75,10 @@ query ForagerUnfiledScenes($value: String!, $page: Int!, $perPage: Int!) {
 // Both separators are accepted in every position: Stash on Windows reports
 // backslashes, on Linux forward slashes, and forage is routinely pointed at a
 // Windows Stash from a Linux container.
-func UnfiledPattern(root string) string {
+// folders are the fallback bin names to accept. Both the current and the
+// legacy spelling are always passed in practice (placer.UnfiledFolders), so a
+// library never stops being readable because the preferred name changed.
+func UnfiledPattern(root string, folders []string) string {
 	if root == "" {
 		return ""
 	}
@@ -84,14 +88,23 @@ func UnfiledPattern(root string) string {
 	}
 	q := regexp.QuoteMeta(root)
 	// Either one segment after root (loose in the root), or anything at all
-	// under root/Unsorted.
-	return `^` + q + `[\\/](?:[^\\/]+|[Uu]nsorted[\\/].+)$`
+	// under one of the fallback folders. Those are matched case-insensitively:
+	// Stash reports whatever the filesystem handed it, and a case-insensitive
+	// filesystem will happily answer "unsorted".
+	alts := ""
+	for _, f := range folders {
+		if f == "" {
+			continue
+		}
+		alts += `|(?i:` + regexp.QuoteMeta(f) + `)[\\/].+`
+	}
+	return `^` + q + `[\\/](?:[^\\/]+` + alts + `)$`
 }
 
 // FindUnfiledScenes returns every scene whose file is loose in the library
-// root or under Unsorted.
-func (c *Client) FindUnfiledScenes(ctx context.Context, root string) ([]UnfiledScene, error) {
-	pattern := UnfiledPattern(root)
+// root or under one of the fallback folders.
+func (c *Client) FindUnfiledScenes(ctx context.Context, root string, folders []string) ([]UnfiledScene, error) {
+	pattern := UnfiledPattern(root, folders)
 	if pattern == "" {
 		return nil, nil
 	}
