@@ -4,10 +4,13 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
+	"time"
 )
 
 // The accuracy regression gate.
@@ -34,13 +37,30 @@ const (
 	// a floor left at the old value would let that improvement be undone
 	// silently, which is the entire point of having a floor.
 	corpusMinClean = 0.87
-	// corpusMaxFalseVerifies caps the precision side outright. Measured
-	// 127, down from 145. A change that trades recall for a flood of false
-	// verifies would otherwise pass both rates above.
-	corpusMaxFalseVerifies = 140
+	// corpusMaxFalseVerifyRate caps the precision side outright. Measured
+	// 127 false verifies in 1,570 entries, 0.0809, down from 145. A change
+	// that trades recall for a flood of false verifies would otherwise pass
+	// both rates above.
+	//
+	// A RATE, and it was an absolute count of 140 until that was found to be a
+	// floor which tightens itself. The fixture is re-recorded from the daemon's
+	// confirmed grabs, which only grow: at exactly this quality a corpus of
+	// 1,731 entries produces 140 false verifies, so a ~10% growth between
+	// refreshes reds push CI for a quality change of zero, and the refresh
+	// script's advice ("the floors may now be loose, ratchet them") points the
+	// operator the wrong way when it happens. floors.go spends a paragraph on
+	// why the scheduled gate uses rates; this gate had not taken its own
+	// advice. TestCorpusFloorsSurviveCorpusGrowth is the regression test.
+	corpusMaxFalseVerifyRate = 0.09
 )
 
 const corpusFixture = "testdata/corpus-replay.json.gz"
+
+// corpusFixtureMeta is the sidecar recording of the live run the fixture came
+// from: entry counts, the live Match+Verify result, and the verifier config
+// that produced it. Written by `matcher-bench --verify --dump`, so refreshing
+// the fixture refreshes the assertions below in the same command.
+var corpusFixtureMeta = ReplayMetaPath(corpusFixture)
 
 // The fixture is 1,570 entries of roughly ten candidates each, so one
 // ScoreReplay is ~16,000 Verify calls. CI runs `go test -race` and nothing
@@ -101,73 +121,176 @@ func loadCorpusFixture(t *testing.T) []ReplayEntry {
 	return fixtureEntries
 }
 
+// corpusGateBreaches is this gate's judgement on a score, factored out so the
+// growth test below can exercise the arithmetic the gate actually uses rather
+// than a restatement of it that is free to drift from it.
+func corpusGateBreaches(s ReplayScore) []string {
+	var out []string
+	if s.RecallRate() < corpusMinRecall {
+		out = append(out, fmt.Sprintf("recall %.4f below floor %.2f: the verifier now refuses scenes it used to accept",
+			s.RecallRate(), corpusMinRecall))
+	}
+	if s.CleanRate() < corpusMinClean {
+		out = append(out, fmt.Sprintf("clean rate %.4f below floor %.2f: fewer entries resolve to exactly one scene",
+			s.CleanRate(), corpusMinClean))
+	}
+	if r := s.FalseVerifyRate(); r > corpusMaxFalseVerifyRate {
+		out = append(out, fmt.Sprintf("false verify rate %.4f (%d in %d) above cap %.2f: the verifier accepts more wrong scenes",
+			r, s.FalseVerifies, s.Entries, corpusMaxFalseVerifyRate))
+	}
+	return out
+}
+
 func TestCorpusAccuracyDoesNotRegress(t *testing.T) {
 	entries := loadCorpusFixture(t)
 	if len(entries) < 1000 {
 		t.Fatalf("fixture holds %d entries, expected the full corpus", len(entries))
 	}
 	s := scoreOnce("default", DefaultVerifyConfig, entries)
-	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (in %d entries)",
-		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.EntriesWithFalse)
+	t.Logf("corpus %d: recall %.4f, clean %.4f, false verifies %d (rate %.4f, in %d entries)",
+		s.Entries, s.RecallRate(), s.CleanRate(), s.FalseVerifies, s.FalseVerifyRate(), s.EntriesWithFalse)
 
-	if s.RecallRate() < corpusMinRecall {
-		t.Errorf("recall %.4f below floor %.2f: the verifier now refuses scenes it used to accept",
-			s.RecallRate(), corpusMinRecall)
-	}
-	if s.CleanRate() < corpusMinClean {
-		t.Errorf("clean rate %.4f below floor %.2f: fewer entries resolve to exactly one scene",
-			s.CleanRate(), corpusMinClean)
-	}
-	if s.FalseVerifies > corpusMaxFalseVerifies {
-		t.Errorf("false verifies %d above cap %d: the verifier accepts more wrong scenes",
-			s.FalseVerifies, corpusMaxFalseVerifies)
+	for _, b := range corpusGateBreaches(s) {
+		t.Error(b)
 	}
 }
 
-// recordedConfig is the verifier as it stood when the fixture was recorded.
+// The corpus only ever grows: it is rebuilt from the daemon's confirmed grabs
+// on every `make bench-refresh`, and the user keeps grabbing. A floor expressed
+// as an absolute count therefore tightens itself, and goes red on the most
+// ordinary event in this repo's workflow while the quality it claims to measure
+// has not moved at all.
 //
-// Pinned as a literal rather than referring to DefaultVerifyConfig, which was
-// the first version's mistake: it made the faithfulness check below fail
-// whenever the verifier legitimately improved, so it was really asserting
-// "nobody has changed anything" while claiming to assert "the replay is
-// faithful". Those are different questions and only the second is useful.
-var recordedConfig = VerifyConfig{
-	RankMinTitleOverlap:         0.15,
-	TitleMinTokens:              4,
-	TitleMinContainment:         0.80,
-	TitleMinConf:                0.30,
-	StrongTitleOverlap:          0.40,
-	ShortTitleMaxTokens:         2,
-	ShortTitleMinConf:           0.50,
-	StrongMatchConf:             0.70,
-	StrongMatchRivalTitleMargin: 0.15,
-	DateAnchorMinConf:           0.65,
-	StrongMatchNeedsDate:        false,
-	ShortTitleNeedsContainment:  true,
-	RefuseBehindTheScenes:       false,
-	TopMargin:                   0,
+// ScoreReplay sums independently over entries, so N copies of the fixture score
+// exactly N times each component. Scaling the score arithmetically rather than
+// concatenating the slice keeps this free: the memoised full-corpus scoring is
+// already the most expensive thing in this package, and doing it eleven more
+// times to prove multiplication would be its own kind of dishonest.
+func TestCorpusFloorsSurviveCorpusGrowth(t *testing.T) {
+	entries := loadCorpusFixture(t)
+	s := scoreOnce("default", DefaultVerifyConfig, entries)
+	for _, mult := range []int{2, 5, 10} {
+		grown := ReplayScore{
+			Entries:          s.Entries * mult,
+			Recall:           s.Recall * mult,
+			FalseVerifies:    s.FalseVerifies * mult,
+			EntriesWithFalse: s.EntriesWithFalse * mult,
+		}
+		if b := corpusGateBreaches(grown); len(b) != 0 {
+			t.Errorf("a corpus %dx the size at IDENTICAL quality breached the gate: %v\nA floor that fails on corpus growth alone fails on the normal case; express it as a rate.", mult, b)
+		}
+	}
+}
+
+// loadCorpusMeta returns the fixture's sidecar recording: the live run's
+// numbers and the verifier config that produced them.
+//
+// Those values used to be constants in this file, hand-copied from a bench
+// run's stdout. That made a fixture refresh a two-file edit, and the half
+// nobody remembers is this one: a refreshed fixture with stale constants fails
+// loudly, which teaches the next person not to refresh. Reading the recording
+// that the dump wrote alongside itself removes the choice.
+func loadCorpusMeta(t *testing.T) ReplayMeta {
+	t.Helper()
+	m, err := LoadReplayMeta(corpusFixtureMeta)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no fixture sidecar at %s; regenerate with matcher-bench --verify --dump", corpusFixtureMeta)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
 }
 
 // The fixture must reproduce the live bench, run under the config that
 // produced it. If replaying diverges, every offline experiment is measuring a
 // different verifier from the one that ran, and this whole apparatus is
 // decorative.
+//
+// The comparison uses the sidecar's recorded config, not DefaultVerifyConfig,
+// which was the first version's mistake: it made this check fail whenever the
+// verifier legitimately improved, so it was really asserting "nobody has
+// changed anything" while claiming to assert "the replay is faithful". Those
+// are different questions and only the second is useful.
 func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	s := scoreOnce("recorded", recordedConfig, entries)
-	// Recorded from matcher-bench --verify on 2026-07-31 against the same
-	// corpus build (commit 627749f, 1,570 confirmed search-grabs).
-	const (
-		liveEntries       = 1570
-		liveRecall        = 1496
-		liveFalseVerifies = 145
-		liveEntriesFalse  = 128
-	)
-	if s.Entries != liveEntries || s.Recall != liveRecall ||
-		s.FalseVerifies != liveFalseVerifies || s.EntriesWithFalse != liveEntriesFalse {
-		t.Errorf("replay diverged from the live run:\n  got  entries=%d recall=%d false=%d entriesWithFalse=%d\n  want entries=%d recall=%d false=%d entriesWithFalse=%d",
+	meta := loadCorpusMeta(t)
+	s := scoreOnce("recorded", meta.Config, entries)
+	if s.Entries != meta.Entries || s.Recall != meta.Recall ||
+		s.FalseVerifies != meta.FalseVerifies || s.EntriesWithFalse != meta.EntriesWithFalse {
+		t.Errorf("replay diverged from the live run recorded %s:\n  got  entries=%d recall=%d false=%d entriesWithFalse=%d\n  want entries=%d recall=%d false=%d entriesWithFalse=%d",
+			meta.RecordedAt.Format("2006-01-02"),
 			s.Entries, s.Recall, s.FalseVerifies, s.EntriesWithFalse,
-			liveEntries, liveRecall, liveFalseVerifies, liveEntriesFalse)
+			meta.Entries, meta.Recall, meta.FalseVerifies, meta.EntriesWithFalse)
+	}
+}
+
+// The sidecar must describe every knob the verifier has.
+//
+// Adding a VerifyConfig field and leaving the sidecar alone gives the recorded
+// config that field's zero value, so the faithfulness check above would replay
+// a verifier nobody ever ran: it would either fail for a reason its message
+// cannot explain, or pass by luck when the zero value happens to be the
+// shipped one. Comparing key sets says the real thing instead: the recording
+// predates the knob, re-record it.
+func TestFixtureSidecarDescribesEveryVerifierKnob(t *testing.T) {
+	raw, err := os.ReadFile(corpusFixtureMeta)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no fixture sidecar at %s", corpusFixtureMeta)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Config map[string]json.RawMessage `json:"config"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	shipped, err := json.Marshal(DefaultVerifyConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want map[string]json.RawMessage
+	if err := json.Unmarshal(shipped, &want); err != nil {
+		t.Fatal(err)
+	}
+	for k := range want {
+		if _, ok := doc.Config[k]; !ok {
+			t.Errorf("sidecar config is missing %q: the verifier grew a knob since the fixture was recorded, so the recording no longer describes a verifier that ran. Re-record with `make bench-refresh`.", k)
+		}
+	}
+	for k := range doc.Config {
+		if _, ok := want[k]; !ok {
+			t.Errorf("sidecar config carries %q, which VerifyConfig no longer has: re-record the fixture", k)
+		}
+	}
+}
+
+// The fixture is a snapshot of a moving distribution: StashDB gains and edits
+// scenes, and the corpus is rebuilt from the user's confirmed grabs, whose mix
+// of indexers and release groups shifts. A gate replaying a two-year-old
+// recording still passes, and still says nothing about today's input.
+//
+// Opt-in via env rather than always-on, because a test that turns red on a
+// calendar date breaks the build for someone who changed nothing, and a build
+// that goes red for no reason is a build people learn to force through. The
+// weekly scheduled workflow sets the variable; push CI does not.
+func TestReplayFixtureIsNotStale(t *testing.T) {
+	v := os.Getenv("FORAGE_FIXTURE_MAX_AGE_DAYS")
+	if v == "" {
+		t.Skip("FORAGE_FIXTURE_MAX_AGE_DAYS unset; freshness is checked by the scheduled bench workflow")
+	}
+	maxDays, err := strconv.Atoi(v)
+	if err != nil || maxDays <= 0 {
+		t.Fatalf("FORAGE_FIXTURE_MAX_AGE_DAYS=%q is not a positive integer", v)
+	}
+	meta := loadCorpusMeta(t)
+	ageDays := time.Since(meta.RecordedAt).Hours() / 24
+	t.Logf("fixture recorded %s, %.0f days ago", meta.RecordedAt.Format("2006-01-02"), ageDays)
+	if ageDays > float64(maxDays) {
+		t.Errorf("corpus fixture is %.0f days old, budget is %d: the frozen gate no longer resembles current matcher input. Re-record with `make bench-refresh`.",
+			ageDays, maxDays)
 	}
 }
 
@@ -175,7 +298,7 @@ func TestCorpusFixtureMatchesTheLiveRun(t *testing.T) {
 // the ratchet the floors above imply, stated directly against the same data.
 func TestShippedConfigBeatsTheRecording(t *testing.T) {
 	entries := loadCorpusFixture(t)
-	was := scoreOnce("recorded", recordedConfig, entries)
+	was := scoreOnce("recorded", loadCorpusMeta(t).Config, entries)
 	now := scoreOnce("default", DefaultVerifyConfig, entries)
 	t.Logf("recorded: recall %d clean %.4f false %d | shipped: recall %d clean %.4f false %d",
 		was.Recall, was.CleanRate(), was.FalseVerifies,
@@ -220,8 +343,8 @@ func TestCorpusGateCatchesBothFailureDirections(t *testing.T) {
 	acceptAll.TitleMinContainment = 0
 	acceptAll.TitleMinConf = 0
 	acceptAll.StrongMatchConf = 0
-	if got := ScoreReplay(acceptAll, entries); got.FalseVerifies <= corpusMaxFalseVerifies {
-		t.Errorf("a verifier that accepts everything produced %d false verifies, under the cap",
-			got.FalseVerifies)
+	if got := ScoreReplay(acceptAll, entries); got.FalseVerifyRate() <= corpusMaxFalseVerifyRate {
+		t.Errorf("a verifier that accepts everything produced a false verify rate of %.4f (%d in %d), under the cap",
+			got.FalseVerifyRate(), got.FalseVerifies, got.Entries)
 	}
 }

@@ -35,6 +35,8 @@ plugin/scripts/push.sh
 # IDs and personal release-name history; never commit.
 tools/matcher-bench/corpus.yaml
 tools/matcher-bench/*.matcher.failures.csv
+# scripts/matcher-bench.sh drops this in the repo root after every run.
+verify.failures.csv
 
 # Editor / OS
 .DS_Store

@@ -70,8 +70,10 @@ parsing message strings.
 No same-day code-and-release. A release is cut when:
 
 1. Full suite green, including `-race` and the fuzz smoke (CI does both).
-2. Any matcher change: `matcher-bench` (+`--verify`) against the private
-   corpus — P@1 and verify recall must not regress.
+2. Any matcher change: `make bench` against the private corpus. P@1 and
+   verify recall must not regress. Push CI replays frozen candidates, which
+   guards `Verify` and not retrieval or scoring; `make bench` is the only
+   thing that measures the whole pipeline. See `docs/matcher-accuracy.md`.
 3. Deployed to the maintainer's live instance and **soaked ≥3 days**.
 4. Soak review: destruction journal shows only expected outcomes; poller
    `phasesMs` sane; `lastPanic` absent (or explained and fixed).

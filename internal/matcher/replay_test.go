@@ -1,8 +1,10 @@
 package matcher
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
@@ -153,5 +155,91 @@ func TestSaveLoadReplay(t *testing.T) {
 	}
 	if ScoreReplay(DefaultVerifyConfig, got) != ScoreReplay(DefaultVerifyConfig, want) {
 		t.Error("a loaded dump must score identically to the one saved")
+	}
+}
+
+// The committed fixture is gzipped, so a refresh that could only write plain
+// JSON would need a hand gzip step, and a refresh nobody can do in one command
+// is a refresh that does not happen.
+func TestSaveLoadReplayGzip(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "replay.json.gz")
+	want := []ReplayEntry{RecordCandidates("a release", "id-1", []Candidate{
+		cand("id-1", "Some Title", "2021-05-05", 0.66, 0.2, "A Performer"),
+	})}
+	if err := SaveReplay(path, want); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A .gz path that silently wrote plain JSON would still round trip here,
+	// because the reader would... not, actually: LoadReplay would fail. Check
+	// the magic anyway, so the failure names the cause.
+	if len(raw) < 2 || raw[0] != 0x1f || raw[1] != 0x8b {
+		t.Fatalf("a .gz path wrote something that is not gzip: % x", raw[:min(4, len(raw))])
+	}
+	got, err := LoadReplay(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ScoreReplay(DefaultVerifyConfig, got) != ScoreReplay(DefaultVerifyConfig, want) {
+		t.Error("a gzipped dump must score identically to the one saved")
+	}
+}
+
+// The sidecar is what the corpus gate asserts against. If it does not survive
+// a write/read cycle intact, a refresh writes a gate that measures something
+// other than the run it came from.
+func TestSaveLoadReplayMeta(t *testing.T) {
+	dump := filepath.Join(t.TempDir(), "corpus-replay.json.gz")
+	path := ReplayMetaPath(dump)
+	want := ReplayMeta{
+		RecordedAt:       time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC),
+		Commit:           "deadbee",
+		Corpus:           "1570 confirmed search-grabs",
+		Entries:          1570,
+		Recall:           1496,
+		FalseVerifies:    145,
+		EntriesWithFalse: 128,
+		Config:           DefaultVerifyConfig,
+	}
+	if err := SaveReplayMeta(path, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadReplayMeta(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("sidecar round trip lost data:\n got %+v\nwant %+v", got, want)
+	}
+}
+
+// The sidecar has to land beside its dump whatever the dump is called, or a
+// refresh writes the recording to one place and its numbers to another.
+func TestReplayMetaPath(t *testing.T) {
+	tests := []struct{ dump, want string }{
+		{"testdata/corpus-replay.json.gz", "testdata/corpus-replay.meta.json"},
+		{"corpus-replay.json", "corpus-replay.meta.json"},
+		{"/data/dump", "/data/dump.meta.json"},
+	}
+	for _, tt := range tests {
+		if got := ReplayMetaPath(tt.dump); got != tt.want {
+			t.Errorf("ReplayMetaPath(%q) = %q, want %q", tt.dump, got, tt.want)
+		}
+	}
+}
+
+// A sidecar key this build does not understand means the file was written by a
+// different tool version. Ignoring it would let the gate assert against a
+// partially-read recording and call that agreement.
+func TestLoadReplayMetaRejectsUnknownKeys(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.meta.json")
+	if err := os.WriteFile(path, []byte(`{"entries":10,"future_field":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadReplayMeta(path); err == nil {
+		t.Error("an unknown sidecar key was accepted")
 	}
 }

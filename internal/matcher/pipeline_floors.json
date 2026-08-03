@@ -1,0 +1,16 @@
+{
+  "note": "Full-pipeline (Match+Verify) floors, enforced by `matcher-bench --verify --gate` on a schedule, not on push: the run needs live StashDB and the daemon's caches and takes ~26 minutes. See docs/matcher-accuracy.md. PROVENANCE, stated exactly: nobody has run a live full-pipeline bench at the commit these floors ship with. The `measured` block below is the committed fixture (internal/matcher/testdata/corpus-replay.json.gz, 1,570 confirmed search-grabs recorded live at 627749f on 2026-07-31, build-corpus with -include-downloads OFF) replayed under the shipped verifier, which is what TestPipelineFloorsMeasuredMatchTheCommittedFixture asserts. The candidate sets in that fixture came from a real Match run, so the recall figure is close to a live figure, but it is NOT identical to what the pipeline would retrieve today: 16bcab6 landed after the recording and changed fold() in entity.go, which is the retrieval stage. That change only affects input containing invalid UTF-8, so the delta is expected to be nil, and expected is not measured. The precision figures are the shipped verifier's over live candidates. Treat the first live run against these floors as the measurement that replaces this paragraph. Slack is deliberate and larger than the replay gate's: StashDB is a third party that edits and deletes scenes, and the corpus is rebuilt from the daemon's confirmed grabs on every run, so both halves of the input move without anyone touching this repo. Tighten when a run earns it.",
+  "measured_at": "2026-07-31",
+  "commit": "627749f",
+  "min_entries": 1400,
+  "min_recall": 0.93,
+  "min_clean": 0.86,
+  "max_false_verify_rate": 0.1,
+  "max_match_error_rate": 0.02,
+  "measured": {
+    "entries": 1570,
+    "recall": 0.9529,
+    "clean": 0.8803,
+    "false_verify_rate": 0.0809
+  }
+}
