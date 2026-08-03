@@ -25,6 +25,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
 	"github.com/ordureconnoisseur/forager/internal/poller"
+	"github.com/ordureconnoisseur/forager/internal/vpnguard"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -105,6 +106,18 @@ func main() {
 	// pendingAdds bridges the api layer's async add chains and the poller's
 	// link timeouts: the poller won't fail a queued grab whose add is still
 	// queued behind a fetch gate in this process.
+	// VPN leak-guard: watches the torrent client's own network health and
+	// pauses hands-free torrent grabs while the tunnel is down. Catches
+	// the gluetun-recreation failure where the WebUI still answers but
+	// the client's netns is dead.
+	guard := vpnguard.New()
+	launch(func() {
+		guard.Run(ctx, func() config.Config {
+			c, _ := config.Compose(bootstrap, store.Get())
+			return c
+		}, 2*time.Minute, log.With("component", "vpnguard"))
+	})
+
 	pendingAdds := grabs.NewPendingAdds()
 	// Phase B grabs poller — always start; the poller itself short-circuits
 	// when no download clients are configured (pool.Qbit() / Sab() = nil).
@@ -147,6 +160,7 @@ func main() {
 		AdoptNow:        p.AdoptNow,
 		PendingAdds:     pendingAdds,
 		ManagedProwlarr: managedProwlarr,
+		Guard:           guard,
 	})
 
 	// Boot-start (and shutdown-stop) the managed Prowlarr if one is

@@ -256,12 +256,22 @@ func (s *Server) tickSubscriptions(ctx context.Context) {
 	// UI/Telegram button (benched-indexer filter included). Watches that
 	// were already available before the user enabled auto_grab are picked
 	// up too, deliberately.
+	// A dead VPN tunnel leaves the torrent client reachable but with no
+	// network, so an auto-grab would sit in the client forever. Pause the
+	// hands-free path (manual grabs and usenet are unaffected) rather
+	// than queue work that cannot move.
+	torrentsOK := s.guard == nil || s.guard.TorrentGrabsAllowed()
 	for i := range subs {
 		if !subs[i].AutoGrab {
 			continue
 		}
 		for _, wt := range wlist {
 			if wt.BatchID != subs[i].BatchID() || wt.Status != watches.StatusAvailable {
+				continue
+			}
+			if !torrentsOK && !strings.EqualFold(wt.FoundProtocol, "usenet") {
+				s.log.Info("subscription auto-grab paused: torrent client has no network",
+					"subject", subs[i].Name, "scene", wt.StashDBID)
 				continue
 			}
 			if err := s.grabAvailableWatch(ctx, wt.StashDBID); err != nil {

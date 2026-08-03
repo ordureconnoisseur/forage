@@ -32,6 +32,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/stash"
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 	"github.com/ordureconnoisseur/forager/internal/subscriptions"
+	"github.com/ordureconnoisseur/forager/internal/vpnguard"
 	"github.com/ordureconnoisseur/forager/internal/watches"
 )
 
@@ -64,6 +65,9 @@ type Server struct {
 	pollerHealth func() map[string]any            // poller telemetry for /healthz; may be nil
 	invariants   func() *invariants.Report        // last invariant-checker report; may be nil
 	startedAt    time.Time                        // process start, for /diag uptime
+	// guard pauses AUTOMATED torrent grabs while the torrent client has
+	// no network (gluetun down / netns orphaned). nil = no gating.
+	guard *vpnguard.Guard
 
 	// Managed-Prowlarr wiring (nil when not applicable — Docker, tests).
 	// managedCtx is the daemon lifetime ctx, retained by RunManagedProwlarr
@@ -211,6 +215,9 @@ type Options struct {
 	// PendingAdds is the in-flight async-add registry shared with the
 	// poller (see Server.pendingAdds). May be nil (tests).
 	PendingAdds *grabs.PendingAdds
+	// Guard pauses automated TORRENT grabs while the torrent client has
+	// no network. May be nil (tests, or gating disabled).
+	Guard *vpnguard.Guard
 	// PollerHealth returns the poller's telemetry snapshot (last tick
 	// time/duration, library-mount health) for /healthz. May be nil (tests),
 	// in which case healthz simply omits the block.
@@ -247,6 +254,7 @@ func New(opts Options) *Server {
 		store:        opts.Store,
 		grabs:        opts.Grabs,
 		watches:      opts.Watches,
+		guard:        opts.Guard,
 		subs:         subscriptions.NewRepo(opts.DB),
 		rss:          rss.NewRepo(opts.DB),
 		log:          opts.Log,
