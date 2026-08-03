@@ -35,24 +35,8 @@ import (
 // that can never reach zero, presented as work, gets ignored, and takes the
 // two counts beside it that ARE actionable down with it.
 
-type unfiledScene struct {
-	SceneID string `json:"scene_id"`
-	Title   string `json:"title"`
-	// Path is Stash's view of the file. The UI shows it; the filing action
-	// re-derives forage's own view from it.
-	Path string `json:"path"`
-	// Bucket is one of "filable", "identified", "unknown".
-	Bucket string `json:"bucket"`
-	// Suggested is the performer this would be filed under, when Stash names
-	// one. Empty for the other two buckets.
-	Suggested string `json:"suggested,omitempty"`
-	// Performers is every performer Stash has on the scene, best first.
-	Performers []string `json:"performers,omitempty"`
-	Identified bool     `json:"identified"`
-}
-
 type unfiledResponse struct {
-	Scenes []unfiledScene `json:"scenes"`
+	Scenes []unfiledItem  `json:"scenes"`
 	Counts map[string]int `json:"counts"`
 	// LibraryRoot is echoed so the UI can render paths relative to it rather
 	// than as absolute strings nobody can read.
@@ -120,36 +104,27 @@ func (s *Server) getUnfiled(w http.ResponseWriter, r *http.Request) {
 	}
 
 	want := r.URL.Query().Get("bucket")
-	out := unfiledResponse{
-		Scenes:      []unfiledScene{},
-		Counts:      map[string]int{"filable": 0, "identified": 0, "unknown": 0},
-		LibraryRoot: stashRoot,
-	}
-	for _, f := range found {
-		b := bucketFor(f)
-		out.Counts[b]++
-		if want != "" && want != b {
-			continue
+	items, counts := groupUnfiled(found, stashRoot, want, func(name string) string {
+		ps := s.suggestPerformers(r.Context(), name)
+		if len(ps) == 0 {
+			return ""
 		}
-		row := unfiledScene{
-			SceneID: f.ID, Title: f.Title, Path: f.FilePath,
-			Bucket: b, Suggested: topPerformerName(f.Performers),
-			Identified: len(f.StashIDs) > 0,
-		}
-		for _, p := range f.Performers {
-			if p.Name != "" {
-				row.Performers = append(row.Performers, p.Name)
-			}
-		}
-		out.Scenes = append(out.Scenes, row)
-	}
-	sort.SliceStable(out.Scenes, func(i, j int) bool {
-		return out.Scenes[i].Path < out.Scenes[j].Path
+		return ps[0].Name
 	})
+	out := unfiledResponse{Scenes: items, Counts: counts, LibraryRoot: stashRoot}
+	if out.Scenes == nil {
+		out.Scenes = []unfiledItem{}
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
 type fileUnfiledRequest struct {
+	// Keys are what the list handed out: a Stash scene id for a loose file,
+	// a folder path for a pack. Opaque to the caller on purpose, so the two
+	// cannot be confused for one another.
+	Keys []string `json:"keys"`
+	// SceneIDs is the older name, still accepted so an in-flight page does
+	// not fail after a deploy.
 	SceneIDs []string `json:"scene_ids"`
 	// Performer is the folder to file under. Required: this endpoint does not
 	// guess. The list view already suggests one per scene, and a bulk action
@@ -175,8 +150,12 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req.Performer = strings.TrimSpace(req.Performer)
-	if req.Performer == "" || len(req.SceneIDs) == 0 {
-		writeErr(w, http.StatusBadRequest, "scene_ids and performer are both required")
+	keys := req.Keys
+	if len(keys) == 0 {
+		keys = req.SceneIDs
+	}
+	if req.Performer == "" || len(keys) == 0 {
+		writeErr(w, http.StatusBadRequest, "keys and performer are both required")
 		return
 	}
 	sc := s.pool.Stash()
@@ -198,19 +177,22 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
 		return
 	}
-	// Only scenes the query returned may be moved. Filing by an id the caller
-	// supplies without checking would let any scene in the library be moved
-	// through an endpoint whose entire contract is "things that are unfiled".
-	byID := map[string]stash.UnfiledScene{}
-	for _, f := range found {
-		byID[f.ID] = f
+	// Only what the LIST offered may be moved. Filing an arbitrary path or
+	// scene id supplied by the caller would let anything in the library be
+	// relocated through an endpoint whose whole contract is "things that are
+	// unfiled", and for a pack that path is a directory.
+	items, _ := groupUnfiled(found, stashRoot, "", func(string) string { return "" })
+	offered := map[string]unfiledItem{}
+	for _, it := range items {
+		offered[it.Key] = it
 	}
 
 	type outcome struct {
-		SceneID string `json:"scene_id"`
-		From    string `json:"from,omitempty"`
-		To      string `json:"to,omitempty"`
-		Error   string `json:"error,omitempty"`
+		Key   string `json:"key"`
+		From  string `json:"from,omitempty"`
+		To    string `json:"to,omitempty"`
+		Files int    `json:"files,omitempty"`
+		Error string `json:"error,omitempty"`
 	}
 	res := struct {
 		Moved   int       `json:"moved"`
@@ -219,46 +201,50 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 	}{Results: []outcome{}}
 
 	dir := filepath.Join(cfg.LibraryRoot, sanitiseFolder(req.Performer))
-	for _, id := range req.SceneIDs {
-		f, ok := byID[id]
+	for _, key := range keys {
+		it, ok := offered[key]
 		if !ok {
 			res.Skipped++
-			res.Results = append(res.Results, outcome{SceneID: id,
+			res.Results = append(res.Results, outcome{Key: key,
 				Error: "not in the unfiled set (already filed, or not a library scene)"})
 			continue
 		}
-		src := pathmap.Reverse(f.FilePath, cfg.StashPathMapping)
+		src := pathmap.Reverse(it.Path, cfg.StashPathMapping)
 		if src == "" {
-			src = f.FilePath
+			src = it.Path
 		}
 		if _, err := os.Stat(src); err != nil {
 			res.Skipped++
-			res.Results = append(res.Results, outcome{SceneID: id, From: src,
-				Error: "file is not where Stash says it is"})
+			res.Results = append(res.Results, outcome{Key: key, From: src,
+				Error: "not where Stash says it is"})
 			continue
 		}
+		// A pack moves whole, under <performer>/<pack name>/. Moving its
+		// files individually would gut a folder the poller's own distribute
+		// step goes out of its way to preserve, and would scatter a release
+		// across a performer folder it was never part of.
 		dst := filepath.Join(dir, filepath.Base(src))
 		if _, err := os.Stat(dst); err == nil {
 			res.Skipped++
-			res.Results = append(res.Results, outcome{SceneID: id, From: src, To: dst,
-				Error: "a file of that name is already there"})
+			res.Results = append(res.Results, outcome{Key: key, From: src, To: dst,
+				Error: "something of that name is already there"})
 			continue
 		}
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			res.Skipped++
-			res.Results = append(res.Results, outcome{SceneID: id, Error: err.Error()})
+			res.Results = append(res.Results, outcome{Key: key, Error: err.Error()})
 			continue
 		}
 		if err := os.Rename(src, dst); err != nil {
 			res.Skipped++
-			res.Results = append(res.Results, outcome{SceneID: id, From: src, To: dst,
+			res.Results = append(res.Results, outcome{Key: key, From: src, To: dst,
 				Error: err.Error()})
 			continue
 		}
 		res.Moved++
-		res.Results = append(res.Results, outcome{SceneID: id, From: src, To: dst})
-		s.log.Info("unfiled: filed scene", "scene", id, "from", src, "to", dst,
-			"performer", req.Performer)
+		res.Results = append(res.Results, outcome{Key: key, From: src, To: dst, Files: it.Files})
+		s.log.Info("unfiled: filed", "kind", it.Kind, "key", key, "from", src,
+			"to", dst, "files", it.Files, "performer", req.Performer)
 	}
 
 	// Stash still points at the old paths. Scan the destination only: a
@@ -293,13 +279,18 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 // performers to each would multiply a payload that is mostly scrolled past.
 func (s *Server) postUnfiledSuggest(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		SceneIDs []string `json:"scene_ids"`
+		Keys     []string `json:"keys"`
+		SceneIDs []string `json:"scene_ids"` // older name, still accepted
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad json: "+err.Error())
 		return
 	}
-	if len(req.SceneIDs) == 0 {
+	keys := req.Keys
+	if len(keys) == 0 {
+		keys = req.SceneIDs
+	}
+	if len(keys) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"suggestions": []suggestedPerformer{}})
 		return
 	}
@@ -318,24 +309,37 @@ func (s *Server) postUnfiledSuggest(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "couldn't ask Stash: "+err.Error())
 		return
 	}
-	want := map[string]bool{}
-	for _, id := range req.SceneIDs {
-		want[id] = true
+	items, _ := groupUnfiled(found, stashRoot, "", func(string) string { return "" })
+	byKey := map[string]unfiledItem{}
+	for _, it := range items {
+		byKey[it.Key] = it
 	}
 
 	// Rank across the whole selection, best total first. A performer named by
-	// several of the selected files is a better answer than one named by the
-	// first, which is the case that matters when someone has just filtered to
-	// a name and selected everything it matched.
+	// several of the selected items beats one named by the first, which is
+	// what matters after filtering to a name and selecting everything.
+	//
+	// For a pack the string to read is the FOLDER's name, not a member file's.
+	// Stash names one performer across a whole pack in 6 of 103 folders on the
+	// reference library and nobody at all in 93, while the folder itself is
+	// called "Toni Camille pack".
 	score := map[string]int{}
 	meta := map[string]suggestedPerformer{}
-	for _, f := range found {
-		if !want[f.ID] {
+	for _, key := range keys {
+		it, ok := byKey[key]
+		if !ok {
 			continue
 		}
-		for _, p := range s.suggestPerformers(r.Context(), filepath.Base(f.FilePath)) {
+		subject := it.Name
+		for _, p := range s.suggestPerformers(r.Context(), subject) {
 			score[p.Name] += p.SceneCount + 1
 			meta[p.Name] = p
+		}
+		// A pack whose folder name says nothing still has whatever Stash
+		// managed to name inside it.
+		if len(meta) == 0 && it.Suggested != "" {
+			meta[it.Suggested] = suggestedPerformer{Name: it.Suggested}
+			score[it.Suggested]++
 		}
 	}
 	out := make([]suggestedPerformer, 0, len(meta))

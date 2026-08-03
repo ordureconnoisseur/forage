@@ -8198,3 +8198,20 @@ code.grab-fact-v,
   gap: 6px;
   margin-bottom: 8px;
 }
+/* A pack is a different kind of decision from a file, so it reads as one
+   before you select it: filing "Adorable Alice Video Pack" moves 489 files. */
+.unfiled-packtag {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 1px 6px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim, #9aa);
+  vertical-align: 1px;
+}
+.unfiled-files {
+  color: var(--text-dim, #9aa);
+}
