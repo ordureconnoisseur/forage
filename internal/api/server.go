@@ -352,6 +352,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/watches", s.getWatches)
 		r.Delete("/watches/batch/{batchId}", s.clearBatch)
 		r.Post("/watches/clear-finished", s.postClearFinished)
+
+		// Unfiled: library scenes not under a performer folder. Stash-driven,
+		// deliberately not derived from the grabs table (see unfiled.go).
+		r.Get("/unfiled", s.getUnfiled)
+		r.Post("/unfiled/file", s.postUnfiledFile)
 		r.Delete("/watches/{id}", s.deleteWatch)
 		r.Post("/watches/{id}/grab", s.postWatchGrab)
 		r.Post("/watches/{id}/grab-candidate", s.postWatchGrabCandidate)
