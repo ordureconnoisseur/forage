@@ -72,6 +72,18 @@ type Config struct {
 	// nothing. Report-first because deleting a partial is unrecoverable and
 	// this pass runs unattended.
 	DeadDownloads string
+	// StagingDisk says the download folder is on a DIFFERENT disk from the
+	// library on purpose: the common "download to a fast local SSD, then
+	// move to the NAS" layout. forage detects the split either way (the
+	// hardlink probe cannot be fooled); this only records that it is
+	// intended, so setup reports it as a supported mode rather than nagging
+	// about a misconfiguration.
+	//
+	// It changes nothing about placement. What it changes is the advice:
+	// hardlinks are impossible across mounts, so every placement copies, the
+	// download copy is a REAL second copy rather than a free extra name, and
+	// the seeding cull is the only thing that ever reclaims the staging disk.
+	StagingDisk bool
 	// SeedOverrides is a JSON array of per-indexer cull thresholds, e.g.
 	// [{"indexer":"PornoLab","maxAge":"720h","ratio":2.0}]. A field omitted
 	// in an override inherits the global; an explicit zero disables that
@@ -244,6 +256,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SeedRatio = b.envFloat("FORAGER_SEED_RATIO", 1.0, "seedRatio")
 	b.DeadAfter = b.envDuration("FORAGER_DEAD_AFTER", 30*24*time.Hour, "deadAfter")
 	b.DeadDownloads = b.envOr("FORAGER_DEAD_DOWNLOADS", "report", "deadDownloads")
+	b.StagingDisk = b.envBool("FORAGER_STAGING_DISK", false, "stagingDisk")
 	b.SeedOverrides = b.envOr("FORAGER_SEED_OVERRIDES", "", "seedOverrides")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
@@ -371,6 +384,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SeedRatio = flt("seedRatio", stored.SeedRatio, b.SeedRatio, 1.0)
 	out.DeadAfter = dur("deadAfter", stored.DeadAfter, b.DeadAfter, 30*24*time.Hour)
 	out.DeadDownloads = str("deadDownloads", stored.DeadDownloads, b.DeadDownloads, "report")
+	out.StagingDisk = boolean("stagingDisk", stored.StagingDisk, b.StagingDisk, false)
 	out.SeedOverrides = str("seedOverrides", stored.SeedOverrides, b.SeedOverrides, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)

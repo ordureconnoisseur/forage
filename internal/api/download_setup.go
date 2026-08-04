@@ -107,6 +107,22 @@ func (s *Server) fillHardlink(c *clientCheck, savePath string) {
 	case res.OK && res.Hardlink:
 		c.HardlinkOK = true
 		c.Status = "ok"
+	case res.OK && !res.Hardlink && res.CrossDevice && s.pool.Settings().StagingDisk:
+		// Declared: a staging disk is a supported layout, not a fault, and a
+		// permanent warning about a deliberate choice is just noise.
+		c.Status = "ok"
+		c.Detail = res.Reason + ". That is expected with a staging disk: the " +
+			"download copy is a real second copy, not a free extra name, so the " +
+			"seeding cull is what reclaims that disk."
+	case res.OK && !res.Hardlink && res.CrossDevice:
+		// Undeclared: usually a mount that drifted, occasionally a deliberate
+		// staging disk nobody told forage about. Say which it might be rather
+		// than assuming the user got it wrong.
+		c.Status = "warn"
+		c.Detail = res.Reason + ". Placement still works and costs double the " +
+			"space while both copies exist. If that is on purpose (a fast local " +
+			"disk staging to a NAS), turn on \"downloads are on a separate disk\" " +
+			"in Settings and this stops being flagged."
 	case res.OK && !res.Hardlink:
 		// Copy fallback works but wastes space — a warning, not an error.
 		c.Status = "warn"
