@@ -24,6 +24,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/managed"
 	"github.com/ordureconnoisseur/forager/internal/paniclog"
+	"github.com/ordureconnoisseur/forager/internal/placer"
 	"github.com/ordureconnoisseur/forager/internal/poller"
 	"github.com/ordureconnoisseur/forager/internal/vpnguard"
 	"github.com/ordureconnoisseur/forager/internal/watches"
@@ -110,6 +111,11 @@ func main() {
 	// pauses hands-free torrent grabs while the tunnel is down. Catches
 	// the gluetun-recreation failure where the WebUI still answers but
 	// the client's netns is dead.
+	// The ownership contract for everything forage creates in the library.
+	// Read once, before anything can place a file: a container running as
+	// root otherwise leaves a library the human (and Stash) cannot write.
+	placer.ConfigureOwnership(bootstrap.PUID, bootstrap.PGID, bootstrap.Umask)
+
 	guard := vpnguard.New()
 	launch(func() {
 		guard.Run(ctx, func() config.Config {

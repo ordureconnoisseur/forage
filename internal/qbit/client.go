@@ -208,7 +208,6 @@ func (c *Client) GetTransferInfo(ctx context.Context) (*TransferInfo, error) {
 	return &ti, nil
 }
 
-
 func (c *Client) Version(ctx context.Context) (string, error) {
 	resp, err := c.authedDo(ctx, func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, "GET", c.baseURL+"/api/v2/app/version", nil)

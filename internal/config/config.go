@@ -130,8 +130,18 @@ type Config struct {
 	ExcludedSceneTags []string
 	PollInterval      time.Duration
 	OrphanAfter       time.Duration
-	CacheRefresh      time.Duration
-	LogLevel          slog.Level
+	// PUID/PGID/Umask are the ownership contract for files forage creates,
+	// so a container running as root does not leave a library the human (or
+	// Stash) cannot write. Env-only and read once at startup: changing the
+	// uid a running daemon writes as is not a thing to do live, and every
+	// other *arr-style deployment configures these the same way. -1 means
+	// "inherit the process defaults", which is what a bare-binary install
+	// wants.
+	PUID         int
+	PGID         int
+	Umask        string
+	CacheRefresh time.Duration
+	LogLevel     slog.Level
 	// AllowedOrigin is the CORS allowlist: empty (the default) emits no
 	// CORS headers at all, so browsers hold the API to same-origin — the
 	// right shape for the daemon-served UI. Set an origin (the old
@@ -232,6 +242,9 @@ func LoadBootstrap() BootstrapConfig {
 	b.ExcludedSceneTags = parseCSVStrings(b.envOr("FORAGER_EXCLUDED_SCENE_TAGS", "", "excludedSceneTags"))
 	b.DiscoverFilters = b.envOr("FORAGER_DISCOVER_FILTERS", "", "discoverFilters")
 	b.HideMalePerformers = b.envBool("FORAGER_HIDE_MALE_PERFORMERS", false, "hideMalePerformers")
+	b.PUID = b.envInt("FORAGER_PUID", -1, "puid")
+	b.PGID = b.envInt("FORAGER_PGID", -1, "pgid")
+	b.Umask = b.envOr("FORAGER_UMASK", "", "umask")
 	b.PollInterval = b.envDuration("FORAGER_POLL_INTERVAL", 60*time.Second, "pollInterval")
 	b.OrphanAfter = b.envDuration("FORAGER_ORPHAN_AFTER", 6*time.Hour, "orphanAfter")
 	b.CacheRefresh = b.envDuration("FORAGER_CACHE_REFRESH", 6*time.Hour, "cacheRefresh")
@@ -413,6 +426,22 @@ func (b *BootstrapConfig) envOr(key, def, field string) string {
 		return v
 	}
 	return def
+}
+
+// envInt reads an integer setting. A malformed value falls back to the
+// default rather than failing startup: a typo in PUID should not stop the
+// daemon booting, it should just leave ownership alone.
+func (b *BootstrapConfig) envInt(key string, def int, field string) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return def
+	}
+	b.set[field] = true
+	return n
 }
 
 func (b *BootstrapConfig) envFloat(key string, def float64, field string) float64 {
