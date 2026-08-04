@@ -115,3 +115,35 @@ func TestNearlyDoneProtectsAlmostFinishedDownloads(t *testing.T) {
 		}
 	}
 }
+
+// The safety argument behind deleting a download after placement is entirely
+// "usenet does not seed". A torrent's copy always has a consumer — it is what
+// the torrent serves — so this must never fire for qBit, whatever the setting
+// says. Three separate doors in this codebase have deleted a file something
+// else was serving; this one is a predicate so it cannot quietly become the
+// fourth.
+func TestPostPlaceCleanupNeverTouchesTorrents(t *testing.T) {
+	for _, c := range []struct {
+		client  string
+		enabled bool
+		want    bool
+	}{
+		{"sabnzbd", true, true},
+		{"sabnzbd", false, false}, // setting off
+		{"qbit", true, false},     // the one that matters
+		{"qbit", false, false},
+		{"", true, false}, // unknown client: never guess
+	} {
+		g := &grabs.Grab{Client: c.client, ClientID: "id-1"}
+		if got := postPlaceCleanupDue(g, c.enabled); got != c.want {
+			t.Errorf("client=%q enabled=%v -> %v, want %v", c.client, c.enabled, got, c.want)
+		}
+	}
+	// No client id means nothing to delete, and a nil grab is not a target.
+	if postPlaceCleanupDue(&grabs.Grab{Client: "sabnzbd"}, true) {
+		t.Error("no client id: nothing to delete")
+	}
+	if postPlaceCleanupDue(nil, true) {
+		t.Error("nil grab must not be a deletion target")
+	}
+}

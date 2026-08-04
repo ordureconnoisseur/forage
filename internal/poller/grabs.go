@@ -820,7 +820,7 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 			// in SAB. After deletion SAB no longer tracks the nzo_id,
 			// but the grab is "placed" now so advanceSab's not-found
 			// branch correctly leaves it alone.
-			if g.Client == "sabnzbd" && g.ClientID != "" && p.pool.Settings().SabDeleteAfterPlace {
+			if postPlaceCleanupDue(g, p.pool.Settings().SabDeleteAfterPlace) {
 				if sb := p.pool.Sab(); sb != nil {
 					if err := sb.DeleteHistory(ctx, g.ClientID, true); err != nil {
 						p.log.Warn("sab cleanup after place failed", "id", g.ID, "nzo_id", g.ClientID, "err", err)
@@ -3121,4 +3121,21 @@ func tokenOverlap(a, b map[string]bool) int {
 		}
 	}
 	return n
+}
+
+// postPlaceCleanupDue reports whether a placed grab's download-client copy may
+// be removed now that the library has its own.
+//
+// The client check is the whole safety argument, not a detail. Usenet does not
+// seed, so once the file is in the library SAB's copy has no remaining
+// consumer. A torrent's copy always does: it is what the torrent serves, and
+// deleting it breaks the torrent silently, which is a failure this codebase
+// has already shipped three times through different doors.
+//
+// A named predicate rather than an inline condition because that condition sat
+// mid-way through a 400-line function, which is precisely the shape that gets
+// generalised by someone reading the setting name ("delete after place") and
+// not the line enforcing what it applies to.
+func postPlaceCleanupDue(g *grabs.Grab, enabled bool) bool {
+	return enabled && g != nil && g.Client == "sabnzbd" && g.ClientID != ""
 }
