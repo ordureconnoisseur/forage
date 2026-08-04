@@ -813,6 +813,34 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             Leave blank to fall back to a full-library scan after each
             placement (slower but works regardless of mount layout).
           </p>
+          <Field label="Ignore screenshot folders">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={boolValue(
+                  "stashIgnoreScreenshots",
+                  data?.fields["stashIgnoreScreenshots"],
+                )}
+                onChange={(e) =>
+                  setField("stashIgnoreScreenshots", e.target.checked)
+                }
+              />
+              Keep contact sheets and preview grids out of Stash
+            </label>
+            <SourceBadge field={data?.fields["stashIgnoreScreenshots"]} />
+          </Field>
+          <p className="settings-tip">
+            Packs ship a folder of screenshots beside the video —{" "}
+            <code>Screens</code>, <code>Screenlists</code>,{" "}
+            <code>Covers</code>, <code>Proof</code>, <code>scr</code> — and
+            Stash indexes every one as an image. Turning this on has forage
+            write the exclusion rules for you when you save. Worth letting it:
+            Stash matches these as raw regexes against raw paths and never
+            reports a rule that matches nothing, so a pattern written with{" "}
+            <code>/</code> against Windows paths silently excludes nothing at
+            all. Existing rules of your own are kept, and this only affects
+            what Stash indexes from now on.
+          </p>
           <Field label="Pack duplicates">
             <select
               value={

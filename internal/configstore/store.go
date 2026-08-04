@@ -65,6 +65,9 @@ type StoredConfig struct {
 	// *bool so an explicit false round-trips (nil = fall through to
 	// env/default).
 	SabDeleteAfterPlace *bool `json:"sabDeleteAfterPlace,omitempty"`
+	// StashIgnoreScreenshots: have forage maintain Stash's image excludes
+	// for screenshot folders.
+	StashIgnoreScreenshots *bool `json:"stashIgnoreScreenshots,omitempty"`
 	// PackDedupKeep: "existing" | "pack" | "review" | "both". Controls which copy
 	// survives when a pack scene duplicates one already in the library.
 	PackDedupKeep *string `json:"packDedupKeep,omitempty"`

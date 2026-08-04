@@ -62,7 +62,7 @@ func PathInside(child, parent string) bool {
 
 const generalConfigQuery = `
 query ForagerStashGeneralConfig {
-  configuration { general { excludes stashes { path } } }
+  configuration { general { excludes imageExcludes stashes { path } } }
 }`
 
 const configureGeneralMutation = `
@@ -74,6 +74,8 @@ mutation ForagerConfigureGeneral($input: ConfigGeneralInput!) {
 type LibraryConfig struct {
 	// Excludes is the video exclusion regex list, verbatim.
 	Excludes []string
+	// ImageExcludes is the same for images.
+	ImageExcludes []string
 	// Paths is every library root Stash scans.
 	Paths []string
 }
@@ -83,8 +85,9 @@ func (c *Client) LibraryConfig(ctx context.Context) (LibraryConfig, error) {
 	var resp struct {
 		Configuration struct {
 			General struct {
-				Excludes []string `json:"excludes"`
-				Stashes  []struct {
+				Excludes      []string `json:"excludes"`
+				ImageExcludes []string `json:"imageExcludes"`
+				Stashes       []struct {
 					Path string `json:"path"`
 				} `json:"stashes"`
 			} `json:"general"`
@@ -93,7 +96,10 @@ func (c *Client) LibraryConfig(ctx context.Context) (LibraryConfig, error) {
 	if err := c.do(ctx, generalConfigQuery, nil, &resp); err != nil {
 		return LibraryConfig{}, err
 	}
-	out := LibraryConfig{Excludes: resp.Configuration.General.Excludes}
+	out := LibraryConfig{
+		Excludes:      resp.Configuration.General.Excludes,
+		ImageExcludes: resp.Configuration.General.ImageExcludes,
+	}
 	for _, s := range resp.Configuration.General.Stashes {
 		out.Paths = append(out.Paths, s.Path)
 	}
@@ -129,4 +135,116 @@ func (c *Client) AddVideoExclude(ctx context.Context, pattern string) (bool, err
 		return false, err
 	}
 	return true, nil
+}
+
+// Screenshot folders: the images nobody wants in a library.
+//
+// Scene packs routinely ship a folder of contact sheets and preview grids
+// beside the video: Screens/, Screenlists/, Covers/, Proof/, scr/. Stash
+// indexes them as images, and they swamp a gallery view without ever being
+// content anyone browses. On the reference library there are 29,045 of them,
+// and the user had ALREADY written rules to exclude them; the rules just used
+// forward slashes against Windows paths and matched nothing at all.
+//
+// So forage generates these rather than documenting them: same reasoning as
+// the download folder, and the same separator-agnostic construction.
+var screenshotFolders = []string{
+	"screens", "screenshots", "screenlist", "screenlists",
+	"cover", "covers", "proof", "proofs", "scr", "thumbs", "thumbnails",
+}
+
+// ScreenshotExcludePatterns returns an image-exclusion regex per screenshot
+// folder name, matching that folder ANYWHERE in a path rather than anchored at
+// a root, because these folders sit beside each release wherever it landed.
+func ScreenshotExcludePatterns() []string {
+	out := make([]string, 0, len(screenshotFolders))
+	for _, f := range screenshotFolders {
+		// [\\/] is slash OR backslash. [\/] would be an ESCAPED slash, which
+		// matches only "/" and is precisely the mistake that left 29,045
+		// screenshots in this library.
+		out = append(out, `(?i)[\\/]`+regexp.QuoteMeta(f)+`[\\/]`)
+	}
+	return out
+}
+
+// AddImageExcludes appends any of the given patterns Stash does not already
+// have, and returns how many it added. Existing entries are preserved.
+func (c *Client) AddImageExcludes(ctx context.Context, patterns []string) (int, error) {
+	var resp struct {
+		Configuration struct {
+			General struct {
+				ImageExcludes []string `json:"imageExcludes"`
+			} `json:"general"`
+		} `json:"configuration"`
+	}
+	const q = `query ForagerImageExcludes { configuration { general { imageExcludes } } }`
+	if err := c.do(ctx, q, nil, &resp); err != nil {
+		return 0, err
+	}
+	have := map[string]bool{}
+	for _, e := range resp.Configuration.General.ImageExcludes {
+		have[e] = true
+	}
+	merged := append([]string{}, resp.Configuration.General.ImageExcludes...)
+	added := 0
+	for _, p := range patterns {
+		if p == "" || have[p] {
+			continue
+		}
+		merged = append(merged, p)
+		have[p] = true
+		added++
+	}
+	if added == 0 {
+		return 0, nil
+	}
+	const m = `mutation ForagerConfigureImageExcludes($input: ConfigGeneralInput!) {
+  configureGeneral(input: $input) { imageExcludes }
+}`
+	var out struct {
+		ConfigureGeneral struct {
+			ImageExcludes []string `json:"imageExcludes"`
+		} `json:"configureGeneral"`
+	}
+	if err := c.do(ctx, m, map[string]any{"input": map[string]any{"imageExcludes": merged}}, &out); err != nil {
+		return 0, err
+	}
+	return added, nil
+}
+
+// Unmatchable reports patterns that CANNOT match any of the given library
+// paths because of separator style, which is the silent failure this whole
+// area suffers from.
+//
+// Stash matches a raw regex against a raw OS path and says nothing when a
+// pattern never fires: no error, no warning, no count of what was skipped. A
+// rule written with `/` against `D:\Porn\...` excludes exactly nothing, and
+// the only symptom is content you thought you had ruled out showing up in the
+// library months later.
+func Unmatchable(patterns, libraryPaths []string) []string {
+	backslashLib := false
+	for _, p := range libraryPaths {
+		if strings.Contains(p, `\`) {
+			backslashLib = true
+			break
+		}
+	}
+	if !backslashLib {
+		return nil
+	}
+	var bad []string
+	for _, p := range patterns {
+		// A pattern is unmatchable when it uses "/" as a separator and offers
+		// no way to match a backslash. `\\` (an escaped backslash) is the only
+		// construct that reliably does, whether alone or inside a class like
+		// [\\/]; a bare `\` in the pattern is usually a regex escape such as
+		// `\.` and says nothing about separators.
+		//
+		// Deliberately conservative: a false alarm here trains people to
+		// ignore the warning, which is worse than the silence it replaces.
+		if strings.Contains(p, "/") && !strings.Contains(p, `\\`) {
+			bad = append(bad, p)
+		}
+	}
+	return bad
 }
