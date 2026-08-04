@@ -70,7 +70,10 @@ type Pool struct {
 // category names, the placer's library root for diagnostics, etc.
 // Snapshot pattern keeps callers from racing against a Reload.
 type Settings struct {
-	QbitCategory       string
+	QbitCategory string
+	// DownloadRoot is where finished downloads land, for the incremental
+	// reconcile pass that compares them against the library.
+	DownloadRoot       string
 	SabCategory        string
 	LibraryRoot        string
 	ProwlarrCategories []int
@@ -173,6 +176,7 @@ func (p *Pool) Reload(cfg config.Config) {
 
 	p.settings.Store(&Settings{
 		QbitCategory:        cfg.QbitCategory,
+		DownloadRoot:        cfg.DownloadRoot,
 		SabCategory:         cfg.SabCategory,
 		LibraryRoot:         cfg.LibraryRoot,
 		ProwlarrCategories:  append([]int(nil), cfg.ProwlarrCategories...),

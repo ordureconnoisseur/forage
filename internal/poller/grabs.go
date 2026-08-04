@@ -175,6 +175,9 @@ type Poller struct {
 	// lastSeedCull gates the hourly seeding cull (see cull.go). Owned by
 	// the single-goroutine tick.
 	lastSeedCull time.Time
+	// lastDownloadsReconcile gates the incremental download/library
+	// reconcile (see reconcile_downloads.go). Owned by the tick goroutine.
+	lastDownloadsReconcile time.Time
 
 	// Invariant checker (see invariants.go). lastInvariants gates its slow
 	// cadence and is tick-owned; the checker itself is built lazily by the
@@ -516,6 +519,15 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 		// ever sees FINISHED torrents, so a download that stopped is
 		// invisible to it forever.
 		p.cullDeadDownloads(ctx)
+	}
+
+	// Incremental reconcile against the library. Its own, slower cadence:
+	// nothing it finds is urgent, and the cursor means a slow schedule costs
+	// nothing extra.
+	phase("reconcileDownloads")
+	if time.Since(p.lastDownloadsReconcile) >= downloadsReconcileInterval {
+		p.lastDownloadsReconcile = time.Now()
+		p.reconcileDownloads(ctx)
 	}
 
 	// Invariant checker (see invariants.go): assert the joins forage's data
