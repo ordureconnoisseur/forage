@@ -284,3 +284,54 @@ func TestCullMalformedOverridesPausesEverything(t *testing.T) {
 		t.Fatalf("deletes = %v — malformed overrides must pause the cull entirely", got)
 	}
 }
+
+// The bug this exists for: two grabs of one release download to the same
+// filename, so both torrents point at a single file. Culling either deletes
+// the file the other is seeding. On the reference library the June grab was
+// retired on schedule and took the July grab's file with it; the torrent sat
+// in missingFiles for a fortnight and nothing reported it.
+func TestOtherSeederFindsATorrentSharingThePath(t *testing.T) {
+	all := []qbit.Torrent{
+		{Hash: "AAAA", ContentPath: "/data/porn/downloads/complete/Army Brat [1080p].mp4"},
+		{Hash: "BBBB", ContentPath: "/data/porn/downloads/complete/Army Brat [1080p].mp4"},
+		{Hash: "CCCC", ContentPath: "/data/porn/downloads/complete/Something Else.mp4"},
+	}
+	got := otherSeeder(all, "AAAA", "/data/porn/downloads/complete/Army Brat [1080p].mp4")
+	if got == "" {
+		t.Fatal("BBBB serves the same file; culling AAAA would break it")
+	}
+	// Case-insensitive on the hash, since qBit's casing is not guaranteed.
+	if otherSeeder(all, "aaaa", "/data/porn/downloads/complete/Army Brat [1080p].mp4") == "" {
+		t.Error("hash comparison must not be case-sensitive")
+	}
+}
+
+// A torrent must not block its own cull, or nothing is ever retired.
+func TestOtherSeederIgnoresItself(t *testing.T) {
+	all := []qbit.Torrent{
+		{Hash: "AAAA", ContentPath: "/data/porn/downloads/complete/Only Copy.mp4"},
+	}
+	if got := otherSeeder(all, "AAAA", "/data/porn/downloads/complete/Only Copy.mp4"); got != "" {
+		t.Errorf("got %q: a torrent is not another seeder of itself", got)
+	}
+}
+
+// The folder cases a plain string compare would miss.
+func TestOtherSeederCatchesFolderOverlap(t *testing.T) {
+	all := []qbit.Torrent{
+		{Hash: "AAAA", ContentPath: "/data/porn/downloads/complete/Big Pack"},
+		{Hash: "BBBB", ContentPath: "/data/porn/downloads/complete/Big Pack/inner/scene.mp4"},
+	}
+	// Culling the pack would delete the file BBBB serves from inside it.
+	if otherSeeder(all, "AAAA", "/data/porn/downloads/complete/Big Pack") == "" {
+		t.Error("a torrent seeding INSIDE the folder must block culling the folder")
+	}
+	// And the reverse: the file is covered by the pack torrent.
+	if otherSeeder(all, "BBBB", "/data/porn/downloads/complete/Big Pack/inner/scene.mp4") == "" {
+		t.Error("a torrent seeding the enclosing folder must block culling the file")
+	}
+	// A sibling that merely shares a prefix is unrelated.
+	if got := otherSeeder(all, "CCCC", "/data/porn/downloads/complete/Big Pack extra/x.mp4"); got != "" {
+		t.Errorf("got %q: shared prefix is not shared content", got)
+	}
+}
