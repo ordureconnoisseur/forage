@@ -91,6 +91,7 @@ func (s *Server) configFields() map[string]configField {
 		"stagingDisk":            {Value: cfg.StagingDisk, Source: sources["stagingDisk"]},
 		"deadAfter":              {Value: cfg.DeadAfter.String(), Source: sources["deadAfter"]},
 		"deadDownloads":          {Value: cfg.DeadDownloads, Source: sources["deadDownloads"]},
+		"deadMaxProgress":        {Value: cfg.DeadMaxProgress, Source: sources["deadMaxProgress"]},
 		"trashTtl":               {Value: cfg.TrashTTL.String(), Source: sources["trashTtl"]},
 		"seedMaxAge":             {Value: cfg.SeedMaxAge.String(), Source: sources["seedMaxAge"]},
 		"seedRatio":              {Value: cfg.SeedRatio, Source: sources["seedRatio"]},

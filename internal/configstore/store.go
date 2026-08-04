@@ -56,11 +56,14 @@ type StoredConfig struct {
 	DeadAfter     *string `json:"deadAfter,omitempty"`
 	DeadDownloads *string `json:"deadDownloads,omitempty"`
 	// StagingDisk: the download folder is on a separate disk on purpose.
-	StagingDisk *bool   `json:"stagingDisk,omitempty"`
-	SabURL      *string `json:"sabUrl,omitempty"`
-	SabAPIKey   *string `json:"sabApiKey,omitempty"`
-	SabCategory *string `json:"sabCategory,omitempty"`
-	LibraryRoot *string `json:"libraryRoot,omitempty"`
+	StagingDisk *bool `json:"stagingDisk,omitempty"`
+	// DeadMaxProgress: never auto-retire a download at or above this fraction
+	// (stored as a string so it round-trips through the UI like the others).
+	DeadMaxProgress *string `json:"deadMaxProgress,omitempty"`
+	SabURL          *string `json:"sabUrl,omitempty"`
+	SabAPIKey       *string `json:"sabApiKey,omitempty"`
+	SabCategory     *string `json:"sabCategory,omitempty"`
+	LibraryRoot     *string `json:"libraryRoot,omitempty"`
 	// StashPathMapping translates the forager-container path of a
 	// placed file into the path Stash sees for the same file (the two
 	// often differ when forager runs in Docker on Linux and Stash is
@@ -381,6 +384,9 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.DeadDownloads != nil {
 		base.DeadDownloads = patch.DeadDownloads
+	}
+	if patch.DeadMaxProgress != nil {
+		base.DeadMaxProgress = patch.DeadMaxProgress
 	}
 	if patch.StagingDisk != nil {
 		base.StagingDisk = patch.StagingDisk

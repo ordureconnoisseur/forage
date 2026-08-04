@@ -69,6 +69,18 @@ func deadDue(t qbit.Torrent, g *grabs.Grab, after time.Duration, now time.Time) 
 		idle.Truncate(time.Hour), after, t.Progress*100)
 }
 
+// nearlyDone reports whether a download has enough of the file on disk to be
+// worth keeping despite being idle.
+//
+// An idle-time rule cannot tell a torrent stuck at 98% from one stuck at 0%,
+// and they are completely different things: the first has almost all the data
+// and deserves a recheck or another source, the second has nothing and never
+// will. A 99.4%-complete archive reached a delete list here on exactly that
+// confusion. floor <= 0 disables the protection.
+func nearlyDone(progress, floor float64) bool {
+	return floor > 0 && progress >= floor
+}
+
 // cullDeadDownloads runs one pass over unfinished torrents.
 func (p *Poller) cullDeadDownloads(ctx context.Context) {
 	cfg := p.pool.Settings()
@@ -109,9 +121,15 @@ func (p *Poller) cullDeadDownloads(ctx context.Context) {
 			continue
 		}
 		found++
-		if !remove {
-			p.log.Info("dead download (reporting only)", "id", g.ID,
-				"name", t.Name, "why", why, "progress", t.Progress)
+		keep := nearlyDone(t.Progress, cfg.DeadMaxProgress)
+		if !remove || keep {
+			// Progress leads the message. "no progress for 913h" reads as
+			// dead whether 2% or 98% of the file is sitting there, and the
+			// percentage was previously last on the line where it truncated.
+			p.log.Info("dead download", "id", g.ID,
+				"percent", fmt.Sprintf("%.1f%%", t.Progress*100),
+				"action", map[bool]string{true: "kept: nearly complete", false: "reporting only"}[keep],
+				"name", t.Name, "why", why)
 			continue
 		}
 		if other := otherSeeder(all, t.Hash, t.ContentPath); other != "" {

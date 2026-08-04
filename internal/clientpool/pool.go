@@ -99,6 +99,8 @@ type Settings struct {
 	DeadDownloads string
 	// StagingDisk: the download folder is on a separate disk on purpose.
 	StagingDisk bool
+	// DeadMaxProgress: never auto-retire a download at or above this fraction.
+	DeadMaxProgress float64
 	// SeedOverrides: per-indexer threshold JSON (see config.SeedOverrides).
 	SeedOverrides string
 	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
@@ -183,6 +185,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		DeadAfter:           cfg.DeadAfter,
 		DeadDownloads:       cfg.DeadDownloads,
 		StagingDisk:         cfg.StagingDisk,
+		DeadMaxProgress:     cfg.DeadMaxProgress,
 		SeedOverrides:       cfg.SeedOverrides,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
