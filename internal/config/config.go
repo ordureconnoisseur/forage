@@ -82,6 +82,14 @@ type Config struct {
 	// first, so deleting the SAB source leaves the library file
 	// intact. qBit grabs are never touched (torrents keep seeding).
 	SabDeleteAfterPlace bool
+	// StashIgnoreScreenshots has forage keep Stash's IMAGE excludes pointed
+	// at the screenshot folders packs ship beside their videos (Screens,
+	// Screenlists, Covers, Proof, scr). Off by default: those are the user's
+	// own files and forage should not decide unasked what their library
+	// indexes. On, because writing the rule by hand fails silently — a
+	// pattern with the wrong separator matches nothing and Stash never says
+	// so, which is how 29,045 of them reached one library.
+	StashIgnoreScreenshots bool
 	// PackDedupKeep controls what pack download-then-dedup does when a
 	// pack scene duplicates one already in the library:
 	//   "existing" — keep the existing copy, remove the pack's (default)
@@ -216,6 +224,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.SeedOverrides = b.envOr("FORAGER_SEED_OVERRIDES", "", "seedOverrides")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
+	b.StashIgnoreScreenshots = b.envBool("FORAGER_STASH_IGNORE_SCREENSHOTS", false, "stashIgnoreScreenshots")
 	b.PackDedupKeep = normalizePackKeep(b.envOr("FORAGER_PACK_DEDUP_KEEP", "existing", "packDedupKeep"))
 	b.ReleaseRules = b.envOr("FORAGER_RELEASE_RULES", "", "releaseRules")
 	b.ReleasePrefs = b.envOr("FORAGER_RELEASE_PREFS", "", "releasePrefs")
@@ -337,6 +346,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.SeedOverrides = str("seedOverrides", stored.SeedOverrides, b.SeedOverrides, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)
+	out.StashIgnoreScreenshots = boolean("stashIgnoreScreenshots", stored.StashIgnoreScreenshots, b.StashIgnoreScreenshots, false)
 	out.PackDedupKeep = normalizePackKeep(str("packDedupKeep", stored.PackDedupKeep, b.PackDedupKeep, "existing"))
 	out.ReleaseRules = str("releaseRules", stored.ReleaseRules, b.ReleaseRules, "")
 	out.ReleasePrefs = str("releasePrefs", stored.ReleasePrefs, b.ReleasePrefs, "")

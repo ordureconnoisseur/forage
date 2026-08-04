@@ -9,6 +9,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -71,40 +72,41 @@ func (s *Server) getConfig(w http.ResponseWriter, r *http.Request) {
 func (s *Server) configFields() map[string]configField {
 	cfg, sources := config.Compose(s.bootstrap, s.store.Get())
 	return map[string]configField{
-		"stashUrl":            {Value: cfg.StashURL, Source: sources["stashUrl"]},
-		"stashApiKey":         secretField(cfg.StashAPIKey, sources["stashApiKey"]),
-		"stashdbUrl":          {Value: cfg.StashDBURL, Source: sources["stashdbUrl"]},
-		"stashdbApiKey":       secretField(cfg.StashDBAPIKey, sources["stashdbApiKey"]),
-		"prowlarrUrl":         {Value: cfg.ProwlarrURL, Source: sources["prowlarrUrl"]},
-		"prowlarrApiKey":      secretField(cfg.ProwlarrAPIKey, sources["prowlarrApiKey"]),
-		"prowlarrCategories":  {Value: cfg.ProwlarrCategories, Source: sources["prowlarrCategories"]},
-		"qbitUrl":             {Value: cfg.QbitURL, Source: sources["qbitUrl"]},
-		"qbitUsername":        {Value: cfg.QbitUsername, Source: sources["qbitUsername"]},
-		"qbitPassword":        secretField(cfg.QbitPassword, sources["qbitPassword"]),
-		"qbitCategory":        {Value: cfg.QbitCategory, Source: sources["qbitCategory"]},
-		"sabUrl":              {Value: cfg.SabURL, Source: sources["sabUrl"]},
-		"sabApiKey":           secretField(cfg.SabAPIKey, sources["sabApiKey"]),
-		"sabCategory":         {Value: cfg.SabCategory, Source: sources["sabCategory"]},
-		"downloadRoot":        {Value: cfg.DownloadRoot, Source: sources["downloadRoot"]},
-		"trashTtl":            {Value: cfg.TrashTTL.String(), Source: sources["trashTtl"]},
-		"seedMaxAge":          {Value: cfg.SeedMaxAge.String(), Source: sources["seedMaxAge"]},
-		"seedRatio":           {Value: cfg.SeedRatio, Source: sources["seedRatio"]},
-		"seedOverrides":       {Value: cfg.SeedOverrides, Source: sources["seedOverrides"]},
-		"libraryRoot":         {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
-		"stashPathMapping":    {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
-		"sabDeleteAfterPlace": {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
-		"packDedupKeep":       {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
-		"releaseRules":        {Value: cfg.ReleaseRules, Source: sources["releaseRules"]},
-		"releasePrefs":        {Value: cfg.ReleasePrefs, Source: sources["releasePrefs"]},
-		"releaseAdvanced":     {Value: cfg.ReleaseAdvanced, Source: sources["releaseAdvanced"]},
-		"excludedSceneTags":   {Value: cfg.ExcludedSceneTags, Source: sources["excludedSceneTags"]},
-		"hideMalePerformers":  {Value: cfg.HideMalePerformers, Source: sources["hideMalePerformers"]},
-		"pollInterval":        {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
-		"orphanAfter":         {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
-		"cacheRefresh":        {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
-		"allowedOrigin":       {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
-		"adminToken":          secretField(cfg.AdminToken, sources["adminToken"]),
-		"username":            {Value: cfg.Username, Source: sources["username"]},
+		"stashUrl":               {Value: cfg.StashURL, Source: sources["stashUrl"]},
+		"stashApiKey":            secretField(cfg.StashAPIKey, sources["stashApiKey"]),
+		"stashdbUrl":             {Value: cfg.StashDBURL, Source: sources["stashdbUrl"]},
+		"stashdbApiKey":          secretField(cfg.StashDBAPIKey, sources["stashdbApiKey"]),
+		"prowlarrUrl":            {Value: cfg.ProwlarrURL, Source: sources["prowlarrUrl"]},
+		"prowlarrApiKey":         secretField(cfg.ProwlarrAPIKey, sources["prowlarrApiKey"]),
+		"prowlarrCategories":     {Value: cfg.ProwlarrCategories, Source: sources["prowlarrCategories"]},
+		"qbitUrl":                {Value: cfg.QbitURL, Source: sources["qbitUrl"]},
+		"qbitUsername":           {Value: cfg.QbitUsername, Source: sources["qbitUsername"]},
+		"qbitPassword":           secretField(cfg.QbitPassword, sources["qbitPassword"]),
+		"qbitCategory":           {Value: cfg.QbitCategory, Source: sources["qbitCategory"]},
+		"sabUrl":                 {Value: cfg.SabURL, Source: sources["sabUrl"]},
+		"sabApiKey":              secretField(cfg.SabAPIKey, sources["sabApiKey"]),
+		"sabCategory":            {Value: cfg.SabCategory, Source: sources["sabCategory"]},
+		"downloadRoot":           {Value: cfg.DownloadRoot, Source: sources["downloadRoot"]},
+		"stashIgnoreScreenshots": {Value: cfg.StashIgnoreScreenshots, Source: sources["stashIgnoreScreenshots"]},
+		"trashTtl":               {Value: cfg.TrashTTL.String(), Source: sources["trashTtl"]},
+		"seedMaxAge":             {Value: cfg.SeedMaxAge.String(), Source: sources["seedMaxAge"]},
+		"seedRatio":              {Value: cfg.SeedRatio, Source: sources["seedRatio"]},
+		"seedOverrides":          {Value: cfg.SeedOverrides, Source: sources["seedOverrides"]},
+		"libraryRoot":            {Value: cfg.LibraryRoot, Source: sources["libraryRoot"]},
+		"stashPathMapping":       {Value: cfg.StashPathMapping, Source: sources["stashPathMapping"]},
+		"sabDeleteAfterPlace":    {Value: cfg.SabDeleteAfterPlace, Source: sources["sabDeleteAfterPlace"]},
+		"packDedupKeep":          {Value: cfg.PackDedupKeep, Source: sources["packDedupKeep"]},
+		"releaseRules":           {Value: cfg.ReleaseRules, Source: sources["releaseRules"]},
+		"releasePrefs":           {Value: cfg.ReleasePrefs, Source: sources["releasePrefs"]},
+		"releaseAdvanced":        {Value: cfg.ReleaseAdvanced, Source: sources["releaseAdvanced"]},
+		"excludedSceneTags":      {Value: cfg.ExcludedSceneTags, Source: sources["excludedSceneTags"]},
+		"hideMalePerformers":     {Value: cfg.HideMalePerformers, Source: sources["hideMalePerformers"]},
+		"pollInterval":           {Value: cfg.PollInterval.String(), Source: sources["pollInterval"]},
+		"orphanAfter":            {Value: cfg.OrphanAfter.String(), Source: sources["orphanAfter"]},
+		"cacheRefresh":           {Value: cfg.CacheRefresh.String(), Source: sources["cacheRefresh"]},
+		"allowedOrigin":          {Value: cfg.AllowedOrigin, Source: sources["allowedOrigin"]},
+		"adminToken":             secretField(cfg.AdminToken, sources["adminToken"]),
+		"username":               {Value: cfg.Username, Source: sources["username"]},
 		// passwordHash is masked like any secret; the UI only reads its
 		// hasSecret flag (to show "password is set"), and writes a
 		// plaintext `password` field that the daemon hashes — the hash
@@ -314,6 +316,8 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	// And keep that same folder out of Stash's library, for the layout where
 	// it lives inside the library root.
 	excl := s.ensureStashExclusion(r.Context(), newCfg)
+	shots := s.ensureScreenshotExclusion(r.Context(), newCfg)
+	unmatchable := s.reportUnmatchableExcludes(r.Context())
 
 	out := map[string]any{
 		"ok":      true,
@@ -324,6 +328,12 @@ func (s *Server) postConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	if excl != "" {
 		out["stash_exclusion"] = excl
+	}
+	if shots != "" {
+		out["screenshot_exclusion"] = shots
+	}
+	if len(unmatchable) > 0 {
+		out["unmatchable_excludes"] = unmatchable
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -578,4 +588,58 @@ func (s *Server) ensureStashExclusion(ctx context.Context, cfg config.Config) st
 	}
 	s.log.Info("stash exclusion added", "pattern", pattern, "path", stashDL)
 	return "added " + pattern
+}
+
+// ensureScreenshotExclusion keeps the contact sheets and preview grids packs
+// ship beside their videos out of Stash, when the user has asked for it.
+//
+// Opt-in, unlike the download-folder rule: that folder is forage's own, these
+// are the user's files, and forage has no business deciding unasked what their
+// library indexes. What forage IS good for is writing the rule correctly,
+// because Stash matches a raw regex against a raw path and never reports a
+// pattern that fires zero times.
+func (s *Server) ensureScreenshotExclusion(ctx context.Context, cfg config.Config) string {
+	if !cfg.StashIgnoreScreenshots {
+		return ""
+	}
+	sc := s.pool.Stash()
+	if sc == nil {
+		return ""
+	}
+	added, err := sc.AddImageExcludes(ctx, stash.ScreenshotExcludePatterns())
+	if err != nil {
+		s.log.Warn("screenshot exclusion", "err", err)
+		return "failed: " + err.Error()
+	}
+	if added == 0 {
+		return "already excluded"
+	}
+	s.log.Info("screenshot exclusions added", "count", added)
+	return fmt.Sprintf("added %d screenshot-folder patterns", added)
+}
+
+// reportUnmatchableExcludes surfaces exclusion patterns that can never fire.
+//
+// Always checked, toggle or not, because this is the failure mode the whole
+// area suffers from and nothing else reports it. A rule written with "/"
+// against Windows paths excludes exactly nothing, and the only symptom is
+// content you believed you had ruled out appearing months later: 29,045 images
+// on the reference library, from four patterns their owner had every reason to
+// think were working.
+func (s *Server) reportUnmatchableExcludes(ctx context.Context) []string {
+	sc := s.pool.Stash()
+	if sc == nil {
+		return nil
+	}
+	cfg, err := sc.LibraryConfig(ctx)
+	if err != nil {
+		return nil
+	}
+	bad := stash.Unmatchable(append(append([]string{}, cfg.Excludes...),
+		cfg.ImageExcludes...), cfg.Paths)
+	for _, p := range bad {
+		s.log.Warn("stash exclusion pattern can never match this library's paths",
+			"pattern", p)
+	}
+	return bad
 }
