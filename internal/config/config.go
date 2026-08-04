@@ -61,6 +61,17 @@ type Config struct {
 	// common private-tracker hit-and-run rules (≥72h or 1.0).
 	SeedMaxAge time.Duration
 	SeedRatio  float64
+	// DeadAfter retires a download that has made no progress for this long.
+	// The seeding cull only ever looks at FINISHED torrents, so without this
+	// a download that stops is invisible to forage forever. Measured from the
+	// last byte received, not from when it was added, so a slow torrent is
+	// never mistaken for a dead one. 0 disables the check.
+	DeadAfter time.Duration
+	// DeadDownloads is what to do with them: "remove" deletes the torrent and
+	// its partial data, anything else (the default) reports and touches
+	// nothing. Report-first because deleting a partial is unrecoverable and
+	// this pass runs unattended.
+	DeadDownloads string
 	// SeedOverrides is a JSON array of per-indexer cull thresholds, e.g.
 	// [{"indexer":"PornoLab","maxAge":"720h","ratio":2.0}]. A field omitted
 	// in an override inherits the global; an explicit zero disables that
@@ -231,6 +242,8 @@ func LoadBootstrap() BootstrapConfig {
 	b.TrashTTL = b.envDuration("FORAGER_TRASH_TTL", 7*24*time.Hour, "trashTtl")
 	b.SeedMaxAge = b.envDuration("FORAGER_SEED_MAX_AGE", 7*24*time.Hour, "seedMaxAge")
 	b.SeedRatio = b.envFloat("FORAGER_SEED_RATIO", 1.0, "seedRatio")
+	b.DeadAfter = b.envDuration("FORAGER_DEAD_AFTER", 30*24*time.Hour, "deadAfter")
+	b.DeadDownloads = b.envOr("FORAGER_DEAD_DOWNLOADS", "report", "deadDownloads")
 	b.SeedOverrides = b.envOr("FORAGER_SEED_OVERRIDES", "", "seedOverrides")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
@@ -356,6 +369,8 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.TrashTTL = dur("trashTtl", stored.TrashTTL, b.TrashTTL, 7*24*time.Hour)
 	out.SeedMaxAge = dur("seedMaxAge", stored.SeedMaxAge, b.SeedMaxAge, 7*24*time.Hour)
 	out.SeedRatio = flt("seedRatio", stored.SeedRatio, b.SeedRatio, 1.0)
+	out.DeadAfter = dur("deadAfter", stored.DeadAfter, b.DeadAfter, 30*24*time.Hour)
+	out.DeadDownloads = str("deadDownloads", stored.DeadDownloads, b.DeadDownloads, "report")
 	out.SeedOverrides = str("seedOverrides", stored.SeedOverrides, b.SeedOverrides, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)

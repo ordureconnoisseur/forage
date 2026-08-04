@@ -93,6 +93,10 @@ type Settings struct {
 	// both zero disables culling.
 	SeedMaxAge time.Duration
 	SeedRatio  float64
+	// DeadAfter / DeadDownloads: retire downloads that stopped progressing.
+	// See config.Config; the seeding cull above only sees FINISHED torrents.
+	DeadAfter     time.Duration
+	DeadDownloads string
 	// SeedOverrides: per-indexer threshold JSON (see config.SeedOverrides).
 	SeedOverrides string
 	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
@@ -174,6 +178,8 @@ func (p *Pool) Reload(cfg config.Config) {
 		TrashTTL:            cfg.TrashTTL,
 		SeedMaxAge:          cfg.SeedMaxAge,
 		SeedRatio:           cfg.SeedRatio,
+		DeadAfter:           cfg.DeadAfter,
+		DeadDownloads:       cfg.DeadDownloads,
 		SeedOverrides:       cfg.SeedOverrides,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),
