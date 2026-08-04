@@ -260,12 +260,9 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 // folder cases: a pack directory whose contents another torrent serves, and a
 // file inside a directory another torrent holds.
 func otherSeeder(all []qbit.Torrent, selfHash, path string) string {
-	paths := make([]string, 0, len(all))
+	entries := make([]seeding.Entry, 0, len(all))
 	for _, o := range all {
-		if strings.EqualFold(o.Hash, selfHash) {
-			continue
-		}
-		paths = append(paths, o.ContentPath)
+		entries = append(entries, seeding.Entry{ID: o.Hash, Path: o.ContentPath})
 	}
-	return seeding.New(paths, seeding.DefaultMinDepth).Blocks(path)
+	return seeding.NewFrom(entries, selfHash, seeding.DefaultMinDepth).Blocks(path)
 }
