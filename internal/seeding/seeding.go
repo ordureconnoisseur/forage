@@ -82,6 +82,34 @@ func (s *Set) Covers(path string) bool {
 	return false
 }
 
+// Blocks reports a seeded path that MOVING path would break, or "" when the
+// move is safe. It is the check every rename needs, and it is strictly wider
+// than Covers.
+//
+// Three ways a move breaks a torrent, and a file-only check catches one:
+//
+//   - the path IS the torrent's content
+//   - an ancestor is (the file sits inside a seeded pack folder)
+//   - a descendant is (path is a FOLDER holding seeded content)
+//
+// The third is the one that matters here, because the unfiled filing action
+// moves whole pack directories. Ten torrents on the reference library died to
+// a bulk move of a directory nobody thought to check the inside of.
+func (s *Set) Blocks(path string) string {
+	if s == nil || path == "" {
+		return ""
+	}
+	p := strings.TrimRight(path, "/")
+	for _, cp := range s.paths {
+		if p == cp ||
+			strings.HasPrefix(p, cp+"/") || // a seeded ancestor
+			strings.HasPrefix(cp, p+"/") { // seeded content inside it
+			return cp
+		}
+	}
+	return ""
+}
+
 // Len is how many usable content paths the snapshot holds.
 func (s *Set) Len() int {
 	if s == nil {

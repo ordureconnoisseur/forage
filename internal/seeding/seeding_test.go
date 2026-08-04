@@ -86,3 +86,51 @@ func TestKnownWithRealPaths(t *testing.T) {
 		t.Error("a usable path is information")
 	}
 }
+
+// Moving a FOLDER breaks every torrent seeding from inside it, which is
+// exactly how ten torrents died to one bulk move. Covers only looks upward, so
+// a directory containing seeded files reads as safe; Blocks looks both ways.
+func TestBlocksCatchesSeededContentInsideAFolder(t *testing.T) {
+	s := New([]string{
+		"/data/porn/Media/Unfiled/Big Pack/inner/scene.mp4",
+		"/data/porn/Media/Unfiled/single.mp4",
+	}, DefaultMinDepth)
+
+	// The folder itself is not a content path, and Covers says nothing.
+	dir := "/data/porn/Media/Unfiled/Big Pack"
+	if s.Covers(dir) {
+		t.Fatal("precondition: the folder is not itself a content path")
+	}
+	if got := s.Blocks(dir); got == "" {
+		t.Error("moving the folder would break the torrent seeding from inside it")
+	}
+
+	// The three shapes, and the safe case.
+	for _, c := range []struct {
+		path  string
+		block bool
+	}{
+		{"/data/porn/Media/Unfiled/single.mp4", true},               // is the content
+		{"/data/porn/Media/Unfiled/Big Pack/inner/scene.mp4", true}, // is the content
+		{"/data/porn/Media/Unfiled/Big Pack/inner", true},           // holds it
+		{"/data/porn/Media/Unfiled/Big Pack", true},                 // holds it, deeper
+		{"/data/porn/Media/Unfiled/Other Pack", false},              // unrelated
+		{"/data/porn/Media/Unfiled/Big Pack extra", false},          // shared prefix only
+		{"/data/porn/Media/Unfiled/single.mp4.bak", false},          // shared prefix only
+	} {
+		got := s.Blocks(c.path) != ""
+		if got != c.block {
+			t.Errorf("Blocks(%q) = %v, want %v", c.path, got, c.block)
+		}
+	}
+}
+
+func TestBlocksOnNilAndEmpty(t *testing.T) {
+	var s *Set
+	if s.Blocks("/anything") != "" {
+		t.Error("a nil Set blocks nothing")
+	}
+	if New([]string{"/data/porn/downloads/complete/x.mp4"}, DefaultMinDepth).Blocks("") != "" {
+		t.Error("an empty path blocks nothing")
+	}
+}

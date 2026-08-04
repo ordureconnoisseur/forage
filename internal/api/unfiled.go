@@ -214,6 +214,12 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 	}{Results: []outcome{}}
 
 	dir := filepath.Join(cfg.LibraryRoot, sanitiseFolder(req.Performer))
+	// One snapshot for the whole batch. Filing MOVES files, and a move is what
+	// breaks a torrent: the client keeps pointing at the old path and the
+	// download goes dark without any error anywhere. Ten torrents on this
+	// library died exactly that way, to a bulk move of loose files that never
+	// asked what was being served.
+	seeded := s.seedingSet(r.Context())
 	for _, key := range keys {
 		it, ok := offered[key]
 		if !ok {
@@ -230,6 +236,17 @@ func (s *Server) postUnfiledFile(w http.ResponseWriter, r *http.Request) {
 			res.Skipped++
 			res.Results = append(res.Results, outcome{Key: key, From: src,
 				Error: "not where Stash says it is"})
+			continue
+		}
+		// A seeded path is refused however filable it looks. Unlike the other
+		// refusals here this one is about a system OUTSIDE the library: the
+		// file is fine, the library would be fine, and the torrent would
+		// silently stop. Blocks (not Covers) because a pack folder moves whole
+		// and the torrent is usually seeding a file INSIDE it.
+		if cp := seeded.Blocks(src); cp != "" {
+			res.Skipped++
+			res.Results = append(res.Results, outcome{Key: key, From: src,
+				Error: "a torrent is seeding " + cp + " — moving this would break it"})
 			continue
 		}
 		// A pack moves whole, under <performer>/<pack name>/. Moving its
