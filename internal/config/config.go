@@ -72,6 +72,13 @@ type Config struct {
 	// nothing. Report-first because deleting a partial is unrecoverable and
 	// this pass runs unattended.
 	DeadDownloads string
+	// DeadMaxProgress protects a download that is nearly finished from being
+	// retired for idleness. A torrent stuck at 98% has almost all of the data
+	// on disk and is worth a recheck or another source; one stuck at 0% has
+	// nothing and never will. Both look identical to an idle-time rule, which
+	// is exactly how a 99.4%-complete archive ended up on a delete list here.
+	// 0 disables the floor and retires on idleness alone.
+	DeadMaxProgress float64
 	// StagingDisk says the download folder is on a DIFFERENT disk from the
 	// library on purpose: the common "download to a fast local SSD, then
 	// move to the NAS" layout. forage detects the split either way (the
@@ -257,6 +264,7 @@ func LoadBootstrap() BootstrapConfig {
 	b.DeadAfter = b.envDuration("FORAGER_DEAD_AFTER", 30*24*time.Hour, "deadAfter")
 	b.DeadDownloads = b.envOr("FORAGER_DEAD_DOWNLOADS", "report", "deadDownloads")
 	b.StagingDisk = b.envBool("FORAGER_STAGING_DISK", false, "stagingDisk")
+	b.DeadMaxProgress = b.envFloat("FORAGER_DEAD_MAX_PROGRESS", 0.9, "deadMaxProgress")
 	b.SeedOverrides = b.envOr("FORAGER_SEED_OVERRIDES", "", "seedOverrides")
 	b.StashPathMapping = b.envOr("FORAGER_STASH_PATH_MAPPING", "", "stashPathMapping")
 	b.SabDeleteAfterPlace = b.envBool("FORAGER_SAB_DELETE_AFTER_PLACE", true, "sabDeleteAfterPlace")
@@ -385,6 +393,7 @@ func Compose(b BootstrapConfig, stored configstore.StoredConfig) (Config, Source
 	out.DeadAfter = dur("deadAfter", stored.DeadAfter, b.DeadAfter, 30*24*time.Hour)
 	out.DeadDownloads = str("deadDownloads", stored.DeadDownloads, b.DeadDownloads, "report")
 	out.StagingDisk = boolean("stagingDisk", stored.StagingDisk, b.StagingDisk, false)
+	out.DeadMaxProgress = flt("deadMaxProgress", stored.DeadMaxProgress, b.DeadMaxProgress, 0.9)
 	out.SeedOverrides = str("seedOverrides", stored.SeedOverrides, b.SeedOverrides, "")
 	out.StashPathMapping = str("stashPathMapping", stored.StashPathMapping, b.StashPathMapping, "")
 	out.SabDeleteAfterPlace = boolean("sabDeleteAfterPlace", stored.SabDeleteAfterPlace, b.SabDeleteAfterPlace, true)

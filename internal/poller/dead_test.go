@@ -93,3 +93,25 @@ func TestDeadDueBoundary(t *testing.T) {
 		t.Error("a minute under the threshold is not due")
 	}
 }
+
+// An idle-time rule cannot tell a torrent stuck at 98% from one stuck at 0%,
+// and they are entirely different things. A 99.4%-complete archive on this
+// library reached a delete list on exactly that confusion.
+func TestNearlyDoneProtectsAlmostFinishedDownloads(t *testing.T) {
+	for _, c := range []struct {
+		progress, floor float64
+		keep            bool
+	}{
+		{0.994, 0.9, true}, // the archive that prompted this
+		{0.985, 0.9, true},
+		{0.900, 0.9, true},  // exactly at the floor is protected
+		{0.899, 0.9, false}, // just under is not
+		{0.000, 0.9, false}, // never started: the unambiguous case
+		{0.994, 0, false},   // floor disabled: idleness alone decides
+		{0.000, 0, false},
+	} {
+		if got := nearlyDone(c.progress, c.floor); got != c.keep {
+			t.Errorf("nearlyDone(%.3f, %.2f) = %v, want %v", c.progress, c.floor, got, c.keep)
+		}
+	}
+}
