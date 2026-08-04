@@ -512,6 +512,10 @@ func (p *Poller) tickOnce(ctx context.Context) error {
 	if time.Since(p.lastSeedCull) >= cullInterval {
 		p.lastSeedCull = time.Now()
 		p.cullSeededTorrents(ctx)
+		// Same cadence, opposite half of the problem: the seeding cull only
+		// ever sees FINISHED torrents, so a download that stopped is
+		// invisible to it forever.
+		p.cullDeadDownloads(ctx)
 	}
 
 	// Invariant checker (see invariants.go): assert the joins forage's data

@@ -50,10 +50,15 @@ type StoredConfig struct {
 	SeedMaxAge         *string `json:"seedMaxAge,omitempty"`
 	SeedRatio          *string `json:"seedRatio,omitempty"`
 	SeedOverrides      *string `json:"seedOverrides,omitempty"`
-	SabURL             *string `json:"sabUrl,omitempty"`
-	SabAPIKey          *string `json:"sabApiKey,omitempty"`
-	SabCategory        *string `json:"sabCategory,omitempty"`
-	LibraryRoot        *string `json:"libraryRoot,omitempty"`
+	// DeadAfter / DeadDownloads: retire downloads that stopped making
+	// progress. See config.Config for why this is separate from the seeding
+	// cull and why it reports by default.
+	DeadAfter     *string `json:"deadAfter,omitempty"`
+	DeadDownloads *string `json:"deadDownloads,omitempty"`
+	SabURL        *string `json:"sabUrl,omitempty"`
+	SabAPIKey     *string `json:"sabApiKey,omitempty"`
+	SabCategory   *string `json:"sabCategory,omitempty"`
+	LibraryRoot   *string `json:"libraryRoot,omitempty"`
 	// StashPathMapping translates the forager-container path of a
 	// placed file into the path Stash sees for the same file (the two
 	// often differ when forager runs in Docker on Linux and Stash is
@@ -368,6 +373,12 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	}
 	if patch.SabDeleteAfterPlace != nil {
 		base.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
+	}
+	if patch.DeadAfter != nil {
+		base.DeadAfter = patch.DeadAfter
+	}
+	if patch.DeadDownloads != nil {
+		base.DeadDownloads = patch.DeadDownloads
 	}
 	if patch.StashIgnoreScreenshots != nil {
 		base.StashIgnoreScreenshots = patch.StashIgnoreScreenshots
