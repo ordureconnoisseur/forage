@@ -483,8 +483,17 @@ func TestCopyFileWorldReadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o644 {
-		t.Errorf("copied file mode = %o, want 644", perm)
+	// Against the configured contract, not a literal. The default moved from
+	// 0644 to 0664 when ownership became configurable, and asserting the old
+	// number here failed a change that satisfied this test's actual point.
+	if perm := info.Mode().Perm(); perm != FileMode() {
+		t.Errorf("copied file mode = %o, want %o (the configured FileMode)", perm, FileMode())
+	}
+	// And the point itself, independent of whatever the mode is configured
+	// to: a library copy Stash cannot read is the bug this guards.
+	if perm := info.Mode().Perm(); perm&0o044 == 0 {
+		t.Errorf("copied file mode = %o: not readable by group or other, so a "+
+			"Stash running as another uid cannot open it", perm)
 	}
 }
 
