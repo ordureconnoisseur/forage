@@ -203,6 +203,35 @@ func TestInvariants(t *testing.T) {
 			cleanIDs: []string{"grab 11"},
 		},
 		{
+			invariant: "grab.unfiled_though_scene_identified",
+			breaks: "the check fires on a scene that IS filed, because a second " +
+				"grab of it was hardlinked into the bin beside the filed copy; " +
+				"86 such rows on the reference library, none of them actionable, " +
+				"and an invariant nobody can act on is one everybody ignores",
+			seed: func(t *testing.T, dbh *sql.DB) {
+				// One scene, two grabs: the first carries the performer, the
+				// second is the hardlink in the bin with no name on it.
+				insertGrab(t, dbh, 20, cols{
+					"status": "confirmed", "actual_stashdb_id": "sc-20",
+					"placed_path": "/lib/Hazel Moore/twenty.mp4", "performer_name": "Hazel Moore",
+					"confirmed_at": now,
+				})
+				insertGrab(t, dbh, 21, cols{
+					"status": "confirmed", "actual_stashdb_id": "sc-20",
+					"placed_path": "/lib/Unfiled/twenty.mp4", "performer_name": "",
+					"confirmed_at": now,
+				})
+				// A scene nothing has filed: still a genuine violation.
+				insertGrab(t, dbh, 22, cols{
+					"status": "confirmed", "actual_stashdb_id": "sc-22",
+					"placed_path": "/lib/Unfiled/twentytwo.mp4", "performer_name": "",
+					"confirmed_at": now,
+				})
+			},
+			wantID:   "grab 22",
+			cleanIDs: []string{"grab 20", "grab 21"},
+		},
+		{
 			invariant: "grab.unfiled_though_scene_predicted",
 			breaks: "an adopted download the matcher identified is filed nowhere, " +
 				"even though the matched scene came with its own cast attached",

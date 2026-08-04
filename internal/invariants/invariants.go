@@ -413,17 +413,32 @@ func sqlChecks(now int64) []sqlCheck {
 			name:      "grab.unfiled_though_scene_identified",
 			kind:      "grab",
 			statement: "a confirmed grab whose scene Stash has identified has a performer folder",
+			// The NOT EXISTS is what makes this worth reading.
+			//
+			// The question is whether the SCENE is filed, not whether this
+			// particular row carries the name. A scene grabbed twice has two
+			// rows; the second is routinely placed as a hardlink beside the
+			// first, so the content sits under the performer while this row
+			// still shows an empty performer_name. Without the clause the
+			// check reported 86 such rows on the reference library, of which
+			// every actionable one turned out to be already filed. An
+			// invariant nobody can act on is one everybody learns to ignore,
+			// which costs more than the check is worth.
 			query: `
-				SELECT CAST(id AS TEXT),
-				       'confirmed against scene ' || actual_stashdb_id ||
-				       ' and placed at ' || placed_path || ' but no performer folder'
-				  FROM grabs
-				 WHERE status = 'confirmed'
-				   AND COALESCE(kind, 'single') != 'pack'
-				   AND COALESCE(actual_stashdb_id, '') != ''
-				   AND COALESCE(placed_path, '') != ''
-				   AND COALESCE(performer_name, '') = ''
-				 ORDER BY id`,
+				SELECT CAST(g.id AS TEXT),
+				       'confirmed against scene ' || g.actual_stashdb_id ||
+				       ' and placed at ' || g.placed_path || ' but no performer folder'
+				  FROM grabs g
+				 WHERE g.status = 'confirmed'
+				   AND COALESCE(g.kind, 'single') != 'pack'
+				   AND COALESCE(g.actual_stashdb_id, '') != ''
+				   AND COALESCE(g.placed_path, '') != ''
+				   AND COALESCE(g.performer_name, '') = ''
+				   AND NOT EXISTS (
+				         SELECT 1 FROM grabs f
+				          WHERE f.actual_stashdb_id = g.actual_stashdb_id
+				            AND COALESCE(f.performer_name, '') != '')
+				 ORDER BY g.id`,
 		},
 		{
 			// Gap 3. identifyAdopted (poller/adopt_match.go) runs an adopted
