@@ -15,15 +15,18 @@ func TestCopyFileVerifiesSize(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
 	dest := filepath.Join(dir, "dest.bin")
-	if err := os.WriteFile(src, []byte("hello winnowing world"), 0o644); err != nil {
+	content := []byte("hello foraging world")
+	if err := os.WriteFile(src, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := copyFile(src, dest); err != nil {
 		t.Fatalf("good copy failed: %v", err)
 	}
 	di, err := os.Stat(dest)
-	if err != nil || di.Size() != 21 {
-		t.Fatalf("copy landed wrong: %v %v", di, err)
+	// Against len(content), not a literal: the size was hardcoded and broke
+	// the moment the fixture string changed by one character.
+	if err != nil || di.Size() != int64(len(content)) {
+		t.Fatalf("copy landed %d bytes, want %d (%v)", di.Size(), len(content), err)
 	}
 	// No .partial debris left behind.
 	ents, _ := os.ReadDir(dir)
@@ -68,5 +71,35 @@ func TestSpaceCheckSkippedForHardlink(t *testing.T) {
 	// Same directory ⇒ same device ⇒ no space check, whatever the size.
 	if err := p.checkSpaceFor(src, dir, 1<<62); err != nil {
 		t.Fatalf("hardlink candidate was space-checked: %v", err)
+	}
+}
+
+// The default modes must not silently change what a library looks like.
+//
+// This commit moved created files from 0644/0755 to 0664/0775 so the daemon,
+// Stash and the human can all write regardless of which uid the container
+// runs as. That is deliberate, but it is a behaviour change on every existing
+// deployment, so it is pinned rather than left to be rediscovered.
+func TestDefaultModesAreGroupWritable(t *testing.T) {
+	defer ConfigureOwnership(-1, -1, "")
+	ConfigureOwnership(-1, -1, "")
+	if got := DirMode(); got != 0o775 {
+		t.Errorf("DirMode() = %o, want 775", got)
+	}
+	if got := FileMode(); got != 0o664 {
+		t.Errorf("FileMode() = %o, want 664", got)
+	}
+}
+
+// A malformed umask must leave the defaults alone rather than producing
+// something absurd like mode 0.
+func TestConfigureOwnershipIgnoresJunkUmask(t *testing.T) {
+	defer ConfigureOwnership(-1, -1, "")
+	for _, junk := range []string{"nonsense", "99999999999999999999", "-1"} {
+		ConfigureOwnership(-1, -1, "")
+		ConfigureOwnership(-1, -1, junk)
+		if DirMode() != 0o775 || FileMode() != 0o664 {
+			t.Errorf("umask %q changed the modes to %o/%o", junk, DirMode(), FileMode())
+		}
 	}
 }

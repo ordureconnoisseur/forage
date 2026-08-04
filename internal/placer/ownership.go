@@ -17,10 +17,10 @@ import (
 // files away, and CIFS/NFS mounts often fix ownership themselves. A
 // failure must never fail a placement that otherwise succeeded.
 var (
-	ownUID  = -1
-	ownGID  = -1
+	ownUID              = -1
+	ownGID              = -1
 	dirMode os.FileMode = 0o775
-	// fileMode is applied to files winnow creates (the copy path; a
+	// fileMode is applied to files forage creates (the copy path; a
 	// hardlink shares the source's mode by definition).
 	fileMode os.FileMode = 0o664
 )
@@ -45,7 +45,7 @@ func ConfigureOwnership(uid, gid int, umask string) {
 func DirMode() os.FileMode  { return dirMode }
 func FileMode() os.FileMode { return fileMode }
 
-// Adopt applies the configured ownership and mode to a path winnow just
+// Adopt applies the configured ownership and mode to a path forage just
 // created. Best-effort by design (see above).
 func Adopt(path string, isDir bool) {
 	mode := fileMode
