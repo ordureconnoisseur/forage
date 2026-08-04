@@ -1,4 +1,4 @@
-// refile-unsorted reports which files sitting in the library's Unsorted folder
+// refile-unsorted reports which files sitting in the library's unfiled bin
 // could be moved under a performer, and (only when told to) moves them.
 //
 //	docker exec forager /refile-unsorted                 # dry run, prints a plan
@@ -68,13 +68,21 @@ func main() {
 			"can't supply a folder; falling back to watch casts only")
 	}
 
-	// Only grabs the library actually holds under Unsorted. A grab whose file
-	// has since been moved by hand is not ours to second-guess.
+	// Only grabs the library actually holds in the fallback bin. A grab whose
+	// file has since been moved by hand is not ours to second-guess.
+	//
+	// BOTH spellings, because the bin is called Unfiled on a fresh library and
+	// Unsorted on one that predates the rename, and a library that has just
+	// been renamed holds rows written under either. This tool matched the
+	// literal "Unsorted" and silently reported nothing to do the moment the
+	// folder was renamed, which is the worst way for a backfill to fail:
+	// it looks like success.
 	rows, err := dbh.Query(`
 		SELECT g.id, g.placed_path, g.predicted_stashdb_id, g.actual_stashdb_id
 		FROM grabs g
-		WHERE g.placed_path LIKE '%/Unsorted/%'
-		ORDER BY g.id`)
+		WHERE g.placed_path LIKE '%/' || ? || '/%'
+		   OR g.placed_path LIKE '%/' || ? || '/%'
+		ORDER BY g.id`, placer.UnfiledFolder, placer.LegacyUnfiledFolder)
 	if err != nil {
 		die("query grabs: %v", err)
 	}
