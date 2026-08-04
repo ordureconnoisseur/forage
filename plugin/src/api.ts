@@ -1539,6 +1539,9 @@ export interface ConfigPatch {
   stashPathMapping?: string;
   sabDeleteAfterPlace?: boolean;
   stashIgnoreScreenshots?: boolean;
+  stagingDisk?: boolean;
+  deadAfter?: string;
+  deadDownloads?: string;
   // "existing" (keep your copy, drop the pack dup), "pack" (keep the
   // pack copy, drop yours), or "both" (no dedup).
   packDedupKeep?: string;

@@ -97,6 +97,8 @@ type Settings struct {
 	// See config.Config; the seeding cull above only sees FINISHED torrents.
 	DeadAfter     time.Duration
 	DeadDownloads string
+	// StagingDisk: the download folder is on a separate disk on purpose.
+	StagingDisk bool
 	// SeedOverrides: per-indexer threshold JSON (see config.SeedOverrides).
 	SeedOverrides string
 	// AllowedOrigin is the CORS allow value ("" = same-origin only). It
@@ -180,6 +182,7 @@ func (p *Pool) Reload(cfg config.Config) {
 		SeedRatio:           cfg.SeedRatio,
 		DeadAfter:           cfg.DeadAfter,
 		DeadDownloads:       cfg.DeadDownloads,
+		StagingDisk:         cfg.StagingDisk,
 		SeedOverrides:       cfg.SeedOverrides,
 		AllowedOrigin:       cfg.AllowedOrigin,
 		ExcludedSceneTags:   append([]string(nil), cfg.ExcludedSceneTags...),

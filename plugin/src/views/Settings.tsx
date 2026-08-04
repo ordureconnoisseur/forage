@@ -813,6 +813,28 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             Leave blank to fall back to a full-library scan after each
             placement (slower but works regardless of mount layout).
           </p>
+          <Field label="Downloads on a separate disk">
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={boolValue("stagingDisk", data?.fields["stagingDisk"])}
+                onChange={(e) => setField("stagingDisk", e.target.checked)}
+              />
+              My download folder is on a different disk on purpose
+            </label>
+            <SourceBadge field={data?.fields["stagingDisk"]} />
+          </Field>
+          <p className="settings-tip">
+            The common "download to a fast local SSD, then move to the NAS"
+            layout. forage detects the split either way — the hardlink probe
+            cannot be fooled — so this only tells setup it is deliberate and
+            stops it being flagged as a misconfiguration. Placement is
+            unchanged: hardlinks are impossible across mounts, so every
+            placement copies. The thing worth knowing is that the download
+            copy is then a <em>real</em> second copy rather than a free extra
+            name, so the seeding cull is the only thing that ever reclaims
+            that disk.
+          </p>
           <Field label="Ignore screenshot folders">
             <label className="check">
               <input

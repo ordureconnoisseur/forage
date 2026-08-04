@@ -71,9 +71,15 @@ func (p *Placer) FreeSpace() (uint64, error) {
 // the library would hardlink (cheap, no extra space, seeds keep working) or
 // fall back to a copy (different filesystem → double storage), or fail.
 type HardlinkResult struct {
-	OK       bool   // a probe ran to a conclusion (Hardlink known either way)
-	Hardlink bool   // true = same filesystem, real hardlink; false = cross-device copy
-	Reason   string // human explanation, esp. on !OK
+	// CrossDevice distinguishes "different mounts" from every other reason a
+	// link can fail. It is the one failure that is a legitimate LAYOUT rather
+	// than a fault: downloading to a fast local disk and copying to the NAS
+	// is a deliberate, common setup, and telling that user to put both on one
+	// mount is advice to undo something they chose.
+	CrossDevice bool
+	OK          bool   // a probe ran to a conclusion (Hardlink known either way)
+	Hardlink    bool   // true = same filesystem, real hardlink; false = cross-device copy
+	Reason      string // human explanation, esp. on !OK
 }
 
 // HardlinkProbe tests whether a file in downloadDir can be hardlinked into
@@ -111,8 +117,8 @@ func (p *Placer) HardlinkProbe(downloadDir string) HardlinkResult {
 	// a real error (e.g. library not writable).
 	var linkErr *os.LinkError
 	if errors.As(err, &linkErr) && errors.Is(linkErr.Err, syscall.EXDEV) {
-		return HardlinkResult{OK: true, Hardlink: false,
-			Reason: "download dir and library are on different filesystems — placement will COPY (uses double the space). Put both on one mount for hardlinks."}
+		return HardlinkResult{OK: true, Hardlink: false, CrossDevice: true,
+			Reason: "download folder and library are on different filesystems, so placement copies instead of hardlinking"}
 	}
 	return HardlinkResult{Reason: "couldn't link into the library: " + err.Error()}
 }
