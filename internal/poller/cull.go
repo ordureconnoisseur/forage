@@ -10,6 +10,7 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/seeding"
 )
 
 // ── Seeding cull ────────────────────────────────────────────────────
@@ -161,6 +162,16 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 		return
 	}
 
+	// EVERY torrent, not just forage's: the cull deletes files, and the
+	// thing it must not do is delete a file some other torrent is serving.
+	// A failure here skips the pass rather than culling blind, because the
+	// whole point of this list is to say no.
+	allTorrents, aerr := qb.ListTorrents(ctx, qbit.ListOpts{})
+	if aerr != nil {
+		p.log.Warn("seeding cull: cannot list all torrents, skipping pass", "err", aerr)
+		return
+	}
+
 	now := time.Now()
 	culled := 0
 	for _, t := range torrents {
@@ -208,6 +219,20 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 				"id", g.ID, "path", g.PlacedPath, "err", serr)
 			continue
 		}
+		// Another torrent serving the same bytes makes this NOT redundant.
+		//
+		// Two grabs of one release download to the same filename, so both
+		// torrents point at a single file. Culling either one deletes the
+		// file the other is seeding, which is how a torrent on this library
+		// sat in missingFiles for a fortnight: the June grab was retired on
+		// schedule and took the July grab's file with it. The library copy
+		// was safe throughout, so nothing was lost, but a torrent died
+		// silently and nothing said so.
+		if other := otherSeeder(allTorrents, t.Hash, t.ContentPath); other != "" {
+			p.log.Warn("seeding cull: another torrent is serving this path, keeping it",
+				"id", g.ID, "path", t.ContentPath, "also_seeded_by", other)
+			continue
+		}
 		// The library copy is verified on disk; the client copy is now
 		// genuinely redundant. Journal, then delete torrent + files.
 		if _, jerr := p.repo.JournalDestruction(ctx, "seeding cull",
@@ -226,4 +251,21 @@ func (p *Poller) cullSeededTorrents(ctx context.Context) {
 	if culled > 0 {
 		p.log.Info("seeding cull pass done", "culled", culled, "scanned", len(torrents))
 	}
+}
+
+// otherSeeder returns the content path of a torrent OTHER than selfHash that
+// is serving path, or "" when none is.
+//
+// Uses seeding.Blocks rather than a string compare so it also catches the
+// folder cases: a pack directory whose contents another torrent serves, and a
+// file inside a directory another torrent holds.
+func otherSeeder(all []qbit.Torrent, selfHash, path string) string {
+	paths := make([]string, 0, len(all))
+	for _, o := range all {
+		if strings.EqualFold(o.Hash, selfHash) {
+			continue
+		}
+		paths = append(paths, o.ContentPath)
+	}
+	return seeding.New(paths, seeding.DefaultMinDepth).Blocks(path)
 }
