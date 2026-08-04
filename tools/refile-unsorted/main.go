@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -29,6 +30,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/config"
 	"github.com/ordureconnoisseur/forager/internal/db"
 	"github.com/ordureconnoisseur/forager/internal/placer"
+	"github.com/ordureconnoisseur/forager/internal/seeding"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -42,6 +44,7 @@ type plan struct {
 func main() {
 	apply := flag.Bool("apply", false, "actually move the files; without this the tool only prints what it would do")
 	limit := flag.Int("limit", 0, "stop after N candidates (0 = all)")
+	qbitURL := flag.String("qbit", "", "qBittorrent base URL, so files a torrent is seeding are never moved")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -198,8 +201,17 @@ func main() {
 		return
 	}
 
-	moved, failed := 0, 0
+	// Same rule the daemon enforces: never move a file a torrent is serving.
+	// This tool moves in bulk, which is precisely the shape that broke ten
+	// torrents on the reference library in one run.
+	seeded := loadSeeding(*qbitURL)
+	moved, failed, seedSkipped := 0, 0, 0
 	for _, p := range plans {
+		if cp := seeded.Blocks(p.from); cp != "" {
+			fmt.Fprintf(os.Stderr, "skip %s: a torrent is seeding %s\n", p.from, cp)
+			seedSkipped++
+			continue
+		}
 		dest := filepath.Join(cfg.LibraryRoot, sanitise(p.performer), filepath.Base(p.from))
 		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
 			fmt.Fprintf(os.Stderr, "mkdir %s: %v\n", filepath.Dir(dest), err)
@@ -225,7 +237,8 @@ func main() {
 		}
 		moved++
 	}
-	fmt.Printf("\nmoved %d, failed %d\n", moved, failed)
+	fmt.Printf("\nmoved %d, failed %d, skipped %d because a torrent is seeding them\n",
+		moved, failed, seedSkipped)
 	fmt.Println("Stash still points at the old paths: run a library scan, then Stash's")
 	fmt.Println("own cleanup, so the moved scenes re-attach at their new location.")
 }
@@ -323,4 +336,38 @@ func sanitise(s string) string {
 func die(f string, a ...any) {
 	fmt.Fprintf(os.Stderr, "refile-unsorted: "+f+"\n", a...)
 	os.Exit(1)
+}
+
+// loadSeeding snapshots what qBittorrent is serving. A nil Set (no URL, or an
+// unreachable client) blocks nothing, and the tool says so loudly rather than
+// pretending it checked: this is a bulk mover, and "I could not ask" is very
+// different from "nothing is seeding".
+func loadSeeding(base string) *seeding.Set {
+	if strings.TrimSpace(base) == "" {
+		fmt.Fprintln(os.Stderr,
+			"WARNING: no -qbit URL, so seeded files cannot be detected. "+
+				"Moving a file a torrent is serving breaks it silently.")
+		return nil
+	}
+	c := &http.Client{Timeout: 60 * time.Second}
+	resp, err := c.Get(strings.TrimRight(base, "/") + "/api/v2/torrents/info")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: qBittorrent unreachable (%v); seeded files cannot be detected\n", err)
+		return nil
+	}
+	defer resp.Body.Close()
+	var torrents []struct {
+		ContentPath string `json:"content_path"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&torrents); err != nil {
+		fmt.Fprintf(os.Stderr, "WARNING: qBittorrent reply unreadable (%v)\n", err)
+		return nil
+	}
+	paths := make([]string, 0, len(torrents))
+	for _, t := range torrents {
+		paths = append(paths, t.ContentPath)
+	}
+	set := seeding.New(paths, seeding.DefaultMinDepth)
+	fmt.Printf("seeding: %d torrents, %d usable content paths\n", len(torrents), set.Len())
+	return set
 }
