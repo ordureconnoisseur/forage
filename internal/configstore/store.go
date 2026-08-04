@@ -369,6 +369,12 @@ func applyPatch(base *StoredConfig, patch Patch) {
 	if patch.SabDeleteAfterPlace != nil {
 		base.SabDeleteAfterPlace = patch.SabDeleteAfterPlace
 	}
+	if patch.StashIgnoreScreenshots != nil {
+		base.StashIgnoreScreenshots = patch.StashIgnoreScreenshots
+	}
+	if patch.DiscoverFilters != nil {
+		base.DiscoverFilters = patch.DiscoverFilters
+	}
 	if patch.PackDedupKeep != nil {
 		base.PackDedupKeep = patch.PackDedupKeep
 	}
