@@ -110,6 +110,30 @@ func (s *Set) Blocks(path string) string {
 	return ""
 }
 
+// Entry pairs a torrent's identity with what it is serving.
+type Entry struct {
+	ID   string
+	Path string
+}
+
+// NewFrom builds a Set from entries, skipping any whose ID matches skipID
+// case-insensitively. An empty skipID keeps everything.
+//
+// The skip is what makes "is anyone ELSE serving this" expressible. Without
+// it a torrent always blocks its own removal and nothing is ever retired,
+// which is why the naive version of this check cannot simply reuse the
+// whole-client snapshot.
+func NewFrom(entries []Entry, skipID string, minDepth int) *Set {
+	paths := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if skipID != "" && strings.EqualFold(e.ID, skipID) {
+			continue
+		}
+		paths = append(paths, e.Path)
+	}
+	return New(paths, minDepth)
+}
+
 // Len is how many usable content paths the snapshot holds.
 func (s *Set) Len() int {
 	if s == nil {

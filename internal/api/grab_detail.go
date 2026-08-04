@@ -16,6 +16,8 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/destroy"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/pathmap"
+	"github.com/ordureconnoisseur/forager/internal/qbit"
+	"github.com/ordureconnoisseur/forager/internal/seeding"
 	"github.com/ordureconnoisseur/forager/internal/stash"
 )
 
@@ -451,6 +453,18 @@ func (s *Server) purgeGrab(ctx context.Context, g *grabs.Grab) deleteGrabRespons
 		switch g.Client {
 		case "qbit":
 			if qb := s.pool.Torrents(); qb != nil {
+				// Removing THIS torrent's files is what was asked for. Taking
+				// a file some OTHER torrent is serving is collateral, and it
+				// is silent: the other torrent simply stops. That is exactly
+				// how a torrent on this library sat dead for a fortnight
+				// after the seeding cull retired its twin.
+				if other := s.otherSeederOf(ctx, g.ClientID); other != "" {
+					s.log.Warn("purge: another torrent serves these files, keeping them",
+						"id", id, "also_seeded_by", other)
+					out.Removed = append(out.Removed,
+						"qbit torrent kept: another torrent is seeding the same files")
+					break
+				}
 				if derr := qb.DeleteTorrent(ctx, g.ClientID, true); derr != nil {
 					addErr("qbit torrent", derr)
 				} else {
@@ -516,4 +530,32 @@ func sameParentDir(stashPath, placedPath string) bool {
 		return true
 	}
 	return sp == pathmap.Base(placedPath)
+}
+
+// otherSeederOf reports a torrent OTHER than hash that is serving the same
+// content, or "" when none is (or when qBittorrent cannot be asked).
+//
+// Unreachable reads as "no other seeder": this gates a deletion the user
+// explicitly asked for, so a client outage must not turn an explicit purge
+// into a silent no-op. The cull takes the opposite view and skips its pass,
+// because nobody asked for that one.
+func (s *Server) otherSeederOf(ctx context.Context, hash string) string {
+	qb := s.pool.Torrents()
+	if qb == nil || hash == "" {
+		return ""
+	}
+	self, err := qb.TorrentInfo(ctx, hash)
+	if err != nil || self == nil || self.ContentPath == "" {
+		return ""
+	}
+	all, err := qb.ListTorrents(ctx, qbit.ListOpts{})
+	if err != nil {
+		s.log.Warn("purge: cannot check for other seeders", "err", err)
+		return ""
+	}
+	entries := make([]seeding.Entry, 0, len(all))
+	for _, t := range all {
+		entries = append(entries, seeding.Entry{ID: t.Hash, Path: t.ContentPath})
+	}
+	return seeding.NewFrom(entries, hash, seeding.DefaultMinDepth).Blocks(self.ContentPath)
 }

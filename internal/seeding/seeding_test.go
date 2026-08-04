@@ -134,3 +134,34 @@ func TestBlocksOnNilAndEmpty(t *testing.T) {
 		t.Error("an empty path blocks nothing")
 	}
 }
+
+// NewFrom's skip is what makes "is anyone ELSE serving this" expressible.
+// Without it every torrent blocks its own removal and nothing is ever
+// retired, which is the trap the naive version of this check falls into.
+func TestNewFromSkipsTheTorrentBeingAskedAbout(t *testing.T) {
+	entries := []Entry{
+		{ID: "AAAA", Path: "/data/porn/downloads/complete/shared.mp4"},
+		{ID: "BBBB", Path: "/data/porn/downloads/complete/shared.mp4"},
+		{ID: "CCCC", Path: "/data/porn/downloads/complete/other.mp4"},
+	}
+	// Asking about AAAA: BBBB serves the same file, so it is blocked.
+	if got := NewFrom(entries, "AAAA", DefaultMinDepth).
+		Blocks("/data/porn/downloads/complete/shared.mp4"); got == "" {
+		t.Error("BBBB serves the same path, so AAAA must be blocked")
+	}
+	// The lone seeder of a file is never blocked by itself.
+	if got := NewFrom(entries, "CCCC", DefaultMinDepth).
+		Blocks("/data/porn/downloads/complete/other.mp4"); got != "" {
+		t.Errorf("got %q: a torrent is not another seeder of itself", got)
+	}
+	// Case-insensitive, since client hash casing is not guaranteed.
+	if got := NewFrom(entries, "cccc", DefaultMinDepth).
+		Blocks("/data/porn/downloads/complete/other.mp4"); got != "" {
+		t.Errorf("got %q: the skip must ignore hash casing", got)
+	}
+	// An empty skip keeps everything, so the whole-client snapshot still works.
+	if got := NewFrom(entries, "", DefaultMinDepth).
+		Blocks("/data/porn/downloads/complete/other.mp4"); got == "" {
+		t.Error("with no skip, every torrent counts")
+	}
+}
