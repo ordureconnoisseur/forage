@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -51,7 +52,9 @@ var uiETag = func() string {
 // read fresh references via pool.X() on every request rather than
 // holding stale ones across config saves.
 type Server struct {
-	db           *sql.DB
+	db *sql.DB
+	// images caches StashDB thumbnails on disk; nil disables the endpoint.
+	images       *imageCache
 	pool         *clientpool.Pool
 	bootstrap    config.BootstrapConfig
 	store        *configstore.Store
@@ -248,10 +251,13 @@ func (s *Server) destroyExecutor(sc *stash.Client) destroy.Executor {
 
 func New(opts Options) *Server {
 	s := &Server{
-		db:           opts.DB,
-		pool:         opts.Pool,
-		bootstrap:    opts.Bootstrap,
-		store:        opts.Store,
+		db:        opts.DB,
+		pool:      opts.Pool,
+		bootstrap: opts.Bootstrap,
+		store:     opts.Store,
+		// Thumbnails live beside the database, so the cache moves with the
+		// deployment's data volume rather than needing its own mount.
+		images:       newImageCache(filepath.Join(filepath.Dir(opts.Bootstrap.DBPath), "imagecache")),
 		grabs:        opts.Grabs,
 		watches:      opts.Watches,
 		guard:        opts.Guard,
@@ -394,6 +400,10 @@ func (s *Server) Router() http.Handler {
 		// fetched server-side with the stored Stash API key so the browser
 		// never needs Stash creds. Gated like everything else (cookie auth
 		// for <img>).
+		// Cached StashDB thumbnails. Beside the other image routes and inside
+		// the same auth group: those already work from <img> tags, so there is
+		// no reason to open a new unauthenticated surface for these.
+		r.Get("/img/stashdb/{id}", s.getImage)
 		r.Get("/img/performer/{id}", s.getPerformerImage)
 		r.Get("/img/studio/{id}", s.getStudioImage)
 		r.Get("/img/scene/{id}/screenshot", s.getSceneScreenshot)

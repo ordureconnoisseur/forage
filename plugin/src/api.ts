@@ -651,6 +651,29 @@ export function imageBase(): string | null {
   return ""; // same-origin daemon
 }
 
+// stashdbThumbURL routes a StashDB cover through forage's on-disk cache.
+//
+// Discover mounts hundreds of cards, each of which would otherwise be a round
+// trip to stashdb.org — measured at about fifteen seconds to decode 120 of
+// them while scrolling, every single visit. The bytes behind a StashDB image
+// id never change, so forage fetches each one once and serves it locally
+// afterwards.
+//
+// Takes the ID, never the URL: the daemon rebuilds the upstream URL against a
+// fixed host, which is what stops the endpoint being an open relay. Anything
+// that is not a StashDB image URL is passed through untouched rather than
+// guessed at.
+const STASHDB_IMAGE_RE = /^https:\/\/stashdb\.org\/images\/([0-9a-f-]{36})$/i;
+
+export function stashdbThumbURL(url: string | undefined): string | undefined {
+  if (!url) return url;
+  const m = STASHDB_IMAGE_RE.exec(url.trim());
+  if (!m) return url;
+  const base = imageBase();
+  if (base === null) return url;
+  return `${base}/img/stashdb/${m[1]}`;
+}
+
 export function performerImageURL(localStashID: string): string | null {
   const base = imageBase();
   if (base === null) return null;

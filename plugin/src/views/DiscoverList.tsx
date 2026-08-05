@@ -11,6 +11,7 @@ import {
   type DiscoverBox,
   performerImageURL,
   type AddWatchReq,
+  stashdbThumbURL,
 } from "../api";
 import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
@@ -29,6 +30,15 @@ import { filterGlyph } from "../format";
 const SLOW_POLL_MS = 60_000;
 
 const DAYS_PRESETS = [7, 30, 60, 90] as const;
+
+// RENDER_CAP bounds what is MOUNTED, not what is fetched or how far back the
+// window reaches — the days control above is the setting for that, and this
+// must never look like a second one. A 90-day window returns hundreds of
+// scenes, and mounting ~390 cards means ~390 lazy image requests queued
+// against one host plus the DOM to match. Showing the first 300 keeps the page
+// responsive; the count below the grid says when anything is held back, so the
+// answer is "narrow the window" rather than a silent truncation.
+const RENDER_CAP = 300;
 
 // Trending pulls the daemon's full top-50 — the carousel paginates
 // through them 5 at a time so this fits comfortably in one row.
@@ -438,6 +448,12 @@ export default function DiscoverList({
         )}
         <span className="count">
           {filtered.length} / {data.scenes.length}
+          {filtered.length > RENDER_CAP && (
+            <span className="muted">
+              {" "}
+              · showing {RENDER_CAP}, narrow the window to see the rest
+            </span>
+          )}
         </span>
         {filtered.length > 0 &&
           (selecting ? (
@@ -481,7 +497,7 @@ export default function DiscoverList({
         </div>
       ) : (
         <div className="scene-grid">
-          {filtered.map((s) => (
+          {filtered.slice(0, RENDER_CAP).map((s) => (
             <DiscoverCard
               box={box}
               key={s.stashdb_id}
@@ -655,7 +671,7 @@ function TrendingCard({
         >
           {s.image_url ? (
             <img
-              src={s.image_url}
+              src={stashdbThumbURL(s.image_url)}
               alt=""
               loading="lazy"
               onLoad={(e) => {
@@ -791,7 +807,7 @@ function DiscoverCard({
         >
           {s.image_url ? (
             <img
-              src={s.image_url}
+              src={stashdbThumbURL(s.image_url)}
               alt=""
               loading="lazy"
               onLoad={(e) => {
