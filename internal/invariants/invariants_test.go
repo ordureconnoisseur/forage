@@ -76,6 +76,20 @@ func insertWatch(t *testing.T, dbh *sql.DB, id string, over cols) {
 	insertRow(t, dbh, "watches", c)
 }
 
+// localPerformer makes sceneID's cast include a performer the library holds,
+// which is the precondition for expecting a performer folder at all: forage
+// refuses to file under a performer Stash does not have.
+func localPerformer(t *testing.T, dbh *sql.DB, sceneID, performerID string) {
+	t.Helper()
+	insertRow(t, dbh, "scene_performer", cols{
+		"scene_id": sceneID, "performer_stashdb_id": performerID,
+	})
+	insertRow(t, dbh, "performer_cache", cols{
+		"stash_id": "local-" + performerID, "stashdb_id": performerID,
+		"name": "Performer " + performerID, "refreshed_at": time.Now().Unix(),
+	})
+}
+
 func insertRow(t *testing.T, dbh *sql.DB, table string, c cols) {
 	t.Helper()
 	names := make([]string, 0, len(c))
@@ -188,6 +202,9 @@ func TestInvariants(t *testing.T) {
 			breaks: "201 confirmed grabs sat under Unsorted whose scene Stash had " +
 				"already identified; nothing ever revisited the folder",
 			seed: func(t *testing.T, dbh *sql.DB) {
+				// The scene's cast includes someone the library HAS, so a
+				// performer folder was a real option and the bin is wrong.
+				localPerformer(t, dbh, "sc-10", "pf-10")
 				insertGrab(t, dbh, 10, cols{
 					"status": "confirmed", "actual_stashdb_id": "sc-10",
 					"placed_path": "/lib/Unsorted/ten.mp4", "performer_name": "",
@@ -211,6 +228,8 @@ func TestInvariants(t *testing.T) {
 			seed: func(t *testing.T, dbh *sql.DB) {
 				// One scene, two grabs: the first carries the performer, the
 				// second is the hardlink in the bin with no name on it.
+				localPerformer(t, dbh, "sc-20", "pf-20")
+				localPerformer(t, dbh, "sc-22", "pf-22")
 				insertGrab(t, dbh, 20, cols{
 					"status": "confirmed", "actual_stashdb_id": "sc-20",
 					"placed_path": "/lib/Hazel Moore/twenty.mp4", "performer_name": "Hazel Moore",
@@ -230,6 +249,35 @@ func TestInvariants(t *testing.T) {
 			},
 			wantID:   "grab 22",
 			cleanIDs: []string{"grab 20", "grab 21"},
+		},
+		{
+			invariant: "grab.unfiled_though_scene_identified",
+			breaks: "the check demands a performer folder for a scene whose cast " +
+				"the library does not have, which is the one thing the placer is " +
+				"RIGHT to refuse — a folder that is not a Stash record never " +
+				"appears on the performer page and is never counted as owned, so " +
+				"the bin is the correct destination and the alarm is false",
+			seed: func(t *testing.T, dbh *sql.DB) {
+				// sc-30's cast is entirely performers the library does not
+				// have: no scene_performer row joins performer_cache.
+				insertRow(t, dbh, "scene_performer", cols{
+					"scene_id": "sc-30", "performer_stashdb_id": "pf-not-local",
+				})
+				insertGrab(t, dbh, 30, cols{
+					"status": "confirmed", "actual_stashdb_id": "sc-30",
+					"placed_path": "/lib/Unfiled/thirty.mp4", "performer_name": "",
+					"confirmed_at": now,
+				})
+				// sc-31 has one the library DOES hold, so it is a real miss.
+				localPerformer(t, dbh, "sc-31", "pf-31")
+				insertGrab(t, dbh, 31, cols{
+					"status": "confirmed", "actual_stashdb_id": "sc-31",
+					"placed_path": "/lib/Unfiled/thirtyone.mp4", "performer_name": "",
+					"confirmed_at": now,
+				})
+			},
+			wantID:   "grab 31",
+			cleanIDs: []string{"grab 30"},
 		},
 		{
 			invariant: "grab.unfiled_though_scene_predicted",

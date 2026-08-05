@@ -412,7 +412,7 @@ func sqlChecks(now int64) []sqlCheck {
 			// zero rather than in the hundreds.
 			name:      "grab.unfiled_though_scene_identified",
 			kind:      "grab",
-			statement: "a confirmed grab whose scene Stash has identified has a performer folder",
+			statement: "a confirmed grab whose scene has a cast member the library holds is filed under a performer",
 			// The NOT EXISTS is what makes this worth reading.
 			//
 			// The question is whether the SCENE is filed, not whether this
@@ -438,6 +438,23 @@ func sqlChecks(now int64) []sqlCheck {
 				         SELECT 1 FROM grabs f
 				          WHERE f.actual_stashdb_id = g.actual_stashdb_id
 				            AND COALESCE(f.performer_name, '') != '')
+				   -- ...and only when a performer folder was ever an option.
+				   --
+				   -- forage refuses to file under a performer the library does
+				   -- not have: a folder that is not a Stash record is one
+				   -- nothing else can reason about, never shows on the
+				   -- performer page and is never counted as owned. When none
+				   -- of a scene's cast is local, the bin is the CORRECT
+				   -- destination, so reporting it as unfiled asks for
+				   -- something the placer is right to refuse. 78 of the 82
+				   -- violations on the reference library were this.
+				   AND EXISTS (
+				         SELECT 1
+				           FROM scene_performer sp
+				           JOIN performer_cache pc
+				             ON pc.stashdb_id = sp.performer_stashdb_id
+				          WHERE sp.scene_id = g.actual_stashdb_id
+				            AND COALESCE(pc.stashdb_id, '') != '')
 				 ORDER BY g.id`,
 		},
 		{
