@@ -659,7 +659,11 @@ function TrendingCard({
               alt=""
               loading="lazy"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
+                const img = e.currentTarget as HTMLImageElement;
+                img.style.display = "none";
+                // Stop the loading shimmer too, or a thumbnail that genuinely
+                // failed animates forever and reads as still-arriving.
+                img.parentElement?.classList.add("thumb-failed");
               }}
             />
           ) : null}
@@ -784,7 +788,11 @@ function DiscoverCard({
               alt=""
               loading="lazy"
               onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = "none";
+                const img = e.currentTarget as HTMLImageElement;
+                img.style.display = "none";
+                // Stop the loading shimmer too, or a thumbnail that genuinely
+                // failed animates forever and reads as still-arriving.
+                img.parentElement?.classList.add("thumb-failed");
               }}
             />
           ) : null}
@@ -1043,7 +1051,11 @@ function PerformerHovercard({
             src={imgURL}
             alt=""
             onError={(e) => {
-              (e.currentTarget as HTMLImageElement).style.display = "none";
+              const img = e.currentTarget as HTMLImageElement;
+              img.style.display = "none";
+              // Stop the loading shimmer too, or a thumbnail that genuinely
+              // failed animates forever and reads as still-arriving.
+              img.parentElement?.classList.add("thumb-failed");
             }}
           />
         ) : null}

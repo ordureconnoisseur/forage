@@ -8294,3 +8294,36 @@ code.grab-fact-v,
 .ti-drop:hover {
   opacity: 1;
 }
+
+/* Thumbnails arrive slowly and that is not a fault to fix in CSS.
+   Discover mounts ~390 cards, each lazy-loading from stashdb.org, so the
+   browser fetches a handful at a time as you scroll. Measured on the live
+   page: 112 requests, every one HTTP 200, none broken — they simply had not
+   arrived yet. A static gradient in the meantime reads as "broken image",
+   which is the actual complaint.
+
+   The shimmer needs no per-card state: the <img> fills the container with
+   object-fit: cover, so the moment it paints it hides the animation behind
+   it. Only the failure case needs marking, which the onError handler does. */
+@keyframes thumb-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.scene-thumb:not(.thumb-failed) {
+  background-image: linear-gradient(
+    100deg,
+    rgba(255, 255, 255, 0.04) 30%,
+    rgba(255, 255, 255, 0.11) 50%,
+    rgba(255, 255, 255, 0.04) 70%
+  );
+  background-size: 200% 100%;
+  animation: thumb-shimmer 1.6s ease-in-out infinite;
+}
+/* A thumbnail that failed is not still loading; leave it flat. */
+.scene-thumb.thumb-failed {
+  animation: none;
+  background-image: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .scene-thumb:not(.thumb-failed) { animation: none; }
+}
