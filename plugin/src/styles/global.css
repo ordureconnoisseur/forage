@@ -8309,7 +8309,7 @@ code.grab-fact-v,
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-.scene-thumb:not(.thumb-failed) {
+.scene-thumb:not(.thumb-failed):not(.thumb-loaded) {
   background-image: linear-gradient(
     100deg,
     rgba(255, 255, 255, 0.04) 30%,
@@ -8319,11 +8319,17 @@ code.grab-fact-v,
   background-size: 200% 100%;
   animation: thumb-shimmer 1.6s ease-in-out infinite;
 }
-/* A thumbnail that failed is not still loading; leave it flat. */
+/* Neither a loaded nor a failed thumbnail is still arriving. Stopping the
+   animation matters: Discover mounts ~390 of these, and an infinite animation
+   on every one repaints continuously for the life of the page. */
+.scene-thumb.thumb-loaded {
+  animation: none;
+  background-image: none;
+}
 .scene-thumb.thumb-failed {
   animation: none;
   background-image: none;
 }
 @media (prefers-reduced-motion: reduce) {
-  .scene-thumb:not(.thumb-failed) { animation: none; }
+  .scene-thumb:not(.thumb-failed):not(.thumb-loaded) { animation: none; }
 }

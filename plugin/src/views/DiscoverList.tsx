@@ -658,6 +658,13 @@ function TrendingCard({
               src={s.image_url}
               alt=""
               loading="lazy"
+              onLoad={(e) => {
+                // Stop the placeholder animating once the image is there.
+                // The image covers it either way, but ~390 perpetual
+                // animations repaint for nothing.
+                (e.currentTarget as HTMLImageElement)
+                  .parentElement?.classList.add("thumb-loaded");
+              }}
               onError={(e) => {
                 const img = e.currentTarget as HTMLImageElement;
                 img.style.display = "none";
@@ -787,6 +794,13 @@ function DiscoverCard({
               src={s.image_url}
               alt=""
               loading="lazy"
+              onLoad={(e) => {
+                // Stop the placeholder animating once the image is there.
+                // The image covers it either way, but ~390 perpetual
+                // animations repaint for nothing.
+                (e.currentTarget as HTMLImageElement)
+                  .parentElement?.classList.add("thumb-loaded");
+              }}
               onError={(e) => {
                 const img = e.currentTarget as HTMLImageElement;
                 img.style.display = "none";
@@ -1050,6 +1064,13 @@ function PerformerHovercard({
           <img
             src={imgURL}
             alt=""
+            onLoad={(e) => {
+              // Stop the placeholder animating once the image is there.
+              // The image covers it either way, but ~390 perpetual
+              // animations repaint for nothing.
+              (e.currentTarget as HTMLImageElement)
+                .parentElement?.classList.add("thumb-loaded");
+            }}
             onError={(e) => {
               const img = e.currentTarget as HTMLImageElement;
               img.style.display = "none";
