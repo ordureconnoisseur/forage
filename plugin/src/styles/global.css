@@ -5357,13 +5357,12 @@ code.grab-fact-v,
    dropdown had). The strip itself is click-through so tapping empty
    thumb still opens the scene; only the controls capture clicks. */
 .scene-watch {
-  /* Was a pinned bottom strip that placed whatever it held. The state tag and
-     the action pill now claim their own corners (see the refinement pass at
-     the end of this file), so this only provides the stacking context and
-     lets clicks through everywhere it is not covering something. */
   position: absolute;
-  inset: 0;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
   z-index: 3;
+  display: flex;
   pointer-events: none;
 }
 .scene-watch > * {
@@ -8474,39 +8473,12 @@ code.grab-fact-v,
   border: 0; background: none; padding: 0 2px;
   color: var(--text-dim); font-size: 11px;
 }
-/* Action, not a readout: accent disc, pressable, 18px inside a dashed pill. */
-.perf-chip-add {
-  display: grid; place-items: center; width: 18px; height: 18px;
-  border: 0; border-radius: 50%;
-  background: var(--accent); color: #0a0a0a; font-weight: 800; font-size: 12px;
-}
+/* The add button keeps its original bare glyph. The pass made it a filled
+   18px accent disc to tell it apart from the "+N" readout beside it, but that
+   disc reads as heavy and loud next to a muted dashed chip — and the readout
+   now says "+2 more" in words, which disambiguates the two on its own. The
+   quieter half of the fix was enough. */
 
-/* ── Thumbnail: state top-left, action bottom-right ───────────── */
-.scene-state {
-  position: absolute; top: 8px; left: 8px;
-  display: inline-flex; align-items: center; gap: 6px;
-  height: 22px; padding: 0 9px; border-radius: var(--radius-sm);
-  background: rgba(10, 10, 10, 0.74);
-  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
-  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
-}
-.scene-state::before {           /* the shape half of the signal */
-  content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
-}
-.scene-state.ready    { color: #bff3d3; }
-.scene-state.ready::before    { background: var(--accent); }
-.scene-state.watching { color: #f0dcae; }
-.scene-state.watching::before { background: var(--status-downloading); }
-
-/* Was .watch-chip, revealed on hover. Now permanent — touch has no hover. */
-.watch-chip {
-  position: absolute; right: 8px; bottom: 8px; opacity: 1;
-  display: inline-flex; align-items: center; gap: 5px;
-  height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
-  background: rgba(10, 10, 10, 0.66); border: 1px solid rgba(255, 255, 255, 0.3);
-  color: #fff; font-size: 12px; font-weight: 600;
-}
-/* Guarantees the pill's contrast over a pale thumb without dimming the image. */
 .scene-thumb-wrap::after {
   content: ""; position: absolute; inset: auto 0 0 0; height: 44%;
   background: linear-gradient(to top, rgba(0,0,0,0.45), rgba(0,0,0,0));

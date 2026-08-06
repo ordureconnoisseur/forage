@@ -75,43 +75,37 @@ export default function WatchControl({
     }
   };
 
-  const overlay = variant === "overlay";
   return (
     <div
-      className={overlay ? "scene-watch" : "watch-inline"}
+      className={variant === "overlay" ? "scene-watch" : "watch-inline"}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* State and action stop sharing a corner.
-          A state is something the scene IS, and reads as a flat tag with a
-          status dot in the top-left. An action is something you can DO, and
-          reads as a bordered pill bottom-right. Different corner, different
-          shape, different weight — so colour only agrees with the signal
-          instead of carrying it alone, which is what "Ready" green, "Watching"
-          amber and "Watch" grey were asking it to do from one position.
-          Overlay only: the inline variant is a row of buttons and has no
-          corners to speak of. */}
+      {/* One chip that changes colour in place: grey to watch, amber while
+          watching, green when a release is ready. The refinement pass split
+          this into a state tag top-left and an action pill bottom-right, on
+          the argument that colour should not carry the signal alone. Reverted
+          on use: the colour change IS the signal here, it happens on the
+          control you just pressed, and moving it to the far corner made a
+          state change look like two different controls appearing.
+
+          What survives from the pass: the chip is permanent rather than
+          revealed on hover, because touch has no hover. */}
       {watch === "available" ? (
-        overlay ? (
-          <span
-            className="scene-state ready"
-            title="A release was found — open the Watching tab to grab it"
-          >
-            Ready
-          </span>
-        ) : (
-          <span className="watch-chip is-available">
-            <BookmarkGlyph filled />
-            Ready
-          </span>
-        )
+        <span
+          className="watch-chip is-available"
+          title="A release was found — open the Watching tab to grab it"
+        >
+          <BookmarkGlyph filled />
+          Ready
+        </span>
       ) : watch === "watching" ? (
         <button
-          className={overlay ? "scene-state watching" : "watch-chip is-watching"}
+          className="watch-chip is-watching"
           disabled={busy}
           onClick={untrack}
           title="Watching for releases — click to stop"
         >
-          {!overlay && <BookmarkGlyph filled />}
+          <BookmarkGlyph filled />
           Watching
         </button>
       ) : (
