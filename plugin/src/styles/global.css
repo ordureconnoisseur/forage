@@ -8465,8 +8465,13 @@ code.grab-fact-v,
    with many performers and the fixed-height slots meant nothing. The
    design's prose said "nowrap plus overflow hidden"; its CSS carried
    only the second half. */
+/* min-height reserves the slot on a card with no performers, so rows still
+   line up. There is deliberately no max-height. One was here, and since every
+   pill in a nowrap row is the same height anyway it bounded nothing: all it
+   did was clip the tops off pills that came out a pixel taller than the guess.
+   The row is one pill tall by construction. */
 .perf-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px;
-  min-height: 23px; max-height: 23px; overflow: hidden; margin-top: 0; }
+  min-height: 23px; overflow: hidden; margin-top: 0; }
 .perf-chips > * { flex: none; max-width: 100%; }
 .perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
@@ -8475,11 +8480,45 @@ code.grab-fact-v,
   border: 0; background: none; padding: 0 2px;
   color: var(--text-dim); font-size: 11px;
 }
-/* The add button keeps its original bare glyph. The pass made it a filled
-   18px accent disc to tell it apart from the "+N" readout beside it, but that
-   disc reads as heavy and loud next to a muted dashed chip — and the readout
-   now says "+2 more" in words, which disambiguates the two on its own. The
-   quieter half of the fix was enough. */
+/* Adding a performer: the pill IS the button.
+   It used to be a span holding the name plus a 12px "+", so the only place
+   that did anything was a glyph smaller than a fingertip, sitting inside
+   something that looked pressable and was not. The plus now leads instead of
+   trailing, so it reads as a verb against the name ("+ Jane Doe" = add Jane
+   Doe) rather than as a badge hanging off the end, and it is a real icon in
+   the same stroke language as the rest rather than a text character sitting
+   at whatever size and baseline the font felt like. */
+.perf-chip-missing {
+  cursor: pointer;
+  font-family: inherit;
+  padding-left: 7px; /* an icon sits optically lighter than a letter */
+  gap: 5px;
+}
+.perf-chip-missing:hover:not(:disabled),
+.perf-chip-missing:focus-visible {
+  border-style: solid;
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.12);
+  color: var(--accent-bright);
+  opacity: 1;
+}
+.perf-chip-missing:active:not(:disabled) {
+  background: rgba(var(--accent-rgb), 0.2);
+}
+.perf-chip-missing:disabled { cursor: default; }
+/* Fixed slot: plus, spinner, check and "!" all occupy the same box, so the
+   pill does not change width as its state changes. */
+.perf-chip-add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--accent, #22c55e);
+  line-height: 1;
+}
+.perf-chip-missing.is-err .perf-chip-add { color: var(--danger, #ef4444); }
 
 .scene-thumb-wrap::after {
   content: ""; position: absolute; inset: auto 0 0 0; height: 44%;

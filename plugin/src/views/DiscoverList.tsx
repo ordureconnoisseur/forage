@@ -16,7 +16,7 @@ import {
 import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
-import { GenderIcon, HeartIcon } from "../icons";
+import { CheckIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -997,28 +997,38 @@ function MissingPerfChip({ p, box }: { p: DiscoverPerformer; box: string }) {
     }
   };
 
+  const done = state === "added";
+  const busy = state === "adding";
+  // The WHOLE pill is the button.
+  //
+  // It used to be a span holding the name plus a separate 12px "+", so the
+  // only place that did anything was a glyph smaller than a fingertip, sitting
+  // inside something that looked pressable and was not. One target now, the
+  // size of the pill, with the icon saying what pressing it does.
   return (
-    <span
-      className={"perf-chip perf-chip-missing" + (state === "added" ? " is-added" : "")}
+    <button
+      type="button"
+      className={
+        "perf-chip perf-chip-missing" +
+        (done ? " is-added" : "") +
+        (state === "err" ? " is-err" : "")
+      }
+      onClick={add}
+      disabled={busy || done}
       title={
         state === "err"
           ? msg
-          : state === "added"
+          : done
             ? p.name + " — " + msg
-            : p.name + " isn't in your library yet"
+            : "Add " + p.name + " to your library"
       }
+      aria-label={"Add " + p.name + " to your library"}
     >
+      <span className="perf-chip-add" aria-hidden="true">
+        {busy ? "…" : done ? <CheckIcon /> : state === "err" ? "!" : <PlusIcon />}
+      </span>
       {p.name}
-      <button
-        type="button"
-        className="perf-chip-add"
-        onClick={add}
-        disabled={state === "adding" || state === "added"}
-        aria-label={"Add " + p.name + " to your library"}
-      >
-        {state === "adding" ? "…" : state === "added" ? "✓" : state === "err" ? "!" : "+"}
-      </button>
-    </span>
+    </button>
   );
 }
 

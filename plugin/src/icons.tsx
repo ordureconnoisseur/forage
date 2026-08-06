@@ -127,3 +127,25 @@ export function HeartIcon({
     </svg>
   );
 }
+
+// Plus / check / alert for the "add this performer" pill.
+//
+// The plus path is the one the other Stash plugins use (M12 5v14M5 12h14) so
+// the shape is shared rather than re-invented. It replaces a "+" character,
+// which sat at whatever size and baseline the font felt like and gave no hint
+// that it was a control.
+export function PlusIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)} strokeWidth={2.2}>
+      <path d="M12 5v14M5 12h14" />
+    </svg>
+  );
+}
+
+export function CheckIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)} strokeWidth={2.2}>
+      <path d="M4 12.5 L9.5 18 L20 6.5" />
+    </svg>
+  );
+}
