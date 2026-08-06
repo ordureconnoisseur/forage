@@ -8382,7 +8382,18 @@ code.grab-fact-v,
   color: var(--text-muted); font: inherit; font-size: 13px;
   white-space: nowrap; cursor: pointer;
 }
-.filter-scope select { padding-right: 30px; color: var(--text); }
+/* A <select> sizes to its LONGEST OPTION, not its selected one, and one of
+   these options is a diagnostic sentence: "ThePornDB (answers, but returns no
+   scenes to browse)". That made the source pill 358px — the entire screen
+   width — and pushed every other pill off the strip. "Pills keep content
+   width" was the right instruction; a select's content width just is not what
+   it shows. Cap it and let the closed pill ellipsize; the open menu is a
+   native overlay and shows each option in full regardless. */
+.filter-scope select {
+  padding-right: 30px; color: var(--text);
+  max-width: 42vw; text-overflow: ellipsis;
+}
+@media (min-width: 721px) { .filter-scope select { max-width: 22ch; } }
 .scope-pill[aria-pressed="true"] {
   color: var(--text); border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.13);
@@ -8518,6 +8529,11 @@ code.grab-fact-v,
 /* Section head: the title may truncate, the numbers may not. */
 .trending-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
 .trending-head .section-header {
+  /* flex-grow is declared, not inherited from the earlier rule of the same
+     selector, which sets flex:1. A later rule only wins the properties it
+     names — so the heading kept growing and shoved the count and the age to
+     the far right, away from the title they belong to. */
+  flex: 0 1 auto;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .trending-head .trending-count { flex: none; font-variant-numeric: tabular-nums; }
