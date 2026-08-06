@@ -503,8 +503,8 @@ export default function DiscoverList({
         <div className="list-note">
           <span aria-hidden="true">⚠</span>
           <span>
-            Showing the first {RENDER_CAP} of {filtered.length}. Narrow the
-            window or the filter to see the rest.
+            Showing {RENDER_CAP} of {filtered.length} — narrow the window to
+            see the rest.
           </span>
         </div>
       )}

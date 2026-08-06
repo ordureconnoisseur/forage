@@ -8349,7 +8349,7 @@ code.grab-fact-v,
 /* ── filter bar — Discover, Missing Scenes, Grabs ─────────────────────────────────── */
 /* One shell for Discover, Missing Scenes and Grabs. Mobile-first:
    the phone rules ARE the rules, desktop is the media query. */
-.filter-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+.filter-bar { display: flex; flex-direction: column; gap: 9px; margin-bottom: 12px; }
 
 .filter-q {
   height: 44px; padding: 0 14px;
@@ -8365,6 +8365,12 @@ code.grab-fact-v,
   overflow-x: auto; scrollbar-width: none;
   scroll-snap-type: x proximity;
   margin: 0 -12px; padding: 4px 12px;   /* 4px + 36px pill = 44pt band */
+  /* Without this the strip scrolls itself 12px on load and the first pill sits
+     flush against the screen edge, out of line with the search field above it.
+     scroll-snap-align: start snaps to the SNAPPORT edge, which is the padding
+     box, so the padding that provides the inset is exactly what the snap
+     cancels. Matching scroll-padding moves the snapport to the content edge. */
+  scroll-padding-left: 12px;
 }
 .filter-scope::-webkit-scrollbar { display: none; }
 .filter-scope > * { flex: none; scroll-snap-align: start; }
@@ -8401,7 +8407,7 @@ code.grab-fact-v,
 .scope-glyph { font-size: 14px; line-height: 1; }
 
 /* Readout: text, in the header, never between two buttons. */
-.list-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 11px; }
+.list-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
 .list-readout { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .list-head-actions { margin-left: auto; display: flex; gap: 14px; }
 .list-head-actions button {
@@ -8411,8 +8417,9 @@ code.grab-fact-v,
 
 /* Amber, wrapping, and only when the cap bites. */
 .list-note {
-  display: flex; gap: 8px; margin: 0 0 14px;
-  padding: 9px 11px; border-radius: var(--radius-sm);
+  display: flex; gap: 7px; margin: 0 0 10px;
+  align-items: center;
+  padding: 7px 10px; border-radius: var(--radius-sm);
   background: var(--status-downloading-bg);
   border: 1px solid rgba(212, 161, 74, 0.28);
   color: #c8b189; font-size: 12px; line-height: 1.5;
