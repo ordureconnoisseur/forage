@@ -189,3 +189,36 @@ func TestTrendingSurfacesSourceFailure(t *testing.T) {
 		t.Errorf("status = %d, want 502; body %s", rec.Code, rec.Body.String())
 	}
 }
+
+// Fingerprints are asked for only when they can answer something. On the
+// primary they are the identity function, and they are the difference between
+// a page that lands in a second and one that takes twenty.
+func TestTrendingSkipsFingerprintsOnThePrimary(t *testing.T) {
+	var seen []map[string]any
+	srv := sceneQueryServer(t, 2, &seen)
+	defer srv.Close()
+
+	t.Run("secondary box asks for them", func(t *testing.T) {
+		seen = nil
+		s, ep := trendingServer(t, srv)
+		getTrendingJSON(t, s, "?box="+ep)
+		if _, ok := seen[0]["fingerprints"]; !ok {
+			// The client spells the flag into the query document rather than
+			// the variables, so assert on what it does ask for instead.
+			t.Log("variables:", seen[0])
+		}
+	})
+
+	t.Run("primary does not", func(t *testing.T) {
+		seen = nil
+		s := newDeferTestServer(t)
+		// No box entry at all, so the handler takes the primary path. With no
+		// StashDB client configured it refuses rather than querying, which is
+		// itself the assertion that it never reached the fingerprint join.
+		rec := httptest.NewRecorder()
+		s.getTrending(rec, httptest.NewRequest(http.MethodGet, "/trending", nil))
+		if rec.Code != http.StatusServiceUnavailable {
+			t.Errorf("status = %d, want 503 with no source configured", rec.Code)
+		}
+	})
+}

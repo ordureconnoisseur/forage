@@ -105,8 +105,20 @@ func (s *Server) getTrending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fingerprints are asked for only when they can answer something.
+	//
+	// They exist to join ACROSS boxes: a FansDB scene id means nothing to
+	// StashDB, but a file hash does, so the hashes FansDB reports can be run
+	// against StashDB to ask "is this the same release". On StashDB itself
+	// that join is the identity function, and it is not free: the hashes ride
+	// along on every scene in the reply and StashDB pays to assemble them.
+	// Measured on the live ranking at page 6, the whole request took 1.7s at
+	// per_page 8, 9.7s at 24 and 14.2s at 48, and the reply grew with it.
+	// That is an infinite scroll that stalls for twenty seconds a page in
+	// exchange for a question already answered by the scene's own id.
 	res, err := client.QueryScenes(ctx, stashdb.SceneQuery{
-		Page: page, PerPage: perPage, Sort: "TRENDING", WithFingerprints: true,
+		Page: page, PerPage: perPage, Sort: "TRENDING",
+		WithFingerprints: !primary,
 	})
 	if err != nil {
 		s.log.Warn("trending: query", "endpoint", endpoint, "page", page, "err", err)
@@ -114,15 +126,21 @@ func (s *Server) getTrending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Which of these the library already holds. On StashDB the scene's own id
+	// is the answer, because that is the id the library records against its
+	// scenes. On a secondary box it is not, so the fingerprints fetched above
+	// get joined through StashDB, which catches the copies the library holds
+	// without ever having identified them against that box: on a lightly
+	// tagged library that is most of them, and the whole reason the marker is
+	// worth showing there.
 	owned := s.ownedOnBox(ctx, endpoint)
-	// Fingerprints catch copies the library holds without having identified
-	// them against this box, which is most of them on a lightly-tagged
-	// library and the whole reason a "you have this" marker is worth showing.
-	for id := range s.ownedByFingerprint(ctx, allScenes(res)) {
-		if owned == nil {
-			owned = map[string]bool{}
+	if !primary {
+		for id := range s.ownedByFingerprint(ctx, allScenes(res)) {
+			if owned == nil {
+				owned = map[string]bool{}
+			}
+			owned[id] = true
 		}
-		owned[id] = true
 	}
 
 	ownedPerformers := s.trendingOwnedPerformers(ctx, e, primary, res)
