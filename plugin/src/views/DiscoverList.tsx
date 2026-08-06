@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   addWatches,
@@ -904,27 +904,87 @@ function DiscoverCard({
             performers is exactly the ragged-height problem this replaced —
             measured at 241px against 272px. Empty, it reserves its min-height
             and shows nothing. */}
-        <div className="perf-chips">
-          {s.performers.length > 0 && (
-            <ScenePerfChips s={s} box={box} onPickPerformer={onPickPerformer} />
-          )}
-        </div>
+        <ScenePerfChips s={s} box={box} onPickPerformer={onPickPerformer} />
       </div>
     </div>
   );
 }
 
-// How many "not in your library" pills a card shows before collapsing the
-// rest behind a count. Local pills are never capped — the user chose to have
-// those performers. Un-owned ones are discovered, and the cache holds
-// compilations with 20, 45, even 89 performers, so uncapped this would bury
-// the card it is attached to.
-const MISSING_CHIP_CAP = 3;
+// Rendering the pill row is a fitting problem, not a counting one.
+//
+// The row is one line so cards in a grid row stay the same height. What fits
+// on that line depends on the card's width and on how long the names happen to
+// be, so any fixed cap is wrong somewhere: three pills fit at 1440 and two at
+// 390, and "Cheer Lyn Ashford" is worth two of "Riley". The old cap applied
+// only to performers you do NOT have, so a card with four local performers
+// sliced the fourth in half, and the "+N more" readout meant to explain the
+// truncation was itself last in an overflow-hidden row and clipped with it.
+//
+// So the pills are measured after layout. Everyone stays mounted and in flow —
+// hidden ones are made invisible rather than removed, which keeps their
+// offsets measurable, so the fit survives a resize without a second pass.
 
-// ScenePerfChips renders a card's performers: everyone you have, then up to
-// MISSING_CHIP_CAP you don't, then a count that reveals the remainder on
-// click. Collapsed rather than truncated, because a hidden performer is one
-// you cannot add, and adding them is the entire point of the pill.
+// A generous bound on how many get mounted at all. The cache holds
+// compilations with 89 performers; measuring 89 buttons to display two is
+// waste, and the count covers the rest.
+const PERF_CHIP_RENDER_CAP = 14;
+
+// Reserve for the "+N" readout before it exists to be measured.
+const MORE_CHIP_ESTIMATE = 42;
+
+// useFitCount reports how many of a flex row's children fit on one line.
+// overflow: hidden clips paint, not layout, so a clipped child still reports
+// a truthful offsetLeft and this stays correct as the row is re-measured.
+function useFitCount(
+  ref: React.RefObject<HTMLElement | null>,
+  count: number,
+  enabled: boolean,
+) {
+  const [fit, setFit] = useState(count);
+  const moreRef = useRef<HTMLElement | null>(null);
+
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !enabled) {
+      setFit(count);
+      return;
+    }
+    const measure = () => {
+      const avail = el.clientWidth;
+      if (avail === 0) return; // not laid out yet, or off-screen
+      const kids = [...el.children].filter(
+        (c) => c !== moreRef.current,
+      ) as HTMLElement[];
+      const fits = (reserve: number) => {
+        let n = 0;
+        for (const k of kids) {
+          if (k.offsetLeft + k.offsetWidth > avail - reserve) break;
+          n++;
+        }
+        return n;
+      };
+      // First pass assumes the whole width. If that already shows everyone,
+      // no readout is needed and no space has to be kept for one.
+      let n = fits(0);
+      if (n < kids.length) {
+        const w = moreRef.current?.offsetWidth ?? MORE_CHIP_ESTIMATE;
+        n = fits(w + 6);
+      }
+      // At least one pill, even if a single long name cannot fit: a sliced
+      // name still says more than an empty row.
+      setFit(Math.max(1, n));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ref, count, enabled]);
+
+  return { fit, moreRef };
+}
+
+// ScenePerfChips renders a card's performers on one line, with whatever does
+// not fit collapsed behind a count that reveals the rest on click.
 function ScenePerfChips({
   s,
   box,
@@ -937,38 +997,62 @@ function ScenePerfChips({
   onPickPerformer: (stashID: string) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  // Yours first: those are the ones you chose to have, so they are the ones
+  // worth the space when the line runs out.
   const local = s.performers.filter((p) => p.local !== false || !p.stashdb_id);
   const missing = s.performers.filter((p) => p.local === false && p.stashdb_id);
-  const shown = showAll ? missing : missing.slice(0, MISSING_CHIP_CAP);
-  const hidden = missing.length - shown.length;
+  const all = [...local, ...missing];
+  const mounted = showAll ? all : all.slice(0, PERF_CHIP_RENDER_CAP);
+  const { fit, moreRef } = useFitCount(rowRef, mounted.length, !showAll);
+  const hidden = showAll ? 0 : all.length - fit;
 
   return (
-    <>
-      {local.map((p) => (
-        <PerfChip
-          key={p.stash_id}
-          p={p}
-          onPick={() => onPickPerformer(p.stash_id)}
-        />
-      ))}
-      {shown.map((p) => (
-        <MissingPerfChip key={p.stashdb_id} p={p} box={box} />
-      ))}
+    <div
+      className={"perf-chips" + (showAll ? " is-open" : "")}
+      ref={rowRef}
+      // The row is a list of controls, so it gets no role of its own; the
+      // count below is what carries the "there are more" information.
+    >
+      {mounted.map((p, i) => {
+        // Kept in flow and merely unpainted: removing them would destroy the
+        // offsets the fit is measured from.
+        const clipped = !showAll && i >= fit;
+        const style = clipped ? { visibility: "hidden" as const } : undefined;
+        return p.local === false && p.stashdb_id ? (
+          <MissingPerfChip
+            key={"m" + p.stashdb_id}
+            p={p}
+            box={box}
+            hiddenFromRow={clipped}
+            style={style}
+          />
+        ) : (
+          <PerfChip
+            key={"l" + (p.stash_id || p.name)}
+            p={p}
+            onPick={() => onPickPerformer(p.stash_id)}
+            hiddenFromRow={clipped}
+            style={style}
+          />
+        );
+      })}
       {hidden > 0 && (
         <button
           type="button"
+          ref={moreRef as React.RefObject<HTMLButtonElement>}
           className="perf-chip perf-chip-more"
           onClick={() => setShowAll(true)}
-          title={`Show ${hidden} more performer${hidden === 1 ? "" : "s"} not in your library`}
+          title={`Show ${hidden} more performer${hidden === 1 ? "" : "s"}`}
+          aria-label={`Show ${hidden} more performer${hidden === 1 ? "" : "s"}`}
         >
-          {/* Says "more", not "+". The plus on a performer chip MEANS add this
-              one to your library; the same glyph here meant "there are others",
-              so one symbol was doing two unrelated jobs on the same row. This
-              is a readout that reveals the rest — muted, borderless, worded. */}
-          +{hidden} more
+          {/* Sticky to the right edge, so the readout explaining the
+              truncation cannot itself be truncated — which is exactly what
+              happened when it was just the last item in the row. */}
+          +{hidden}
         </button>
       )}
-    </>
+    </div>
   );
 }
 
@@ -980,7 +1064,17 @@ function ScenePerfChips({
 // Once added it becomes inert rather than disappearing — the card would
 // otherwise reshuffle under the cursor, and the next Discover refresh
 // re-renders it as an ordinary local pill anyway.
-function MissingPerfChip({ p, box }: { p: DiscoverPerformer; box: string }) {
+function MissingPerfChip({
+  p,
+  box,
+  style,
+  hiddenFromRow,
+}: {
+  p: DiscoverPerformer;
+  box: string;
+  style?: React.CSSProperties;
+  hiddenFromRow?: boolean;
+}) {
   const [state, setState] = useState<"idle" | "adding" | "added" | "err">("idle");
   const [msg, setMsg] = useState("");
 
@@ -1015,6 +1109,9 @@ function MissingPerfChip({ p, box }: { p: DiscoverPerformer; box: string }) {
       }
       onClick={add}
       disabled={busy || done}
+      style={style}
+      tabIndex={hiddenFromRow ? -1 : undefined}
+      aria-hidden={hiddenFromRow || undefined}
       title={
         state === "err"
           ? msg
@@ -1043,9 +1140,15 @@ function PerfChip({
   p,
   onPick,
   extraLabel,
+  style,
+  hiddenFromRow,
 }: {
   p: DiscoverPerformer;
   onPick: () => void;
+  style?: React.CSSProperties;
+  // Measured out of the visible line: still in flow so the fit stays
+  // measurable, but unpainted, so it must not be tabbable or announced.
+  hiddenFromRow?: boolean;
   // Optional suffix (e.g. " +2") for compact-chip use cases where
   // multiple performers collapse into a single chip.
   extraLabel?: string;
@@ -1078,6 +1181,9 @@ function PerfChip({
     <>
       <button
         className={"perf-chip" + (p.favorite ? " fav" : "")}
+        style={style}
+        tabIndex={hiddenFromRow ? -1 : undefined}
+        aria-hidden={hiddenFromRow || undefined}
         onClick={onPick}
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}

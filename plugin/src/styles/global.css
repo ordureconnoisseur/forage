@@ -8472,14 +8472,26 @@ code.grab-fact-v,
    The row is one pill tall by construction. */
 .perf-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px;
   min-height: 23px; overflow: hidden; margin-top: 0; }
+/* Opened by the "+N" readout: the row wraps and the card grows. Cards in a
+   grid row grow with it, which is fine on a deliberate press and is the whole
+   reason the row is one line the rest of the time. */
+.perf-chips.is-open { flex-wrap: wrap; row-gap: 5px; }
 .perf-chips > * { flex: none; max-width: 100%; }
 .perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* Readout, not a button: no border, no pointer, muted, and it says "more". */
+/* The count of what did not fit. Sticky to the right edge of the row: as the
+   last item in an overflow-hidden line it was clipped by the very truncation
+   it exists to explain. It carries the row's background so pills slide under
+   it rather than through it. */
 .perf-chip-more {
-  border: 0; background: none; padding: 0 2px;
+  border: 0; padding: 0 2px 0 8px;
   color: var(--text-dim); font-size: 11px;
+  cursor: pointer;
+  position: sticky; right: 0; margin-left: auto;
+  background: linear-gradient(to right, transparent, var(--bg-1) 8px);
+  font-variant-numeric: tabular-nums;
 }
+.perf-chip-more:hover { color: var(--accent-bright); }
 /* Adding a performer: the pill IS the button.
    It used to be a span holding the name plus a 12px "+", so the only place
    that did anything was a glyph smaller than a fingertip, sitting inside
