@@ -8363,17 +8363,19 @@ code.grab-fact-v,
 .filter-scope {
   display: flex; align-items: center; gap: 8px;
   overflow-x: auto; scrollbar-width: none;
-  scroll-snap-type: x proximity;
   margin: 0 -12px; padding: 4px 12px;   /* 4px + 36px pill = 44pt band */
-  /* Without this the strip scrolls itself 12px on load and the first pill sits
-     flush against the screen edge, out of line with the search field above it.
-     scroll-snap-align: start snaps to the SNAPPORT edge, which is the padding
-     box, so the padding that provides the inset is exactly what the snap
-     cancels. Matching scroll-padding moves the snapport to the content edge. */
-  scroll-padding-left: 12px;
+  /* No scroll-snap here, deliberately.
+     Snapping is right for the trending carousel, where a card is a unit you
+     land on. On a filter strip it only fought the layout: the pills are
+     different widths and none is a destination, and snap-align: start snaps
+     to the SNAPPORT edge — the padding box — so the 12px inset that lines the
+     first pill up with the search field was exactly what the snap cancelled.
+     Measured: scrollLeft 12 on load, putting the first pill flush against the
+     screen edge. Adding scroll-padding to compensate made it scroll 92px and
+     took the pill off-screen entirely. The strip just scrolls. */
 }
 .filter-scope::-webkit-scrollbar { display: none; }
-.filter-scope > * { flex: none; scroll-snap-align: start; }
+.filter-scope > * { flex: none; }
 
 /* Whatever is narrowing the list stays in the first screenful. */
 .filter-scope > [aria-pressed="true"] { order: -1; }
