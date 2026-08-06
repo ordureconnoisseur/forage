@@ -365,6 +365,22 @@ export function fetchDiscover(opts?: {
   return get<DiscoverResponse>("/discover" + (qs ? "?" + qs : ""));
 }
 
+// Enough of a StashDB scene to recognise it: a picture and a title. Served
+// from the daemon's cache when it has the scene and from StashDB when it does
+// not, so an arbitrary id still answers.
+export interface SceneCard {
+  stashdb_id: string;
+  title?: string;
+  date?: string;
+  studio_name?: string;
+  image_url?: string;
+  performers?: string[];
+}
+
+export function fetchSceneCard(stashDBID: string): Promise<SceneCard> {
+  return get<SceneCard>("/scenes/" + encodeURIComponent(stashDBID) + "/card");
+}
+
 // A performer worth adding, for the strip at the top of the Performers page.
 // Everyone here is NOT in the library: the strip answers "who should I be
 // following", so anyone already followed has nothing to offer it.

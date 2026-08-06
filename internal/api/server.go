@@ -152,6 +152,9 @@ type Server struct {
 	// dupes views. The lock is held across the (slow) library sweep so
 	// concurrent loads coalesce onto one fetch rather than each launching their
 	// own.
+	// sceneCards memoises id-to-thumbnail lookups; see scene_card.go.
+	sceneCards sceneCardCache
+
 	// perfPicks memoises the performers strip; see discover_performers.go.
 	perfPicks performerPickCache
 
@@ -390,6 +393,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/watches/{id}/redo", s.postWatchRedo)
 		r.Get("/missing-scenes", s.getMissingScenes)
 		r.Get("/performers/{id}/packs", s.getPerformerPacks)
+		r.Get("/scenes/{id}/card", s.getSceneCard)
 		r.Get("/scenes/{id}/releases", s.getSceneReleases)
 		r.Post("/scenes/{id}/destroy", s.postDestroyScene)
 		r.Get("/discover", s.getDiscover)

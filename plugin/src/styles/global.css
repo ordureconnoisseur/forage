@@ -52,6 +52,7 @@
   --heart-rgb: 244, 114, 182;
 
   --amber: #d4a14a;
+  --amber-rgb: 212, 161, 74;
   --red: #ef4444;
 
   --radius: 16px;
@@ -2703,7 +2704,7 @@ button {
 .grab-poster {
   position: relative;
   aspect-ratio: 3 / 4;
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background:
     radial-gradient(
@@ -3053,7 +3054,7 @@ button {
   align-items: center;
   gap: 16px;
   padding: 15px 18px;
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(var(--tone-rgb), 0.45);
   background: linear-gradient(
     110deg,
@@ -7734,7 +7735,7 @@ code.grab-fact-v,
 .grab-del-preview {
   border: 1px solid rgba(239, 68, 68, 0.4);
   background: rgba(239, 68, 68, 0.06);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-sm);
   padding: 12px 14px;
   font-size: 12px;
 }
@@ -7908,7 +7909,7 @@ code.grab-fact-v,
   gap: 14px;
   padding: 12px 16px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 10px);
+  border-radius: var(--radius-sm);
   background: var(--glass-bg);
 }
 .del-badge {
@@ -8846,4 +8847,158 @@ code.grab-fact-v,
 }
 @media (prefers-reduced-motion: reduce) {
   .pick-dismiss { transition: none; }
+}
+
+/* ── mismatch: what we wanted vs what arrived ────────────────────── */
+.grab-mismatch {
+  border: 1px solid rgba(var(--amber-rgb), 0.35);
+  background: rgba(var(--amber-rgb), 0.07);
+  border-radius: var(--radius-sm);
+  padding: 14px 14px 12px;
+  margin: 12px 0;
+}
+.grab-mismatch-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.grab-mismatch-head .grab-match-glyph { flex: none; }
+
+/* Two columns where there is room, stacked where there is not. Side by side
+   is the point of the panel: the comparison is the information, and a phone
+   that stacks them still reads top-to-bottom as wanted-then-got. */
+.grab-mismatch-pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+@media (max-width: 700px) {
+  .grab-mismatch-pair { grid-template-columns: 1fr; }
+}
+
+.scene-face {
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  padding: 8px;
+  min-width: 0;
+}
+/* The one that arrived is the one on disk, so it carries the accent. The one
+   that was wanted is stated plainly: it is not an error, it is just absent. */
+.scene-face.got { border-color: rgba(var(--accent-rgb), 0.45); }
+
+.scene-face-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 7px;
+}
+.scene-face.got .scene-face-label { color: var(--accent-bright); }
+.scene-face-tag {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-bright);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+}
+
+.scene-face-body { display: flex; gap: 10px; min-width: 0; }
+.scene-face-img {
+  flex: none;
+  width: 92px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 5px;
+  background: var(--bg-0);
+}
+.scene-face-img-empty { border: 1px dashed var(--glass-border); }
+.scene-face-text { min-width: 0; flex: 1; }
+.scene-face-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.scene-face-meta,
+.scene-face-perf {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The id stays reachable, but it stops being the headline: it is the thing
+   you copy, not the thing you read. */
+.scene-face-id {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-dim);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.scene-face-id:hover { color: var(--accent-bright); text-decoration: underline; }
+
+.grab-mismatch-keep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+}
+.grab-action.match.keep {
+  border-color: var(--accent);
+  color: var(--accent-bright);
+}
+.grab-mismatch-keep-note,
+.grab-mismatch-kept {
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.grab-mismatch-kept { color: var(--accent-bright); }
+
+/* "Show all N" under a capped pack grid. A quiet full-width control rather
+   than a button in the corner: it is the seam in the list, so it reads as the
+   list continuing rather than as an action beside it. */
+.grab-pack-more {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+.grab-pack-more:hover {
+  color: var(--accent-bright);
+  border-color: var(--accent);
+}
+.grab-pack-more-note {
+  font-weight: 400;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+@media (prefers-reduced-motion: reduce) {
+  .grab-pack-more { transition: none; }
 }

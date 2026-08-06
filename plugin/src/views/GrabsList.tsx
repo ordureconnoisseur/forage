@@ -42,6 +42,8 @@ import {
   isActiveStatus,
   proxiedImageURL,
   performerImageURL,
+  fetchSceneCard,
+  type SceneCard,
 } from "../api";
 import { createPortal } from "react-dom";
 
@@ -1317,6 +1319,181 @@ function MatchCandidatesModal({
   );
 }
 
+// Two scenes, side by side, because that is the whole question.
+//
+// This used to print two bare UUIDs with an arrow between them. Nobody can
+// look at 019faec1… → 019baa2e… and see what went wrong: the ids are the same
+// length, the same alphabet, and neither says what film it is. Worse, the big
+// image at the top of the card is the scene that LANDED, with nothing marking
+// it as such, so the one picture on screen showed the wrong answer and looked
+// like the right one.
+//
+// So both sides get a picture and a title, labelled by what they mean rather
+// than by which database field they came from: what forage went out for, and
+// what actually arrived.
+function MismatchPanel({
+  g,
+  predicted,
+  actual,
+  conf,
+}: {
+  g: Grab;
+  predicted: string;
+  actual: string;
+  conf: string | null;
+}) {
+  return (
+    <div className="grab-mismatch">
+      <div className="grab-mismatch-head">
+        <svg className="grab-match-glyph" viewBox="0 0 40 40" aria-hidden="true">
+          <circle className="ring" cx="20" cy="20" r="17" />
+          <path className="x1" d="M14 14 L26 26" />
+          <path className="x2" d="M26 14 L14 26" />
+        </svg>
+        <div>
+          <div className="grab-match-hero-title">Different scene</div>
+          <div className="grab-match-hero-sub">
+            The file that arrived is not the scene this grab went out for.
+          </div>
+        </div>
+      </div>
+      <div className="grab-mismatch-pair">
+        <SceneFace
+          id={predicted}
+          label="Went out for"
+          badge={conf ?? undefined}
+          tone="wanted"
+        />
+        <SceneFace id={actual} label="What arrived" tone="got" onDisk />
+      </div>
+      {/* Named for the outcome, not the mechanism. "Keep this one" is the
+          answer to "the download is wrong but the film is fine", which is
+          the common case and previously required copying the second uuid out
+          of the panel and pasting it into the box below. */}
+      <KeepScene g={g} actual={actual} />
+    </div>
+  );
+}
+
+// SceneFace resolves an id to a picture and a title.
+function SceneFace({
+  id,
+  label,
+  badge,
+  tone,
+  onDisk,
+}: {
+  id: string;
+  label: string;
+  badge?: string;
+  tone: "wanted" | "got";
+  onDisk?: boolean;
+}) {
+  const [card, setCard] = useState<SceneCard | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSceneCard(id)
+      .then((c) => !cancelled && setCard(c))
+      .catch(() => !cancelled && setFailed(true));
+    return () => {
+      cancelled = true;
+    };
+  }, [id]);
+
+  const img = proxiedImageURL(card?.image_url) || "";
+  return (
+    <div className={"scene-face " + tone}>
+      <div className="scene-face-label">
+        {label}
+        {onDisk && <span className="scene-face-tag">on disk</span>}
+      </div>
+      <div className="scene-face-body">
+        {img ? (
+          <img className="scene-face-img" src={img} alt="" loading="lazy" />
+        ) : (
+          <div className="scene-face-img scene-face-img-empty" aria-hidden="true" />
+        )}
+        <div className="scene-face-text">
+          <div className="scene-face-title">
+            {card?.title || (failed ? "Could not look this scene up" : "…")}
+          </div>
+          <div className="scene-face-meta">
+            {[card?.date, card?.studio_name].filter(Boolean).join(" · ")}
+          </div>
+          {card?.performers && card.performers.length > 0 && (
+            <div className="scene-face-perf">{card.performers.join(", ")}</div>
+          )}
+          <a
+            className="scene-face-id"
+            href={stashdbScene(id)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {id}
+          </a>
+          {badge && <span className="grab-match-badge dim">{badge}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Accepting the file for what it is.
+//
+// Matching the grab to the scene that actually arrived is not just a tidier
+// label: it is what tells forage it never got the scene it wanted. While the
+// grab sits at "mismatched" the daemon counts the PREDICTED scene as covered,
+// which holds that watch closed. Resolving to the arrived scene drops that
+// cover, and the watch for the scene you were after reopens on the next pass.
+function KeepScene({ g, actual }: { g: Grab; actual: string }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState("");
+
+  const keep = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await matchGrab(g.id, actual);
+      setDone(true);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (done) {
+    return (
+      <div className="grab-mismatch-keep">
+        <span className="grab-mismatch-kept">
+          Kept. Tagged as the scene that arrived, and the one you wanted goes
+          back on the watchlist.
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div className="grab-mismatch-keep">
+      <button
+        type="button"
+        className="grab-action match keep"
+        onClick={keep}
+        disabled={busy}
+      >
+        {busy ? "Keeping…" : "Keep this one"}
+      </button>
+      <span className="grab-mismatch-keep-note">
+        Tag the file as the scene that arrived and keep hunting for the one you
+        wanted.
+      </span>
+      {err && <span className="grab-delete-err">{err}</span>}
+    </div>
+  );
+}
+
 // MatchBlock unifies predicted-vs-actual by outcome:
 //   • match    → ONE green "match confirmed" hero (the prediction and
 //                Stash's identification are the same scene, so there's
@@ -1360,38 +1537,7 @@ function MatchBlock({ g }: { g: Grab }) {
   }
 
   if (actual) {
-    return (
-      <div className="grab-match-hero mismatch">
-        <svg
-          className="grab-match-glyph"
-          viewBox="0 0 40 40"
-          aria-hidden="true"
-        >
-          <circle className="ring" cx="20" cy="20" r="17" />
-          <path className="x1" d="M14 14 L26 26" />
-          <path className="x2" d="M26 14 L14 26" />
-        </svg>
-        <div className="grab-match-hero-body">
-          <div className="grab-match-hero-title">Different scene</div>
-          <div className="grab-match-hero-sub grab-match-diff">
-            <span className="grab-match-leg">
-              <span className="grab-match-leg-k">predicted</span>
-              <a href={stashdbScene(predicted)} target="_blank" rel="noopener noreferrer">
-                {predicted}
-              </a>
-              {conf && <span className="grab-match-badge dim">{conf}</span>}
-            </span>
-            <span className="grab-match-rarr">→</span>
-            <span className="grab-match-leg">
-              <span className="grab-match-leg-k">stash got</span>
-              <a href={stashdbScene(actual)} target="_blank" rel="noopener noreferrer">
-                {actual}
-              </a>
-            </span>
-          </div>
-        </div>
-      </div>
-    );
+    return <MismatchPanel g={g} predicted={predicted} actual={actual} conf={conf} />;
   }
 
   // Predicted, but Stash never linked the file to any StashDB scene. When
@@ -1910,6 +2056,11 @@ function resLabel(c?: SceneCopy): string {
 // unidentified ones. Covers are default-checked; deselect a stray, then apply
 // (additive — existing performers preserved). Self-fetches; renders nothing when
 // there's nothing unidentified or stash is unreachable.
+// How many pack scenes the grid shows before you ask for the rest. Three
+// rows at the widest layout: enough to recognise the pack, short enough that
+// the button underneath it is on the same screen.
+const PACK_PREVIEW = 9;
+
 function PackPerformerReviewer({
   grabId,
   performerName,
@@ -1923,6 +2074,7 @@ function PackPerformerReviewer({
   const [tagged, setTagged] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
   const [err, setErr] = useState("");
+  const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -1945,6 +2097,8 @@ function PackPerformerReviewer({
   if (loading || !data || data.scenes.length === 0) return null;
 
   const untagged = data.scenes.filter((s) => !tagged.has(s.scene_id));
+  const shown = showAll ? untagged : untagged.slice(0, PACK_PREVIEW);
+  const hiddenCount = showAll ? 0 : untagged.length - shown.length;
   const allDone = untagged.length === 0;
   const selIds = untagged
     .filter((s) => selected.has(s.scene_id))
@@ -1995,8 +2149,17 @@ function PackPerformerReviewer({
       </div>
       {!allDone && (
         <>
+          {/* A preview, not the whole pack.
+              A pack of 608 unidentified scenes rendered 608 cards, which is
+              several thousand pixels of page to scroll past to reach the one
+              button at the bottom, and 608 thumbnails for the browser to
+              fetch as you go. Nine is enough to see WHAT the pack is, which
+              is the only question this grid answers before you press the
+              button. Everything stays selected either way: hiding a card
+              does not deselect it, so the count on the button is the truth
+              whether or not the rest are on screen. */}
           <div className="scene-grid">
-            {untagged.map((s) => {
+            {shown.map((s) => {
               const sel = selected.has(s.scene_id);
               const img = proxiedImageURL(s.image_url) || "";
               return (
@@ -2043,6 +2206,27 @@ function PackPerformerReviewer({
               );
             })}
           </div>
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className="grab-pack-more"
+              onClick={() => setShowAll(true)}
+            >
+              Show all {untagged.length} scenes
+              <span className="grab-pack-more-note">
+                {hiddenCount} more, all still selected
+              </span>
+            </button>
+          )}
+          {showAll && untagged.length > PACK_PREVIEW && (
+            <button
+              type="button"
+              className="grab-pack-more"
+              onClick={() => setShowAll(false)}
+            >
+              Show fewer
+            </button>
+          )}
           <div className="grab-pack-tag-foot">
             <button
               className="collection-cta"
