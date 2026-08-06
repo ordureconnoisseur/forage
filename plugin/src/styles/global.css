@@ -8646,3 +8646,166 @@ code.grab-fact-v,
 /* Not display:none: an unrendered sentinel never intersects anything, and
    the scroll would silently stop loading. */
 .trending-sentinel { height: 1px; }
+
+/* ── performers to follow ────────────────────────────────────────── */
+/* A suggestion strip above someone's actual library, so it has to read as
+   secondary to it: the header is the same muted section label the rest of the
+   app uses, and the cards are narrower than a library card on purpose. */
+.picks-section { margin-bottom: 28px; }
+.picks-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.picks-head .section-header { margin: 0; flex: none; }
+
+/* Three lenses on one question, so one control: a segmented switch, not three
+   headings stacked down the page. */
+.picks-lenses {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-1);
+  border: 1px solid var(--glass-border);
+}
+.picks-lens {
+  border: 0;
+  background: none;
+  padding: 3px 11px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.picks-lens:hover { color: var(--text); }
+.picks-lens[aria-selected="true"] {
+  background: rgba(var(--accent-rgb), 0.16);
+  color: var(--accent-bright);
+}
+
+/* Swipe, not pages. The scene carousel pages because its cards are wide and
+   few; these are narrow and there are twenty-four, so a scroll strip beats
+   clicking through five pages and costs no chevrons at any width. */
+.picks-row {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: 4px;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
+}
+.picks-row::-webkit-scrollbar { height: 6px; }
+.picks-row::-webkit-scrollbar-thumb {
+  background: var(--glass-border);
+  border-radius: 3px;
+}
+
+.pick-card {
+  position: relative;
+  flex: 0 0 118px;
+  width: 118px;
+  aspect-ratio: 3 / 4;
+  padding: 0;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm, 8px);
+  background: var(--bg-1);
+  overflow: hidden;
+  cursor: pointer;
+  text-align: left;
+  font-family: inherit;
+  transition: border-color 0.14s ease, transform 0.14s ease;
+}
+.pick-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.pick-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pick-card:disabled { cursor: default; }
+.pick-card.is-added { border-color: var(--accent); }
+.pick-card.is-err { border-color: var(--red, #ef4444); }
+
+.pick-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top; /* portraits are framed head-first */
+  display: block;
+}
+.pick-img-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--text-dim);
+  background: var(--bg-2, var(--bg-1));
+}
+
+.pick-scrim {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 18px 8px 7px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.86), rgba(0, 0, 0, 0));
+  pointer-events: none;
+}
+.pick-name {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: #fff;
+  line-height: 1.25;
+  /* Two lines then ellipsis: these are names, and half a name is no name. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.pick-stat {
+  margin-top: 2px;
+  font-size: 10px;
+  color: rgba(255, 255, 255, 0.66);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Over the portrait, not beside the name: the card is one control, and this
+   says which control it is. */
+.pick-action {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  color: var(--accent-bright);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.pick-card.is-added .pick-action { background: var(--accent); color: #08120b; }
+.pick-card.is-err .pick-action { color: var(--red, #ef4444); }
+
+.pick-card.is-skeleton {
+  cursor: default;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+
+@media (max-width: 600px) {
+  .pick-card { flex-basis: 104px; width: 104px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pick-card, .picks-lens { transition: none; }
+  .pick-card:hover:not(:disabled) { transform: none; }
+  .pick-card.is-skeleton { animation: none; opacity: 0.6; }
+}

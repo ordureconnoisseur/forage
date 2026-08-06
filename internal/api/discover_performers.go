@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -10,6 +11,10 @@ import (
 
 	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
+
+// errNoStashDB is the one failure that is not partial: with no client there
+// is nothing to ask.
+var errNoStashDB = errors.New("StashDB is not configured")
 
 // Three ways of asking "who should I be following?", for the strip at the top
 // of the performers page.
@@ -77,28 +82,85 @@ type performerPickCache struct {
 	mu   sync.Mutex
 	at   time.Time
 	resp *discoverPerformersResponse
+	// refreshing marks a background recompute in flight, so a burst of
+	// requests against a stale entry kicks off one, not one each.
+	refreshing bool
+	// computeMu serialises the cold compute. Two tabs opening the page on a
+	// freshly started daemon would otherwise both walk eight pages of the
+	// trending ranking to arrive at the same answer.
+	computeMu sync.Mutex
 }
 
 // getDiscoverPerformers serves GET /discover/performers.
+//
+// Stale-while-revalidate, because computing this costs about sixteen seconds:
+// eight pages of the live trending ranking to tally, two performer sorts, and
+// one batched hydration for the portraits. Nobody should wait that out to see
+// a strip that was correct a minute ago. A stale answer is served immediately
+// and refreshed behind it; only a daemon that has never computed one makes
+// anybody wait, and then only once.
 func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	force := r.URL.Query().Get("refresh") == "true"
+
 	s.perfPicks.mu.Lock()
-	defer s.perfPicks.mu.Unlock()
-	// The lock is held across the fetch rather than released and retaken.
-	// Two tabs opening the page at once would otherwise both pay for eight
-	// live scene pages to compute the same answer.
-	if s.perfPicks.resp != nil && time.Since(s.perfPicks.at) < performerPickTTL &&
-		r.URL.Query().Get("refresh") != "true" {
-		writeJSON(w, http.StatusOK, s.perfPicks.resp)
+	cached, at, busy := s.perfPicks.resp, s.perfPicks.at, s.perfPicks.refreshing
+	if cached != nil && !force {
+		if time.Since(at) >= performerPickTTL && !busy {
+			s.perfPicks.refreshing = true
+			go s.refreshPerformerPicks()
+		}
+		s.perfPicks.mu.Unlock()
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+	s.perfPicks.mu.Unlock()
+
+	// Cold, or an explicit refresh. computeMu makes concurrent callers share
+	// one computation rather than each paying for it.
+	s.perfPicks.computeMu.Lock()
+	defer s.perfPicks.computeMu.Unlock()
+	s.perfPicks.mu.Lock()
+	again := s.perfPicks.resp
+	fresh := time.Since(s.perfPicks.at) < performerPickTTL
+	s.perfPicks.mu.Unlock()
+	if again != nil && fresh && !force {
+		// Someone else computed it while this request waited for the lock.
+		writeJSON(w, http.StatusOK, again)
 		return
 	}
 
+	out, err := s.computePerformerPicks(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// refreshPerformerPicks recomputes in the background, off the request's
+// context: that context is cancelled the moment the stale response is written,
+// which would abort the very refresh it just triggered.
+func (s *Server) refreshPerformerPicks() {
+	defer func() {
+		s.perfPicks.mu.Lock()
+		s.perfPicks.refreshing = false
+		s.perfPicks.mu.Unlock()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	s.perfPicks.computeMu.Lock()
+	defer s.perfPicks.computeMu.Unlock()
+	if _, err := s.computePerformerPicks(ctx); err != nil {
+		s.log.Warn("discover performers: background refresh", "err", err)
+	}
+}
+
+// computePerformerPicks builds all three lenses and stores them.
+func (s *Server) computePerformerPicks(ctx context.Context) (*discoverPerformersResponse, error) {
 	sdb := s.pool.StashDB()
 	if sdb == nil {
-		writeErr(w, http.StatusServiceUnavailable, "StashDB is not configured")
-		return
+		return nil, errNoStashDB
 	}
-
 	local := s.localPerformerStashDBIDs(ctx)
 	hideMale := s.pool.Settings().HideMalePerformers
 
@@ -108,12 +170,14 @@ func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
 		Active:      s.sortedPerformers(ctx, sdb, "LAST_SCENE", local, hideMale),
 		RefreshedAt: nowUnix(),
 	}
-	// Only cache a result worth reusing. An empty strip usually means StashDB
-	// was unreachable, and caching that would hold the failure for an hour.
+	// Only store a result worth reusing. An empty strip means StashDB was
+	// unreachable, and caching that would hold the failure for an hour.
 	if len(out.Trending)+len(out.Debut)+len(out.Active) > 0 {
+		s.perfPicks.mu.Lock()
 		s.perfPicks.at, s.perfPicks.resp = time.Now(), out
+		s.perfPicks.mu.Unlock()
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // localPerformerStashDBIDs is the set of StashDB ids the library already has,

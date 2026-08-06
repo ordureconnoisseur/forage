@@ -1,4 +1,5 @@
 import SubscriptionsRow from "../SubscriptionsRow";
+import PerformerPicks from "./PerformerPicks";
 import { useEffect, useMemo, useState } from "react";
 import { filterGlyph } from "../format";
 import { GenderIcon } from "../icons";
@@ -109,6 +110,7 @@ export default function PerformersList({
   return (
     <div>
       <SubscriptionsRow kind="performer" />
+      <PerformerPicks />
       <div className="controls">
         <input
           type="text"

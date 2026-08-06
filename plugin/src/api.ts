@@ -365,6 +365,48 @@ export function fetchDiscover(opts?: {
   return get<DiscoverResponse>("/discover" + (qs ? "?" + qs : ""));
 }
 
+// A performer worth adding, for the strip at the top of the Performers page.
+// Everyone here is NOT in the library: the strip answers "who should I be
+// following", so anyone already followed has nothing to offer it.
+export interface DiscoverPerformerPick {
+  stashdb_id: string;
+  name: string;
+  gender?: string;
+  image_url?: string;
+  // Scenes StashDB holds for them in total.
+  scene_count: number;
+  // How many of the CURRENT trending scenes they are on. Only set on the
+  // trending lens, where it is the entire ranking signal.
+  trending_scenes?: number;
+}
+
+export interface DiscoverPerformersResponse {
+  // StashDB has no trending sort for performers, so this one is derived by
+  // the daemon from who recurs across the trending scenes.
+  trending: DiscoverPerformerPick[];
+  // StashDB's DEBUT sort: first scene just landed.
+  debut: DiscoverPerformerPick[];
+  // StashDB's LAST_SCENE sort: released most recently.
+  active: DiscoverPerformerPick[];
+  refreshed_at: number;
+}
+
+export function fetchDiscoverPerformers(
+  refresh?: boolean,
+): Promise<DiscoverPerformersResponse> {
+  return get<DiscoverPerformersResponse>(
+    "/discover/performers" + (refresh ? "?refresh=true" : ""),
+  );
+}
+
+// Build the proxied URL for a bare StashDB image id or full image URL.
+export function stashdbImageURL(idOrURL: string | undefined): string | undefined {
+  if (!idOrURL) return undefined;
+  return idOrURL.startsWith("http")
+    ? stashdbThumbURL(idOrURL)
+    : stashdbThumbURL("https://stashdb.org/images/" + idOrURL);
+}
+
 // One live page of the source's TRENDING sort, for browsing past the
 // carousel. Unlike DiscoverResponse this is not cached anywhere: the daemon
 // asks the box per request, so a page reflects the ranking at the moment it
