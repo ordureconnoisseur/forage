@@ -63,63 +63,12 @@ func (s *Server) postGrabPerformer(w http.ResponseWriter, r *http.Request) {
 	alreadyPlaced := g.PlacedPath != ""
 
 	if alreadyPlaced {
-		pl := s.pool.Placer()
-		if !pl.Configured() {
-			writeErr(w, http.StatusUnprocessableEntity,
-				"library root not configured — can't re-file (set it in Settings)")
-			return
-		}
-		src := s.grabSourcePath(r.Context(), g.Client, g.ClientID)
-		if src == "" {
-			// The client source is gone (usenet auto-deleted after place, or
-			// the torrent was removed). We can still re-file from the existing
-			// library placement — hardlink/copy it into the new performer
-			// folder. Only give up when there's nothing on disk either.
-			if g.PlacedPath != "" {
-				src = g.PlacedPath
-			} else {
-				writeErr(w, http.StatusUnprocessableEntity,
-					"the download is no longer in the client and nothing is placed, so there's nothing to re-file")
-				return
-			}
-		}
-		res, err := pl.Place(src, performer)
+		newPath, err := s.refilePlaced(r.Context(), g, performer)
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "re-file failed: "+err.Error())
+			writeErr(w, err.status, err.msg)
 			return
 		}
-		// Remove the OLD library-side placement if it moved. Library
-		// hardlink only — never the seeding source. Best-effort: a stale
-		// leftover is cosmetic (Stash drops it on the next scan).
-		oldPath := g.PlacedPath
-		if oldPath != "" && oldPath != res.Path {
-			if rerr := os.RemoveAll(oldPath); rerr != nil {
-				s.log.Warn("set performer: remove old placement", "id", gid, "path", oldPath, "err", rerr)
-			}
-		}
-		g.PlacedPath = res.Path
-		s.log.Info("grab performer reassigned (re-filed)", "id", gid, "performer", performer,
-			"placed", res.Path, "mode", res.Mode)
-		// Re-index the new location. Moving the files strands Stash's scenes at
-		// the old path (they point at a directory that no longer exists); a scan
-		// of the new path relinks them by oshash (or re-creates them there),
-		// which is also what makes the pack's scenes findable under the new
-		// folder for tagging. Best-effort + async (Stash's serial queue), so the
-		// caller returns immediately and the re-index lands when the queue drains.
-		// Needs the path mapped to Stash's filesystem view; skip if it can't map
-		// (Stash falls back to its next scheduled scan).
-		if sc := s.pool.Stash(); sc != nil {
-			if mapped := pathmap.Translate(res.Path, s.pool.Settings().StashPathMapping); mapped != "" {
-				if job, serr := sc.MetadataScan(r.Context(), []string{mapped}); serr != nil {
-					s.log.Warn("set performer: rescan new path", "id", gid, "path", mapped, "err", serr)
-				} else {
-					s.log.Info("set performer: queued rescan of new path", "id", gid, "job", job, "path", mapped)
-				}
-			} else {
-				s.log.Warn("set performer: can't map placed path for rescan (Stash will pick it up on its next scan)",
-					"id", gid, "path", res.Path)
-			}
-		}
+		g.PlacedPath = newPath
 	} else {
 		// Not placed yet: just retarget the folder for when it lands.
 		s.log.Info("grab performer set (not yet placed)", "id", gid, "performer", performer)
@@ -188,4 +137,76 @@ func (s *Server) grabSourcePath(ctx context.Context, client, clientID string) st
 		}
 	}
 	return ""
+}
+
+// refileErr carries the status a caller should report. Re-filing fails in
+// several distinguishable ways (nothing configured, nothing on disk, the move
+// itself), and collapsing them to one 500 would hide which.
+type refileErr struct {
+	status int
+	msg    string
+}
+
+func (e *refileErr) Error() string { return e.msg }
+
+// refilePlaced moves an already-placed grab into another performer's folder
+// and returns its new path.
+//
+// Shared by the manual reassignment and by /match, which re-files on its own
+// when the scene you matched to has a different cast: the file was placed
+// under whoever forage predicted, so agreeing that it is a different scene
+// means agreeing it is in the wrong folder.
+func (s *Server) refilePlaced(ctx context.Context, g *grabs.Grab, performer string) (string, *refileErr) {
+	pl := s.pool.Placer()
+	if !pl.Configured() {
+		return "", &refileErr{http.StatusUnprocessableEntity,
+			"library root not configured — can't re-file (set it in Settings)"}
+	}
+	src := s.grabSourcePath(ctx, g.Client, g.ClientID)
+	if src == "" {
+		// The client source is gone (usenet auto-deleted after place, or the
+		// torrent was removed). We can still re-file from the existing library
+		// placement — hardlink/copy it into the new performer folder. Only give
+		// up when there's nothing on disk either.
+		if g.PlacedPath == "" {
+			return "", &refileErr{http.StatusUnprocessableEntity,
+				"the download is no longer in the client and nothing is placed, so there's nothing to re-file"}
+		}
+		src = g.PlacedPath
+	}
+	res, err := pl.Place(src, performer)
+	if err != nil {
+		return "", &refileErr{http.StatusBadGateway, "re-file failed: " + err.Error()}
+	}
+	// Remove the OLD library-side placement if it moved. Library hardlink
+	// only — never the seeding source. Best-effort: a stale leftover is
+	// cosmetic (Stash drops it on the next scan).
+	if old := g.PlacedPath; old != "" && old != res.Path {
+		if rerr := os.RemoveAll(old); rerr != nil {
+			s.log.Warn("re-file: remove old placement", "id", g.ID, "path", old, "err", rerr)
+		}
+	}
+	s.log.Info("grab re-filed", "id", g.ID, "performer", performer,
+		"placed", res.Path, "mode", res.Mode)
+	// Re-index the new location. Moving the files strands Stash's scenes at
+	// the old path (they point at a directory that no longer exists); a scan of
+	// the new path relinks them by oshash (or re-creates them there), which is
+	// also what makes a pack's scenes findable under the new folder for
+	// tagging. Best-effort + async (Stash's serial queue), so the caller
+	// returns immediately and the re-index lands when the queue drains. Needs
+	// the path mapped to Stash's filesystem view; skip if it cannot map (Stash
+	// falls back to its next scheduled scan).
+	if sc := s.pool.Stash(); sc != nil {
+		if mapped := pathmap.Translate(res.Path, s.pool.Settings().StashPathMapping); mapped != "" {
+			if job, serr := sc.MetadataScan(ctx, []string{mapped}); serr != nil {
+				s.log.Warn("re-file: rescan new path", "id", g.ID, "path", mapped, "err", serr)
+			} else {
+				s.log.Info("re-file: queued rescan of new path", "id", g.ID, "job", job, "path", mapped)
+			}
+		} else {
+			s.log.Warn("re-file: can't map placed path for rescan (Stash will pick it up on its next scan)",
+				"id", g.ID, "path", res.Path)
+		}
+	}
+	return res.Path, nil
 }

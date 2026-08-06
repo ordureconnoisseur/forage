@@ -1395,7 +1395,7 @@ function MismatchPanel({
           tone="wanted"
           chosen={chosen === predicted}
           busy={busy === predicted}
-          action="Stash got it wrong, it's this one"
+          action="This is the file"
           onChoose={() => choose(predicted)}
         />
         <SceneFace
@@ -1405,7 +1405,7 @@ function MismatchPanel({
           onDisk
           chosen={chosen === actual}
           busy={busy === actual}
-          action="Keep this one"
+          action="This is the file"
           onChoose={() => choose(actual)}
           onCast={setCast}
         />
@@ -1413,8 +1413,11 @@ function MismatchPanel({
       {err && <div className="grab-delete-err">{err}</div>}
       {chosen === actual && (
         <div className="grab-mismatch-note">
-          Tagged as the scene that arrived. The one you wanted goes back on the
-          watchlist.
+          Tagged as the scene that arrived, and re-filed under someone in it if
+          it was not already. The scene you wanted goes back on the watchlist.
+          {/* A fallback, not the mechanism: /match re-files itself now. This
+              only appears when it could not, which means nobody in the scene
+              is in the library, so there was no folder to move it to. */}
           <ReFileHint g={g} cast={cast} />
         </div>
       )}
@@ -1533,8 +1536,19 @@ function SceneFace({
   }, [id]);
 
   const img = proxiedImageURL(card?.image_url) || "";
+  // The whole card is the choice. Two pictures side by side already ask
+  // "which one is it"; a button underneath each was a second thing to aim at
+  // saying what the picture above it already said. Clicking the other one
+  // switches, so the undo is just the other thumbnail.
   return (
-    <div className={"scene-face " + tone + (chosen ? " is-chosen" : "")}>
+    <button
+      type="button"
+      className={"scene-face " + tone + (chosen ? " is-chosen" : "")}
+      onClick={onChoose}
+      disabled={busy || chosen}
+      aria-pressed={chosen}
+      title={chosen ? "Tagged as this scene" : action}
+    >
       <div className="scene-face-label">
         {label}
         {onDisk && <span className="scene-face-tag">on disk</span>}
@@ -1567,17 +1581,12 @@ function SceneFace({
           {badge && <span className="grab-match-badge dim">{badge}</span>}
         </div>
       </div>
-      {action && onChoose && !chosen && (
-        <button
-          type="button"
-          className={"grab-action match scene-face-pick " + tone}
-          onClick={onChoose}
-          disabled={busy}
-        >
-          {busy ? "Applying…" : action}
-        </button>
+      {action && (
+        <div className={"scene-face-pick " + tone}>
+          {busy ? "Applying…" : chosen ? "Tagged as this" : action}
+        </div>
       )}
-    </div>
+    </button>
   );
 }
 

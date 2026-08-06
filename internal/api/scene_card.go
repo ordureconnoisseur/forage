@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -36,6 +37,17 @@ type sceneCard struct {
 	// Performers is names only. The card is for recognising a scene at a
 	// glance, not for navigating anywhere.
 	Performers []string `json:"performers,omitempty"`
+	// cast keeps the genders the wire form drops, so "hide male performers"
+	// can be applied when the card is SERVED rather than when it is cached.
+	// Baked in at cache time, a setting change would take six hours to reach
+	// a card, and the same cached row would be right for one user and wrong
+	// for the same user an hour later.
+	cast []cardPerformer
+}
+
+type cardPerformer struct {
+	name   string
+	gender string
 }
 
 type sceneCardCache struct {
@@ -60,7 +72,7 @@ func (s *Server) getSceneCard(w http.ResponseWriter, r *http.Request) {
 	s.sceneCards.mu.Lock()
 	if got, ok := s.sceneCards.by[id]; ok && time.Since(got.at) < sceneCardTTL {
 		s.sceneCards.mu.Unlock()
-		writeJSON(w, http.StatusOK, got.card)
+		writeJSON(w, http.StatusOK, s.servableCard(got.card))
 		return
 	}
 	s.sceneCards.mu.Unlock()
@@ -80,7 +92,7 @@ func (s *Server) getSceneCard(w http.ResponseWriter, r *http.Request) {
 	}
 	s.sceneCards.by[id] = sceneCardEntry{at: time.Now(), card: card}
 	s.sceneCards.mu.Unlock()
-	writeJSON(w, http.StatusOK, card)
+	writeJSON(w, http.StatusOK, s.servableCard(card))
 }
 
 // sceneCardByID reads the local cache first and asks StashDB only on a miss.
@@ -129,8 +141,27 @@ func (s *Server) sceneCardByID(ctx context.Context, id string) (*sceneCard, erro
 			name = p.As
 		}
 		if name != "" {
-			out.Performers = append(out.Performers, name)
+			out.cast = append(out.cast, cardPerformer{name: name, gender: p.Gender})
 		}
 	}
 	return out, nil
+}
+
+// servableCard applies "hide male performers" on the way out.
+//
+// The card's cast is also what the mismatch panel offers to re-file under, so
+// leaving men in it does not merely show a name the user asked not to see: it
+// offers to file a scene into a folder for someone they have chosen never to
+// have. The setting has to reach here or it is not a setting.
+func (s *Server) servableCard(in *sceneCard) *sceneCard {
+	out := *in
+	out.Performers = nil
+	hideMale := s.pool.Settings().HideMalePerformers
+	for _, p := range in.cast {
+		if hideMale && strings.EqualFold(strings.TrimSpace(p.gender), "MALE") {
+			continue
+		}
+		out.Performers = append(out.Performers, p.name)
+	}
+	return &out
 }

@@ -9035,3 +9035,40 @@ code.grab-fact-v,
   color: var(--text-muted);
 }
 .grab-mismatch-refile strong { color: var(--text); }
+
+/* The face is a button now, so it needs the button reset and a hover that
+   says it is one. Two pictures asking "which is it" is the whole interaction;
+   picking the other is the undo. */
+.scene-face {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.14s ease, background 0.14s ease;
+}
+.scene-face:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.09);
+}
+.scene-face:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.scene-face:disabled { cursor: default; }
+
+/* The caption under each picture. Not a nested button: the card is the
+   target, and a second one inside it would just be a smaller way to do the
+   same thing. */
+.scene-face-pick {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--glass-border);
+  text-align: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.scene-face:hover:not(:disabled) .scene-face-pick { color: var(--accent-bright); }
+.scene-face.is-chosen .scene-face-pick { color: var(--accent-bright); }
+@media (prefers-reduced-motion: reduce) {
+  .scene-face { transition: none; }
+}

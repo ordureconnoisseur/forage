@@ -12,6 +12,7 @@ import (
 	"github.com/ordureconnoisseur/forager/internal/clienterr"
 	"github.com/ordureconnoisseur/forager/internal/grabs"
 	"github.com/ordureconnoisseur/forager/internal/stash"
+	"github.com/ordureconnoisseur/forager/internal/stashdb"
 )
 
 type grabMatchRequest struct {
@@ -145,12 +146,24 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	}
 	s.log.Info("grab manually matched", "id", gid, "stashdb", target,
 		"scene", local.ID, "performers_applied", len(apply.PerformerIDs), "studio", apply.StudioID != "")
+
+	// Agreeing that this is a different scene means agreeing it is in the
+	// wrong folder. The file was placed under whoever forage predicted, and
+	// matching never used to move it, so a Harley Love scene stayed in
+	// Scarlett Rosewood's folder and the only thing that said so was a
+	// suggestion the user had to click. If the scene you matched to has a
+	// different cast, the file follows it.
+	refiled := s.refileToSceneCast(r.Context(), gid, grab, scene)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":                 true,
 		"stashdb_id":         target,
 		"title":              scene.Title,
 		"performers_applied": len(apply.PerformerIDs),
 		"studio_applied":     apply.StudioID != "",
+		// Empty when nothing moved, which is the usual case: most matches are
+		// to a scene the same person is in.
+		"refiled_under": refiled,
 	})
 }
 
@@ -223,4 +236,84 @@ func lastPathSegment(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// refileToSceneCast moves a matched grab into a folder for someone actually in
+// the scene, and reports who. Empty means nothing moved.
+//
+// Deliberately conservative about WHICH performer. It picks the first cast
+// member the library already has, which is the same rule placement uses when
+// the grab first lands, so a re-file cannot disagree with where the file would
+// have gone had the prediction been right. A scene whose cast the library does
+// not have leaves the file alone: there is no folder to move it to, and
+// creating one for a performer nobody follows would be a stranger decision
+// than leaving it.
+func (s *Server) refileToSceneCast(ctx context.Context, gid int64,
+	g *grabs.Grab, scene *stashdb.Scene) string {
+	if g == nil || scene == nil || g.PlacedPath == "" || g.Kind == "pack" {
+		return ""
+	}
+	hideMale := s.pool.Settings().HideMalePerformers
+	target := ""
+	inScene := false
+	for _, p := range scene.Performers {
+		name := p.Name
+		if p.As != "" {
+			name = p.As
+		}
+		if name == "" {
+			continue
+		}
+		if sameFolderName(name, g.PerformerName) {
+			inScene = true
+			break
+		}
+		// The same filter the rest of the UI applies. Without it the first
+		// cast member is frequently the male lead, and the file lands in a
+		// folder for someone the user has chosen never to see.
+		if hideMale && strings.EqualFold(strings.TrimSpace(p.Gender), "MALE") {
+			continue
+		}
+		if target == "" && s.localPerformerIDByName(ctx, name) != "" {
+			target = name
+		}
+	}
+	if inScene || target == "" || sameFolderName(target, g.PerformerName) {
+		return ""
+	}
+
+	newPath, rerr := s.refilePlaced(ctx, g, target)
+	if rerr != nil {
+		// Not fatal to the match: the identification is already correct and
+		// the file is still where it was. The panel offers the move manually.
+		s.log.Warn("match: auto re-file", "id", gid, "performer", target, "err", rerr.msg)
+		return ""
+	}
+	if err := s.applyGrabUpdate(ctx, gid, func(fresh *grabs.Grab) {
+		fresh.PerformerName = target
+		fresh.PlacedPath = newPath
+		fresh.PlaceError = ""
+	}); err != nil {
+		s.log.Error("match: re-file update", "id", gid, "err", err)
+	}
+	return target
+}
+
+// sameFolderName compares a performer name against a folder assignment. The
+// folder name came from forage's own record and the cast from StashDB, so they
+// agree on the person without always agreeing on punctuation or case.
+func sameFolderName(a, b string) bool {
+	norm := func(x string) string {
+		var out []rune
+		for _, r := range strings.ToLower(x) {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				out = append(out, r)
+			}
+		}
+		return string(out)
+	}
+	if a == "" || b == "" {
+		return false
+	}
+	return norm(a) == norm(b)
 }
