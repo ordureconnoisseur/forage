@@ -399,6 +399,19 @@ export function fetchDiscoverPerformers(
   );
 }
 
+// Stop offering this performer. Applied when the strip is served rather than
+// when it is computed, so it takes effect on the next load instead of waiting
+// out the hour-long memo behind it.
+export function dismissPerformerPick(
+  stashDBID: string,
+  undo?: boolean,
+): Promise<{ ok: boolean; dismissed: number }> {
+  return postJSON("/discover/performers/dismiss", {
+    stashdb_id: stashDBID,
+    undo,
+  });
+}
+
 // Build the proxied URL for a bare StashDB image id or full image URL.
 export function stashdbImageURL(idOrURL: string | undefined): string | undefined {
   if (!idOrURL) return undefined;

@@ -8809,3 +8809,41 @@ code.grab-fact-v,
   .pick-card:hover:not(:disabled) { transform: none; }
   .pick-card.is-skeleton { animation: none; opacity: 0.6; }
 }
+
+/* Not interested. Hidden until the card is hovered or something inside it has
+   focus: a strip that is swiped past on a phone should not carry a live
+   destructive-ish target under the thumb, and on a pointer device the moment
+   you are considering a card is exactly the moment the option is wanted.
+   Keyboard users get it from :focus-within, so it is never unreachable. */
+.pick-dismiss {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(3px);
+  color: rgba(255, 255, 255, 0.75);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+.pick-card:hover .pick-dismiss,
+.pick-card:focus-within .pick-dismiss,
+.pick-dismiss:focus-visible { opacity: 1; }
+.pick-dismiss:hover {
+  background: rgba(0, 0, 0, 0.8);
+  color: #fff;
+}
+.pick-dismiss:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch has no hover, so it stays visible there rather than unreachable. */
+@media (hover: none) {
+  .pick-dismiss { opacity: 0.85; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pick-dismiss { transition: none; }
+}

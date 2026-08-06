@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from "react";
 import {
   addPerformerFromStashDB,
+  dismissPerformerPick,
   fetchDiscoverPerformers,
   stashdbImageURL,
   type DiscoverPerformerPick,
   type DiscoverPerformersResponse,
 } from "../api";
-import { CheckIcon, PlusIcon } from "../icons";
+import { CheckIcon, CloseIcon, PlusIcon } from "../icons";
 
-// Who to follow next, at the top of the page listing who you already follow.
+// Who to add next, between the trending scenes and your own performers' new
+// releases. All three sections on Discover answer "what should I look at",
+// ordered by how far they sit from the library you already have.
 //
 // Three lenses, one strip. They could have been three strips, but they answer
-// one question from three angles and stacking them would push the library
-// three screens down to make that point.
+// one question from three angles and stacking them would push the feed three
+// screens down to make that point.
 //
 //   Trending   who recurs across the current trending SCENES. StashDB has no
 //              trending sort for performers, so the daemon derives this.
@@ -39,6 +42,10 @@ export default function PerformerPicks() {
   const [data, setData] = useState<DiscoverPerformersResponse | null>(null);
   const [lens, setLens] = useState<Lens>("trending");
   const [failed, setFailed] = useState(false);
+  // Hidden locally the moment they are dismissed. The server applies the same
+  // set when it next serves the strip; this is so the card leaves under the
+  // finger rather than on the next page load.
+  const [gone, setGone] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -50,12 +57,13 @@ export default function PerformerPicks() {
     };
   }, []);
 
-  // Nothing at all rather than an empty frame: this is a suggestion strip
-  // above someone's actual library, and a broken-looking one is worse than
-  // none. Same reason the subscriptions row hides itself.
+  // Nothing at all rather than an empty frame. This is a suggestion strip
+  // sitting between two things the user actually asked for, and a broken
+  // looking one is worse than none. Same reason the subscriptions row hides
+  // itself.
   if (failed) return null;
 
-  const picks = data ? data[lens] : [];
+  const picks = (data ? data[lens] : []).filter((p) => !gone.has(p.stashdb_id));
   const loading = !data;
   if (data && !data.trending.length && !data.debut.length && !data.active.length) {
     return null;
@@ -64,7 +72,7 @@ export default function PerformerPicks() {
   return (
     <section className="picks-section">
       <div className="picks-head">
-        <h3 className="section-header">Performers to follow</h3>
+        <h3 className="section-header">Discover performers</h3>
         <div className="picks-lenses" role="tablist" aria-label="Lens">
           {LENSES.map((l) => (
             <button
@@ -91,13 +99,30 @@ export default function PerformerPicks() {
           ? Array.from({ length: 8 }, (_, i) => (
               <div className="pick-card is-skeleton" key={i} aria-hidden="true" />
             ))
-          : picks.map((p) => <PickCard key={p.stashdb_id} p={p} lens={lens} />)}
+          : picks.map((p) => (
+              <PickCard
+                key={p.stashdb_id}
+                p={p}
+                lens={lens}
+                onDismiss={() =>
+                  setGone((prev) => new Set(prev).add(p.stashdb_id))
+                }
+              />
+            ))}
       </div>
     </section>
   );
 }
 
-function PickCard({ p, lens }: { p: DiscoverPerformerPick; lens: Lens }) {
+function PickCard({
+  p,
+  lens,
+  onDismiss,
+}: {
+  p: DiscoverPerformerPick;
+  lens: Lens;
+  onDismiss: () => void;
+}) {
   const [state, setState] = useState<"idle" | "adding" | "added" | "err">("idle");
   const [msg, setMsg] = useState("");
   const [noImage, setNoImage] = useState(false);
@@ -141,7 +166,7 @@ function PickCard({ p, lens }: { p: DiscoverPerformerPick; lens: Lens }) {
       title={
         state === "idle"
           ? `Add ${p.name} to your library`
-          : `${p.name} — ${msg || "adding…"}`
+          : `${p.name}: ${msg || "adding…"}`
       }
       aria-label={`Add ${p.name} to your library`}
     >
@@ -163,6 +188,36 @@ function PickCard({ p, lens }: { p: DiscoverPerformerPick; lens: Lens }) {
         <div className="pick-name">{p.name}</div>
         <div className="pick-stat">{stat}</div>
       </div>
+
+      {/* Not interested. A second target on a card that is otherwise one
+          button, which is justified here because it is a genuinely different
+          action, not a smaller way to do the same one. It is deliberately the
+          smaller and quieter of the two, and it only appears on hover or
+          focus so it cannot be hit by accident while scrolling a strip. */}
+      <span
+        className="pick-dismiss"
+        role="button"
+        tabIndex={0}
+        aria-label={`Stop suggesting ${p.name}`}
+        title={`Stop suggesting ${p.name}`}
+        onClick={(e) => {
+          // The card underneath is the add button. Without this, dismissing
+          // someone would add them.
+          e.preventDefault();
+          e.stopPropagation();
+          void dismissPerformerPick(p.stashdb_id).catch(() => {});
+          onDismiss();
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          e.stopPropagation();
+          void dismissPerformerPick(p.stashdb_id).catch(() => {});
+          onDismiss();
+        }}
+      >
+        <CloseIcon size={11} />
+      </span>
 
       {/* The affordance sits over the portrait rather than beside the name:
           the card is one control, and this says which control it is. */}

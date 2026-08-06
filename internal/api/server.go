@@ -396,6 +396,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/trending", s.getTrending)
 		r.Get("/discover/boxes", s.getDiscoverBoxes)
 		r.Get("/discover/performers", s.getDiscoverPerformers)
+		r.Post("/discover/performers/dismiss", s.postDismissPerformer)
 		r.Get("/indexers", s.getIndexers)
 		r.Get("/indexer-catalog", s.getIndexerCatalog)
 		r.Post("/indexer-catalog/add", s.postIndexerCatalogAdd)

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -42,8 +44,13 @@ const (
 	// is refreshed hourly upstream, so recomputing faster would spend requests
 	// to arrive at the same answer.
 	performerPickTTL = time.Hour
-	// performerPickCount is how many make it into each lens.
+	// performerPickCount is how many are SERVED per lens.
 	performerPickCount = 24
+	// performerPickStore is how many are kept per lens. Dismissals are
+	// applied on the way out rather than baked into the computation, so
+	// saying "not interested" costs nothing and the surplus is what refills
+	// the strip behind it.
+	performerPickStore = 40
 	// trendingScanPages is how deep the trending ranking is walked to tally
 	// performers. Measured on the live ranking: five pages of 48 yielded 98
 	// un-owned performers of whom 8 appeared more than once, so the signal is
@@ -110,7 +117,7 @@ func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
 			go s.refreshPerformerPicks()
 		}
 		s.perfPicks.mu.Unlock()
-		writeJSON(w, http.StatusOK, cached)
+		writeJSON(w, http.StatusOK, s.servable(r.Context(), cached))
 		return
 	}
 	s.perfPicks.mu.Unlock()
@@ -125,7 +132,7 @@ func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
 	s.perfPicks.mu.Unlock()
 	if again != nil && fresh && !force {
 		// Someone else computed it while this request waited for the lock.
-		writeJSON(w, http.StatusOK, again)
+		writeJSON(w, http.StatusOK, s.servable(r.Context(), again))
 		return
 	}
 
@@ -134,7 +141,7 @@ func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, s.servable(r.Context(), out))
 }
 
 // refreshPerformerPicks recomputes in the background, off the request's
@@ -207,9 +214,9 @@ func (s *Server) sortedPerformers(ctx context.Context, sdb *stashdb.Client,
 		s.log.Warn("discover performers: query", "sort", sortKey, "err", err)
 		return []discoverPerformer2{}
 	}
-	out := make([]discoverPerformer2, 0, performerPickCount)
+	out := make([]discoverPerformer2, 0, performerPickStore)
 	for _, p := range res.Performers {
-		if len(out) >= performerPickCount {
+		if len(out) >= performerPickStore {
 			break
 		}
 		if !keepPerformer(p.ID, p.Gender, local, hideMale) {
@@ -226,61 +233,81 @@ func (s *Server) sortedPerformers(ctx context.Context, sdb *stashdb.Client,
 	return out
 }
 
-// trendingPerformers derives the ranking StashDB does not expose, by tallying
-// who appears across the trending scenes.
+// performerTally is one performer's standing in the derived ranking.
+type performerTally struct {
+	P     stashdb.ScenePerformer
+	Count int
+	// Best is the earliest position in the ranking they appear at, used only
+	// to break ties: two performers on two trending scenes each are separated
+	// by whose scenes rank higher.
+	Best int
+}
+
+// rankTrendingPerformers is the derivation itself, kept apart from the
+// fetching so it can be tested without a StashDB.
+//
+// scenes must arrive in ranking order; position in the slice IS the rank.
+func rankTrendingPerformers(scenes []stashdb.Scene,
+	local map[string]bool, hideMale bool) []performerTally {
+	seen := map[string]*performerTally{}
+	order := make([]string, 0, len(scenes))
+	for rank, sc := range scenes {
+		for _, p := range sc.Performers {
+			if p.ID == "" || p.Name == "" {
+				continue
+			}
+			t := seen[p.ID]
+			if t == nil {
+				t = &performerTally{P: p, Best: rank}
+				seen[p.ID] = t
+				order = append(order, p.ID)
+			}
+			t.Count++
+		}
+	}
+	list := make([]performerTally, 0, len(order))
+	// Seeded from `order`, not from the map: ranging a map is randomised, and
+	// the tie-break below only orders pairs that differ, so equal entries
+	// would shuffle between calls and the strip would reorder on every
+	// refresh for no reason.
+	for _, id := range order {
+		t := seen[id]
+		if keepPerformer(t.P.ID, t.P.Gender, local, hideMale) {
+			list = append(list, *t)
+		}
+	}
+	sort.SliceStable(list, func(i, j int) bool {
+		if list[i].Count != list[j].Count {
+			return list[i].Count > list[j].Count
+		}
+		return list[i].Best < list[j].Best
+	})
+	return list
+}
+
+// trendingPerformers walks the trending ranking and ranks who recurs in it.
 func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 	local map[string]bool, hideMale bool) []discoverPerformer2 {
-	type tally struct {
-		p     stashdb.ScenePerformer
-		count int
-		// best is the earliest position in the ranking they appear at, used
-		// only to break ties: two performers on two trending scenes each are
-		// separated by whose scenes rank higher.
-		best int
-	}
-	seen := map[string]*tally{}
-	rank := 0
+	all := make([]stashdb.Scene, 0, trendingScanPages*trendingScanPer)
 	for page := 1; page <= trendingScanPages; page++ {
 		res, err := sdb.QueryScenes(ctx, stashdb.SceneQuery{
 			Page: page, PerPage: trendingScanPer, Sort: "TRENDING",
 		})
 		if err != nil {
+			// Partial depth still ranks; a shallower scan is a weaker signal,
+			// not a wrong one.
 			s.log.Warn("discover performers: trending scan", "page", page, "err", err)
 			break
 		}
-		for _, sc := range res.Scenes {
-			rank++
-			for _, p := range sc.Performers {
-				if p.ID == "" || p.Name == "" {
-					continue
-				}
-				t := seen[p.ID]
-				if t == nil {
-					t = &tally{p: p, best: rank}
-					seen[p.ID] = t
-				}
-				t.count++
-			}
-		}
+		all = append(all, res.Scenes...)
 		if len(res.Scenes) < trendingScanPer {
 			break
 		}
 	}
 
-	list := make([]*tally, 0, len(seen))
-	for _, t := range seen {
-		if keepPerformer(t.p.ID, t.p.Gender, local, hideMale) {
-			list = append(list, t)
-		}
-	}
-	sort.Slice(list, func(i, j int) bool {
-		if list[i].count != list[j].count {
-			return list[i].count > list[j].count
-		}
-		return list[i].best < list[j].best
-	})
-	if len(list) > performerPickCount {
-		list = list[:performerPickCount]
+	list := rankTrendingPerformers(all, local, hideMale)
+	if len(list) > performerPickStore {
+		list = list[:performerPickStore]
 	}
 
 	// The scene query carries a performer's name and gender but no portrait,
@@ -288,19 +315,19 @@ func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 	// asking for images on every scene of all eight pages.
 	ids := make([]string, 0, len(list))
 	for _, t := range list {
-		ids = append(ids, t.p.ID)
+		ids = append(ids, t.P.ID)
 	}
 	profiles := s.performerProfiles(ctx, sdb, ids)
 
 	out := make([]discoverPerformer2, 0, len(list))
 	for _, t := range list {
 		d := discoverPerformer2{
-			StashDBID:      t.p.ID,
-			Name:           t.p.Name,
-			Gender:         strings.ToUpper(t.p.Gender),
-			TrendingScenes: t.count,
+			StashDBID:      t.P.ID,
+			Name:           t.P.Name,
+			Gender:         strings.ToUpper(t.P.Gender),
+			TrendingScenes: t.Count,
 		}
-		if pr, ok := profiles[t.p.ID]; ok {
+		if pr, ok := profiles[t.P.ID]; ok {
 			d.ImageURL = pr.ImageURL
 			d.SceneCount = pr.SceneCount
 			if pr.Name != "" {
@@ -344,4 +371,133 @@ func performerLabel(p stashdb.PerformerProfile) string {
 		return p.Name
 	}
 	return p.Name + " (" + p.Disambiguation + ")"
+}
+
+// ── dismissals ───────────────────────────────────────────────────────
+
+// Saying "not interested".
+//
+// Applied when the strip is SERVED, not when it is computed. Dismissing
+// therefore costs one row write and takes effect on the next paint, instead of
+// invalidating an hour-old computation that took sixteen seconds to make. The
+// lenses hold performerPickStore each and serve performerPickCount, so the
+// surplus is what closes the gap a dismissal leaves.
+const (
+	dismissedPerformersKey = "dismissed_performers"
+	// dismissedCap bounds the list. It is a "stop showing me this" set, not
+	// an audit log, and the oldest entries are the ones whose absence would
+	// be least noticed if the ranking ever surfaced them again.
+	dismissedCap = 500
+)
+
+func loadDismissedPerformers(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	var raw string
+	err := db.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = ?`, dismissedPerformersKey).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	if err := json.Unmarshal([]byte(raw), &ids); err != nil {
+		return nil, err
+	}
+	set := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, nil
+}
+
+// servable applies the dismissals and trims each lens to what is shown.
+func (s *Server) servable(ctx context.Context,
+	in *discoverPerformersResponse) *discoverPerformersResponse {
+	dismissed, err := loadDismissedPerformers(ctx, s.db)
+	if err != nil {
+		// Fail open: showing someone who asked not to be shown is a nuisance,
+		// showing nobody is a broken page.
+		s.log.Warn("discover performers: dismissals", "err", err)
+	}
+	return &discoverPerformersResponse{
+		Trending:    trimPicks(in.Trending, dismissed),
+		Debut:       trimPicks(in.Debut, dismissed),
+		Active:      trimPicks(in.Active, dismissed),
+		RefreshedAt: in.RefreshedAt,
+	}
+}
+
+func trimPicks(in []discoverPerformer2, dismissed map[string]bool) []discoverPerformer2 {
+	out := make([]discoverPerformer2, 0, performerPickCount)
+	for _, p := range in {
+		if len(out) >= performerPickCount {
+			break
+		}
+		if dismissed[p.StashDBID] {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+type dismissPerformerRequest struct {
+	StashDBID string `json:"stashdb_id"`
+	// Undo reverses it, so a mis-tap is not permanent.
+	Undo bool `json:"undo"`
+}
+
+// postDismissPerformer serves POST /discover/performers/dismiss.
+func (s *Server) postDismissPerformer(w http.ResponseWriter, r *http.Request) {
+	var req dismissPerformerRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad request body")
+		return
+	}
+	if !validImageID(req.StashDBID) {
+		// StashDB ids are UUIDs; anything else cannot name a performer and
+		// would just accumulate in the list forever.
+		writeErr(w, http.StatusBadRequest, "not a stashdb id")
+		return
+	}
+	ctx := r.Context()
+
+	// Read-modify-write under the same lock the strip uses, so two rapid
+	// dismissals cannot each write a list missing the other's entry.
+	s.perfPicks.mu.Lock()
+	defer s.perfPicks.mu.Unlock()
+
+	var raw string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = ?`, dismissedPerformersKey).Scan(&raw)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, "could not read dismissals")
+		return
+	}
+	var ids []string
+	if raw != "" {
+		_ = json.Unmarshal([]byte(raw), &ids)
+	}
+	// Newest first, and de-duplicated: re-dismissing someone should refresh
+	// their position rather than grow the list.
+	next := make([]string, 0, len(ids)+1)
+	if !req.Undo {
+		next = append(next, req.StashDBID)
+	}
+	for _, id := range ids {
+		if id == req.StashDBID || len(next) >= dismissedCap {
+			continue
+		}
+		next = append(next, id)
+	}
+	enc, _ := json.Marshal(next)
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO meta (key, value) VALUES (?, ?)
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		dismissedPerformersKey, string(enc)); err != nil {
+		writeErr(w, http.StatusInternalServerError, "could not save dismissal")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "dismissed": len(next)})
 }

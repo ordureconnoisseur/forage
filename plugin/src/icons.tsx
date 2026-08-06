@@ -160,3 +160,13 @@ export function ChevronIcon({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
+
+// An X, for dismissing. Same stroke language and weight as the plus it sits
+// opposite, so the pair reads as a pair.
+export function CloseIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)} strokeWidth={2.2}>
+      <path d="M6 6l12 12M18 6L6 18" />
+    </svg>
+  );
+}

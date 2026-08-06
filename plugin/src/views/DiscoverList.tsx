@@ -17,6 +17,7 @@ import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
 import { CheckIcon, ChevronIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
+import PerformerPicks from "./PerformerPicks";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -372,6 +373,12 @@ export default function DiscoverList({
           />
         </section>
       )}
+
+      {/* Between the two: trending SCENES above, your own performers' new
+          releases below, and the people worth adding in between. All three
+          are "what should I look at", ordered by how far they sit from the
+          library you already have. */}
+      <PerformerPicks />
 
       <h3 className="section-header from-your-performers">
         {box ? `Recent on ${boxName}` : "From your performers"}
