@@ -8409,21 +8409,21 @@ code.grab-fact-v,
 
 /* Readout: text, in the header, never between two buttons. */
 .list-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }
-.list-readout { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+/* The readout absorbed the cap banner. Tabular figures so the numbers hold
+   their columns as the filter changes them rather than jittering; the slash is
+   set back so the two counts read as a pair rather than as three glyphs. */
+.list-readout {
+  font-size: 11.5px; color: var(--text-dim);
+  font-variant-numeric: tabular-nums; letter-spacing: 0.01em;
+}
+.list-readout .sep { opacity: 0.4; margin: 0 1px; }
+/* Amber on one numeral, where a full-width box used to be. Enough to say a
+   limit is in force, quiet enough to ignore once you know it is. */
+.list-readout.is-capped .shown { color: var(--status-downloading); font-weight: 600; }
 .list-head-actions { margin-left: auto; display: flex; gap: 14px; }
 .list-head-actions button {
   border: 0; background: none; padding: 6px 0; cursor: pointer;
   font: inherit; font-size: 13px; font-weight: 600; color: var(--accent-bright);
-}
-
-/* Amber, wrapping, and only when the cap bites. */
-.list-note {
-  display: flex; gap: 7px; margin: 0 0 10px;
-  align-items: center;
-  padding: 7px 10px; border-radius: var(--radius-sm);
-  background: var(--status-downloading-bg);
-  border: 1px solid rgba(212, 161, 74, 0.28);
-  color: #c8b189; font-size: 12px; line-height: 1.5;
 }
 
 @media (min-width: 721px) {

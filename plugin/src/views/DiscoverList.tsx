@@ -259,6 +259,9 @@ export default function DiscoverList({
   // bulk action resolves ids against the full scene list, so picks made
   // before a narrowing filter still apply.
   const visibleIds = filtered.map((s) => s.stashdb_id);
+  // Whether the render cap is actually biting, which is the only thing
+  // that distinguishes the readout from a plain total.
+  const capped = filtered.length > RENDER_CAP;
   const allSelected =
     visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
 
@@ -466,10 +469,34 @@ export default function DiscoverList({
           the count is text, and Select acts on the grid rather than narrowing
           it. */}
       <div className="list-head">
-        <span className="list-readout">
-          {filtered.length === data.scenes.length
-            ? filtered.length
-            : `${filtered.length} of ${data.scenes.length}`}
+        {/* The fraction IS the warning. "300/368" says not-all-of-it in six
+            characters, which is what a full-width amber banner was spending
+            44px and a two-line sentence to say. The cap stays legible as a
+            cap because the numerator is amber — colour on one numeral rather
+            than around a whole box. */}
+        <span
+          className={"list-readout" + (capped ? " is-capped" : "")}
+          title={
+            capped
+              ? `Showing the first ${RENDER_CAP} of ${filtered.length}. Narrow the window or the filter to see the rest.`
+              : undefined
+          }
+        >
+          {capped ? (
+            <>
+              <span className="shown">{RENDER_CAP}</span>
+              <span className="sep">/</span>
+              {filtered.length}
+            </>
+          ) : filtered.length === data.scenes.length ? (
+            filtered.length
+          ) : (
+            <>
+              {filtered.length}
+              <span className="sep">/</span>
+              {data.scenes.length}
+            </>
+          )}
         </span>
         {filtered.length > 0 && (
           <div className="list-head-actions">
@@ -496,18 +523,6 @@ export default function DiscoverList({
           </div>
         )}
       </div>
-
-      {/* Only when the cap actually bites, and it wraps instead of running off
-          the right edge the way the old one-line version did. */}
-      {filtered.length > RENDER_CAP && (
-        <div className="list-note">
-          <span aria-hidden="true">⚠</span>
-          <span>
-            Showing {RENDER_CAP} of {filtered.length} — narrow the window to
-            see the rest.
-          </span>
-        </div>
-      )}
 
       {filtered.length === 0 ? (
         <div className="empty">
