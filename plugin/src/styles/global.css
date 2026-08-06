@@ -8479,58 +8479,23 @@ code.grab-fact-v,
 .perf-chips > * { flex: none; max-width: 100%; }
 .perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* The count of what did not fit. Sticky to the right edge of the row: as the
-   last item in an overflow-hidden line it was clipped by the very truncation
-   it exists to explain. It carries the row's background so pills slide under
-   it rather than through it. */
+/* The count of what did not fit.
+   It keeps the .perf-chip chrome instead of stripping it. As borderless dim
+   text at 0.6 opacity it read as something left behind by accident rather
+   than a control, which is precisely what it looked like. Shaped like the
+   pills it counts, it is legible as their sibling; muted colour and tabular
+   numerals are enough to say it is a quantity and not a name, and the base
+   chip's hover already lights it green because it is pressable.
+   order places it straight after the last visible pill: the clipped ones stay
+   in flow after it, so it no longer needs to be stuck to the right edge with
+   a gap of dead space in front of it. */
 .perf-chip-more {
-  border: 0; padding: 0 2px 0 8px;
-  color: var(--text-dim); font-size: 11px;
-  cursor: pointer;
-  position: sticky; right: 0; margin-left: auto;
-  background: linear-gradient(to right, transparent, var(--bg-1) 8px);
-  font-variant-numeric: tabular-nums;
-}
-.perf-chip-more:hover { color: var(--accent-bright); }
-/* Adding a performer: the pill IS the button.
-   It used to be a span holding the name plus a 12px "+", so the only place
-   that did anything was a glyph smaller than a fingertip, sitting inside
-   something that looked pressable and was not. The plus now leads instead of
-   trailing, so it reads as a verb against the name ("+ Jane Doe" = add Jane
-   Doe) rather than as a badge hanging off the end, and it is a real icon in
-   the same stroke language as the rest rather than a text character sitting
-   at whatever size and baseline the font felt like. */
-.perf-chip-missing {
-  cursor: pointer;
-  font-family: inherit;
-  padding-left: 7px; /* an icon sits optically lighter than a letter */
-  gap: 5px;
-}
-.perf-chip-missing:hover:not(:disabled),
-.perf-chip-missing:focus-visible {
-  border-style: solid;
-  border-color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.12);
-  color: var(--accent-bright);
+  order: 1;
   opacity: 1;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  padding-inline: 8px;
 }
-.perf-chip-missing:active:not(:disabled) {
-  background: rgba(var(--accent-rgb), 0.2);
-}
-.perf-chip-missing:disabled { cursor: default; }
-/* Fixed slot: plus, spinner, check and "!" all occupy the same box, so the
-   pill does not change width as its state changes. */
-.perf-chip-add {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 13px;
-  height: 13px;
-  flex: none;
-  color: var(--accent, #22c55e);
-  line-height: 1;
-}
-.perf-chip-missing.is-err .perf-chip-add { color: var(--red, #ef4444); }
 
 .scene-thumb-wrap::after {
   content: ""; position: absolute; inset: auto 0 0 0; height: 44%;

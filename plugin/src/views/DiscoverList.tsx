@@ -932,9 +932,16 @@ const PERF_CHIP_RENDER_CAP = 14;
 // Reserve for the "+N" readout before it exists to be measured.
 const MORE_CHIP_ESTIMATE = 42;
 
-// useFitCount reports how many of a flex row's children fit on one line.
-// overflow: hidden clips paint, not layout, so a clipped child still reports
-// a truthful offsetLeft and this stays correct as the row is re-measured.
+// useFitCount reports how many of a flex row's pills fit on one line.
+//
+// It adds up widths rather than reading positions. The first version compared
+// offsetLeft against the row's width, and offsetLeft is measured from the
+// offsetParent, which for an unpositioned row is somewhere far up the page: a
+// pill sitting at x=0 in a 274px row reported 1044, so everything "overflowed"
+// and 297 of 300 cards showed a single pill. A pill's WIDTH does not depend on
+// where it sits, on whether it is painted, or on what order flex puts it in,
+// which also leaves the row free to reorder without the measurement chasing
+// its own tail.
 function useFitCount(
   ref: React.RefObject<HTMLElement | null>,
   count: number,
@@ -952,25 +959,27 @@ function useFitCount(
     const measure = () => {
       const avail = el.clientWidth;
       if (avail === 0) return; // not laid out yet, or off-screen
-      const kids = [...el.children].filter(
-        (c) => c !== moreRef.current,
-      ) as HTMLElement[];
+      const gap = parseFloat(getComputedStyle(el).columnGap) || 0;
+      const widths = ([...el.children] as HTMLElement[])
+        .filter((c) => c !== moreRef.current)
+        .map((c) => c.offsetWidth);
       const fits = (reserve: number) => {
+        let used = 0;
         let n = 0;
-        for (const k of kids) {
-          if (k.offsetLeft + k.offsetWidth > avail - reserve) break;
+        for (const w of widths) {
+          const next = used + (n ? gap : 0) + w;
+          if (next > avail - reserve) break;
+          used = next;
           n++;
         }
         return n;
       };
-      // First pass assumes the whole width. If that already shows everyone,
-      // no readout is needed and no space has to be kept for one.
+      // If everyone fits there is no count, so no space is kept for one.
       let n = fits(0);
-      if (n < kids.length) {
-        const w = moreRef.current?.offsetWidth ?? MORE_CHIP_ESTIMATE;
-        n = fits(w + 6);
+      if (n < widths.length) {
+        n = fits((moreRef.current?.offsetWidth ?? MORE_CHIP_ESTIMATE) + gap);
       }
-      // At least one pill, even if a single long name cannot fit: a sliced
+      // At least one, even where a single long name cannot fit: a clipped
       // name still says more than an empty row.
       setFit(Math.max(1, n));
     };
@@ -1018,7 +1027,12 @@ function ScenePerfChips({
         // Kept in flow and merely unpainted: removing them would destroy the
         // offsets the fit is measured from.
         const clipped = !showAll && i >= fit;
-        const style = clipped ? { visibility: "hidden" as const } : undefined;
+        // order pushes clipped pills past the count, so the count lands beside
+        // the last name instead of marooned at the right edge with a gap. They
+        // stay in flow: only their paint is dropped.
+        const style = clipped
+          ? { visibility: "hidden" as const, order: 2 }
+          : undefined;
         return p.local === false && p.stashdb_id ? (
           <MissingPerfChip
             key={"m" + p.stashdb_id}
@@ -1046,10 +1060,19 @@ function ScenePerfChips({
           title={`Show ${hidden} more performer${hidden === 1 ? "" : "s"}`}
           aria-label={`Show ${hidden} more performer${hidden === 1 ? "" : "s"}`}
         >
-          {/* Sticky to the right edge, so the readout explaining the
-              truncation cannot itself be truncated — which is exactly what
-              happened when it was just the last item in the row. */}
+          {/* Shaped like the pills it counts. As borderless dim text it read
+              as something left behind by accident rather than a control. */}
           +{hidden}
+        </button>
+      )}
+      {showAll && all.length > 1 && (
+        <button
+          type="button"
+          className="perf-chip perf-chip-more"
+          onClick={() => setShowAll(false)}
+          title="Collapse the performer list"
+        >
+          Less
         </button>
       )}
     </div>
