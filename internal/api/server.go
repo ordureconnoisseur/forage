@@ -152,6 +152,9 @@ type Server struct {
 	// dupes views. The lock is held across the (slow) library sweep so
 	// concurrent loads coalesce onto one fetch rather than each launching their
 	// own.
+	// perfPicks memoises the performers strip; see discover_performers.go.
+	perfPicks performerPickCache
+
 	ownedCopiesMu      sync.Mutex
 	ownedCopies        map[string][]stash.SceneRef
 	ownedCopiesFetched time.Time
@@ -392,6 +395,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/discover", s.getDiscover)
 		r.Get("/trending", s.getTrending)
 		r.Get("/discover/boxes", s.getDiscoverBoxes)
+		r.Get("/discover/performers", s.getDiscoverPerformers)
 		r.Get("/indexers", s.getIndexers)
 		r.Get("/indexer-catalog", s.getIndexerCatalog)
 		r.Post("/indexer-catalog/add", s.postIndexerCatalogAdd)

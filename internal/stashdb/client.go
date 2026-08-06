@@ -627,3 +627,167 @@ func (c *Client) FindPerformersByID(ctx context.Context, ids []string) (map[stri
 	}
 	return out, nil
 }
+
+// ── queryPerformers ──────────────────────────────────────────────────
+
+// PerformerProfile is the wider projection used to browse performers, as
+// opposed to Performer above, which exists only to resolve names for the
+// matcher and carries nothing a card would show.
+type PerformerProfile struct {
+	ID             string
+	Name           string
+	Disambiguation string
+	Gender         string
+	SceneCount     int
+	// ImageURL is the tallest portrait StashDB holds, or "" when it holds
+	// none. Portraits and square avatars are mixed together in `images` with
+	// no flag distinguishing them, so the choice is made by shape.
+	ImageURL string
+}
+
+// PerformerQuery is one page of queryPerformers.
+//
+// Sort is the interesting part. StashDB has no TRENDING sort for performers
+// (the enum offers it for scenes only), and POPULARITY is career volume: it
+// answers with the men who have four thousand scenes, every time, forever.
+// The two that carry any sense of "now" are DEBUT, whose first scene has just
+// landed, and LAST_SCENE, who released most recently.
+type PerformerQuery struct {
+	Page    int
+	PerPage int
+	// Sort is a PerformerSortEnum value: "DEBUT", "LAST_SCENE", "POPULARITY",
+	// "SCENE_COUNT", "NAME"… Empty falls through to "LAST_SCENE".
+	Sort string
+	// Gender filters server-side ("FEMALE", "MALE", …). Empty means any.
+	Gender string
+}
+
+type QueryPerformersResult struct {
+	Count      int
+	Performers []PerformerProfile
+}
+
+const queryPerformersGQL = `
+query ForagerQueryPerformers($input: PerformerQueryInput!) {
+  queryPerformers(input: $input) {
+    count
+    performers {
+      id
+      name
+      disambiguation
+      gender
+      scene_count
+      images { url width height }
+    }
+  }
+}`
+
+type performerWire struct {
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Disambiguation string `json:"disambiguation"`
+	Gender         string `json:"gender"`
+	SceneCount     int    `json:"scene_count"`
+	Images         []struct {
+		URL    string `json:"url"`
+		Width  int    `json:"width"`
+		Height int    `json:"height"`
+	} `json:"images"`
+}
+
+func (w performerWire) toProfile() PerformerProfile {
+	p := PerformerProfile{
+		ID:             w.ID,
+		Name:           w.Name,
+		Disambiguation: w.Disambiguation,
+		Gender:         w.Gender,
+		SceneCount:     w.SceneCount,
+	}
+	// Prefer the tallest portrait. A performer's images are a mixed bag:
+	// 1440x2160 publicity shots next to 400x400 avatars, in no stated order,
+	// with nothing marking which is which. Taking images[0] puts a square
+	// avatar in a 3:4 card about a third of the time.
+	best := -1
+	for _, im := range w.Images {
+		if im.URL == "" {
+			continue
+		}
+		score := im.Height
+		if im.Width > 0 && im.Height > im.Width {
+			score += im.Height // portraits outrank squares of the same height
+		}
+		if score > best {
+			best, p.ImageURL = score, im.URL
+		}
+	}
+	return p
+}
+
+// QueryPerformers runs one page of queryPerformers.
+func (c *Client) QueryPerformers(ctx context.Context, q PerformerQuery) (*QueryPerformersResult, error) {
+	if q.PerPage == 0 {
+		q.PerPage = 25
+	}
+	if q.Page == 0 {
+		q.Page = 1
+	}
+	sort := q.Sort
+	if sort == "" {
+		sort = "LAST_SCENE"
+	}
+	input := map[string]any{
+		"page":      q.Page,
+		"per_page":  q.PerPage,
+		"sort":      sort,
+		"direction": "DESC",
+	}
+	if q.Gender != "" {
+		input["gender"] = q.Gender
+	}
+	var resp struct {
+		QueryPerformers struct {
+			Count      int             `json:"count"`
+			Performers []performerWire `json:"performers"`
+		} `json:"queryPerformers"`
+	}
+	if err := c.do(ctx, queryPerformersGQL, map[string]any{"input": input}, &resp); err != nil {
+		return nil, err
+	}
+	out := &QueryPerformersResult{Count: resp.QueryPerformers.Count}
+	for _, w := range resp.QueryPerformers.Performers {
+		out.Performers = append(out.Performers, w.toProfile())
+	}
+	return out, nil
+}
+
+// FindPerformerProfilesByID fetches the card-shaped projection for a set of
+// ids, alias-batched for the same reason FindPerformersByID is: queryPerformers
+// has no ids filter, so a bulk fetch by id is a pile of findPerformer calls
+// packed into one document.
+func (c *Client) FindPerformerProfilesByID(ctx context.Context, ids []string) (map[string]PerformerProfile, error) {
+	out := make(map[string]PerformerProfile, len(ids))
+	for start := 0; start < len(ids); start += findPerformerChunk {
+		end := start + findPerformerChunk
+		if end > len(ids) {
+			end = len(ids)
+		}
+		var b strings.Builder
+		b.WriteString("query ForagerFindPerformerProfiles {\n")
+		for i, id := range ids[start:end] {
+			fmt.Fprintf(&b, "  p%d: findPerformer(id: %q) { id name disambiguation"+
+				" gender scene_count images { url width height } }\n", i, id)
+		}
+		b.WriteString("}")
+		var resp map[string]*performerWire
+		if err := c.do(ctx, b.String(), nil, &resp); err != nil {
+			return out, err
+		}
+		for _, p := range resp {
+			if p == nil || p.ID == "" {
+				continue
+			}
+			out[p.ID] = p.toProfile()
+		}
+	}
+	return out, nil
+}
