@@ -1342,6 +1342,26 @@ function MismatchPanel({
   actual: string;
   conf: string | null;
 }) {
+  const [chosen, setChosen] = useState<string | null>(
+    g.status === "confirmed" ? actual : null,
+  );
+  const [busy, setBusy] = useState("");
+  const [err, setErr] = useState("");
+  const [cast, setCast] = useState<string[]>([]);
+
+  const choose = async (id: string) => {
+    setBusy(id);
+    setErr("");
+    try {
+      await matchGrab(g.id, id);
+      setChosen(id);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <div className="grab-mismatch">
       <div className="grab-mismatch-head">
@@ -1353,26 +1373,120 @@ function MismatchPanel({
         <div>
           <div className="grab-match-hero-title">Different scene</div>
           <div className="grab-match-hero-sub">
-            The file that arrived is not the scene this grab went out for.
+            Stash identified the file as a different scene than this grab went
+            out for. One of them is wrong. Pick the one the file really is.
           </div>
         </div>
       </div>
+      {/* Both sides carry the same kind of button, because either can be the
+          wrong one: forage can pick the wrong release, and Stash's phash can
+          pick the wrong scene. Presenting only "keep what arrived" quietly
+          asserts that Stash is never mistaken.
+
+          And the choice stays reversible. It used to vanish the moment it was
+          made (the tool row below is gated on the grab still being unresolved),
+          so a mis-tap was final and the panel that showed you the mistake
+          offered no way to correct it. */}
       <div className="grab-mismatch-pair">
         <SceneFace
           id={predicted}
           label="Went out for"
           badge={conf ?? undefined}
           tone="wanted"
+          chosen={chosen === predicted}
+          busy={busy === predicted}
+          action="Stash got it wrong, it's this one"
+          onChoose={() => choose(predicted)}
         />
-        <SceneFace id={actual} label="What arrived" tone="got" onDisk />
+        <SceneFace
+          id={actual}
+          label="What arrived"
+          tone="got"
+          onDisk
+          chosen={chosen === actual}
+          busy={busy === actual}
+          action="Keep this one"
+          onChoose={() => choose(actual)}
+          onCast={setCast}
+        />
       </div>
-      {/* Named for the outcome, not the mechanism. "Keep this one" is the
-          answer to "the download is wrong but the film is fine", which is
-          the common case and previously required copying the second uuid out
-          of the panel and pasting it into the box below. */}
-      <KeepScene g={g} actual={actual} />
+      {err && <div className="grab-delete-err">{err}</div>}
+      {chosen === actual && (
+        <div className="grab-mismatch-note">
+          Tagged as the scene that arrived. The one you wanted goes back on the
+          watchlist.
+          <ReFileHint g={g} cast={cast} />
+        </div>
+      )}
+      {chosen === predicted && (
+        <div className="grab-mismatch-note">
+          Tagged as the scene forage went out for. The file stays where it is,
+          which is the folder it was placed in for that scene.
+        </div>
+      )}
     </div>
   );
+}
+
+// Where a kept scene actually belongs.
+//
+// Matching does not move anything: a grab is placed into a performer folder
+// when it lands, chosen from the scene forage PREDICTED. So accepting a
+// different scene leaves the file filed under someone who is not in it, which
+// is how a Harley Love scene ends up in Scarlett Rosewood's folder. Nothing
+// said so; this does, and offers the move.
+function ReFileHint({ g, cast }: { g: Grab; cast: string[] }) {
+  const [busy, setBusy] = useState("");
+  const [done, setDone] = useState("");
+  const [err, setErr] = useState("");
+  const folder = g.performer_name || "";
+  const wrongFolder =
+    folder && cast.length > 0 && !cast.some((n) => sameName(n, folder));
+  if (done) {
+    return <div className="grab-mismatch-refile">Re-filed under {done}.</div>;
+  }
+  if (!wrongFolder) return null;
+
+  const move = async (name: string) => {
+    setBusy(name);
+    setErr("");
+    try {
+      await setGrabPerformer(g.id, name);
+      setDone(name);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="grab-mismatch-refile">
+      <span>
+        It is filed under <strong>{folder}</strong>, who is not in this scene.
+      </span>
+      {cast.map((n) => (
+        <button
+          key={n}
+          type="button"
+          className="grab-action match"
+          disabled={!!busy}
+          onClick={() => move(n)}
+        >
+          {busy === n ? "Moving…" : `File under ${n}`}
+        </button>
+      ))}
+      {err && <span className="grab-delete-err">{err}</span>}
+    </div>
+  );
+}
+
+// Loose name comparison: the folder name came from forage's own performer
+// record and the cast list from StashDB, so they agree on the person without
+// always agreeing on punctuation or case.
+function sameName(a: string, b: string) {
+  const norm = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return norm(a) === norm(b);
 }
 
 // SceneFace resolves an id to a picture and a title.
@@ -1382,12 +1496,22 @@ function SceneFace({
   badge,
   tone,
   onDisk,
+  chosen,
+  busy,
+  action,
+  onChoose,
+  onCast,
 }: {
   id: string;
   label: string;
   badge?: string;
   tone: "wanted" | "got";
   onDisk?: boolean;
+  chosen?: boolean;
+  busy?: boolean;
+  action?: string;
+  onChoose?: () => void;
+  onCast?: (names: string[]) => void;
 }) {
   const [card, setCard] = useState<SceneCard | null>(null);
   const [failed, setFailed] = useState(false);
@@ -1395,7 +1519,13 @@ function SceneFace({
   useEffect(() => {
     let cancelled = false;
     fetchSceneCard(id)
-      .then((c) => !cancelled && setCard(c))
+      .then((c) => {
+        if (cancelled) return;
+        setCard(c);
+        // Handed up so the panel can tell whether the file is filed under
+        // someone who is actually in the scene it kept.
+        onCast?.(c.performers ?? []);
+      })
       .catch(() => !cancelled && setFailed(true));
     return () => {
       cancelled = true;
@@ -1404,10 +1534,11 @@ function SceneFace({
 
   const img = proxiedImageURL(card?.image_url) || "";
   return (
-    <div className={"scene-face " + tone}>
+    <div className={"scene-face " + tone + (chosen ? " is-chosen" : "")}>
       <div className="scene-face-label">
         {label}
         {onDisk && <span className="scene-face-tag">on disk</span>}
+        {chosen && <span className="scene-face-tag chosen">tagged as this</span>}
       </div>
       <div className="scene-face-body">
         {img ? (
@@ -1436,6 +1567,16 @@ function SceneFace({
           {badge && <span className="grab-match-badge dim">{badge}</span>}
         </div>
       </div>
+      {action && onChoose && !chosen && (
+        <button
+          type="button"
+          className={"grab-action match scene-face-pick " + tone}
+          onClick={onChoose}
+          disabled={busy}
+        >
+          {busy ? "Applying…" : action}
+        </button>
+      )}
     </div>
   );
 }
@@ -2601,8 +2742,15 @@ function GrabRow({
   // file: a wrong-scene mismatch, or anything placed that never got a
   // StashDB cross-id (e.g. "in library (scanned)" — no fingerprint on
   // StashDB). Needs the file on disk to apply onto.
+  // A divergence that has been resolved can be resolved differently: the two
+  // ids still disagree, so the question is still open, whatever the status
+  // says. Gating this on "mismatched" alone meant the first answer was the
+  // last one, and the panel above showed the mistake with no way to fix it.
   const canMatch =
-    !!g.placed_path && (g.status === "mismatched" || !g.actual_stashdb_id);
+    !!g.placed_path &&
+    (g.status === "mismatched" ||
+      !g.actual_stashdb_id ||
+      (!!g.predicted_stashdb_id && g.actual_stashdb_id !== g.predicted_stashdb_id));
 
   // Confirmed, but nothing on StashDB was ever linked to it — toned apart
   // from a real match everywhere the row shows its status.

@@ -9002,3 +9002,36 @@ code.grab-fact-v,
 @media (prefers-reduced-motion: reduce) {
   .grab-pack-more { transition: none; }
 }
+
+/* The chosen side of a mismatch. Both faces carry a button, because either
+   one can be the wrong one, so the state has to say which was picked rather
+   than relying on which button is missing. */
+.scene-face.is-chosen { border-color: var(--accent); background: rgba(var(--accent-rgb), 0.07); }
+.scene-face-tag.chosen { background: var(--accent); color: #08120b; }
+.scene-face-pick {
+  width: 100%;
+  margin-top: 8px;
+  justify-content: center;
+}
+/* The predicted side is the quieter option: taking it means overriding Stash's
+   own identification, which is the less common answer and the one that
+   rewrites metadata, so it does not get the accent that says "do this". */
+.scene-face-pick.wanted { color: var(--text-muted); }
+.scene-face-pick.wanted:hover:not(:disabled) { color: var(--accent-bright); }
+
+.grab-mismatch-note {
+  margin-top: 12px;
+  font-size: 11.5px;
+  color: var(--accent-bright);
+}
+.grab-mismatch-refile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border);
+  color: var(--text-muted);
+}
+.grab-mismatch-refile strong { color: var(--text); }
