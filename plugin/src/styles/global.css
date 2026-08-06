@@ -8438,7 +8438,14 @@ code.grab-fact-v,
   font-variant-numeric: tabular-nums;
 }
 
-.perf-chips { display: flex; align-items: center; gap: 5px; min-height: 23px; overflow: hidden; }
+/* flex-wrap is declared, not left to the default: an earlier .perf-chips
+   rule sets `wrap`, and a later rule of equal specificity only wins the
+   properties it names. Without this the row wrapped to 257px on a card
+   with many performers and the fixed-height slots meant nothing. The
+   design's prose said "nowrap plus overflow hidden"; its CSS carried
+   only the second half. */
+.perf-chips { display: flex; flex-wrap: nowrap; align-items: center; gap: 5px;
+  min-height: 23px; max-height: 23px; overflow: hidden; margin-top: 0; }
 .perf-chips > * { flex: none; max-width: 100%; }
 .perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
