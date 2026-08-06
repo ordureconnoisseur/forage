@@ -1869,8 +1869,18 @@ function ChipPortrait({
         <img
           src={img}
           alt=""
+          onLoad={(e) => {
+            // Same contract as Discover: stop the placeholder once the image
+            // is there. Without this every card on the page keeps an infinite
+            // CSS animation repainting behind a picture that already arrived.
+            (e.currentTarget as HTMLImageElement)
+              .parentElement?.classList.add("thumb-loaded");
+          }}
           onError={(e) => {
-            (e.currentTarget as HTMLImageElement).style.display = "none";
+            const img = e.currentTarget as HTMLImageElement;
+            img.style.display = "none";
+            // A thumbnail that failed is not still loading.
+            img.parentElement?.classList.add("thumb-failed");
           }}
         />
       </div>
@@ -2010,9 +2020,18 @@ function PackPerformerReviewer({
                         src={img}
                         alt=""
                         loading="lazy"
+                        onLoad={(e) => {
+                          // Same contract as Discover: stop the placeholder once the image
+                          // is there. Without this every card on the page keeps an infinite
+                          // CSS animation repainting behind a picture that already arrived.
+                          (e.currentTarget as HTMLImageElement)
+                            .parentElement?.classList.add("thumb-loaded");
+                        }}
                         onError={(e) => {
-                          (e.currentTarget as HTMLImageElement).style.display =
-                            "none";
+                          const img = e.currentTarget as HTMLImageElement;
+                          img.style.display = "none";
+                          // A thumbnail that failed is not still loading.
+                          img.parentElement?.classList.add("thumb-failed");
                         }}
                       />
                     ) : null}
