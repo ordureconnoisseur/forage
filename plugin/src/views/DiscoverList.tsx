@@ -16,6 +16,7 @@ import {
 import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
+import { GenderIcon } from "../icons";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -455,7 +456,7 @@ export default function DiscoverList({
                       hover — stops depending on a title attribute. */}
                   {glyph && (
                     <span className="scope-glyph" aria-hidden="true">
-                      {glyph}
+                      <GenderIcon kind={glyph} />
                     </span>
                   )}
                   {f}

@@ -34,3 +34,65 @@ export function BellIcon({ size = 10 }: { size?: number }) {
     </svg>
   );
 }
+
+// Gender symbols, in the same stroke language as the rest of this file.
+//
+// These replace the unicode glyphs the content filters used to render
+// (⚧︎ ♀︎ ♂︎ ⚥︎). Those depend on a font actually carrying the codepoint AND on
+// the variation selector being honoured, so the same chip looked different on
+// every platform and thin-to-invisible on some — which is the exact reason
+// this file opens with "No emoji: glyph rendering varies across platforms".
+//
+// The Venus and Mars geometry is taken from binge's GenderIcon so the two
+// apps draw the same symbol; the trans and intersex forms are built in the
+// same idiom, since binge only needed the per-gender variants.
+export function GenderIcon({
+  kind,
+  size = 13,
+}: {
+  kind: "trans" | "female" | "male" | "intersex";
+  size?: number;
+}) {
+  return (
+    <svg {...iconProps(size)} strokeWidth={1.9}>
+      {kind === "female" && (
+        <g>
+          <circle cx="12" cy="9" r="4.5" />
+          <path d="M12 13.5 v7" />
+          <path d="M9 17.5 h6" />
+        </g>
+      )}
+      {kind === "male" && (
+        <g>
+          <circle cx="10" cy="14" r="4.5" />
+          <path d="M13.2 10.8 L20 4" />
+          <path d="M14 4 H20 V10" />
+        </g>
+      )}
+      {kind === "intersex" && (
+        // Venus below, Mars above-right: the two arms of ⚥ on one ring.
+        <g>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 16 v5" />
+          <path d="M9.5 18.7 h5" />
+          <path d="M14.9 9.1 L19.5 4.5" />
+          <path d="M15.5 4.5 H19.5 V8.5" />
+        </g>
+      )}
+      {kind === "trans" && (
+        // ⚧: the same two arms, plus the third to the upper LEFT with a bar
+        // across its tip — the stroke that distinguishes the trans symbol
+        // from a plain intersex one.
+        <g>
+          <circle cx="12" cy="12" r="4" />
+          <path d="M12 16 v5" />
+          <path d="M9.5 18.7 h5" />
+          <path d="M14.9 9.1 L19.5 4.5" />
+          <path d="M15.5 4.5 H19.5 V8.5" />
+          <path d="M9.1 9.1 L4.9 4.9" />
+          <path d="M3.7 6.6 L6.6 3.7" />
+        </g>
+      )}
+    </svg>
+  );
+}

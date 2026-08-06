@@ -8405,7 +8405,9 @@ code.grab-fact-v,
   color: var(--text); border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.13);
 }
-.scope-glyph { font-size: 14px; line-height: 1; }
+/* Holds an SVG now, not a character, so it needs to align rather than be
+   sized by font-size. */
+.scope-glyph { display: inline-flex; align-items: center; line-height: 0; }
 
 /* Readout: text, in the header, never between two buttons. */
 .list-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 8px; }

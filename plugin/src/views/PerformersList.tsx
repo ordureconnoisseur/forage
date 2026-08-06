@@ -1,6 +1,7 @@
 import SubscriptionsRow from "../SubscriptionsRow";
 import { useEffect, useMemo, useState } from "react";
 import { filterGlyph } from "../format";
+import { GenderIcon } from "../icons";
 import { invalidate, useCached } from "../swr";
 import {
   fetchPerformers,
@@ -155,7 +156,7 @@ export default function PerformersList({
                   >
                     {glyph ? (
                       <span className="chip-glyph" aria-label={f}>
-                        {glyph}
+                        <GenderIcon kind={glyph} />
                       </span>
                     ) : (
                       <span className="chip-label">{f}</span>

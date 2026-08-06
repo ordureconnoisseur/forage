@@ -21,14 +21,25 @@ export function humanSize(b: number, zero = ""): string {
 // trailing U+FE0E variation selector forces the monochrome text glyph
 // (iOS otherwise renders these as coloured emoji). Mixed sets we have
 // no single symbol for return null; the chip falls back to its name.
-export function filterGlyph(genders?: string[]): string | null {
+/**
+ * Which symbol a content filter should show, or null when its gender set is
+ * mixed enough that no single one is honest.
+ *
+ * Returns a KIND rather than a character. This used to hand back unicode
+ * (⚧︎ ♀︎ ♂︎ ⚥︎), which needs the font to carry the codepoint and to honour the
+ * variation selector — so the same chip rendered differently on every platform
+ * and came out thin or blank on some. icons.tsx draws them instead.
+ */
+export type GenderKind = "trans" | "female" | "male" | "intersex";
+
+export function filterGlyph(genders?: string[]): GenderKind | null {
   if (!genders || genders.length === 0) return null;
   const trans = (g: string) =>
     g.startsWith("TRANSGENDER") || g === "NON_BINARY";
-  if (genders.every(trans)) return "⚧︎"; // ⚧
-  if (genders.every((g) => g === "FEMALE")) return "♀︎"; // ♀
-  if (genders.every((g) => g === "MALE")) return "♂︎"; // ♂
-  if (genders.every((g) => g === "INTERSEX")) return "⚥︎"; // ⚥
+  if (genders.every(trans)) return "trans";
+  if (genders.every((g) => g === "FEMALE")) return "female";
+  if (genders.every((g) => g === "MALE")) return "male";
+  if (genders.every((g) => g === "INTERSEX")) return "intersex";
   return null;
 }
 
