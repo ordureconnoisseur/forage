@@ -19,10 +19,21 @@ import { DiscoverCard } from "./DiscoverList";
 // Pages come live from the daemon, one request each, so what loads reflects
 // the ranking at the moment it was scrolled to.
 
-// How many cards a page carries. Big enough that a scroll rarely stalls
-// waiting on the network, small enough that the first screen is not held up
-// by scenes three screens down.
-const PER_PAGE = 24;
+// How many scenes to ASK for per request, which is not how many cards arrive:
+// the daemon drops scenes the library already holds, and on a well-stocked
+// library that is most of a trending page. Measured against the live ranking,
+// six requested yielded one, one and three across three pages. So ask for a
+// lot and expect a little.
+const PER_PAGE = 48;
+
+// How many requests one fill may chain before giving up and waiting for the
+// user to scroll. Without a bound, a stretch of the ranking that is entirely
+// owned would walk to the page cap in one go.
+const MAX_CHAINED = 6;
+
+// Matches the observer's rootMargin: the distance below the fold that still
+// counts as "the screen is not full yet".
+const LOOKAHEAD = 800;
 
 export default function TrendingList({
   box,
@@ -47,27 +58,44 @@ export default function TrendingList({
   const nextPage = useRef(1);
   const [pending, setPending] = useState(true);
 
+  const sentinel = useRef<HTMLDivElement | null>(null);
+
   const loadMore = useCallback(async () => {
     if (loading.current) return;
     loading.current = true;
     setPending(true);
     try {
-      const r: TrendingPage = await fetchTrending({
-        page: nextPage.current,
-        perPage: PER_PAGE,
-        box: box || undefined,
-      });
-      setSource(r.source || "StashDB");
-      setScenes((prev) => {
-        // The ranking shifts under us between requests, so page 3 can repeat
-        // a scene from page 2. Appending blind would render duplicate keys
-        // and, worse, show the same card twice on one screen.
-        const seen = new Set(prev.map((s) => s.stashdb_id));
-        return prev.concat((r.scenes || []).filter((s) => !seen.has(s.stashdb_id)));
-      });
-      setHasMore(!!r.has_more);
-      nextPage.current += 1;
-      setErr("");
+      // Keep going until the screen is actually full. A page of 48 can yield
+      // three cards, which does not move the sentinel off screen, and an
+      // IntersectionObserver only fires on a CHANGE: an element that never
+      // stops intersecting never reports again, so a single fetch per event
+      // leaves the scroll wedged with the sentinel sitting in view.
+      for (let i = 0; i < MAX_CHAINED; i++) {
+        const r: TrendingPage = await fetchTrending({
+          page: nextPage.current,
+          perPage: PER_PAGE,
+          box: box || undefined,
+        });
+        nextPage.current += 1;
+        setSource(r.source || "StashDB");
+        setScenes((prev) => {
+          // The ranking shifts under us between requests, so page 3 can
+          // repeat a scene from page 2. Appending blind would render
+          // duplicate keys and show the same card twice on one screen.
+          const seen = new Set(prev.map((s) => s.stashdb_id));
+          return prev.concat(
+            (r.scenes || []).filter((s) => !seen.has(s.stashdb_id)),
+          );
+        });
+        setHasMore(!!r.has_more);
+        setErr("");
+        if (!r.has_more) break;
+        // Let the appended cards lay out before asking whether they filled
+        // the screen; the sentinel has not moved until they have.
+        await new Promise((res) => requestAnimationFrame(() => res(null)));
+        const top = sentinel.current?.getBoundingClientRect().top;
+        if (top == null || top > window.innerHeight + LOOKAHEAD) break;
+      }
     } catch (e) {
       setErr((e as Error).message);
       // Stop the sentinel retrying into a failing endpoint forever; the
@@ -89,7 +117,6 @@ export default function TrendingList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [box]);
 
-  const sentinel = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = sentinel.current;
     if (!el || !hasMore) return;
@@ -99,7 +126,7 @@ export default function TrendingList({
       (entries) => {
         if (entries.some((e) => e.isIntersecting)) void loadMore();
       },
-      { rootMargin: "800px 0px" },
+      { rootMargin: `${LOOKAHEAD}px 0px` },
     );
     io.observe(el);
     return () => io.disconnect();
@@ -115,7 +142,8 @@ export default function TrendingList({
         <h2>Trending on {source}</h2>
         <div className="meta">
           The whole ranking, not just your performers. This is where scenes by
-          people you do not follow yet turn up.
+          people you do not follow yet turn up. Scenes already in your library
+          are left out, so this is thinner than the ranking itself.
         </div>
       </div>
 
