@@ -882,11 +882,17 @@ function DiscoverCard({
         <div className="meta">
           {[s.release_date, s.studio_name].filter(Boolean).join(" · ")}
         </div>
-        {s.performers.length > 0 && (
-          <div className="perf-chips">
+        {/* Always rendered, even with nobody in it. The row is one of the
+            three fixed-height slots that stop two cards in a row disagreeing
+            about height, and a slot that vanishes when a scene has no
+            performers is exactly the ragged-height problem this replaced —
+            measured at 241px against 272px. Empty, it reserves its min-height
+            and shows nothing. */}
+        <div className="perf-chips">
+          {s.performers.length > 0 && (
             <ScenePerfChips s={s} box={box} onPickPerformer={onPickPerformer} />
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
