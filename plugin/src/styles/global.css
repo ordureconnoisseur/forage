@@ -8562,3 +8562,87 @@ code.grab-fact-v,
   background: linear-gradient(to right, rgba(13,13,13,0), var(--bg-0) 78%);
   pointer-events: none;
 }
+
+/* ── trending: the full ranking ──────────────────────────────────── */
+/* "See all" on the carousel header. It sits beside a count and an age, both
+   of them muted readouts, so it has to read as the one thing there you can
+   press without shouting: accent-coloured text, no fill, and a chevron that
+   moves on hover to say which direction it goes. */
+.trending-all {
+  border: 0;
+  background: none;
+  padding: 2px 0 2px 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  color: var(--accent-bright);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.trending-all svg { transition: transform 0.14s ease; }
+.trending-all:hover svg { transform: translateX(2px); }
+.trending-all:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+/* Back out of the ranking. A chevron rotated rather than a second glyph:
+   it is the same "this way" mark the entry point used, pointed the other way,
+   which makes the pair legible as a pair. */
+.trending-back {
+  border: 0;
+  background: none;
+  padding: 0 0 6px 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.trending-back svg { transform: rotate(180deg); transition: transform 0.14s ease; }
+.trending-back:hover { color: var(--accent-bright); }
+.trending-back:hover svg { transform: rotate(180deg) translateX(2px); }
+
+/* Skeletons, not a spinner: they stand in the grid where the arriving cards
+   will land, so the page does not lurch when a page resolves. The pulse is
+   what separates "loading" from "broken", which is the same reason the card
+   thumb has one. */
+.trending-skeletons { margin-top: 16px; }
+.skeleton-card {
+  border-color: var(--glass-border);
+  padding-bottom: 12px;
+  animation: skeleton-pulse 1.6s ease-in-out infinite;
+}
+.skeleton-thumb {
+  aspect-ratio: 16 / 9;
+  background: var(--bg-1);
+  border-radius: var(--radius-sm, 6px) var(--radius-sm, 6px) 0 0;
+}
+.skeleton-line {
+  height: 11px;
+  margin: 12px 12px 0 12px;
+  border-radius: 4px;
+  background: var(--bg-1);
+}
+.skeleton-line.short { width: 45%; }
+@keyframes skeleton-pulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 0.85; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-card { animation: none; opacity: 0.7; }
+  .trending-all svg, .trending-back svg { transition: none; }
+}
+
+.trending-end {
+  margin: 28px 0 8px;
+  text-align: center;
+  font-size: 13px;
+}
+.trending-end button { margin-top: 8px; }
+/* Not display:none: an unrendered sentinel never intersects anything, and
+   the scroll would silently stop loading. */
+.trending-sentinel { height: 1px; }

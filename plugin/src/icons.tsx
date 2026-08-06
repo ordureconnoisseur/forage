@@ -149,3 +149,14 @@ export function CheckIcon({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
+
+// A right chevron, for "there is more this way". Same stroke language as the
+// rest; the carousel's own arrows are separate glyphs baked into that
+// component.
+export function ChevronIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)} strokeWidth={2.2}>
+      <path d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}

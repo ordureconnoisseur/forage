@@ -16,7 +16,7 @@ import {
 import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
-import { CheckIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
+import { CheckIcon, ChevronIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
 // featuring ≥1 of the user's local-library performers, filtering out
@@ -59,12 +59,15 @@ function discoverKey(
 export default function DiscoverList({
   onPickPerformer,
   onPickScene,
+  onSeeTrending,
 }: {
   onPickPerformer: (localID: string) => void;
   // Navigate straight to a scene's release-search page. Carries the
   // optional performer name so the placer can drop the file under
   // <library>/<performer>/ when the user grabs from this jump-point.
   onPickScene: (stashDBID: string, performerName?: string) => void;
+  // Opens the full trending ranking for the source being browsed.
+  onSeeTrending: (box?: string) => void;
 }) {
   const [days, setDays] = useState<number>(() => {
     const stored = parseInt(localStorage.getItem("forage.discover.days") || "", 10);
@@ -347,6 +350,19 @@ export default function DiscoverList({
                 {relativeTime(data.trending_refreshed_at)}
               </div>
             )}
+            {/* The carousel is the top of a ranking that keeps going. This is
+                the way further down it, and it earns its place in the header
+                because the carousel's own chevrons stop at the cached 50 with
+                nothing saying why. */}
+            <button
+              type="button"
+              className="trending-all"
+              onClick={() => onSeeTrending(box || undefined)}
+              title={`Browse the full ${boxName} trending ranking`}
+            >
+              See all
+              <ChevronIcon />
+            </button>
           </div>
           <TrendingCarousel
             scenes={data.trending}
@@ -783,7 +799,10 @@ function TrendingCard({
   );
 }
 
-function DiscoverCard({
+// Exported for the Trending page, which renders the same card against the
+// same wire shape. Two views showing scenes from the same source should not
+// drift into two subtly different cards.
+export function DiscoverCard({
   s,
   box,
   selecting,

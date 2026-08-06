@@ -365,6 +365,35 @@ export function fetchDiscover(opts?: {
   return get<DiscoverResponse>("/discover" + (qs ? "?" + qs : ""));
 }
 
+// One live page of the source's TRENDING sort, for browsing past the
+// carousel. Unlike DiscoverResponse this is not cached anywhere: the daemon
+// asks the box per request, so a page reflects the ranking at the moment it
+// was scrolled to.
+export interface TrendingPage {
+  scenes: DiscoverScene[];
+  page: number;
+  per_page: number;
+  // Whether another page exists. Deliberately not a total: queryScenes
+  // reports the size of the entire scene table for an unfiltered trending
+  // query, which is a true number answering a question nobody asked.
+  has_more: boolean;
+  // Display name of the box these came from.
+  source: string;
+}
+
+export function fetchTrending(opts?: {
+  page?: number;
+  perPage?: number;
+  box?: string;
+}): Promise<TrendingPage> {
+  const params = new URLSearchParams();
+  if (opts?.box) params.set("box", opts.box);
+  if (opts?.page != null) params.set("page", String(opts.page));
+  if (opts?.perPage != null) params.set("per_page", String(opts.perPage));
+  const qs = params.toString();
+  return get<TrendingPage>("/trending" + (qs ? "?" + qs : ""));
+}
+
 // A selectable source on Discover. StashDB (primary) is the cached feed that
 // backs the rest of forage; the others are live-queried browse surfaces, read
 // from the stash-boxes configured in Stash itself rather than re-entered here.

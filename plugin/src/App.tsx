@@ -8,6 +8,7 @@ import DeletionsList from "./views/DeletionsList";
 import UnfiledList from "./views/UnfiledList";
 import WatchingList from "./views/WatchingList";
 import DiscoverList from "./views/DiscoverList";
+import TrendingList from "./views/TrendingList";
 import Setup from "./views/Setup";
 import Settings from "./views/Settings";
 import Login from "./views/Login";
@@ -52,6 +53,9 @@ type Route =
   | { kind: "studio"; studioId: string }
   | { kind: "scene"; sceneId: string; performerName?: string }
   | { kind: "discover" }
+  // Trending past the carousel: the source's global ranking, browsed
+  // live. Reachable from Discover rather than the nav, like unfiled.
+  | { kind: "trending"; box?: string }
   | { kind: "watching" }
   // grabs carries an optional starting query so other views can link into
   // a filtered Grabs (the Watching tab points at a batch's finished work,
@@ -91,6 +95,9 @@ function parseRoute(hash: string): Route {
   }
   if (parts[0] === "deletions") {
     return { kind: "deletions" };
+  }
+  if (parts[0] === "trending") {
+    return { kind: "trending", box: query.get("box") || undefined };
   }
   if (parts[0] === "discover") {
     return { kind: "discover" };
@@ -311,6 +318,8 @@ export default function App() {
   const goPerformers = () => setHash("#/");
   const goStudios = () => setHash("#/studios");
   const goDiscover = () => setHash("#/discover");
+  const goTrending = (box?: string) =>
+    setHash("#/trending" + (box ? "?box=" + encodeURIComponent(box) : ""));
   const goWatching = () => setHash("#/watching");
   // Bare for the nav button; with a query when another view links into a
   // filtered Grabs (see the Watching tab's finished-work disclosure).
@@ -501,7 +510,19 @@ export default function App() {
           />
         )}
         {ready && route.kind === "discover" && (
-          <DiscoverList onPickPerformer={goPerformer} onPickScene={goScene} />
+          <DiscoverList
+            onPickPerformer={goPerformer}
+            onPickScene={goScene}
+            onSeeTrending={goTrending}
+          />
+        )}
+        {ready && route.kind === "trending" && (
+          <TrendingList
+            box={route.box || ""}
+            onPickPerformer={goPerformer}
+            onPickScene={goScene}
+            onBack={goDiscover}
+          />
         )}
         {ready && route.kind === "watching" && (
           <WatchingList onPickScene={goScene} onPickGrabs={goGrabs} />
