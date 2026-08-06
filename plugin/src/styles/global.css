@@ -5357,12 +5357,13 @@ code.grab-fact-v,
    dropdown had). The strip itself is click-through so tapping empty
    thumb still opens the scene; only the controls capture clicks. */
 .scene-watch {
+  /* Was a pinned bottom strip that placed whatever it held. The state tag and
+     the action pill now claim their own corners (see the refinement pass at
+     the end of this file), so this only provides the stacking context and
+     lets clicks through everywhere it is not covering something. */
   position: absolute;
-  left: 8px;
-  right: 8px;
-  bottom: 8px;
+  inset: 0;
   z-index: 3;
-  display: flex;
   pointer-events: none;
 }
 .scene-watch > * {
@@ -8332,4 +8333,210 @@ code.grab-fact-v,
 }
 @media (prefers-reduced-motion: reduce) {
   .scene-thumb:not(.thumb-failed):not(.thumb-loaded) { animation: none; }
+}
+
+
+/* ═══════════════════════════════════════════════════════════════
+   UI refinement pass. Sorted by JOB rather than by control type:
+   query, scope, mode, readout. Only scope is a filter, which is why
+   the old bar held seven things in one row — nothing had decided
+   what kind of thing each one was.
+
+   Mobile-first throughout: the phone rules are the rules and desktop
+   is the media query, because the phone is where this broke.
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── filter bar — Discover, Missing Scenes, Grabs ─────────────────────────────────── */
+/* One shell for Discover, Missing Scenes and Grabs. Mobile-first:
+   the phone rules ARE the rules, desktop is the media query. */
+.filter-bar { display: flex; flex-direction: column; gap: 10px; margin-bottom: 18px; }
+
+.filter-q {
+  height: 44px; padding: 0 14px;
+  border-radius: var(--radius-sm);
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  color: var(--text); font: inherit; font-size: 15px;   /* 15px: no iOS zoom-on-focus */
+}
+
+/* Full-bleed swipe strip — same trick as .grab-filter-chips, so the two
+   bars are one pattern rather than two that resemble each other. */
+.filter-scope {
+  display: flex; align-items: center; gap: 8px;
+  overflow-x: auto; scrollbar-width: none;
+  scroll-snap-type: x proximity;
+  margin: 0 -12px; padding: 4px 12px;   /* 4px + 36px pill = 44pt band */
+}
+.filter-scope::-webkit-scrollbar { display: none; }
+.filter-scope > * { flex: none; scroll-snap-align: start; }
+
+/* Whatever is narrowing the list stays in the first screenful. */
+.filter-scope > [aria-pressed="true"] { order: -1; }
+
+/* The one idiom. A <select> and a toggle differ only in the caret. */
+.scope-pill, .filter-scope select {
+  appearance: none; -webkit-appearance: none;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 36px; box-sizing: border-box; padding: 0 14px;
+  border-radius: var(--radius-pill);
+  background: var(--glass-bg); border: 1px solid var(--glass-border);
+  color: var(--text-muted); font: inherit; font-size: 13px;
+  white-space: nowrap; cursor: pointer;
+}
+.filter-scope select { padding-right: 30px; color: var(--text); }
+.scope-pill[aria-pressed="true"] {
+  color: var(--text); border-color: var(--accent);
+  background: rgba(var(--accent-rgb), 0.13);
+}
+.scope-glyph { font-size: 14px; line-height: 1; }
+
+/* Readout: text, in the header, never between two buttons. */
+.list-head { display: flex; align-items: baseline; gap: 9px; margin-bottom: 11px; }
+.list-readout { font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.list-head-actions { margin-left: auto; display: flex; gap: 14px; }
+.list-head-actions button {
+  border: 0; background: none; padding: 6px 0; cursor: pointer;
+  font: inherit; font-size: 13px; font-weight: 600; color: var(--accent-bright);
+}
+
+/* Amber, wrapping, and only when the cap bites. */
+.list-note {
+  display: flex; gap: 8px; margin: 0 0 14px;
+  padding: 9px 11px; border-radius: var(--radius-sm);
+  background: var(--status-downloading-bg);
+  border: 1px solid rgba(212, 161, 74, 0.28);
+  color: #c8b189; font-size: 12px; line-height: 1.5;
+}
+
+@media (min-width: 721px) {
+  .filter-bar { flex-direction: row; align-items: center; gap: 10px; }
+  .filter-q { flex: 0 1 340px; height: 38px; border-radius: var(--radius-pill); font-size: 13.5px; }
+  .filter-scope { flex-wrap: wrap; overflow: visible; margin: 0; padding: 0; row-gap: 8px; }
+  .filter-scope::before {          /* query | scope hairline */
+    content: ""; align-self: stretch; width: 1px; margin: 2px 6px;
+    background: var(--glass-border);
+  }
+  .scope-pill, .filter-scope select { height: 38px; padding: 0 15px; }
+}
+
+/* ── scene card ─────────────────────────────────── */
+/* Three slots, each a fixed number of lines, so a row of cards cannot
+   disagree about height. --title-lines is the only thing that moves. */
+.scene-info { --title-lines: 3; padding: 9px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+
+.scene-info .title {
+  font-size: 13px; font-weight: 600; line-height: 1.32; text-wrap: pretty;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--title-lines);
+  overflow: hidden;
+  min-height: calc(var(--title-lines) * 1.32em);   /* reserved, not just capped */
+}
+
+/* Date first: it is fixed width, so the studio is what gets clipped. */
+.scene-info .meta {
+  font-size: 11.5px; color: var(--text-muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+.perf-chips { display: flex; align-items: center; gap: 5px; min-height: 23px; overflow: hidden; }
+.perf-chips > * { flex: none; max-width: 100%; }
+.perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Readout, not a button: no border, no pointer, muted, and it says "more". */
+.perf-chip-more {
+  border: 0; background: none; padding: 0 2px;
+  color: var(--text-dim); font-size: 11px;
+}
+/* Action, not a readout: accent disc, pressable, 18px inside a dashed pill. */
+.perf-chip-add {
+  display: grid; place-items: center; width: 18px; height: 18px;
+  border: 0; border-radius: 50%;
+  background: var(--accent); color: #0a0a0a; font-weight: 800; font-size: 12px;
+}
+
+/* ── Thumbnail: state top-left, action bottom-right ───────────── */
+.scene-state {
+  position: absolute; top: 8px; left: 8px;
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 9px; border-radius: var(--radius-sm);
+  background: rgba(10, 10, 10, 0.74);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+  font-size: 10px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.scene-state::before {           /* the shape half of the signal */
+  content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+}
+.scene-state.ready    { color: #bff3d3; }
+.scene-state.ready::before    { background: var(--accent); }
+.scene-state.watching { color: #f0dcae; }
+.scene-state.watching::before { background: var(--status-downloading); }
+
+/* Was .watch-chip, revealed on hover. Now permanent — touch has no hover. */
+.watch-chip {
+  position: absolute; right: 8px; bottom: 8px; opacity: 1;
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 32px; padding: 0 12px; border-radius: var(--radius-pill);
+  background: rgba(10, 10, 10, 0.66); border: 1px solid rgba(255, 255, 255, 0.3);
+  color: #fff; font-size: 12px; font-weight: 600;
+}
+/* Guarantees the pill's contrast over a pale thumb without dimming the image. */
+.scene-thumb-wrap::after {
+  content: ""; position: absolute; inset: auto 0 0 0; height: 44%;
+  background: linear-gradient(to top, rgba(0,0,0,0.45), rgba(0,0,0,0));
+  pointer-events: none;
+}
+
+@media (min-width: 721px) { .scene-info { --title-lines: 2; } }
+
+/* ── header + section furniture ─────────────────────────────────── */
+/* One badge idiom. The bell already worked because it was positioned; the
+   nav link was a flex sibling, so a squeezed row shrank it and clipped the
+   count to "2◐" against the icon beside it.
+   (The design named this .nav-tab; this codebase's nav links are `.top-nav a`
+   with no base class, so the selector is adapted rather than a class added
+   for one rule.) */
+.top-nav a, .notif { position: relative; flex: none; }
+
+.nav-badge {
+  position: absolute; top: -5px; right: -7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
+  border-radius: 9px;
+  background: var(--accent-bright); color: #0a0a0a;
+  font-size: 10px; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 2px var(--bg-0);   /* clears whatever it overlaps */
+}
+
+/* Section head: the title may truncate, the numbers may not. */
+.trending-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 12px; }
+.trending-head .section-header {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.trending-head .trending-count { flex: none; font-variant-numeric: tabular-nums; }
+.trending-meta { margin-left: auto; flex: none; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 520px) {
+  /* The page header names the source one row up. */
+  .trending-head .trending-src { display: none; }
+  /* "refreshed 6m ago" → "6m"; the word is carried by position. */
+  .trending-meta .trending-refreshed-word { display: none; }
+}
+
+/* Full-bleed swipe row + a fade that says the row continues. */
+.trending-carousel.scroll { position: relative; }
+.trending-carousel.scroll .carousel-row {
+  display: flex; gap: 10px;
+  overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  scroll-snap-type: x mandatory; scroll-padding-left: 12px;
+  margin: 0 -12px; padding: 0 12px 6px;
+}
+.trending-carousel.scroll .trending-card {
+  flex: 0 0 47%;                 /* guarantees a peeking partial card */
+  scroll-snap-align: start;
+}
+.trending-carousel.scroll::after {
+  content: ""; position: absolute; inset: 0 -12px 6px auto; width: 44px;
+  background: linear-gradient(to right, rgba(13,13,13,0), var(--bg-0) 78%);
+  pointer-events: none;
 }

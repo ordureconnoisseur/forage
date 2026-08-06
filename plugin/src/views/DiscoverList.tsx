@@ -329,14 +329,18 @@ export default function DiscoverList({
       {data.trending && data.trending.length > 0 && (
         <section className="trending-section">
           <div className="trending-head">
+            {/* The title may truncate; the numbers may not. On a narrow
+                screen the source name drops out entirely — the page header
+                one row up already says which box this is — and "refreshed"
+                drops to just the age, because position carries the word. */}
             <h3 className="section-header">
-              Trending on {boxName} · {data.trending.length}
+              Trending<span className="trending-src"> on {boxName}</span>
             </h3>
+            <span className="trending-count muted">{data.trending.length}</span>
             {data.trending_refreshed_at > 0 && (
-              <div className="trending-meta">
-                <span className="muted">
-                  refreshed {relativeTime(data.trending_refreshed_at)}
-                </span>
+              <div className="trending-meta muted">
+                <span className="trending-refreshed-word">refreshed </span>
+                {relativeTime(data.trending_refreshed_at)}
               </div>
             )}
           </div>
@@ -353,139 +357,157 @@ export default function DiscoverList({
         {box ? `Recent on ${boxName}` : "From your performers"}
       </h3>
 
-      <div className="controls">
+      {/* Sorted by JOB, not by control type. The old bar held seven things in
+          one row because nothing had decided what kind of thing each was.
+          They are four: a query, a scope, a mode, and a readout — and only
+          the scope is a filter. */}
+      <div className="filter-bar">
         <input
+          className="filter-q"
           type="text"
           placeholder="Filter by title, studio, performer…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
-        {/* One control, not a chip per box. A native select collapses to the
-            active source and opens on press, so adding a fifth stash-box in
-            Stash costs no width here. Unreachable boxes stay in the list but
-            un-pickable, with the reason in their label. */}
-        {boxes.filter((b) => !b.unreachable).length > 1 && (
-          <select
-            className="discover-days discover-box"
-            aria-label="Source"
-            value={box}
-            title={
-              box
-                ? `Browsing ${boxName}. Live results; owned and missing tracking stays on StashDB.`
-                : "StashDB, your library's source, with owned and missing tracking"
-            }
-            onChange={(e) => setBox(e.target.value)}
-          >
-            {boxes.map((b) => (
-              <option
-                key={b.endpoint}
-                value={b.primary ? "" : b.endpoint}
-                disabled={!!b.unreachable}
-              >
-                {b.name}
-                {b.unreachable ? ` (${b.unreachable})` : ""}
-              </option>
-            ))}
-          </select>
-        )}
-        {/* Both of these read the StashDB cache: the day window bounds
-            recent_scene_cache, and "favourites" means a local performer.
-            Neither has meaning against a live secondary box, so rather than
-            leave two dead controls they step aside. */}
-        {!box && (
-        <select
-          className="discover-days"
-          value={days}
-          onChange={(e) => setDays(parseInt(e.target.value, 10))}
-        >
-          {DAYS_PRESETS.map((d) => (
-            <option key={d} value={d}>
-              Last {d} days
-            </option>
-          ))}
-        </select>
-        )}
-        {!box && (
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={favoriteOnly}
-            onChange={(e) => setFavoriteOnly(e.target.checked)}
-          />
-          Favourites only
-        </label>
-        )}
-        {Object.keys(data.filters ?? {}).length > 0 && (
-          <span className="discover-filters">
-            {Object.keys(data.filters ?? {})
-              .sort()
-              .map((f) => {
-                const glyph = filterGlyph(data.filters?.[f]);
-                return (
-                  <button
-                    key={f}
-                    className={
-                      "grab-chip" +
-                      (glyph ? " chip-icon" : "") +
-                      (contentFilter === f ? " active chip-any" : "")
-                    }
-                    title={`Only show ${f} content (deployment filter)`}
-                    onClick={() =>
-                      setContentFilter(contentFilter === f ? "" : f)
-                    }
-                  >
-                    {glyph ? (
-                      <span className="chip-glyph" aria-label={f}>
-                        {glyph}
-                      </span>
-                    ) : (
-                      <span className="chip-label">{f}</span>
-                    )}
-                  </button>
-                );
-              })}
-          </span>
-        )}
-        <span className="count">
-          {filtered.length} / {data.scenes.length}
-          {filtered.length > RENDER_CAP && (
-            <span className="muted">
-              {" "}
-              · showing {RENDER_CAP}, narrow the window to see the rest
-            </span>
+        {/* Scope: four ways of narrowing, one idiom. Two open a menu, two
+            toggle; a select and a toggle differ only by the caret. Swipes on
+            a phone, wraps on a desktop, and simply gets shorter when a
+            secondary box hides half of it. */}
+        <div className="filter-scope">
+          {/* One control, not a chip per box. A native select collapses to the
+              active source and opens on press, so adding a fifth stash-box in
+              Stash costs no width here. Unreachable boxes stay in the list but
+              un-pickable, with the reason in their label. */}
+          {boxes.filter((b) => !b.unreachable).length > 1 && (
+            <select
+              aria-label="Source"
+              value={box}
+              title={
+                box
+                  ? `Browsing ${boxName}. Live results; owned and missing tracking stays on StashDB.`
+                  : "StashDB, your library's source, with owned and missing tracking"
+              }
+              onChange={(e) => setBox(e.target.value)}
+            >
+              {boxes.map((b) => (
+                <option
+                  key={b.endpoint}
+                  value={b.primary ? "" : b.endpoint}
+                  disabled={!!b.unreachable}
+                >
+                  {b.name}
+                  {b.unreachable ? ` (${b.unreachable})` : ""}
+                </option>
+              ))}
+            </select>
           )}
-        </span>
-        {filtered.length > 0 &&
-          (selecting ? (
-            <div className="ms-select-actions">
-              <button
-                className="ms-select-toggle"
-                onClick={() =>
-                  setSelected((prev) => {
-                    const next = new Set(prev);
-                    if (allSelected) visibleIds.forEach((id) => next.delete(id));
-                    else visibleIds.forEach((id) => next.add(id));
-                    return next;
-                  })
-                }
-              >
-                {allSelected ? "Clear all" : "Select all"}
-              </button>
-              <button className="ms-select-cancel" onClick={exitSelect}>
-                Cancel
-              </button>
-            </div>
-          ) : (
-            <div className="ms-select-actions">
-              <button
-                className="ms-select-toggle"
-                onClick={() => setSelecting(true)}
-              >
-                Select
-              </button>
-            </div>
-          ))}
+          {/* Both of these read the StashDB cache: the day window bounds
+              recent_scene_cache, and "favourites" means a local performer.
+              Neither has meaning against a live secondary box, so rather than
+              leave two dead controls they step aside. */}
+          {!box && (
+            <select
+              aria-label="Window"
+              value={days}
+              onChange={(e) => setDays(parseInt(e.target.value, 10))}
+            >
+              {DAYS_PRESETS.map((d) => (
+                <option key={d} value={d}>
+                  {d} days
+                </option>
+              ))}
+            </select>
+          )}
+          {!box && (
+            <button
+              type="button"
+              className="scope-pill"
+              aria-pressed={favoriteOnly}
+              onClick={() => setFavoriteOnly(!favoriteOnly)}
+            >
+              <span className="scope-glyph" aria-hidden="true">
+                ♥
+              </span>
+              Favourites
+            </button>
+          )}
+          {Object.keys(data.filters ?? {})
+            .sort()
+            .map((f) => {
+              const glyph = filterGlyph(data.filters?.[f]);
+              const on = contentFilter === f;
+              return (
+                <button
+                  key={f}
+                  type="button"
+                  className="scope-pill"
+                  aria-pressed={on}
+                  title={`Only show ${f} content (deployment filter)`}
+                  onClick={() => setContentFilter(on ? "" : f)}
+                >
+                  {/* The glyph keeps its glyph AND gains its name: the
+                      filter's config key is the word the tooltip was
+                      spelling out, so a deployment adding a fifth filter
+                      needs no design decision, and touch — which has no
+                      hover — stops depending on a title attribute. */}
+                  {glyph && (
+                    <span className="scope-glyph" aria-hidden="true">
+                      {glyph}
+                    </span>
+                  )}
+                  {f}
+                </button>
+              );
+            })}
+        </div>
       </div>
+
+      {/* Readout and mode. Neither is a filter, so neither lives in the bar:
+          the count is text, and Select acts on the grid rather than narrowing
+          it. */}
+      <div className="list-head">
+        <span className="list-readout">
+          {filtered.length === data.scenes.length
+            ? filtered.length
+            : `${filtered.length} of ${data.scenes.length}`}
+        </span>
+        {filtered.length > 0 && (
+          <div className="list-head-actions">
+            {selecting ? (
+              <>
+                <button
+                  onClick={() =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (allSelected)
+                        visibleIds.forEach((id) => next.delete(id));
+                      else visibleIds.forEach((id) => next.add(id));
+                      return next;
+                    })
+                  }
+                >
+                  {allSelected ? "Clear all" : "Select all"}
+                </button>
+                <button onClick={exitSelect}>Cancel</button>
+              </>
+            ) : (
+              <button onClick={() => setSelecting(true)}>Select</button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Only when the cap actually bites, and it wraps instead of running off
+          the right edge the way the old one-line version did. */}
+      {filtered.length > RENDER_CAP && (
+        <div className="list-note">
+          <span aria-hidden="true">⚠</span>
+          <span>
+            Showing the first {RENDER_CAP} of {filtered.length}. Narrow the
+            window or the filter to see the rest.
+          </span>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <div className="empty">
@@ -854,10 +876,11 @@ function DiscoverCard({
       </div>
       <div className="scene-info">
         <div className="title">{s.title || "(untitled)"}</div>
+        {/* One line, never two. Date leads because it is fixed width, so the
+            studio is what gets clipped rather than the line wrapping and
+            making this card taller than the one beside it. */}
         <div className="meta">
-          {s.release_date && <span>{s.release_date}</span>}
-          {s.release_date && s.studio_name && <span> · </span>}
-          {s.studio_name && <span>{s.studio_name}</span>}
+          {[s.release_date, s.studio_name].filter(Boolean).join(" · ")}
         </div>
         {s.performers.length > 0 && (
           <div className="perf-chips">
@@ -916,7 +939,11 @@ function ScenePerfChips({
           onClick={() => setShowAll(true)}
           title={`Show ${hidden} more performer${hidden === 1 ? "" : "s"} not in your library`}
         >
-          +{hidden}
+          {/* Says "more", not "+". The plus on a performer chip MEANS add this
+              one to your library; the same glyph here meant "there are others",
+              so one symbol was doing two unrelated jobs on the same row. This
+              is a readout that reveals the rest — muted, borderless, worded. */}
+          +{hidden} more
         </button>
       )}
     </>

@@ -75,27 +75,43 @@ export default function WatchControl({
     }
   };
 
+  const overlay = variant === "overlay";
   return (
     <div
-      className={variant === "overlay" ? "scene-watch" : "watch-inline"}
+      className={overlay ? "scene-watch" : "watch-inline"}
       onClick={(e) => e.stopPropagation()}
     >
+      {/* State and action stop sharing a corner.
+          A state is something the scene IS, and reads as a flat tag with a
+          status dot in the top-left. An action is something you can DO, and
+          reads as a bordered pill bottom-right. Different corner, different
+          shape, different weight — so colour only agrees with the signal
+          instead of carrying it alone, which is what "Ready" green, "Watching"
+          amber and "Watch" grey were asking it to do from one position.
+          Overlay only: the inline variant is a row of buttons and has no
+          corners to speak of. */}
       {watch === "available" ? (
-        <span
-          className="watch-chip is-available"
-          title="A release was found — open the Watching tab to grab it"
-        >
-          <BookmarkGlyph filled />
-          Ready
-        </span>
+        overlay ? (
+          <span
+            className="scene-state ready"
+            title="A release was found — open the Watching tab to grab it"
+          >
+            Ready
+          </span>
+        ) : (
+          <span className="watch-chip is-available">
+            <BookmarkGlyph filled />
+            Ready
+          </span>
+        )
       ) : watch === "watching" ? (
         <button
-          className="watch-chip is-watching"
+          className={overlay ? "scene-state watching" : "watch-chip is-watching"}
           disabled={busy}
           onClick={untrack}
           title="Watching for releases — click to stop"
         >
-          <BookmarkGlyph filled />
+          {!overlay && <BookmarkGlyph filled />}
           Watching
         </button>
       ) : (
