@@ -1581,60 +1581,6 @@ function SceneFace({
   );
 }
 
-// Accepting the file for what it is.
-//
-// Matching the grab to the scene that actually arrived is not just a tidier
-// label: it is what tells forage it never got the scene it wanted. While the
-// grab sits at "mismatched" the daemon counts the PREDICTED scene as covered,
-// which holds that watch closed. Resolving to the arrived scene drops that
-// cover, and the watch for the scene you were after reopens on the next pass.
-function KeepScene({ g, actual }: { g: Grab; actual: string }) {
-  const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
-  const [err, setErr] = useState("");
-
-  const keep = async () => {
-    setBusy(true);
-    setErr("");
-    try {
-      await matchGrab(g.id, actual);
-      setDone(true);
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  if (done) {
-    return (
-      <div className="grab-mismatch-keep">
-        <span className="grab-mismatch-kept">
-          Kept. Tagged as the scene that arrived, and the one you wanted goes
-          back on the watchlist.
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="grab-mismatch-keep">
-      <button
-        type="button"
-        className="grab-action match keep"
-        onClick={keep}
-        disabled={busy}
-      >
-        {busy ? "Keeping…" : "Keep this one"}
-      </button>
-      <span className="grab-mismatch-keep-note">
-        Tag the file as the scene that arrived and keep hunting for the one you
-        wanted.
-      </span>
-      {err && <span className="grab-delete-err">{err}</span>}
-    </div>
-  );
-}
-
 // MatchBlock unifies predicted-vs-actual by outcome:
 //   • match    → ONE green "match confirmed" hero (the prediction and
 //                Stash's identification are the same scene, so there's
