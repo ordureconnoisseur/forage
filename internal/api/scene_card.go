@@ -111,6 +111,26 @@ func (s *Server) sceneCardByID(ctx context.Context, id string) (*sceneCard, erro
 		  FROM recent_scene_cache WHERE stashdb_id = ?`, id).
 		Scan(&c.StashDBID, &c.Title, &c.Date, &c.StudioName, &c.ImageURL)
 	if err == nil && c.Title != "" {
+		// The cache row carries no cast, so this branch returned a card with
+		// an empty performer list for every scene the daemon already knew
+		// about, silently. The mismatch panel reads that list to decide
+		// whether a file is sitting under someone who is not in the scene,
+		// and an empty list reads as "no reason to move it", so the check
+		// quietly did nothing on exactly the scenes forage knows best.
+		// stashdb_scene holds the full cast; the same loader the Discover
+		// feed uses reads it.
+		if byScene, perr := loadStashDBPerformers(ctx, s.db, []string{id}); perr != nil {
+			s.log.Warn("scene card: cached cast", "id", id, "err", perr)
+		} else {
+			for _, sp := range byScene[id] {
+				if sp.Name != "" {
+					// Gender is not stored on this row, so it cannot be
+					// filtered here; servableCard applies hide-male to what
+					// it can and the cache branch simply has less to go on.
+					c.cast = append(c.cast, cardPerformer{name: sp.Name})
+				}
+			}
+		}
 		return &c, nil
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
