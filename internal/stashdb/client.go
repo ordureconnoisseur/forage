@@ -781,7 +781,7 @@ func (c *Client) FindPerformerProfilesByID(ctx context.Context, ids []string) (m
 		b.WriteString("query ForagerFindPerformerProfiles {\n")
 		for i, id := range ids[start:end] {
 			fmt.Fprintf(&b, "  p%d: findPerformer(id: %q) { id name disambiguation"+
-				" gender scene_count images { url width height } }\n", i, id)
+				" gender age scene_count images { url width height } }\n", i, id)
 		}
 		b.WriteString("}")
 		var resp map[string]*performerWire
