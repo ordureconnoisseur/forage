@@ -7253,11 +7253,20 @@ code.grab-fact-v,
     gap: 12px;
   }
   /* The nav already collapses to icons at this width; let it scroll
-     sideways instead of squeezing if badges push it past the edge. */
+     sideways instead of squeezing if badges push it past the edge.
+     
+     overflow-x: auto forces the computed overflow-y to auto as well: there
+     is no way in CSS to clip one axis and not the other. The count badges
+     are absolutely positioned at top: -5px, which is outside the box, so
+     the browser clipped their top halves off and both badges rendered as
+     domes. The padding gives the scroll box somewhere to put them and the
+     matching negative margin keeps the nav sitting where it did. */
   .top-nav {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
+    padding-top: 8px;
+    margin-top: -8px;
   }
   .top-nav::-webkit-scrollbar {
     display: none;
