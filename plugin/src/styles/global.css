@@ -47,6 +47,10 @@
      reads as a decision. The greys are opaque rather than alpha so they do
      not shift with whatever they happen to sit on. */
   --bg-0: #0c0e0c;
+  /* The same colour as a triple, for the handful of places that need it at an
+     alpha. Six rules wrote rgba(10, 10, 10, a) longhand, which was the OLD
+     page colour and stayed pure black when the palette warmed. */
+  --bg-0-rgb: 12, 14, 12;
   --bg-1: #131513;
   --text: #e8e6df;
   --text-muted: #9d9a92;
@@ -58,10 +62,18 @@
   --tick: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M4 12.5 L9.5 18 L20 6.5'/%3E%3C/svg%3E");
   --fchev: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M2.5 4.5 L6 8 L9.5 4.5'/%3E%3C/svg%3E");
 
+  /* Referenced with a fallback and never defined, so the fallback was the
+     real value and no one could find where it came from. Same fault as
+     --danger and --radius-md. Declared at what they were already resolving
+     to, so nothing moves. */
+  --surface: rgba(255, 255, 255, 0.03);
+  --surface-2: #161616;
+  --band: var(--text);
   --glass-bg: rgba(255, 255, 255, 0.06);
   --glass-bg-strong: rgba(255, 255, 255, 0.10);
   --glass-border: rgba(255, 255, 255, 0.12);
   --glass-border-bright: rgba(255, 255, 255, 0.22);
+  --glass-border-strong: var(--glass-border);
   --glass-blur: blur(20px) saturate(140%);
 
   /* Leafy green — settled forest leaf, not spring shoot.
@@ -190,7 +202,7 @@ button {
   display: flex;
   align-items: center;
   gap: 18px;
-  background: rgba(10, 10, 10, 0.65);
+  background: rgba(var(--bg-0-rgb), 0.65);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--glass-border);
@@ -408,7 +420,7 @@ button {
   padding: 0;
   color: var(--text);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-md);
   overflow: hidden;
   background: var(--bg-0);
   cursor: pointer;
@@ -453,10 +465,10 @@ button {
 /* Studios fall back to a letter tile with a faint accent wash so a studio
    card reads as intentional, not a broken performer image. */
 .studio-img {
-  color: rgba(var(--accent-rgb, 22, 163, 74), 0.22);
+  color: rgba(var(--accent-rgb), 0.22);
   background: linear-gradient(
     135deg,
-    rgba(var(--accent-rgb, 22, 163, 74), 0.1),
+    rgba(var(--accent-rgb), 0.1),
     rgba(0, 0, 0, 0.35)
   );
 }
@@ -654,8 +666,8 @@ button {
   border-radius: 6px;
   font-size: 14px;
   font-weight: 700;
-  color: #0a0a0a;
-  background: rgba(10, 10, 10, 0.55);
+  color: var(--bg-0);
+  background: rgba(var(--bg-0-rgb), 0.55);
   border: 2px solid rgba(255, 255, 255, 0.55);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
@@ -674,7 +686,7 @@ button {
 .ms-select-toggle,
 .ms-select-cancel {
   padding: 8px 14px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text);
@@ -799,7 +811,7 @@ button {
   user-select: none;
 }
 .watch-group-title:hover .section-header {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .watch-group-title .section-header {
   margin: 0;
@@ -813,11 +825,11 @@ button {
   color: var(--text-muted);
 }
 .watch-group-title:hover .fchev {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .watch-group-progress {
   font-size: 12px;
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
 }
 .watch-group-actions {
   display: flex;
@@ -830,16 +842,16 @@ button {
    restyling this class to suit it silently restyled Search all too. */
 .watch-clear {
   background: transparent;
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.15));
-  color: var(--text-dim, #9aa);
-  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--glass-border);
+  color: var(--text-dim);
+  border-radius: var(--radius-pill);
   padding: 5px 12px;
   font-size: 12px;
   cursor: pointer;
 }
 .watch-clear:hover:not(:disabled) {
-  color: var(--text, #eee);
-  border-color: var(--glass-border-bright, rgba(255, 255, 255, 0.3));
+  color: var(--text);
+  border-color: var(--glass-border-bright);
 }
 .watch-clear:disabled {
   opacity: 0.5;
@@ -848,15 +860,15 @@ button {
 /* Search-now reuses the watch-clear pill but tinted accent (it's an action,
    not a destructive one). */
 .watch-search-now {
-  color: var(--accent-bright, #22c55e);
-  border-color: rgba(var(--accent-rgb, 22, 163, 74), 0.4);
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.4);
 }
 .watch-search-now:hover:not(:disabled) {
-  color: var(--accent-bright, #22c55e);
-  border-color: rgba(var(--accent-rgb, 22, 163, 74), 0.7);
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.7);
 }
 .watch-spinner-label.searching {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 /* A grabbed watch lingers, greyed, so batch progress reads correctly. */
 .watch-card.is-grabbed {
@@ -864,7 +876,7 @@ button {
 }
 .watch-grabbed-label {
   font-size: 12px;
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
   white-space: nowrap;
 }
 .watch-cand-toggle {
@@ -896,10 +908,10 @@ button {
 }
 .ms-select-grab {
   padding: 10px 18px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 0;
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -932,20 +944,20 @@ button {
   right: 8px;
   z-index: 2;
   padding: 3px 9px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.01em;
-  color: #0a0a0a;
+  color: var(--bg-0);
   background: var(--accent);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
 /* Pre-download (queued) is quieter amber; scanning leans bright accent. */
 .scene-grab-badge.gs-queued {
-  background: var(--status-queued, #d4a017);
+  background: var(--status-queued);
 }
 .scene-grab-badge.gs-scanned {
-  background: var(--accent-bright, #22c55e);
+  background: var(--accent-bright);
 }
 /* A card whose scene is in flight gets a subtle accent ring so it stands
    out in the grid even before you read the badge. */
@@ -1108,7 +1120,7 @@ button {
   font-weight: 700;
   line-height: 1;
   font-variant-numeric: tabular-nums;
-  color: var(--band, var(--text));
+  color: var(--band);
 }
 .rm-pct i {
   font-size: 10px;
@@ -1150,14 +1162,14 @@ button {
   color: var(--text-muted);
 }
 .release-score-stat.pos .rs-val {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .release-score-stat.neg .rs-val {
-  color: var(--amber, #d4a017);
+  color: var(--amber);
 }
 .release-score-stat.is-reject .rs-val,
 .release-score-stat.is-reject .rs-label {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 
 /* Confidence outline — five-tier gradient meter. The matcher emits
@@ -1254,7 +1266,7 @@ button {
   align-items: center;
   gap: 4px;
   padding: 5px 12px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -1272,7 +1284,7 @@ button {
 .deep-search-btn.on {
   color: var(--accent-bright);
   border-color: rgba(var(--accent-rgb), 0.6);
-  background: var(--accent-tint, rgba(var(--accent-rgb), 0.12));
+  background: var(--accent-tint);
 }
 /* The two search pills (Different name + Deep search) grouped on the
    right of the controls row. */
@@ -1321,7 +1333,7 @@ button {
 }
 .alias-chip {
   padding: 4px 11px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text);
@@ -1335,7 +1347,7 @@ button {
 .alias-chip.sel {
   background: var(--accent);
   border-color: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font-weight: 600;
 }
 .alias-chip.clear {
@@ -1350,7 +1362,7 @@ button {
 .alias-input {
   width: 160px;
   padding: 4px 11px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--accent);
   background: var(--bg-0);
   color: var(--text);
@@ -1359,7 +1371,7 @@ button {
 }
 .alias-input:focus {
   outline: none;
-  box-shadow: 0 0 0 3px var(--accent-tint, rgba(var(--accent-rgb), 0.12));
+  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 .empty-hint {
   margin-top: 8px;
@@ -1380,7 +1392,7 @@ button {
 .grab-as-btn {
   margin-left: 8px;
   padding: 2px 10px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid #f59e0b;
   background: transparent;
   color: #fbbf24;
@@ -1392,7 +1404,7 @@ button {
 }
 .grab-as-btn:hover {
   background: #f59e0b;
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 
 /* "Why this match?" breakdown — a quiet expander under the release meta
@@ -1444,13 +1456,13 @@ button {
   align-items: baseline;
   gap: 5px;
   padding: 2px 8px;
-  border-radius: var(--radius-pill, 999px);
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--glass-border);
   font-variant-numeric: tabular-nums;
 }
 .match-why-row.is-hit {
-  background: rgba(var(--accent-rgb, 34, 197, 94), 0.1);
-  border-color: rgba(var(--accent-rgb, 34, 197, 94), 0.35);
+  background: rgba(var(--accent-rgb), 0.1);
+  border-color: rgba(var(--accent-rgb), 0.35);
 }
 .match-why-row.is-miss {
   opacity: 0.55;
@@ -1666,7 +1678,7 @@ button {
 .grab-btn {
   padding: 9px 16px;
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   border: 0;
   border-radius: var(--radius-pill);
   font-weight: 600;
@@ -1777,7 +1789,7 @@ button {
 .managed-card {
   border: 1px solid rgba(var(--accent-rgb), 0.35);
   background: rgba(var(--accent-rgb), 0.06);
-  border-radius: var(--radius, 10px);
+  border-radius: var(--radius);
   padding: 12px 14px;
   margin: 0 0 14px;
   font-size: 13px;
@@ -1791,13 +1803,13 @@ button {
   width: 100%;
 }
 .managed-line.ok {
-  color: var(--accent-bright, #6ee7a0);
+  color: var(--accent-bright);
 }
 .managed-line a {
-  color: var(--accent-bright, #6ee7a0);
+  color: var(--accent-bright);
 }
 .managed-err {
-  color: var(--red, #ef4444);
+  color: var(--red);
   font-size: 12px;
 }
 .managed-progress {
@@ -1810,7 +1822,7 @@ button {
 }
 .managed-progress-fill {
   height: 100%;
-  background: var(--accent, #22c55e);
+  background: var(--accent);
   transition: width 0.4s ease;
 }
 .banner-setup {
@@ -1823,7 +1835,7 @@ button {
 }
 .banner-action {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   border: 0;
   border-radius: var(--radius-pill);
   padding: 5px 14px;
@@ -1923,7 +1935,7 @@ button {
 }
 .settings-save {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   border: 0;
   border-radius: var(--radius-pill);
   padding: 9px 18px;
@@ -2136,8 +2148,8 @@ button {
   cursor: pointer;
 }
 .settings-logout:hover {
-  color: var(--danger, #f87171);
-  border-color: var(--danger, #f87171);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 
 .settings-footer {
@@ -2166,7 +2178,7 @@ button {
 }
 .settings-save.force {
   background: rgba(212, 161, 74, 0.85);
-  color: #0a0a0a;
+  color: var(--bg-0);
   box-shadow: 0 4px 14px rgba(212, 161, 74, 0.32);
 }
 
@@ -2195,8 +2207,13 @@ button {
   --status-confirmed-bg: rgba(var(--accent-rgb), 0.22);
   --status-mismatched: #f59e0b;
   --status-mismatched-bg: rgba(245, 158, 11, 0.18);
-  --status-orphaned: #d4a14a;
-  --status-orphaned-bg: rgba(212, 161, 74, 0.18);
+  /* Orphaned was #d4a14a, the same hex as downloading: a grab actively
+     pulling bytes and a grab abandoned by its client rendered identically,
+     which is precisely the pair a status colour exists to tell apart. Moved
+     to a desaturated brown: still in the warm family because it is not a
+     hard failure, but visibly drained next to a live amber. */
+  --status-orphaned: #9a7b4f;
+  --status-orphaned-bg: rgba(154, 123, 79, 0.18);
   --status-failed: #ef4444;
   --status-failed-bg: rgba(239, 68, 68, 0.18);
   /* deferred: parked for automatic retry; warm amber, deliberately
@@ -2288,7 +2305,7 @@ button {
 .grab-add-btn.active,
 .grab-add-btn:hover {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .grab-add-form {
   display: flex;
@@ -2319,7 +2336,7 @@ button {
   border-radius: var(--radius-pill);
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
@@ -2339,15 +2356,15 @@ button {
   cursor: pointer;
 }
 .grab-add-clear:hover {
-  border-color: var(--danger, #e6794b);
-  color: var(--danger, #e6794b);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .grab-add-clear:disabled {
   opacity: 0.5;
   cursor: default;
 }
 .grab-add-err {
-  color: var(--danger, #e6794b);
+  color: var(--danger);
   font-size: 12px;
 }
 .grab-add-hint {
@@ -2418,7 +2435,7 @@ button {
 }
 .ti-chip.sel {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   border-color: var(--accent);
   font-weight: 600;
 }
@@ -2851,7 +2868,7 @@ button {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  background: rgba(10, 10, 10, 0.62);
+  background: rgba(var(--bg-0-rgb), 0.62);
   backdrop-filter: blur(6px);
   -webkit-backdrop-filter: blur(6px);
   color: var(--text);
@@ -3417,7 +3434,7 @@ code.grab-fact-v,
   color: var(--accent-bright);
 }
 .grab-setperf-fav {
-  color: var(--status-downloading, #d4a14a);
+  color: var(--status-downloading);
   font-size: 10px;
 }
 .grab-setperf-searchwrap {
@@ -3491,7 +3508,7 @@ code.grab-fact-v,
   display: block;
   margin-top: 8px;
   font-size: 12px;
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .grab-setperf-busy {
   font-size: 12px;
@@ -3504,7 +3521,7 @@ code.grab-fact-v,
   z-index: 1000;
   border-radius: var(--radius-sm);
   overflow: hidden;
-  background: var(--glass-bg-strong, rgba(20, 20, 20, 0.95));
+  background: var(--glass-bg-strong);
   border: 1px solid var(--glass-border-bright);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   pointer-events: none;
@@ -3616,7 +3633,7 @@ code.grab-fact-v,
 }
 .grab-action.match:hover {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .grab-match-input {
   flex: 1;
@@ -3644,7 +3661,7 @@ code.grab-fact-v,
 }
 .grab-action.match.find:hover:not(:disabled) {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .grab-match-find-glyph {
   width: 15px;
@@ -4000,7 +4017,7 @@ code.grab-fact-v,
 }
 .perf-chip-missing.is-added {
   border-style: solid;
-  border-color: var(--accent, #22c55e);
+  border-color: var(--accent);
   opacity: 1;
 }
 .perf-chip-more {
@@ -4019,7 +4036,7 @@ code.grab-fact-v,
   font: inherit;
   line-height: 1;
   cursor: pointer;
-  color: var(--accent, #22c55e);
+  color: var(--accent);
   font-weight: 700;
 }
 .perf-chip-add:disabled {
@@ -4353,7 +4370,7 @@ code.grab-fact-v,
   border-radius: var(--radius-pill);
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font-weight: 700;
   font-size: 13px;
   cursor: pointer;
@@ -4390,7 +4407,7 @@ code.grab-fact-v,
   padding: 1px 8px;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .packs-note {
   font-size: 12px;
@@ -4400,7 +4417,7 @@ code.grab-fact-v,
   color: var(--text-muted);
 }
 .packs-note.err {
-  color: var(--danger, #e6794b);
+  color: var(--danger);
 }
 .packs-search-btn {
   margin-top: 4px;
@@ -4417,7 +4434,7 @@ code.grab-fact-v,
 }
 .packs-search-btn:hover {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .packs-list {
   list-style: none;
@@ -4471,7 +4488,7 @@ code.grab-fact-v,
   color: var(--text);
 }
 .pack-size.huge {
-  color: var(--danger, #e6794b);
+  color: var(--danger);
   font-weight: 700;
 }
 .pack-grab {
@@ -4480,7 +4497,7 @@ code.grab-fact-v,
   border-radius: var(--radius-pill);
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font-weight: 700;
   font-size: 12px;
   cursor: pointer;
@@ -4508,7 +4525,7 @@ code.grab-fact-v,
   border-radius: var(--radius-pill);
   background: rgba(var(--accent-rgb), 0.1);
   border: 1px solid rgba(var(--accent-rgb), 0.35);
-  color: var(--accent-bright, var(--accent));
+  color: var(--accent-bright);
 }
 .grab-pack-glyph {
   width: 10px;
@@ -4635,7 +4652,7 @@ code.grab-fact-v,
    that found nothing usable. */
 .coll-retry {
   padding: 2px 9px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--accent-bright);
@@ -4877,7 +4894,7 @@ code.grab-fact-v,
 }
 .coll-run-server {
   padding: 9px 16px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid rgba(var(--accent-rgb), 0.45);
   background: transparent;
   color: var(--accent-bright);
@@ -4942,12 +4959,12 @@ code.grab-fact-v,
   color: var(--accent-bright);
 }
 .job-state.cancelled {
-  color: var(--status-orphaned, #d4a017);
+  color: var(--status-orphaned);
 }
 .job-cancel {
   margin-left: auto;
   padding: 4px 12px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -4956,8 +4973,8 @@ code.grab-fact-v,
   cursor: pointer;
 }
 .job-cancel:hover {
-  border-color: var(--danger, #f87171);
-  color: var(--danger, #f87171);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .job-progress-track {
   height: 6px;
@@ -5061,7 +5078,7 @@ code.grab-fact-v,
 .job-review {
   margin-left: auto;
   padding: 4px 14px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid rgba(var(--accent-rgb), 0.45);
   background: transparent;
   color: var(--accent-bright);
@@ -5100,7 +5117,7 @@ code.grab-fact-v,
 .rule-pattern,
 .rule-points {
   padding: 5px 8px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--bg-0);
   color: var(--text);
@@ -5114,7 +5131,7 @@ code.grab-fact-v,
 }
 .rule-on {
   padding: 5px 6px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--bg-0);
   color: var(--text);
@@ -5128,7 +5145,7 @@ code.grab-fact-v,
 .rule-actions button {
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -5144,8 +5161,8 @@ code.grab-fact-v,
   cursor: default;
 }
 .rule-actions .rule-del:hover {
-  border-color: var(--danger, #f87171);
-  color: var(--danger, #f87171);
+  border-color: var(--danger);
+  color: var(--danger);
 }
 .rules-actions {
   display: flex;
@@ -5155,7 +5172,7 @@ code.grab-fact-v,
 .rules-add,
 .rules-reset {
   padding: 6px 14px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text);
@@ -5179,7 +5196,7 @@ code.grab-fact-v,
 }
 .prefs-mode-toggle {
   padding: 4px 12px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -5223,7 +5240,7 @@ code.grab-fact-v,
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--bg-0);
   cursor: grab;
@@ -5274,7 +5291,7 @@ code.grab-fact-v,
   padding: 2px;
 }
 .idx-block:hover {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .reorder-move {
   display: flex;
@@ -5284,7 +5301,7 @@ code.grab-fact-v,
 .reorder-move button {
   width: 26px;
   height: 26px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -5304,7 +5321,7 @@ code.grab-fact-v,
   text-transform: uppercase;
   letter-spacing: 0.04em;
   padding: 2px 7px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   color: var(--text-muted);
 }
@@ -5334,7 +5351,7 @@ code.grab-fact-v,
 }
 .prefs-floor select {
   padding: 5px 8px;
-  border-radius: var(--radius-sm, 6px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: var(--bg-0);
   color: var(--text);
@@ -5359,7 +5376,7 @@ code.grab-fact-v,
   align-items: center;
   gap: 6px;
   padding: 3px 6px 3px 10px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: var(--bg-0);
   font-size: 12px;
@@ -5378,12 +5395,12 @@ code.grab-fact-v,
   padding: 0;
 }
 .idx-blocked-chip button:hover {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .prefs-seg {
   display: flex;
   gap: 0;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   overflow: hidden;
   width: fit-content;
@@ -5434,9 +5451,9 @@ code.grab-fact-v,
   align-items: center;
   gap: 5px;
   padding: 4px 11px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
-  background: rgba(10, 10, 10, 0.62);
+  background: rgba(var(--bg-0-rgb), 0.62);
   backdrop-filter: blur(6px);
   color: rgba(255, 255, 255, 0.88);
   font-size: 11px;
@@ -5454,7 +5471,7 @@ code.grab-fact-v,
   opacity: 1;
 }
 .watch-chip:hover:not(:disabled) {
-  background: rgba(10, 10, 10, 0.82);
+  background: rgba(var(--bg-0-rgb), 0.82);
   border-color: rgba(var(--accent-rgb), 0.7);
   color: #fff;
 }
@@ -5466,13 +5483,13 @@ code.grab-fact-v,
 .watch-chip.is-watching {
   background: #d4a017;
   border-color: transparent;
-  color: #0a0a0a;
+  color: var(--bg-0);
   opacity: 1;
 }
 .watch-chip.is-available {
-  background: var(--accent-bright, #22c55e);
+  background: var(--accent-bright);
   border-color: transparent;
-  color: #0a0a0a;
+  color: var(--bg-0);
   opacity: 1;
   cursor: default;
   animation: watchReady 2.4s ease-in-out infinite;
@@ -5493,8 +5510,8 @@ code.grab-fact-v,
   display: flex;
   gap: 4px;
   padding: 4px;
-  border-radius: var(--radius-md, 11px);
-  background: rgba(10, 10, 10, 0.8);
+  border-radius: var(--radius-md);
+  background: rgba(var(--bg-0-rgb), 0.8);
   backdrop-filter: blur(8px);
   border: 1px solid var(--glass-border);
   animation: watchPickerIn 0.16s ease;
@@ -5513,7 +5530,7 @@ code.grab-fact-v,
   flex: 1;
   padding: 5px 0;
   border: 0;
-  border-radius: var(--radius-sm, 7px);
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.92);
   font-size: 11px;
@@ -5524,7 +5541,7 @@ code.grab-fact-v,
 }
 .watch-q:hover:not(:disabled) {
   background: rgba(var(--accent-rgb), 0.9);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .watch-q.watch-cancel {
   flex: 0 0 26px;
@@ -5618,7 +5635,7 @@ code.grab-fact-v,
   margin-left: auto;
 }
 .watch-foot-danger:hover {
-  color: var(--danger, #e0574e);
+  color: var(--danger);
 }
 /* The card is a 2-column grid (thumb · body) aligned to the TOP, so the
    actions ride with the scene title and never float against the middle of an
@@ -5630,8 +5647,8 @@ code.grab-fact-v,
   align-items: start;
   padding: 12px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm, 12px);
-  background: var(--surface, rgba(255, 255, 255, 0.02));
+  border-radius: var(--radius-sm);
+  background: var(--surface);
   transition: border-color 0.15s ease, background 0.15s ease;
 }
 .watch-card.is-available {
@@ -5642,7 +5659,7 @@ code.grab-fact-v,
   flex: none;
   width: 132px;
   aspect-ratio: 16 / 9;
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.04) 0%, rgba(0, 0, 0, 0.2) 100%);
@@ -5698,10 +5715,10 @@ code.grab-fact-v,
 }
 .watch-grab {
   padding: 7px 14px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 0;
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
+  background: var(--accent-bright);
+  color: var(--bg-0);
   font-weight: 600;
   font-size: 13px;
   white-space: nowrap;
@@ -5734,7 +5751,7 @@ code.grab-fact-v,
    between the primary Grab and the remove ✕. */
 .watch-dismiss {
   padding: 7px 12px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -5763,8 +5780,8 @@ code.grab-fact-v,
   transition: color 0.12s ease, border-color 0.12s ease;
 }
 .watch-remove:hover:not(:disabled) {
-  color: var(--danger, #f87171);
-  border-color: var(--danger, #f87171);
+  color: var(--danger);
+  border-color: var(--danger);
 }
 /* Removing: the glyph becomes a spinner, so the button needs to centre a box
    rather than a text glyph. Only while working, to leave the ✕ metrics alone.
@@ -5898,7 +5915,7 @@ code.grab-fact-v,
 .watch-rel-why:hover {
   color: var(--text);
   background: rgba(255, 255, 255, 0.06);
-  border-color: var(--glass-border-strong, var(--glass-border));
+  border-color: var(--glass-border-strong);
 }
 .watch-rel-why.open {
   color: var(--text);
@@ -5955,7 +5972,7 @@ code.grab-fact-v,
 }
 .watch-rel-why-hits li.is-reject .why-label,
 .watch-rel-why-hits li.is-reject .why-pts {
-  color: var(--danger, #e0696a);
+  color: var(--danger);
 }
 .watch-rel-why-match {
   font-size: 11px;
@@ -5982,9 +5999,9 @@ code.grab-fact-v,
 .setup-card {
   width: 100%;
   max-width: 480px;
-  background: var(--surface, rgba(255, 255, 255, 0.03));
+  background: var(--surface);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 14px);
+  border-radius: var(--radius-md);
   padding: 32px 28px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
@@ -6003,7 +6020,7 @@ code.grab-fact-v,
   transition: background 0.2s ease, transform 0.2s ease;
 }
 .setup-dot.active {
-  background: var(--accent-bright, #22c55e);
+  background: var(--accent-bright);
   transform: scale(1.25);
 }
 /* Welcome / done screens */
@@ -6021,7 +6038,7 @@ code.grab-fact-v,
   width: 92px;
   height: 92px;
   display: inline-block;
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
   animation: acornGlow 3.2s ease-in-out infinite;
 }
 .setup-acorn svg {
@@ -6057,8 +6074,8 @@ code.grab-fact-v,
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  color: #0a0a0a;
-  background: var(--accent-bright, #22c55e);
+  color: var(--bg-0);
+  background: var(--accent-bright);
 }
 .setup-welcome h1 {
   margin: 0;
@@ -6098,7 +6115,7 @@ code.grab-fact-v,
   margin-top: 6px;
   font-size: 12px;
   line-height: 1.4;
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 
 /* Download-client setup check — the read-only verify panel on the library
@@ -6123,7 +6140,7 @@ code.grab-fact-v,
   display: flex;
   gap: 9px;
   padding: 9px 11px;
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: rgba(255, 255, 255, 0.02);
   font-size: 12.5px;
@@ -6136,13 +6153,13 @@ code.grab-fact-v,
   font-weight: 700;
 }
 .setup-dlcheck-row.ok .setup-dlcheck-icon {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .setup-dlcheck-row.warn .setup-dlcheck-icon {
-  color: var(--status-downloading, #d4a14a);
+  color: var(--status-downloading);
 }
 .setup-dlcheck-row.error .setup-dlcheck-icon {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .setup-dlcheck-row.ok {
   border-color: rgba(var(--accent-rgb), 0.35);
@@ -6168,7 +6185,7 @@ code.grab-fact-v,
 .setup-field input {
   width: 100%;
   padding: 9px 12px;
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   border: 1px solid var(--glass-border);
   background: rgba(0, 0, 0, 0.25);
   color: var(--text);
@@ -6194,16 +6211,16 @@ code.grab-fact-v,
   margin: 4px 0 2px;
 }
 .setup-test.ok {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .setup-test.err {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .setup-test.testing {
   color: var(--text-muted);
 }
 .setup-err {
-  color: var(--danger, #f87171);
+  color: var(--danger);
   font-size: 13px;
   margin: 10px 0 0;
 }
@@ -6217,7 +6234,7 @@ code.grab-fact-v,
 .setup-secondary {
   flex: 1;
   padding: 11px 16px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   font: inherit;
   font-weight: 600;
   cursor: pointer;
@@ -6225,8 +6242,8 @@ code.grab-fact-v,
   transition: opacity 0.12s ease, background 0.12s ease;
 }
 .setup-primary {
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
+  background: var(--accent-bright);
+  color: var(--bg-0);
 }
 .setup-secondary {
   background: transparent;
@@ -6258,7 +6275,7 @@ code.grab-fact-v,
   cursor: pointer;
 }
 .setup-link:hover {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 
 /* ─── Excluded-tags editor (Settings → Scene filtering) ───────────── */
@@ -6276,7 +6293,7 @@ code.grab-fact-v,
   padding: 6px 8px;
   min-height: 38px;
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.25);
 }
 .tag-chip {
@@ -6284,7 +6301,7 @@ code.grab-fact-v,
   align-items: center;
   gap: 5px;
   padding: 3px 4px 3px 10px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   background: rgba(var(--accent-rgb), 0.18);
   color: var(--text);
   font-size: 13px;
@@ -6299,7 +6316,7 @@ code.grab-fact-v,
   padding: 0 3px;
 }
 .tag-chip button:hover {
-  color: var(--danger, #f87171);
+  color: var(--danger);
 }
 .tags-input {
   flex: 1;
@@ -6325,7 +6342,7 @@ code.grab-fact-v,
 }
 .tag-suggest-chip {
   padding: 3px 10px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px dashed var(--glass-border);
   background: transparent;
   color: var(--text-muted);
@@ -6334,7 +6351,7 @@ code.grab-fact-v,
   transition: color 0.12s ease, border-color 0.12s ease;
 }
 .tag-suggest-chip:hover {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
   border-color: rgba(var(--accent-rgb), 0.6);
 }
 /* "Add all" — a solid accent-tinted chip so it reads as the primary
@@ -6372,7 +6389,7 @@ code.grab-fact-v,
 .grab-action.pick-another {
   background: rgba(var(--accent-rgb), 0.18);
   border: 1px solid rgba(var(--accent-rgb), 0.5);
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .grab-action.pick-another:hover {
   background: rgba(var(--accent-rgb), 0.28);
@@ -6385,7 +6402,7 @@ code.grab-fact-v,
 }
 .grab-action.retry:hover:not(:disabled) {
   border-color: rgba(var(--accent-rgb), 0.6);
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .grab-action.retry:disabled {
   opacity: 0.55;
@@ -6417,10 +6434,10 @@ code.grab-fact-v,
 }
 .notif-bell:hover {
   color: var(--text);
-  border-color: var(--glass-border-bright, rgba(255, 255, 255, 0.25));
+  border-color: var(--glass-border-bright);
 }
 .notif-bell.has-items {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 /* The bell's count. Drawn by .nav-badge below, not by a second set of
    numbers: this was 17px where the nav's was 18, radius 9 against 9, offset
@@ -6439,9 +6456,9 @@ code.grab-fact-v,
   z-index: 61;
   width: 264px;
   padding: 6px;
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-md);
   border: 1px solid var(--glass-border);
-  background: var(--surface-2, #161616);
+  background: var(--surface-2);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
 }
 .notif-head {
@@ -6464,7 +6481,7 @@ code.grab-fact-v,
   width: 100%;
   padding: 9px 10px;
   border: 0;
-  border-radius: var(--radius-sm, 8px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text);
   font-size: 13px;
@@ -6483,13 +6500,13 @@ code.grab-fact-v,
   border-radius: 50%;
 }
 .notif-item.tone-accent .notif-dot {
-  background: var(--accent-bright, #22c55e);
+  background: var(--accent-bright);
 }
 .notif-item.tone-amber .notif-dot {
   background: #d4a017;
 }
 .notif-item.tone-danger .notif-dot {
-  background: var(--danger, #f87171);
+  background: var(--danger);
 }
 .notif-label {
   flex: 1;
@@ -6674,7 +6691,7 @@ code.grab-fact-v,
   flex: 0 1 auto;
   min-width: 0;
   font-size: 12px;
-  color: var(--text, #fff);
+  color: var(--text);
   opacity: 0.82;
   text-decoration: none;
   white-space: nowrap;
@@ -6709,7 +6726,7 @@ code.grab-fact-v,
 /* ─── Release ranking cues ───────────────────────────────────────────
    Health colour on the seeder/grab count + the "best pick" marker. */
 .rel-health.dead {
-  color: var(--danger, #f87171);
+  color: var(--danger);
   font-weight: 600;
 }
 .rel-health.low {
@@ -6729,8 +6746,8 @@ code.grab-fact-v,
   letter-spacing: 0.04em;
   padding: 1px 8px;
   border-radius: var(--radius-pill);
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
+  background: var(--accent-bright);
+  color: var(--bg-0);
 }
 
 /* Bulk "Watch selected" — sits left of the Grab button in the select bar.
@@ -6738,7 +6755,7 @@ code.grab-fact-v,
 .ms-select-watch {
   margin-left: auto;
   padding: 10px 16px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: transparent;
   color: var(--text);
@@ -6749,7 +6766,7 @@ code.grab-fact-v,
 }
 .ms-select-watch:hover:not(:disabled) {
   border-color: rgba(var(--accent-rgb), 0.6);
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .ms-select-watch:disabled {
   opacity: 0.5;
@@ -6767,7 +6784,7 @@ code.grab-fact-v,
 }
 .ms-watch-picker button {
   padding: 7px 12px;
-  border-radius: var(--radius-pill, 999px);
+  border-radius: var(--radius-pill);
   border: 1px solid var(--glass-border);
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
@@ -6778,7 +6795,7 @@ code.grab-fact-v,
 }
 .ms-watch-picker button:hover:not(:disabled) {
   background: rgba(var(--accent-rgb), 0.85);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .ms-watch-picker .ms-watch-cancel {
   padding: 7px 10px;
@@ -6792,7 +6809,7 @@ code.grab-fact-v,
    no StashDB id that the owned/missing math can't see. Muted amber + dotted
    underline to read as an informational footnote (tooltip explains). */
 .ms-unidentified {
-  color: var(--status-downloading, #d4a14a);
+  color: var(--status-downloading);
   border-bottom: 1px dotted currentColor;
   cursor: help;
   white-space: nowrap;
@@ -6805,9 +6822,9 @@ code.grab-fact-v,
   transform: translateX(-50%);
   z-index: 80;
   padding: 10px 18px;
-  border-radius: var(--radius-pill, 999px);
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bright);
+  color: var(--bg-0);
   font-weight: 700;
   font-size: 13px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
@@ -7029,7 +7046,7 @@ code.grab-fact-v,
 }
 .scene-view-tab.active {
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
 }
 .scene-view-count {
   font-size: 11px;
@@ -7054,7 +7071,7 @@ code.grab-fact-v,
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
-  color: #0a0a0a;
+  color: var(--bg-0);
   background: rgba(255, 255, 255, 0.88);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
 }
@@ -7068,7 +7085,7 @@ code.grab-fact-v,
   background: rgba(255, 255, 255, 0.9);
 }
 .scene-res-badge.res-uhd {
-  background: var(--accent-bright, #22c55e);
+  background: var(--accent-bright);
 }
 
 /* Owned cards read as "have it" rather than an actionable gap — keep the
@@ -7147,7 +7164,7 @@ code.grab-fact-v,
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
 }
 .dup-copy-size {
   flex: none;
@@ -7181,8 +7198,8 @@ code.grab-fact-v,
 }
 /* Armed (second-click) — solid red so the irreversible step is unmistakable. */
 .dup-del.armed {
-  background: var(--status-failed, #ef4444);
-  border-color: var(--status-failed, #ef4444);
+  background: var(--status-failed);
+  border-color: var(--status-failed);
   color: #fff;
 }
 .dup-del:disabled {
@@ -7639,7 +7656,7 @@ code.grab-fact-v,
   padding: 0;
   color: var(--text);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-md, 12px);
+  border-radius: var(--radius-md);
   background: var(--bg-0);
   cursor: pointer;
   overflow: hidden;
@@ -7727,7 +7744,7 @@ code.grab-fact-v,
   padding: 2px 6px;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  color: #0a0a0a;
+  color: var(--bg-0);
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
@@ -8023,11 +8040,11 @@ code.grab-fact-v,
   background: currentColor;
   -webkit-mask: var(--tick) no-repeat center/contain;
   mask: var(--tick) no-repeat center/contain;
-  color: var(--accent, #22c55e);
+  color: var(--accent);
   font-weight: 600;
 }
 .setup-field.field-ok input {
-  border-color: rgba(var(--accent-rgb, 34, 197, 94), 0.55);
+  border-color: rgba(var(--accent-rgb), 0.55);
 }
 .setup-fieldnote {
   font-size: 12px;
@@ -8071,7 +8088,7 @@ code.grab-fact-v,
   overflow-y: auto;
 }
 .idx-catalog-row {
-  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.1));
+  border: 1px solid var(--glass-border);
   border-radius: 8px;
   padding: 8px 10px;
   font-size: 13px;
@@ -8099,13 +8116,13 @@ code.grab-fact-v,
 }
 .idx-badge.private {
   background: rgba(212, 161, 74, 0.18);
-  color: var(--amber, #d4a14a);
+  color: var(--amber);
 }
 .idx-badge.semiPrivate {
   background: rgba(120, 160, 255, 0.15);
 }
 .idx-catalog-added {
-  color: var(--accent, #22c55e);
+  color: var(--accent);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -8114,7 +8131,7 @@ code.grab-fact-v,
   white-space: nowrap;
 }
 .idx-catalog-err {
-  color: var(--red, #ef4444);
+  color: var(--red);
   font-size: 12px;
   margin-top: 6px;
 }
@@ -8164,7 +8181,7 @@ code.grab-fact-v,
   margin: 8px 0 14px;
   font-size: 12px;
   line-height: 1.5;
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
   max-width: 62ch;
 }
 .unfiled-list {
@@ -8180,7 +8197,7 @@ code.grab-fact-v,
   padding: 9px 12px;
 }
 .unfiled-card.is-selected {
-  border-color: var(--accent, #22c55e);
+  border-color: var(--accent);
   background: rgba(34, 197, 94, 0.06);
 }
 .unfiled-pick {
@@ -8207,10 +8224,10 @@ code.grab-fact-v,
   gap: 4px 12px;
   margin-top: 3px;
   font-size: 11px;
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
 }
 .unfiled-suggest {
-  color: var(--accent-bright, #22c55e);
+  color: var(--accent-bright);
   opacity: 0.85;
 }
 .unfiled-unknown {
@@ -8233,7 +8250,7 @@ code.grab-fact-v,
 }
 .unfiled-selected {
   font-size: 12px;
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
   white-space: nowrap;
 }
 .unfiled-performer {
@@ -8264,11 +8281,11 @@ code.grab-fact-v,
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
   vertical-align: 1px;
 }
 .unfiled-files {
-  color: var(--text-dim, #9aa);
+  color: var(--text-dim);
 }
 
 /* Drop a .torrent anywhere on the Grabs page.
@@ -8577,7 +8594,7 @@ code.grab-fact-v,
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
   border-radius: 9px;
-  /* The knockout was #0a0a0a, the OLD --bg-0, left behind when the palette
+  /* The knockout was var(--bg-0), the OLD --bg-0, left behind when the palette
      warmed. A badge whose text is a stale copy of the page colour stops
      matching the page the moment the page changes. */
   background: var(--accent-bright); color: var(--bg-0);
@@ -8680,7 +8697,7 @@ code.grab-fact-v,
 .skeleton-thumb {
   aspect-ratio: 16 / 9;
   background: var(--bg-1);
-  border-radius: var(--radius-sm, 6px) var(--radius-sm, 6px) 0 0;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
 }
 .skeleton-line {
   height: 11px;
