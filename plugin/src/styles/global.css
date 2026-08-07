@@ -1031,6 +1031,15 @@ button {
 .thumb-external:focus-visible {
   opacity: 1;
 }
+/* Touch has no hover, so on a phone this link was permanently invisible and
+   unreachable: the only route from a scene card to its StashDB page, hidden
+   on the surface the product is used from most. Faint rather than full, so it
+   sits under the picture rather than on top of it. */
+@media (hover: none) {
+  .thumb-external {
+    opacity: 0.5;
+  }
+}
 .thumb-external:hover {
   background: rgba(0, 0, 0, 0.75);
   color: #fff;
@@ -6417,6 +6426,14 @@ code.grab-fact-v,
   white-space: nowrap;
 }
 
+/* The toast is solid accent green with dark text, which is the app's success
+   colour, and both views that own one push failures through it: "Couldn't
+   file: ..." and "Search failed" arrived looking like good news. A toast that
+   is green whatever it says is not telling you anything. */
+.ms-toast.is-error {
+  background: var(--danger);
+  color: #fff;
+}
 .ms-toast {
   position: fixed;
   bottom: 24px;

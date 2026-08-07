@@ -129,8 +129,12 @@ export default function WatchingList({
     };
   }, []);
 
-  const flashToast = (msg: string) => {
+  // bad marks a failure, so the toast can stop rendering "Search failed" in
+  // the success colour.
+  const [toastBad, setToastBad] = useState(false);
+  const flashToast = (msg: string, bad = false) => {
     setToast(msg);
+    setToastBad(bad);
     window.setTimeout(() => setToast(null), 4500);
   };
 
@@ -142,7 +146,7 @@ export default function WatchingList({
       flashToast(`Searching ${r.searching} scene${r.searching === 1 ? "" : "s"}…`);
       await load(); // pick up the searching flags + kick the fast poll
     } catch (e) {
-      flashToast((e as Error).message || "Search failed");
+      flashToast((e as Error).message || "Search failed", true);
     } finally {
       setSearchBusy(false);
     }
@@ -200,7 +204,9 @@ export default function WatchingList({
         )}
       </div>
 
-      {toast && <div className="ms-toast">{toast}</div>}
+      {toast && (
+        <div className={"ms-toast" + (toastBad ? " is-error" : "")}>{toast}</div>
+      )}
 
       {groups.map((g) => (
         <WatchGroup

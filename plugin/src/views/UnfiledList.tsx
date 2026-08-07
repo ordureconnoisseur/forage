@@ -81,6 +81,9 @@ export default function UnfiledList() {
   const [performer, setPerformer] = useState("");
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Marks a failure, so the toast can stop rendering "Couldn't file" in the
+  // success colour.
+  const [toastBad, setToastBad] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
   // Ranked guesses for the CURRENT selection, from the same suggest.Performers
   // the grab detail uses. A plain text box asked the user to remember and
@@ -181,6 +184,7 @@ export default function UnfiledList() {
     try {
       const r = await fileUnfiled(ids, name);
       const failed = r.results.filter((x) => x.error);
+      setToastBad(false);
       setToast(
         failed.length === 0
           ? `Filed ${r.moved} under ${name}. Stash is rescanning that folder.`
@@ -189,6 +193,7 @@ export default function UnfiledList() {
       setReloadKey((k) => k + 1);
     } catch (e) {
       setToast("Couldn't file: " + (e as Error).message);
+      setToastBad(true);
     } finally {
       setBusy(false);
       window.setTimeout(() => setToast(null), 6000);
@@ -240,7 +245,9 @@ export default function UnfiledList() {
         </span>
       </div>
 
-      {toast && <div className="ms-toast">{toast}</div>}
+      {toast && (
+        <div className={"ms-toast" + (toastBad ? " is-error" : "")}>{toast}</div>
+      )}
       {error && <div className="empty error">Couldn't load: {error}</div>}
       {loading && !data && <div className="empty">Loading…</div>}
 
