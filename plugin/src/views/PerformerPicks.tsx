@@ -220,7 +220,9 @@ function PickCard({
             <PlusIcon size={11} />
           )}
         </span>
-        <span className="perf-name">{p.name}</span>
+        <span className="perf-name" title={p.name}>
+          {p.name}
+        </span>
         {/* Just the number, pinned to the end of the row so a name that wraps
             does not drag it down. Absent when StashDB has no birthdate. */}
         {p.age ? (
