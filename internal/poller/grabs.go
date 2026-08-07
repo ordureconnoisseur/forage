@@ -140,6 +140,9 @@ type Poller struct {
 	// them. Owned by the single-goroutine tick: appended in advanceQbit,
 	// drained in tickOnce, never touched concurrently.
 	resumeKick []string
+	// lastKick is when each grab was last sent a resume, so the retries
+	// above are paced rather than fired every tick.
+	lastKick map[int64]time.Time
 
 	// scanJob records the most recent Stash metadataScan job id fired per
 	// grab. Before re-firing a placement scan (the throttled retry that waits
@@ -1959,6 +1962,22 @@ func (p *Poller) graceElapsed(grabID int64, d time.Duration) bool {
 // the bad condition. Lets a caller attach a one-shot side effect (the
 // error-state resume kick) to the transition without disturbing the
 // elapsed measurement graceElapsed does on the same clock.
+// kickDue rate-limits the resume retries. The poller ticks far more often
+// than a stuck mount recovers, and hammering resume on every tick would turn
+// one bad mount into a stream of pointless API calls.
+func (p *Poller) kickDue(grabID int64) bool {
+	p.graceMu.Lock()
+	defer p.graceMu.Unlock()
+	if p.lastKick == nil {
+		p.lastKick = map[int64]time.Time{}
+	}
+	if at, ok := p.lastKick[grabID]; ok && time.Since(at) < resumeKickInterval {
+		return false
+	}
+	p.lastKick[grabID] = time.Now()
+	return true
+}
+
 func (p *Poller) graceStart(grabID int64) bool {
 	p.graceMu.Lock()
 	defer p.graceMu.Unlock()
@@ -1969,11 +1988,18 @@ func (p *Poller) graceStart(grabID int64) bool {
 	return true
 }
 
+func (p *Poller) clearKick(grabID int64) {
+	p.graceMu.Lock()
+	delete(p.lastKick, grabID)
+	p.graceMu.Unlock()
+}
+
 // graceClear resets a grab's grace clock after the bad condition lifts (a SAB
 // nzo seen again in queue/history, a qBit torrent healthy again), so the next
 // recurrence is measured fresh instead of tripping off the stale first-seen
 // time. Calling it when no clock is set is a harmless no-op.
 func (p *Poller) graceClear(grabID int64) {
+	p.clearKick(grabID)
 	p.graceMu.Lock()
 	delete(p.grace, grabID)
 	p.graceMu.Unlock()
@@ -2189,21 +2215,32 @@ func (p *Poller) advanceQbit(g *grabs.Grab, ts []qbit.Torrent, byHash map[string
 	// clock. (adoptQbitOrphans' revive path is the backstop that recovers a
 	// grab we DO end up failing, should it recover after the grace.)
 	if newStatus == "failed" {
-		// First sighting of the plain "error" state: kick ONE resume.
+		// Keep kicking the resume while the torrent sits in "error".
 		// qBit never auto-resumes an errored torrent, so a transient
-		// write failure (a stalled NAS mount flipped six mid-download
-		// torrents to error on 2026-07-06) otherwise strands the
-		// download until someone hand-resumes it. If the cause
-		// persists the torrent re-errors and the grace window fails
-		// the grab exactly as before. missingFiles is deliberately
-		// NOT kicked: pack dedup deletes duplicate files out from
-		// under seeding torrents, and a resume there would re-download
-		// content the user chose to remove.
-		if p.graceStart(g.ID) && t.State == "error" {
+		// write failure otherwise strands the download until someone
+		// resumes it by hand.
+		//
+		// This used to fire ONCE, on the first sighting, which is the
+		// same as never for an outage that outlasts a single attempt:
+		// on 2026-08-07 the NAS refused file opens with EBUSY from
+		// 06:00 to 07:40, the single kick at minute zero failed
+		// against a mount that was still busy, and twelve grabs were
+		// marked failed ten minutes later. They then sat errored for
+		// five hours, because Active() skips failed grabs so nothing
+		// tried again. Every one recovered on a plain resume once the
+		// mount was free: the recovery was always one retry away, and
+		// there was no retry.
+		//
+		// missingFiles is deliberately NOT kicked: pack dedup deletes
+		// duplicate files out from under seeding torrents, and a
+		// resume there would re-download content the user chose to
+		// remove.
+		if t.State == "error" && p.kickDue(g.ID) {
 			p.resumeKick = append(p.resumeKick, t.Hash)
-			p.log.Info("qbit torrent errored; kicking a one-shot resume",
+			p.log.Info("qbit torrent errored; kicking a resume",
 				"id", g.ID, "hash", t.Hash)
 		}
+		p.graceStart(g.ID)
 		if !p.graceElapsed(g.ID, qbitErrorGrace) {
 			return dirty, t.ContentPath
 		}
@@ -2259,7 +2296,16 @@ const qbitLinkTimeout = 10 * time.Minute
 // matching the SAB philosophy: a download stuck "downloading" a few extra
 // minutes is far cheaper than a false "failed" that strands a torrent qBit
 // then completes (Active() never re-checks a failed grab).
-const qbitErrorGrace = 10 * time.Minute
+//
+// Ten minutes was too short for the thing this actually guards against. A NAS
+// under load refuses file opens for as long as the load lasts, which on
+// 2026-08-07 was a hundred minutes; ten minutes of patience against that just
+// meant failing early and staying failed. Forty-five outlasts a backup or a
+// scrub window while still reaching a verdict inside the hour.
+const qbitErrorGrace = 45 * time.Minute
+
+// resumeKickInterval paces the retries within that window.
+const resumeKickInterval = 3 * time.Minute
 
 // adoptionGrace delays adopting a freshly-added qBit torrent, so a
 // torrent added through the forage UI gets linked to its existing grab

@@ -2020,3 +2020,51 @@ func TestStashJobFailureSurfacesInHealth(t *testing.T) {
 		t.Error("lastStashJobFailure empty; the reason must be visible, not just a count")
 	}
 }
+
+// A resume kick that fires once is the same as never, for an outage that
+// outlasts one attempt.
+//
+// On 2026-08-07 the NAS refused file opens with EBUSY for a hundred minutes.
+// The single kick at minute zero hit a mount that was still busy, the grace
+// elapsed ten minutes later, and twelve grabs were failed. Every one of them
+// recovered on a plain resume once the mount was free, so the recovery was
+// always one retry away and there was no retry.
+func TestErroredTorrentIsKickedRepeatedly(t *testing.T) {
+	p := &Poller{grace: map[int64]time.Time{}}
+
+	if !p.kickDue(7) {
+		t.Fatal("first kick was not due")
+	}
+	if p.kickDue(7) {
+		t.Error("kicked again immediately; retries must be paced")
+	}
+	// Once the interval has passed, it must kick again rather than give up:
+	// this is the whole difference from the one-shot version.
+	p.graceMu.Lock()
+	p.lastKick[7] = time.Now().Add(-resumeKickInterval - time.Second)
+	p.graceMu.Unlock()
+	if !p.kickDue(7) {
+		t.Error("did not kick again after the interval; one attempt is not a retry")
+	}
+
+	// A healthy reading clears the clock, so a later recurrence starts fresh
+	// rather than waiting out a stale interval.
+	p.graceClear(7)
+	if !p.kickDue(7) {
+		t.Error("kick clock survived graceClear")
+	}
+}
+
+// The window has to outlast the thing it guards against. A NAS refuses file
+// opens for as long as its load lasts, and backups and scrubs run in tens of
+// minutes, not single digits.
+func TestQbitErrorGraceOutlastsAMountEvent(t *testing.T) {
+	if qbitErrorGrace < 30*time.Minute {
+		t.Errorf("qbitErrorGrace = %v; too short to survive a backup window, "+
+			"which is what puts a torrent into error in the first place", qbitErrorGrace)
+	}
+	if resumeKickInterval >= qbitErrorGrace {
+		t.Errorf("resumeKickInterval %v >= grace %v: the grab would be failed "+
+			"before a second resume was ever attempted", resumeKickInterval, qbitErrorGrace)
+	}
+}
