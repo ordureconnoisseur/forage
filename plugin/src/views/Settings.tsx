@@ -63,6 +63,23 @@ type SectionKey =
   | "security"
   | "advanced";
 
+// The eleven sections, in the order they appear. Titles lived only as a prop
+// on each <Section>, so nothing could enumerate them: an index had no list to
+// render and the order was whatever the JSX happened to be in.
+const SECTIONS: { key: SectionKey; title: string }[] = [
+  { key: "connection", title: "Connection" },
+  { key: "stash", title: "Stash + StashDB" },
+  { key: "indexer", title: "Indexer (Prowlarr)" },
+  { key: "downloads", title: "Download clients" },
+  { key: "library", title: "Library / placement" },
+  { key: "seeding", title: "Seeding" },
+  { key: "releases", title: "Release preferences" },
+  { key: "filtering", title: "Filtering" },
+  { key: "notifications", title: "Notifications" },
+  { key: "security", title: "Security" },
+  { key: "advanced", title: "Advanced" },
+];
+
 const sensitiveFields = new Set([
   "stashApiKey",
   "stashdbApiKey",
@@ -430,6 +447,34 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           </button>
         </div>
 
+        {/* Eleven collapsible sections is not a long scroll, but it is an
+            invisible one: nothing on screen says what exists or how far down
+            it is, so finding "Seeding" means opening things until it appears.
+            The index lists all of them, and a jump OPENS its target as well as
+            scrolling to it, because a closed section you have scrolled to is
+            still not the thing you were looking for. */}
+        <nav className="settings-index" aria-label="Settings sections">
+          {SECTIONS.map((sec) => (
+            <button
+              key={sec.key}
+              type="button"
+              className={"settings-index-item" + (open[sec.key] ? " is-open" : "")}
+              onClick={() => {
+                setOpen((o) => ({ ...o, [sec.key]: true }));
+                // After the open, so the section has its height when we
+                // measure where to scroll.
+                requestAnimationFrame(() => {
+                  document
+                    .getElementById("set-" + sec.key)
+                    ?.scrollIntoView({ block: "start", behavior: "smooth" });
+                });
+              }}
+            >
+              {sec.title}
+            </button>
+          ))}
+        </nav>
+
         {blocked && (
           <div className="settings-warn">
             <WarnIcon size={12} /> You're on HTTPS and the forage URL is HTTP. Browser will block all
@@ -439,6 +484,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
 
         {/* ── Connection (localStorage) ─────────────────────────── */}
         <Section
+          id="connection"
           title="Connection"
           isOpen={open.connection}
           onToggle={() =>
@@ -486,6 +532,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         )}
 
         <Section
+          id="stash"
           title="Stash + StashDB"
           isOpen={open.stash}
           onToggle={() => setOpen((o) => ({ ...o, stash: !o.stash }))}
@@ -554,6 +601,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="indexer"
           title="Indexer (Prowlarr)"
           isOpen={open.indexer}
           onToggle={() => setOpen((o) => ({ ...o, indexer: !o.indexer }))}
@@ -635,6 +683,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="downloads"
           title="Download clients"
           isOpen={open.downloads}
           onToggle={() => setOpen((o) => ({ ...o, downloads: !o.downloads }))}
@@ -756,6 +805,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="library"
           title="Library / placement"
           isOpen={open.library}
           onToggle={() => setOpen((o) => ({ ...o, library: !o.library }))}
@@ -921,6 +971,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="seeding"
           title="Seeding"
           isOpen={open.seeding}
           onToggle={() => setOpen((o) => ({ ...o, seeding: !o.seeding }))}
@@ -962,6 +1013,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="releases"
           title="Release preferences"
           isOpen={open.releases}
           onToggle={() => setOpen((o) => ({ ...o, releases: !o.releases }))}
@@ -1006,6 +1058,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="filtering"
           title="Filtering"
           isOpen={open.filtering}
           onToggle={() => setOpen((o) => ({ ...o, filtering: !o.filtering }))}
@@ -1062,6 +1115,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="notifications"
           title="Notifications"
           isOpen={open.notifications}
           onToggle={() =>
@@ -1141,6 +1195,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="security"
           title="Security"
           isOpen={open.security}
           onToggle={() => setOpen((o) => ({ ...o, security: !o.security }))}
@@ -1261,6 +1316,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         </Section>
 
         <Section
+          id="advanced"
           title="Advanced"
           isOpen={open.advanced}
           onToggle={() => setOpen((o) => ({ ...o, advanced: !o.advanced }))}
@@ -1340,6 +1396,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
 // ── Helpers ────────────────────────────────────────────────────────
 
 function Section({
+  id,
   title,
   isOpen,
   onToggle,
@@ -1347,6 +1404,9 @@ function Section({
   subProbe,
   children,
 }: {
+  // Matches the SectionKey the index jumps to. Optional so a section that is
+  // not in the index (there are none today) still compiles.
+  id?: SectionKey;
   title: string;
   isOpen: boolean;
   onToggle: () => void;
@@ -1355,7 +1415,10 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <div className={"settings-section" + (isOpen ? " open" : "")}>
+    <div
+      id={id ? "set-" + id : undefined}
+      className={"settings-section" + (isOpen ? " open" : "")}
+    >
       <button className="settings-section-head" onClick={onToggle}>
         <span
           className={"caret fchev" + (isOpen ? " open" : "")}

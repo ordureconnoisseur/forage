@@ -9140,3 +9140,57 @@ code.grab-fact-v,
 @media (prefers-reduced-motion: reduce) {
   .scene-face { transition: none; }
 }
+
+/* ── settings index ──────────────────────────────────────────────
+   A map of the panel, sticky to its top so it stays reachable however far
+   down you are. Eleven sections that each collapse to a title bar are not a
+   long scroll, but they are an invisible one: nothing tells you what exists
+   until you open it.
+   
+   It wraps rather than scrolls sideways. A horizontal strip would hide half
+   the sections behind a swipe, which is the problem it is here to solve, and
+   these are short words that tile well. */
+.settings-index {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 10px 0 12px;
+  margin-bottom: 4px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--glass-border);
+}
+.settings-index-item {
+  border: 1px solid transparent;
+  background: none;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.settings-index-item:hover {
+  color: var(--text);
+  background: var(--glass-bg);
+}
+/* Open, not "selected": the index reports the panel's state rather than
+   holding a selection of its own, so it cannot disagree with what is on
+   screen. */
+.settings-index-item.is-open {
+  color: var(--accent-bright);
+  border-color: rgba(var(--accent-rgb), 0.35);
+  background: rgba(var(--accent-rgb), 0.10);
+}
+.settings-index-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .settings-index-item { transition: none; }
+}
