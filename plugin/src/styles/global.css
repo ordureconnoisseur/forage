@@ -8692,16 +8692,29 @@ code.grab-fact-v,
   color: var(--accent-bright);
 }
 
-/* Portrait, not 16:9, and narrower to suit it. Scene cards are 44% of the
-   row on a phone; a 3:4 card that wide would be taller than the viewport. */
-.picks-carousel .trending-card { flex: 0 0 128px; }
-@media (max-width: 600px) {
-  .picks-carousel .trending-card { flex: 0 0 118px; }
+/* Narrower than a scene card, deliberately. Same chrome, but there are
+   twenty-four of these against sixteen scenes, and at the scene card's 44%
+   only two fit a phone: twelve swipes to reach the end. At 46% of that, three
+   and a bit fit, so the strip shows it continues.
+   The selector is heavier than it looks because .trending-carousel.scroll
+   .trending-card sets flex-basis LATER in this file, and a later rule of equal
+   specificity wins the properties it names. */
+.picks-carousel.trending-carousel.scroll .trending-card,
+.picks-carousel .trending-card {
+  flex: 0 0 132px;
+}
+@media (max-width: 380px) {
+  .picks-carousel.trending-carousel.scroll .trending-card { flex: 0 0 118px; }
 }
 .pick-thumb {
   aspect-ratio: 3 / 4;
   position: relative;
 }
+/* Head-first. A publicity portrait is 2:3 and framed with the face near the
+   top, so cover-cropping it to 3:4 from the centre cuts the head off and
+   leaves a chin and a torso. This is the one thing a portrait needs that a
+   16:9 still does not. */
+.pick-thumb img { object-position: center top; }
 .pick-thumb-empty {
   width: 100%;
   height: 100%;
