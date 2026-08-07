@@ -198,12 +198,31 @@ function PickCard({
         </div>
       )}
 
+      {/* The two controls are not peers, so they do not look like peers.
+          Adding is why this strip exists; dismissing is housekeeping. Two
+          matched circles in opposite corners asserted the opposite, and on a
+          132px card two 22px discs are most of the frame.
+
+          So they live on different planes. The add is IN the scrim, leading
+          the name, which is the grammar forage already uses for a performer
+          it does not have: "+ Jane Doe" on a Discover chip means add Jane
+          Doe. Verb, then object. The dismiss stays on the image, alone in
+          one corner, with no disc behind it at all. */}
       <div className="perf-scrim">
-        <div className="perf-name">{p.name}</div>
-        {/* Just the number. It sits at the end of the name's line and stays
-            there when the name wraps, so it reads as an attribute of the
-            person rather than a second line of text. Absent entirely when
-            StashDB has no birthdate, which beats printing a placeholder. */}
+        <span className="pick-add" aria-hidden="true">
+          {state === "adding" ? (
+            <span className="pick-spinner" />
+          ) : state === "added" ? (
+            <CheckIcon size={11} />
+          ) : state === "err" ? (
+            "!"
+          ) : (
+            <PlusIcon size={11} />
+          )}
+        </span>
+        <span className="perf-name">{p.name}</span>
+        {/* Just the number, pinned to the end of the row so a name that wraps
+            does not drag it down. Absent when StashDB has no birthdate. */}
         {p.age ? (
           <span className="pick-age" title={`${p.age} years old`}>
             {p.age}
@@ -211,26 +230,6 @@ function PickCard({
         ) : null}
       </div>
 
-      {/* The whole card adds. This says so without covering the face: a
-          corner badge rather than a pill across the middle of the portrait,
-          which is where a Watch pill would sit on a 16:9 still and where a
-          chin sits on a 3:4 one. */}
-      <span className="pick-add" aria-hidden="true">
-        {state === "adding" ? (
-          "…"
-        ) : state === "added" ? (
-          <CheckIcon size={12} />
-        ) : state === "err" ? (
-          "!"
-        ) : (
-          <PlusIcon size={12} />
-        )}
-      </span>
-
-      {/* Not interested. The quieter of the two by design: it is the rarer
-          action, and a strip that gets swiped past should not carry two
-          equally loud targets. Revealed on hover where there is a pointer,
-          dimmed rather than hidden on touch, which has none. */}
       <span
         className="pick-dismiss"
         role="button"
@@ -252,7 +251,7 @@ function PickCard({
           onDismiss();
         }}
       >
-        <CloseIcon size={10} />
+        <CloseIcon size={11} />
       </span>
     </button>
   );
