@@ -4311,78 +4311,7 @@ code.grab-fact-v,
   border-color: var(--accent);
 }
 
-/* ── Collection mode ───────────────────────────────────────────── */
-.coll-header {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 16px 24px;
-  flex-wrap: wrap;
-  margin-bottom: 20px;
-}
-.coll-head-id {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.coll-head-id h2 {
-  margin: 0;
-}
-.coll-back {
-  font-size: 12px;
-  color: var(--text-muted);
-  text-decoration: none;
-  width: fit-content;
-}
-.coll-back:hover {
-  color: var(--accent-bright);
-}
-.coll-sub {
-  font-size: 13px;
-  color: var(--text-muted);
-  font-variant-numeric: tabular-nums;
-}
-.coll-bulk {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 4px;
-}
-.coll-bulk button {
-  background: none;
-  border: none;
-  padding: 0;
-  font: inherit;
-  font-size: 12px;
-  color: var(--accent-bright);
-  cursor: pointer;
-}
-.coll-bulk button:hover {
-  text-decoration: underline;
-}
-.coll-bulk-sep {
-  color: var(--text-muted);
-  opacity: 0.5;
-}
-.coll-grab {
-  flex: none;
-  padding: 10px 20px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--bg-0);
-  font-weight: 700;
-  font-size: 13px;
-  cursor: pointer;
-  transition: opacity 0.12s ease, background 0.12s ease;
-}
-.coll-grab:disabled {
-  opacity: 0.45;
-  cursor: default;
-  background: var(--glass-bg);
-  color: var(--text-muted);
-  border-color: var(--glass-border);
-}
+/* ── Collection mode ───────────────────────────────────────────── *
 
 /* ── Packs section (top of the collection view) ──────────────────── */
 .packs-section {
@@ -4538,206 +4467,13 @@ code.grab-fact-v,
   font-variant-numeric: tabular-nums;
 }
 
-.coll-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.coll-row {
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--glass-bg);
-  overflow: hidden;
-}
-.coll-row-head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 10px 14px;
-}
-.coll-thumb {
-  flex: none;
-  width: 96px;
-  aspect-ratio: 16 / 9;
-  border-radius: 6px;
-  overflow: hidden;
-  background: var(--bg-0);
-}
-.coll-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.coll-row-main {
-  flex: 1;
-  min-width: 0;
-}
-.coll-row-title {
-  font-weight: 600;
-  font-size: 14px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.coll-row-meta {
-  font-size: 12px;
-  color: var(--text-muted);
-  margin-top: 2px;
-}
-.coll-row-meta .sep {
-  margin: 0 6px;
-  opacity: 0.5;
-}
-.coll-row-status {
-  flex: none;
-  font-size: 12px;
-  color: var(--text-muted);
-  font-style: italic;
-}
+/* Scan progress bar *
 
-/* Scan progress bar */
-.coll-progress {
-  height: 4px;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-  margin-bottom: 16px;
-}
-.coll-progress-fill {
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), var(--accent-bright));
-  box-shadow: 0 0 8px rgba(var(--accent-rgb), 0.5);
-  transition: width 0.4s ease;
-}
+/* Row checkbox + selected state *
 
-/* Row checkbox + selected state */
-.coll-row.picked {
-  border-color: rgba(var(--accent-rgb), 0.45);
-  background: rgba(var(--accent-rgb), 0.06);
-}
-.coll-check {
-  flex: none;
-  display: inline-flex;
-}
-.coll-check input {
-  width: 17px;
-  height: 17px;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.coll-check input:disabled {
-  cursor: default;
-  opacity: 0.4;
-}
-
-/* Per-row search result / picked release */
-.coll-row-result {
-  flex: none;
-  max-width: 46%;
-  min-width: 0;
-  text-align: right;
-  font-size: 12px;
-}
-.coll-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--text-muted);
-}
+/* Per-row search result / picked release *
 /* Inline per-row action (deep-search retry / pick one) on a settled row
-   that found nothing usable. */
-.coll-retry {
-  padding: 2px 9px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--glass-border);
-  background: transparent;
-  color: var(--accent-bright);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.coll-retry:hover {
-  border-color: var(--accent);
-  background: rgba(var(--accent-rgb), 0.12);
-}
-.coll-state.muted {
-  opacity: 0.7;
-}
-.coll-state.err {
-  color: #fca5a5;
-}
-.coll-state.warn {
-  color: var(--status-mismatched);
-}
-.coll-state.queued {
-  color: var(--accent-bright);
-  font-weight: 600;
-  font-style: normal;
-}
-.coll-state.inflight {
-  color: var(--accent);
-  font-weight: 600;
-  font-style: normal;
-}
-.coll-row.queued {
-  border-color: rgba(var(--accent-rgb), 0.3);
-  background: rgba(var(--accent-rgb), 0.05);
-  opacity: 0.85;
-}
-.coll-queued-check {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 17px;
-  height: 17px;
-  color: var(--accent-bright);
-  font-weight: 800;
-  font-size: 14px;
-}
-.coll-grab-err {
-  flex: none;
-  font-size: 11px;
-  color: #fca5a5;
-}
-.coll-pick {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  min-width: 0;
-}
-.coll-pick-tag {
-  flex: none;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.03em;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  font-variant-numeric: tabular-nums;
-}
-.coll-pick-tag.verified {
-  background: rgba(var(--accent-rgb), 0.16);
-  color: var(--accent-bright);
-}
-.coll-pick-tag.guess {
-  background: rgba(245, 158, 11, 0.16);
-  color: var(--status-mismatched);
-}
-.coll-pick-file {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
-}
+   that found nothing usable. *
 .coll-spinner {
   width: 12px;
   height: 12px;
@@ -4752,99 +4488,7 @@ code.grab-fact-v,
   }
 }
 
-/* Expand affordance + candidate panel */
-.coll-expand {
-  flex: none;
-  width: 44px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-  padding: 5px 0;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--text-muted);
-  font-size: 11px;
-  cursor: pointer;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-.coll-expand:hover {
-  color: var(--text);
-  border-color: var(--glass-border-bright);
-}
-.coll-expand.placeholder {
-  border-color: transparent;
-  cursor: default;
-}
-.coll-expand-n {
-  font-variant-numeric: tabular-nums;
-}
-.coll-cands {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 14px 12px 52px;
-  border-top: 1px solid var(--glass-border);
-  background: rgba(0, 0, 0, 0.18);
-}
-.coll-cand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.1s ease;
-}
-.coll-cand:hover {
-  background: rgba(255, 255, 255, 0.03);
-}
-.coll-cand.sel {
-  background: rgba(var(--accent-rgb), 0.1);
-}
-.coll-cand input {
-  flex: none;
-  accent-color: var(--accent);
-  cursor: pointer;
-}
-.coll-cand-tag {
-  flex: none;
-  width: 96px;
-  text-align: center;
-  font-size: 10px;
-  font-weight: 700;
-  padding: 2px 0;
-  border-radius: var(--radius-pill);
-  font-variant-numeric: tabular-nums;
-}
-.coll-cand-tag.verified {
-  background: rgba(var(--accent-rgb), 0.16);
-  color: var(--accent-bright);
-}
-.coll-cand-tag.guess {
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-muted);
-}
-.coll-cand-body {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.coll-cand-file {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text);
-  word-break: break-all;
-}
-.coll-cand-meta {
-  font-size: 11px;
-  color: var(--text-muted);
-}
-.coll-cand-warn {
-  color: var(--status-mismatched);
-}
+/* Expand affordance + candidate panel *
 
 /* Resolution badge — extracted from the release filename. 4K pops
    gold, 1080p blue, lower tiers stay muted. */
@@ -4881,32 +4525,8 @@ code.grab-fact-v,
   background: rgba(217, 119, 87, 0.16);
   color: #d97757;
 }
-.coll-pick .res-badge,
-.coll-cand .res-badge {
-  align-self: center;
-}
 
-/* ── Collection jobs (Jobs tab) ────────────────────────────────────── */
-.coll-head-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.coll-run-server {
-  padding: 9px 16px;
-  border-radius: var(--radius-pill);
-  border: 1px solid rgba(var(--accent-rgb), 0.45);
-  background: transparent;
-  color: var(--accent-bright);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.coll-run-server:hover {
-  background: rgba(var(--accent-rgb), 0.12);
-  border-color: var(--accent);
-}
+/* ── Collection jobs (Jobs tab) ────────────────────────────────────── *
 
 .job-list {
   list-style: none;
@@ -7400,52 +7020,6 @@ code.grab-fact-v,
     padding-left: 36px;
   }
 
-  /* Collection rows: smaller thumb, titles may wrap to two lines. */
-  .coll-thumb {
-    width: 72px;
-  }
-  .coll-row-title {
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-    overflow: hidden;
-  }
-  .coll-row-head {
-    gap: 10px;
-    padding: 10px;
-    flex-wrap: wrap;
-  }
-  /* The status/result block can't share the head row on a phone — it
-     crushes the title to a few characters and clips its own buttons
-     off the right edge. Drop it to a full-width line of its own under
-     the thumb + title; the expand chevron stays top-right. */
-  .coll-row-result {
-    order: 10;
-    flex: 1 1 100%;
-    max-width: none;
-    text-align: left;
-  }
-  .coll-state,
-  .coll-pick {
-    flex-wrap: wrap;
-    justify-content: flex-start;
-  }
-  /* Candidate rows: the fixed-width tag + badge left column leaves a
-     sliver for the title, which then breaks mid-word. Badges on line
-     one, title + meta full-width underneath. */
-  .coll-cands {
-    padding-left: 10px;
-    padding-right: 10px;
-  }
-  .coll-cand {
-    flex-wrap: wrap;
-    row-gap: 4px;
-  }
-  .coll-cand-body {
-    flex: 1 1 100%;
-  }
-
   /* Grabs list: tighter head grid, keep the status stripe visible. */
   .grab-row-head {
     grid-template-columns: minmax(72px, auto) 1fr 14px;
@@ -7568,12 +7142,6 @@ code.grab-fact-v,
     min-width: 0;
     flex-basis: 100%;
     max-width: none;
-  }
-  .coll-header {
-    align-items: stretch;
-  }
-  .coll-head-actions {
-    flex-wrap: wrap;
   }
 }
 
