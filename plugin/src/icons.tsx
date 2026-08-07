@@ -80,17 +80,16 @@ export function GenderIcon({
         </g>
       )}
       {kind === "trans" && (
-        // ⚧: the same two arms, plus the third to the upper LEFT with a bar
-        // across its tip — the stroke that distinguishes the trans symbol
-        // from a plain intersex one.
+        // binge's, verbatim (src/tabs/SettingsPage.tsx, TRANSGENDER_FEMALE):
+        // Venus plus the trans-modifier arrow off the upper left. Five
+        // strokes, not seven. What was here tried to draw the full
+        // three-armed glyph inside a 13px box and came out as a tangle.
         <g>
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 16 v5" />
-          <path d="M9.5 18.7 h5" />
-          <path d="M14.9 9.1 L19.5 4.5" />
-          <path d="M15.5 4.5 H19.5 V8.5" />
-          <path d="M9.1 9.1 L4.9 4.9" />
-          <path d="M3.7 6.6 L6.6 3.7" />
+          <circle cx="12" cy="11" r="4" />
+          <path d="M12 15 v6" />
+          <path d="M9.5 18.5 h5" />
+          <path d="M9.1 8.1 L5 4" />
+          <path d="M5 4 H8.5 M5 4 V7.5" />
         </g>
       )}
     </svg>
@@ -217,10 +216,13 @@ export function ExternalIcon({ size = 12 }: { size?: number }) {
 }
 
 export function RefreshIcon({ size = 12 }: { size?: number }) {
+  // binge's, verbatim (src/tabs/Home.tsx). Two arcs with two arrowheads, which
+  // is what reads as "refresh" at 11px. What was here was a single arc with a
+  // separate corner tick, and it rendered as a broken C with something stuck
+  // to it.
   return (
     <svg {...iconProps(size)}>
-      <path d="M20 11a8 8 0 1 0-.6 4" />
-      <path d="M20 4v7h-7" />
+      <path d="M21 12C21 16.9706 16.9706 21 12 21C9.69494 21 7.59227 20.1334 6 18.7083L3 16M3 12C3 7.02944 7.02944 3 12 3C14.3051 3 16.4077 3.86656 18 5.29168L21 8M3 21V16M3 16H8M21 3V8M21 8H16" />
     </svg>
   );
 }
