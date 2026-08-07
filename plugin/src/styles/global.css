@@ -54,6 +54,17 @@
   --amber: #d4a14a;
   --amber-rgb: 212, 161, 74;
   --red: #ef4444;
+  /* Referenced 24 times and never defined, so every failure state in the app
+     rendered from an inline fallback and error red was salmon in the grab
+     dossier, burnt orange in the add-torrent form and two further one-off
+     oranges elsewhere. Pointed at --red so there is ONE error colour rather
+     than a fifth. */
+  --danger: var(--red);
+  /* Same fault, smaller blast radius: referenced five times with three
+     different fallbacks (11px, 12px, 14px), which is why the setup card, the
+     performer card and the notification panel had unequal corners by
+     accident rather than by choice. */
+  --radius-md: 12px;
 
   --radius: 16px;
   --radius-sm: 12px;
@@ -8850,7 +8861,13 @@ code.grab-fact-v,
 
 
 /* ── mismatch: what we wanted vs what arrived ────────────────────── */
+/* The verdict glyph reads --tone / --tone-rgb, which were defined only on the
+   .grab-match-hero variants. When the mismatch panel became its own component
+   the glyph came with it and the tone did not, so a 42x42 box painted with no
+   stroke at all: an icon that had silently stopped existing. */
 .grab-mismatch {
+  --tone: var(--amber);
+  --tone-rgb: var(--amber-rgb);
   border: 1px solid rgba(var(--amber-rgb), 0.35);
   background: rgba(var(--amber-rgb), 0.07);
   border-radius: var(--radius-sm);
