@@ -775,7 +775,7 @@ export default function GrabsList({
                       )}
                       <input
                         type="text"
-                        placeholder="folder, default (manual)"
+                        placeholder="folder, default Unfiled"
                         value={it.name}
                         onChange={(e) => setItemName(it.key, e.target.value)}
                       />

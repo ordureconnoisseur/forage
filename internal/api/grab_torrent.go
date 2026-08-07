@@ -26,7 +26,8 @@ const maxUploadTorrent = 32 << 20
 //
 //	POST /grab/torrent   multipart/form-data
 //	  torrent  the .torrent file (required)
-//	  name     library folder to place into (optional; "(manual)" default)
+//	  name     library folder to place into (optional; unattributed uploads
+//	           go to the library's Unfiled bin)
 //
 // Single vs pack is auto-detected from the parsed video count.
 func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
@@ -55,10 +56,19 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Empty means "forage does not know who this is", and the placer already
+	// answers that correctly: Place() routes an empty performer to the
+	// library's fallback bin, which is Unfiled (or Unsorted on a library old
+	// enough to still have it).
+	//
+	// This used to default to the literal string "(manual)", which became the
+	// performer name and therefore the directory, so an unattributed upload
+	// landed in <library_root>/(manual)/. That is a third bin nothing else in
+	// forage knows about: isUnfiledFolder does not recognise it, the /unfiled
+	// route does not list it, and the Unfiled view cannot offer to file it.
+	// Files went there to be sorted later and were invisible to the only
+	// screen that sorts things.
 	folder := strings.TrimSpace(r.FormValue("name"))
-	if folder == "" {
-		folder = "(manual)"
-	}
 	kind := "single"
 	packFiles := 0
 	if meta.VideoCount >= packMinVideos {
@@ -74,7 +84,7 @@ func (s *Server) postGrabTorrent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title := meta.Name
-	if title == "" {
+	if title == "" && folder != "" {
 		title = folder
 	}
 	var grabID int64

@@ -8,7 +8,7 @@ import {
   type SceneRelease,
   type SceneReleasesResponse,
 } from "../api";
-import { ResBadge } from "../ResBadge";
+import { ResBadge, resolution } from "../ResBadge";
 import WatchControl from "../WatchControl";
 import { humanSize } from "../format";
 
@@ -56,18 +56,15 @@ function loadSort(): ReleaseSort {
   return "match";
 }
 
-// resolutionRank extracts a sortable height from the release title.
-// Falls back to 0 when no resolution token is present so unlabelled
-// releases sink below labelled ones.
+// resolutionRank is the badge's own answer, so the sort and the label can
+// never disagree about the same string.
+//
+// It used to be a second parser living here, and it differed twice: it did not
+// fold underscores to spaces, so a title ending "…2022._1080p" ranked 0 while
+// the badge beside it read 1080p, and it knew nothing about VR, so a 5K
+// release wore a gold badge and sorted below a 480p.
 function resolutionRank(title: string): number {
-  const t = title.toLowerCase();
-  // 4K named by height (2160p) or width (3840p).
-  if (/\b(2160p?|3840p?|4k|uhd)\b/.test(t)) return 2160;
-  // FHD / FHDC are JAV/sukebei labels for Full HD = 1080p.
-  if (/\b(1080p?|fhdc?)\b/.test(t)) return 1080;
-  if (/\b720p?\b/.test(t)) return 720;
-  if (/\b480p?\b/.test(t)) return 480;
-  return 0;
+  return resolution(title)?.height ?? 0;
 }
 
 // seedTier buckets torrent seed health (mirrors the backend) so a marginal
