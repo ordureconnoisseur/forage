@@ -351,6 +351,11 @@ export default function App() {
           <AcornIcon />
           forage
         </a>
+        {/* Hidden while the gate is up. Five tabs that move their own active
+            highlight and render nothing behind it are worse than no tabs: the
+            brand lockup stays, because that is the one thing on the screen
+            that should be there. */}
+        {!needsLogin && !needsSetup && (
         <nav className="top-nav">
           <a
             href="#/"
@@ -423,6 +428,7 @@ export default function App() {
             Grabs
           </a>
         </nav>
+        )}
         <div className="header-right">
           {ready && (
             <NotificationsBell

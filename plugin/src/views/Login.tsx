@@ -118,8 +118,12 @@ export default function Login({
     <div className="setup">
       <div className="setup-card">
         <div className="setup-welcome">
+          {/* No <h1>forage</h1> here. The header above already says it, at
+              18px in --accent, and this said it again at 34px in
+              --accent-bright: the same word twice on one screen, at two
+              sizes, in two greens. The acorn carries the brand on this card;
+              the wordmark belongs to the header. */}
           <AcornIcon className="setup-acorn" />
-          <h1>forage</h1>
           <p className="setup-tagline">
             <LockIcon size={12} /> This forage is locked. {mode === "password"
               ? "Sign in to continue."
