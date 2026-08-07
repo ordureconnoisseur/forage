@@ -333,11 +333,28 @@ button {
 /* ── Section headers ─────────────────────────────────────────── */
 
 .page-header { margin-bottom: 24px; }
-.page-header h2 {
+/* The page title, wherever a view puts it.
+   
+   .page-header carried this and .grab-toolbar-id did not, so Grabs and
+   Deletions fell through to the browser's default h2: 1.5em of a 14px body,
+   which is 21px, at weight 700. Every other view was 24px at 600. Two sizes
+   and two weights for the same rank of heading, decided by whether the view
+   happened to use the wrapper.
+   
+   The wrappers stay different, because they are doing different jobs: the
+   toolbar puts a search box on the same row and needs the width, while
+   .page-header stacks a subtitle underneath. Only the type is shared. */
+.page-header h2,
+.grab-toolbar-id h2 {
   margin: 0 0 8px 0;
   font-size: 24px;
   font-weight: 600;
   letter-spacing: -0.01em;
+}
+/* The toolbar sets the title beside its subtitle rather than above it, so it
+   keeps its own margin. */
+.grab-toolbar-id h2 {
+  margin: 0;
 }
 .page-header .meta { color: var(--text-muted); font-size: 13px; }
 
@@ -2251,9 +2268,6 @@ button {
   gap: 12px;
   flex-wrap: wrap;
 }
-.grab-toolbar-id h2 {
-  margin: 0;
-}
 .grab-toolbar-stats {
   font-size: 13px;
   color: var(--text-muted);
@@ -3709,9 +3723,10 @@ code.grab-fact-v,
 .match-head-text {
   min-width: 0;
 }
+/* Was 18px while the other two dialog titles were 20. One modal title size. */
 .match-head h2 {
   margin: 0;
-  font-size: 18px;
+  font-size: 20px;
   font-weight: 600;
   letter-spacing: -0.01em;
 }
