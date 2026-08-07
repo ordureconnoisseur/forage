@@ -8692,110 +8692,87 @@ code.grab-fact-v,
   color: var(--accent-bright);
 }
 
-/* Narrower than a scene card, deliberately. Same chrome, but there are
-   twenty-four of these against sixteen scenes, and at the scene card's 44%
-   only two fit a phone: twelve swipes to reach the end. At 46% of that, three
-   and a bit fit, so the strip shows it continues.
+/* The card is .performer-card, unchanged: portrait filling the frame, name
+   and stat on the scrim, the same one the library grid uses. Only the shell
+   is borrowed from the scene carousel, which is the part that was actually
+   inconsistent. Everything below is sizing it for a flex strip instead of a
+   grid, plus the two corner controls.
+
    The selector is heavier than it looks because .trending-carousel.scroll
-   .trending-card sets flex-basis LATER in this file, and a later rule of equal
-   specificity wins the properties it names. */
-.picks-carousel.trending-carousel.scroll .trending-card,
-.picks-carousel .trending-card {
+   .trending-card sets flex-basis LATER in this file, and a later rule of
+   equal specificity wins the properties it names. */
+.picks-carousel.trending-carousel.scroll .performer-card,
+.picks-carousel .performer-card {
   flex: 0 0 132px;
+  scroll-snap-align: start;
 }
 @media (max-width: 380px) {
-  .picks-carousel.trending-carousel.scroll .trending-card { flex: 0 0 118px; }
-}
-.pick-thumb {
-  aspect-ratio: 3 / 4;
-  position: relative;
+  .picks-carousel.trending-carousel.scroll .performer-card { flex: 0 0 118px; }
 }
 /* Head-first. A publicity portrait is 2:3 and framed with the face near the
-   top, so cover-cropping it to 3:4 from the centre cuts the head off and
-   leaves a chin and a torso. This is the one thing a portrait needs that a
-   16:9 still does not. */
-.pick-thumb img { object-position: center top; }
-/* The same gradient the scene thumbs carry under their Watch pill. Without
-   it the Add pill floats on a face; with it, it sits on a band and reads as
-   part of the card's furniture, which is what it is. */
-.pick-thumb::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 42%;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
-  pointer-events: none;
-  z-index: 2;
-}
-.pick-thumb-empty {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 34px;
-  font-weight: 700;
-  color: var(--text-dim);
-}
-.pick-name { font-size: 12px; }
+   top, so cover-cropping it to 3:4 from the centre leaves a chin and a
+   torso. The library grid's own cards have the same issue; this strip is
+   where it shows, because these are all publicity shots. */
+.pick-card .perf-img { object-position: center top; }
+/* Scaled to the smaller card: the grid renders these at 190px+, the strip at
+   132, and 15px/60px type in a 132px frame is a name that does not fit. */
+.pick-card .perf-scrim { padding: 28px 9px 9px; }
+.pick-card .perf-name { font-size: 12.5px; white-space: normal; }
+.pick-card .perf-stats { font-size: 10.5px; margin-top: 3px; }
+.pick-card .perf-img-empty { font-size: 42px; }
 
-/* The action is the same overlay pill the scene cards use for Watch, in the
-   same corner. It replaced a bare "+" in a circle that said nothing about
-   what it did, and that competed with the dismiss in the opposite corner as
-   though the two were equals. */
+/* The whole card adds; this says so. A corner badge, not a pill across the
+   middle of the portrait: on a 3:4 crop that is where the face is. */
 .pick-add {
   position: absolute;
-  left: 6px;
+  top: 6px;
   right: 6px;
-  bottom: 6px;
-  z-index: 3;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
-  padding: 4px 8px;
-  font-size: 10.5px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(var(--accent-rgb), 0.9);
+  color: #08120b;
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
 }
-.pick-add:hover:not(:disabled) { opacity: 1; }
-.pick-add.is-added {
-  border-color: var(--accent);
-  color: var(--accent-bright);
-  opacity: 1;
-}
-.trending-card.pick-card.is-err .pick-add { border-color: var(--red); color: var(--red); }
+.pick-card.is-err .pick-add { background: var(--red); color: #fff; }
 
-/* Not interested. The quieter of the two by design: it is the rarer action,
-   and a strip that is swiped past should not carry two equally loud targets.
-   Revealed on hover where there is a pointer, always present on touch, which
-   has no hover to reveal it with. */
+/* Not interested. Quieter than the add: rarer action, and a strip that gets
+   swiped past should not carry two equally loud targets. */
 .pick-dismiss {
   position: absolute;
-  top: 5px;
-  right: 5px;
-  z-index: 3;
+  top: 6px;
+  left: 6px;
+  z-index: 2;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
-  padding: 0;
-  border: 0;
   border-radius: 50%;
-  background: rgba(10, 10, 10, 0.55);
+  background: rgba(10, 10, 10, 0.5);
   backdrop-filter: blur(4px);
   color: rgba(255, 255, 255, 0.7);
   cursor: pointer;
   opacity: 0;
   transition: opacity 0.12s ease, color 0.12s ease;
 }
-.trending-card.pick-card:hover .pick-dismiss,
+.pick-card:hover .pick-dismiss,
 .pick-dismiss:focus-visible { opacity: 1; }
-.pick-dismiss:hover { color: #fff; }
+.pick-dismiss:hover { color: #fff; background: rgba(10, 10, 10, 0.72); }
 @media (hover: none) {
-  .pick-dismiss { opacity: 0.55; }
+  .pick-dismiss { opacity: 0.5; }
 }
 
 .pick-card.is-skeleton {
   animation: skeleton-pulse 1.6s ease-in-out infinite;
 }
-.pick-card.is-skeleton .trending-card-body { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .picks-lens, .pick-dismiss { transition: none; }
   .pick-card.is-skeleton { animation: none; opacity: 0.6; }

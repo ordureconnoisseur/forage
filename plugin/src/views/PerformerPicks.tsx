@@ -101,7 +101,7 @@ export default function PerformerPicks() {
         {loading
           ? Array.from({ length: 8 }, (_, i) => (
               <div
-                className="trending-card pick-card is-skeleton"
+                className="performer-card pick-card is-skeleton"
                 key={i}
                 aria-hidden="true"
               />
@@ -161,73 +161,90 @@ function PickCard({
         ? "1 scene"
         : `${p.scene_count} scenes`;
 
+  // forage already has a performer card: portrait filling the frame, name and
+  // stat on a scrim across the bottom, used for every performer in the
+  // library. This is a performer, so it is that card. Borrowing the SCENE
+  // card instead put the picture in a small box above a body block, which is
+  // right for a 16:9 still and wrong for a face.
   return (
-    <div
+    <button
+      type="button"
       className={
-        "trending-card pick-card" +
+        "performer-card pick-card" +
         (state === "added" ? " is-added" : "") +
         (state === "err" ? " is-err" : "")
       }
+      onClick={add}
+      disabled={state === "adding" || state === "added"}
+      title={
+        state === "idle"
+          ? `Add ${p.name} to your library`
+          : `${p.name}: ${msg || "adding…"}`
+      }
+      aria-label={`Add ${p.name} to your library`}
     >
-      <div className="scene-thumb pick-thumb">
-        {img && !noImage ? (
-          <img src={img} alt="" loading="lazy" onError={() => setNoImage(true)} />
+      {img && !noImage ? (
+        <img
+          className="perf-img"
+          src={img}
+          alt=""
+          loading="lazy"
+          onError={() => setNoImage(true)}
+        />
+      ) : (
+        <div className="perf-img perf-img-empty" aria-hidden="true">
+          {p.name.slice(0, 1)}
+        </div>
+      )}
+
+      <div className="perf-scrim">
+        <div className="perf-name">{p.name}</div>
+        <div className="perf-stats">{stat}</div>
+      </div>
+
+      {/* The whole card adds. This says so without covering the face: a
+          corner badge rather than a pill across the middle of the portrait,
+          which is where a Watch pill would sit on a 16:9 still and where a
+          chin sits on a 3:4 one. */}
+      <span className="pick-add" aria-hidden="true">
+        {state === "adding" ? (
+          "…"
+        ) : state === "added" ? (
+          <CheckIcon size={12} />
+        ) : state === "err" ? (
+          "!"
         ) : (
-          <div className="pick-thumb-empty" aria-hidden="true">
-            {p.name.slice(0, 1)}
-          </div>
+          <PlusIcon size={12} />
         )}
-        {/* The same overlay pill the scene cards carry for Watch, in the same
-            corner at the same size. It replaces a bare "+" in a circle, which
-            said nothing about what it did and competed with the dismiss for
-            attention in the opposite corner. */}
-        <button
-          type="button"
-          className={"watch-chip pick-add" + (state === "added" ? " is-added" : "")}
-          onClick={add}
-          disabled={state === "adding" || state === "added"}
-          title={
-            state === "idle"
-              ? `Add ${p.name} to your library`
-              : `${p.name}: ${msg || "adding…"}`
-          }
-          aria-label={`Add ${p.name} to your library`}
-        >
-          {state === "adding" ? (
-            "…"
-          ) : state === "added" ? (
-            <>
-              <CheckIcon size={11} /> Added
-            </>
-          ) : state === "err" ? (
-            "!"
-          ) : (
-            <>
-              <PlusIcon size={11} /> Add
-            </>
-          )}
-        </button>
-        {/* Not interested. Deliberately the quieter of the two: it is the
-            rarer action, and a strip that gets swiped past should not carry
-            two equally loud targets. Revealed on hover where there is a
-            pointer, always present on touch, which has none. */}
-        <button
-          type="button"
-          className="pick-dismiss"
-          aria-label={`Stop suggesting ${p.name}`}
-          title={`Stop suggesting ${p.name}`}
-          onClick={() => {
-            void dismissPerformerPick(p.stashdb_id).catch(() => {});
-            onDismiss();
-          }}
-        >
-          <CloseIcon size={10} />
-        </button>
-      </div>
-      <div className="trending-card-body">
-        <div className="trending-card-title pick-name">{p.name}</div>
-        <div className="trending-card-meta">{stat}</div>
-      </div>
-    </div>
+      </span>
+
+      {/* Not interested. The quieter of the two by design: it is the rarer
+          action, and a strip that gets swiped past should not carry two
+          equally loud targets. Revealed on hover where there is a pointer,
+          dimmed rather than hidden on touch, which has none. */}
+      <span
+        className="pick-dismiss"
+        role="button"
+        tabIndex={0}
+        aria-label={`Stop suggesting ${p.name}`}
+        title={`Stop suggesting ${p.name}`}
+        onClick={(e) => {
+          // The card underneath adds. Without this, dismissing would add.
+          e.preventDefault();
+          e.stopPropagation();
+          void dismissPerformerPick(p.stashdb_id).catch(() => {});
+          onDismiss();
+        }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter" && e.key !== " ") return;
+          e.preventDefault();
+          e.stopPropagation();
+          void dismissPerformerPick(p.stashdb_id).catch(() => {});
+          onDismiss();
+        }}
+      >
+        <CloseIcon size={10} />
+      </span>
+    </button>
   );
 }
