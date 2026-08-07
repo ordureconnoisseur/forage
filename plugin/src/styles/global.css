@@ -152,32 +152,7 @@ input[type="radio"] {
   accent-color: var(--accent);
 }
 
-/* One focus treatment, for everything focusable.
-   
-   Nine rules each turned the outline off and reinvented it. Five did the same
-   thing (accent border plus a 3px tint ring), two gave a border and no ring,
-   one used a different accent alpha, and .tags-input turned the outline off
-   and replaced it with NOTHING, so focus on that field was invisible. Buttons
-   and links had no treatment at all and fell back to the browser's.
-   
-   The dominant version wins because it was already the most common and it
-   suits both a bordered input and a flat button. Stated once. */
-.controls input:focus,
-.sort-select:focus,
-.discover-days:focus,
-.alias-input:focus,
-.settings-row input:focus,
-.grab-toolbar-search input:focus,
-.grab-setperf-search:focus,
-.grab-match-input:focus,
-.setup-field input:focus,
-.tags-input:focus,
-:where(input, textarea, select):focus-visible,
-:where(button, a, [tabindex]):focus-visible {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
-}
+
 
 * {
   box-sizing: border-box;
@@ -8764,4 +8739,36 @@ code.grab-fact-v,
 }
 @media (prefers-reduced-motion: reduce) {
   .settings-index-item { transition: none; }
+}
+
+/* One focus treatment, for everything focusable.
+   
+   Nine rules each turned the outline off and reinvented it. Five did the same
+   thing (accent border plus a 3px tint ring), two gave a border and no ring,
+   one used a different accent alpha, and .tags-input turned the outline off
+   and replaced it with NOTHING, so focus on that field was invisible. Buttons
+   and links had no treatment at all and fell back to the browser's.
+   
+   The dominant version wins because it was already the most common and it
+   suits both a bordered input and a flat button.
+   
+   It lives at the END of the file on purpose. Stated near the top, it was the
+   same specificity as .controls input[type="text"] a couple of hundred lines
+   below, whose border shorthand therefore won and the focused border stayed
+   grey. A rule whose job is to override has to come after what it overrides. */
+.controls input:focus,
+.sort-select:focus,
+.discover-days:focus,
+.alias-input:focus,
+.settings-row input:focus,
+.grab-toolbar-search input:focus,
+.grab-setperf-search:focus,
+.grab-match-input:focus,
+.setup-field input:focus,
+.tags-input:focus,
+:where(input, textarea, select):focus-visible,
+:where(button, a, [tabindex]):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
 }
