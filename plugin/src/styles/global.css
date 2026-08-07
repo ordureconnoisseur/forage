@@ -1880,7 +1880,14 @@ button {
   gap: 6px;
   margin-bottom: 20px;
 }
-.settings-row span {
+/* The field's LABEL, which is the direct child. A descendant selector was
+   written where a child selector was meant, and at (0,1,1) it outranks the
+   component classes of everything rendered inside the row: .source-badge is
+   (0,1,0), so all four "env" badges took this font size, weight, tracking AND
+   colour, and rendered pixel-identical to the label beside them. That badge
+   exists to warn that a hand-edited .env value is overriding your saved
+   config, and it was drawn as a second label. */
+.settings-row > span {
   font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
