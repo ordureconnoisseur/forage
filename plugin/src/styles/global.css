@@ -8715,6 +8715,18 @@ code.grab-fact-v,
    leaves a chin and a torso. This is the one thing a portrait needs that a
    16:9 still does not. */
 .pick-thumb img { object-position: center top; }
+/* The same gradient the scene thumbs carry under their Watch pill. Without
+   it the Add pill floats on a face; with it, it sits on a band and reads as
+   part of the card's furniture, which is what it is. */
+.pick-thumb::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 42%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+  pointer-events: none;
+  z-index: 2;
+}
 .pick-thumb-empty {
   width: 100%;
   height: 100%;
