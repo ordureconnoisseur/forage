@@ -8716,9 +8716,10 @@ code.grab-fact-v,
 .pick-card .perf-img { object-position: center top; }
 /* Scaled to the smaller card: the grid renders these at 190px+, the strip at
    132, and 15px/60px type in a 132px frame is a name that does not fit. */
-.pick-card .perf-scrim { padding: 28px 9px 9px; }
+/* One line now, so the scrim is shallower: the gradient only has to carry a
+   name, and a deep one over a 3:4 crop eats the face it is sitting on. */
+.pick-card .perf-scrim { padding: 22px 9px 8px; }
 .pick-card .perf-name { font-size: 12.5px; white-space: normal; }
-.pick-card .perf-stats { font-size: 10.5px; margin-top: 3px; }
 .pick-card .perf-img-empty { font-size: 42px; }
 
 /* The whole card adds; this says so. A corner badge, not a pill across the

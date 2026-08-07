@@ -149,11 +149,12 @@ function PickCard({
     }
   };
 
-  // The stat says something different per lens, because the reason to look at
-  // this person is different per lens. On trending it is the ranking signal
-  // itself; elsewhere the ORDER carries the recency (StashDB exposes no debut
-  // or last-scene DATE to print), so the scene count is what is left worth
-  // saying.
+  // Not printed on the card any more: a 132px portrait wants a name on it,
+  // not two lines of type. It still says why this person is in the strip, so
+  // it moves to the tooltip rather than being thrown away. On trending it is
+  // the ranking signal itself; elsewhere the ORDER carries the recency
+  // (StashDB exposes no debut or last-scene DATE to print), so the scene
+  // count is what is left worth saying.
   const stat =
     lens === "trending" && p.trending_scenes
       ? `on ${p.trending_scenes} trending scene${p.trending_scenes === 1 ? "" : "s"}`
@@ -178,7 +179,7 @@ function PickCard({
       disabled={state === "adding" || state === "added"}
       title={
         state === "idle"
-          ? `Add ${p.name} to your library`
+          ? `${p.name}, ${stat}. Add to your library`
           : `${p.name}: ${msg || "adding…"}`
       }
       aria-label={`Add ${p.name} to your library`}
@@ -199,7 +200,6 @@ function PickCard({
 
       <div className="perf-scrim">
         <div className="perf-name">{p.name}</div>
-        <div className="perf-stats">{stat}</div>
       </div>
 
       {/* The whole card adds. This says so without covering the face: a
