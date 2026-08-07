@@ -283,3 +283,21 @@ export function ClockIcon({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
+
+export function LockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <rect x="4.5" y="10.5" width="15" height="9.5" rx="2" />
+      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+export function GearIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="12" cy="12" r="3.2" />
+      <path d="M12 3v2.2M12 18.8V21M4.2 7.5l1.9 1.1M17.9 15.4l1.9 1.1M4.2 16.5l1.9-1.1M17.9 8.6l1.9-1.1" />
+    </svg>
+  );
+}

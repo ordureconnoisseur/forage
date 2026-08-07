@@ -239,7 +239,7 @@ export default function MissingScenes({
     setWatchBusy(false);
     const n = scenes.length;
     exitSelect();
-    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
+    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"}`);
     window.setTimeout(() => setWatchedMsg(null), 3500);
   };
 

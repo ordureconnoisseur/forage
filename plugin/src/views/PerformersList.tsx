@@ -238,7 +238,7 @@ function PerformerCard({
       ) : (
         <div className="perf-img perf-img-empty">{p.name.slice(0, 1)}</div>
       )}
-      {p.favorite ? <HeartIcon /> : null}
+      {p.favorite ? <StashHeart /> : null}
       <div className="perf-scrim">
         <div className="perf-name">{p.name}</div>
         {/* StashDB-derived stats (missing, owned/total, last release)
@@ -274,8 +274,16 @@ function PerformerCard({
 
 /* Solid heart glyph — Font Awesome 6 "heart" path, MIT licensed.
    Same shape Stash uses for its favourite button, so this reads the
-   same as refract's pink-glow heart on regular Stash performer cards. */
-function HeartIcon() {
+   same as refract's pink-glow heart on regular Stash performer cards.
+   
+   Named StashHeart, not HeartIcon: icons.tsx exports a HeartIcon of its own
+   in the app's 24-box stroke language, and a local component sharing that
+   name silently shadows the import wherever both are in scope. That is
+   exactly how a local RefreshIcon in GrabsList broke two buttons the moment
+   they passed it a size. This one is a deliberate second heart, borrowed
+   from Stash's own 512-box path so it matches refract; it just must not be
+   confusable with the other. */
+function StashHeart() {
   return (
     <span className="heart-icon" aria-label="Favourite">
       <svg viewBox="0 0 512 512" aria-hidden="true">

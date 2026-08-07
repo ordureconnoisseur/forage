@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { CheckIcon } from "../icons";
 import { fetchPacks, postGrab, type Pack } from "../api";
 import { humanSize } from "../format";
 
@@ -164,7 +165,15 @@ export default function PerformerPacks({
                   huge ? `Large download — ${humanSize(p.size, "?")}` : undefined
                 }
               >
-                {queued ? "queued ✓" : state === "error" ? "retry" : "Grab pack"}
+                {queued ? (
+          <>
+            <CheckIcon size={10} /> queued
+          </>
+        ) : state === "error" ? (
+          "retry"
+        ) : (
+          "Grab pack"
+        )}
               </button>
             </li>
           );

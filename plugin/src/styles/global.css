@@ -55,6 +55,7 @@
   /* Shared disclosure chevron — the rounded-stroke glyph from the refract
      theme, as a mask so its colour follows the element's color. Used by
      .fchev and the <details> summary markers. */
+  --tick: url("data:image/svg+xml,%3Csvg viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round' d='M4 12.5 L9.5 18 L20 6.5'/%3E%3C/svg%3E");
   --fchev: url("data:image/svg+xml,%3Csvg viewBox='0 0 12 12' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath fill='none' stroke='%23000' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M2.5 4.5 L6 8 L9.5 4.5'/%3E%3C/svg%3E");
 
   --glass-bg: rgba(255, 255, 255, 0.06);
@@ -8019,7 +8020,17 @@ code.grab-fact-v,
 
 /* Green tick on a field whose section test passed */
 .setup-field.field-ok > span::after {
-  content: " ✓";
+  /* Was a text tick, which is a different face from every icon beside it
+     and an emoji on some platforms. Drawn instead, in the same 24-box
+     stroke language, as a mask so it takes the element's colour. */
+  content: "";
+  width: 11px;
+  height: 11px;
+  display: inline-block;
+  vertical-align: -1px;
+  background: currentColor;
+  -webkit-mask: var(--tick) no-repeat center/contain;
+  mask: var(--tick) no-repeat center/contain;
   color: var(--accent, #22c55e);
   font-weight: 600;
 }

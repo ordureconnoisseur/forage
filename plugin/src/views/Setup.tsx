@@ -750,7 +750,7 @@ export default function Setup({
               />
               {stashdbAutoFilled && (
                 <span className="setup-autofill-note">
-                  ✓ Filled from your Stash’s StashDB connection — no need to
+                  <CheckIcon size={11} /> Filled from your Stash’s StashDB connection, no need to
                   paste it again. Test to confirm, or replace above.
                 </span>
               )}
@@ -1170,7 +1170,7 @@ export default function Setup({
         {step === "done" && (
           <div className="setup-welcome">
             <div className="setup-check" aria-hidden="true">
-              ✓
+              <CheckIcon size={30} />
             </div>
             <h1>You're set</h1>
             <p className="setup-tagline">
@@ -1362,7 +1362,9 @@ function ConfiguredNotice({
 }) {
   return (
     <>
-      <div className="setup-test ok">✓ {label}</div>
+      <div className="setup-test ok">
+        <CheckIcon size={11} /> {label}
+      </div>
       <div className="setup-actions">
         <button className="setup-primary" onClick={onContinue}>
           Continue
@@ -1381,7 +1383,11 @@ function TestLabel({ test }: { test: Test }) {
       </div>
     );
   if (test.kind === "ok")
-    return <div className="setup-test ok">✓ {test.detail}</div>;
+    return (
+      <div className="setup-test ok">
+        <CheckIcon size={11} /> {test.detail}
+      </div>
+    );
   return (
       <div className="setup-test err">
         <CloseIcon size={11} /> {test.detail}

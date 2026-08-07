@@ -1,4 +1,4 @@
-import { ExternalIcon } from "./icons";
+import { CheckIcon, ExternalIcon } from "./icons";
 import { useEffect, useRef, useState } from "react";
 import {
   fetchManagedProwlarr,
@@ -111,7 +111,7 @@ export default function ManagedProwlarrCard({
       )}
       {status.state === "running" && (
         <div className="managed-line ok">
-          ✓ Managed Prowlarr {status.version} is running and connected.{" "}
+          <CheckIcon size={11} /> Managed Prowlarr {status.version} is running and connected.{" "}
           <a
             href={prowlarrProxyHref()}
             target="_blank"

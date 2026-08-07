@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { LockIcon } from "../icons";
 import {
   adminToken,
   clearSession,
@@ -120,7 +121,7 @@ export default function Login({
           <AcornIcon className="setup-acorn" />
           <h1>forage</h1>
           <p className="setup-tagline">
-            🔒 This forage is locked. {mode === "password"
+            <LockIcon size={12} /> This forage is locked. {mode === "password"
               ? "Sign in to continue."
               : "Enter your API key to continue."}
           </p>

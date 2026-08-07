@@ -314,7 +314,7 @@ function WatchGroup({
     setGrabAllBusy(false);
     onToast(
       failed === 0
-        ? `Queued ${ids.length} grab${ids.length === 1 ? "" : "s"} ✓`
+        ? `Queued ${ids.length} grab${ids.length === 1 ? "" : "s"}`
         : `Queued ${ids.length - failed}, ${failed} failed — they stay listed for a retry`,
     );
     onChanged();
@@ -685,7 +685,7 @@ function WatchCard({
                   onClick={grab}
                 >
                   {queued
-                    ? "Queued ✓"
+                    ? "Queued"
                     : pending === "grab"
                       ? "Grabbing…"
                       : null}

@@ -2243,7 +2243,7 @@ function PackPerformerReviewer({
       <div className="grab-pack-tag-head">
         {allDone ? (
           <span className="grab-pack-tag-done">
-            Tagged ✓ — {data.scenes.length} unidentified scene
+            Tagged: {data.scenes.length} unidentified scene
             {data.scenes.length === 1 ? "" : "s"} credited to {performerName}
           </span>
         ) : (
@@ -2631,7 +2631,7 @@ function GrabRow({
     try {
       await refreshPerformers();
       await runPerfSearch(perfQuery);
-      setPerfSyncMsg("Synced ✓ — performers up to date");
+      setPerfSyncMsg("Synced: performers up to date");
       window.setTimeout(() => setPerfSyncMsg(null), 4000);
     } catch (e) {
       setPerfSyncMsg(null);

@@ -1,4 +1,4 @@
-import { CheckIcon, CloseIcon, WarnIcon } from "../icons";
+import { CheckIcon, CloseIcon, GearIcon, WarnIcon } from "../icons";
 import { useEffect, useState } from "react";
 import {
   adminToken,
@@ -982,7 +982,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
                 onClick={goAdvanced}
                 disabled={releaseAdvanced === null}
               >
-                Advanced ⚙
+                Advanced <GearIcon size={11} />
               </button>
             )}
           </div>

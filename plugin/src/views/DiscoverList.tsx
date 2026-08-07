@@ -299,7 +299,7 @@ export default function DiscoverList({
     setWatchBusy(false);
     const n = chosen.length;
     exitSelect();
-    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"} ✓`);
+    setWatchedMsg(`Watching ${n} scene${n === 1 ? "" : "s"}`);
     window.setTimeout(() => setWatchedMsg(null), 3500);
     setReloadKey((k) => k + 1);
   };
@@ -1241,7 +1241,7 @@ function PerfChip({
         title={`Open ${p.name}'s missing scenes`}
       >
         {p.name}
-        {p.favorite ? " ♥" : ""}
+        {p.favorite ? <HeartIcon size={9} filled /> : null}
         {extraLabel || ""}
       </button>
       {anchor && <PerformerHovercard p={p} anchor={anchor} />}
@@ -1316,7 +1316,7 @@ function PerformerHovercard({
           {p.name}
           {p.favorite && (
             <span className="perf-hovercard-fav" aria-label="Favourite">
-              ♥
+              <HeartIcon size={11} filled />
             </span>
           )}
         </div>
