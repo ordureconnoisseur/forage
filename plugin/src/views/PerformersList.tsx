@@ -173,7 +173,7 @@ export default function PerformersList({
           className="grab-adopt-btn"
           onClick={refreshNow}
           disabled={refreshing}
-          title="Re-sync the performer list from Stash now — picks up newly added performers"
+          title="Re-sync the performer list from Stash now, picks up newly added performers"
         >
           {refreshing ? (
           "Refreshing…"

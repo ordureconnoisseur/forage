@@ -105,10 +105,10 @@ export default function Login({
         setAdminToken("");
         await clearSession();
         clearCache();
-        setErr("API key rejected — check it and try again");
+        setErr("API key rejected, check it and try again");
       }
     } catch {
-      setErr("Couldn't reach the daemon — try again");
+      setErr("Couldn't reach the daemon, try again");
     } finally {
       setBusy(false);
     }

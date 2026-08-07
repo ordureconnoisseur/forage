@@ -162,7 +162,7 @@ export default function PerformerPacks({
                 disabled={queued}
                 onClick={() => grab(p)}
                 title={
-                  huge ? `Large download — ${humanSize(p.size, "?")}` : undefined
+                  huge ? `Large download, ${humanSize(p.size, "?")}` : undefined
                 }
               >
                 {queued ? (

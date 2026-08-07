@@ -467,7 +467,7 @@ export default function App() {
             <WarnIcon size={12} /> A background task crashed and recovered{" "}
             {panicAge(health.lastPanic.at)}{" "}
             (in <code>{health.lastPanic.in}</code>). The daemon is fine, but
-            please report it — <code>/diag</code> has the details.{" "}
+            please report it, <code>/diag</code> has the details.{" "}
             <button
               className="banner-dismiss"
               onClick={() => {

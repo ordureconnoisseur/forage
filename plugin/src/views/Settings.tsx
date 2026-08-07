@@ -413,9 +413,9 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
         setCurrentPassword("");
         setProofDemanded(false);
         const note = pwChange
-          ? "saved — password updated"
+          ? "saved, password updated"
           : tokenChange !== undefined
-            ? "saved — API key updated"
+            ? "saved: API key updated"
             : "saved";
         setSaveMsg(note);
         const fresh = await fetchConfig();
@@ -793,7 +793,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           <p className="settings-tip">
             Usenet doesn't seed, so the SAB copy is redundant once the
             file is in your library. Deletes the history entry and the
-            downloaded files — safe, since placement hardlinks/copies
+            downloaded files, safe, since placement hardlinks/copies
             into the library first. Torrents are never touched (they
             keep seeding).
           </p>
@@ -839,7 +839,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           <p className="settings-tip">
             Path inside the forage container. Must be on the same
             filesystem as the qBit + SAB complete dirs for hardlinks to
-            work — otherwise the placer falls back to copy. Leave blank
+            work, otherwise the placer falls back to copy. Leave blank
             to disable placement (files stay where the client put them).
           </p>
           <Field label="Stash path mapping">
@@ -858,8 +858,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           <p className="settings-tip">
             Optional. Translates a forage-container path to the path
             Stash sees for the same file when forage triggers a scan
-            after placement. Format <code>forage-prefix:stash-prefix</code>
-            — e.g. forage mounts the NAS at <code>/data/media/Media</code>
+            after placement. Format <code>forage-prefix:stash-prefix</code>, e.g. forage mounts the NAS at <code>/data/media/Media</code>
             but Stash on Windows sees it as <code>Z:\Media</code>.
             Leave blank to fall back to a full-library scan after each
             placement (slower but works regardless of mount layout).
@@ -877,8 +876,8 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           </Field>
           <p className="settings-tip">
             The common "download to a fast local SSD, then move to the NAS"
-            layout. forage detects the split either way — the hardlink probe
-            cannot be fooled — so this only tells setup it is deliberate and
+            layout. forage detects the split either way, the hardlink probe
+            cannot be fooled, so this only tells setup it is deliberate and
             stops it being flagged as a misconfiguration. Placement is
             unchanged: hardlinks are impossible across mounts, so every
             placement copies. The thing worth knowing is that the download
@@ -903,9 +902,9 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             <SourceBadge field={data?.fields["stashIgnoreScreenshots"]} />
           </Field>
           <p className="settings-tip">
-            Packs ship a folder of screenshots beside the video —{" "}
+            Packs ship a folder of screenshots beside the video, {" "}
             <code>Screens</code>, <code>Screenlists</code>,{" "}
-            <code>Covers</code>, <code>Proof</code>, <code>scr</code> — and
+            <code>Covers</code>, <code>Proof</code>, <code>scr</code>, and
             Stash indexes every one as an image. Turning this on has forage
             write the exclusion rules for you when you save. Worth letting it:
             Stash matches these as raw regexes against raw paths and never
@@ -936,7 +935,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             survives. Removing a copy deletes its file; the torrent keeps
             seeding from the download client's own copy regardless. Pack
             copies are often re-encodes, so "keep my existing copy" is the
-            safe default. "Ask me each time" never deletes automatically — it
+            safe default. "Ask me each time" never deletes automatically, it
             flags each clash on the grab so you pick the better file (handy
             when some pack copies are higher quality than yours). "Keep the
             pack's copy" deletes your originals automatically, so it only acts
@@ -958,7 +957,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             Deleted files are moved to a <code>.forage-trash</code> folder
             beside the library and kept restorable (Deletions page) for this
             many days before the sweep removes them for good. 0 turns the
-            trash off entirely — every delete is immediate and permanent.
+            trash off entirely, every delete is immediate and permanent.
           </p>
           <div className="settings-actions inline">
             <button
@@ -1001,8 +1000,8 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             <SourceBadge field={data?.fields["seedRatio"]} />
           </Field>
           <p className="settings-tip">
-            A finished torrent is removed from qBittorrent — files included;
-            the library keeps its own hardlink — once either limit is met,
+            A finished torrent is removed from qBittorrent, files included;
+            the library keeps its own hardlink, once either limit is met,
             whichever comes first. 0 disables a rule. Per-indexer rows below
             override the defaults; blank inherits them.
           </p>
@@ -1081,7 +1080,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             <SourceBadge field={data?.fields["hideMalePerformers"]} />
           </Field>
           <p className="settings-tip">
-            Hides performers StashDB or Stash records as male — from the
+            Hides performers StashDB or Stash records as male, from the
             Performers grid and from the performer pills on Discover cards,
             including the ones offering to add someone to your library. Only a
             performer whose gender is actually recorded is hidden; a blank
@@ -1106,7 +1105,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           </Field>
           <p className="settings-tip">
             Scenes carrying any of these StashDB tags are dropped from the
-            missing-scenes view and from the owned/missing counts — so
+            missing-scenes view and from the owned/missing counts, so
             compilations, PMVs, remasters and the like don't clutter the gap
             analysis or skew your completion stats. Use the suggested chips (or
             "Add all") for the common noise tags. Matched case-insensitively;
@@ -1187,8 +1186,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             whose release is ready to grab, grabs that failed, and scenes that
             landed in Stash (with a Watch link). Telegram needs both the bot
             token and your chat id; the webhook receives a small JSON POST per
-            event batch. The Stash public URL is what the Watch links point at
-            — set it when the daemon reaches Stash on an address your phone
+            event batch. The Stash public URL is what the Watch links point at, set it when the daemon reaches Stash on an address your phone
             can't (it falls back to the Stash URL). Leave everything blank to
             keep notifications off (the in-app bell still works).
           </p>
@@ -1243,7 +1241,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               placeholder={
                 data?.fields["passwordHash"]?.hasSecret
                   ? "•••••••• (set; leave blank to keep)"
-                  : "no password — set one to enable login"
+                  : "no password, set one to enable login"
               }
             />
           </Field>
@@ -1255,7 +1253,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
             />
           </Field>
           <p className="settings-tip">
-            The username + password you sign in with — the normal web login.
+            The username + password you sign in with, the normal web login.
             The daemon stores only a bcrypt hash, never the password itself.
             Leave the password blank to keep the current one; clear it (type
             a space then delete, then save with the field empty) only via{" "}
@@ -1273,7 +1271,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
                 placeholder={
                   hasSecretPlaceholder("adminToken", data?.fields["adminToken"])
                     ? "•••••••• (set; leave blank to keep)"
-                    : "no key — programmatic access open"
+                    : "no key, programmatic access open"
                 }
               />
               <button
@@ -1289,7 +1287,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
           </Field>
           <p className="settings-tip">
             A shared secret for programmatic clients and scripts, sent as{" "}
-            <code>Authorization: Bearer &lt;key&gt;</code> — like an *arr API
+            <code>Authorization: Bearer &lt;key&gt;</code>, like an *arr API
             key. Separate from the web login above. While both it and the
             password are blank, anyone who can reach the daemon can browse
             your library and submit grabs, so set a login if forage is
@@ -1308,7 +1306,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               </div>
               <p className="settings-tip">
                 Forgets this browser's token and returns to the login screen.
-                Doesn't change the daemon's token — other devices stay signed
+                Doesn't change the daemon's token, other devices stay signed
                 in.
               </p>
             </>
@@ -1593,7 +1591,7 @@ function ProbeChip({ result }: { result: ProbeResult }) {
   return (
     <span
       className={"probe-chip " + (result.ok ? "ok" : "err")}
-      title={[result.message, result.detail].filter(Boolean).join(" — ")}
+      title={[result.message, result.detail].filter(Boolean).join(", ")}
     >
       {result.ok ? <CheckIcon size={11} /> : <CloseIcon size={11} />}
     </span>
@@ -1698,7 +1696,7 @@ function SeedingOverridesEditor({
   if (names.length === 0) {
     return (
       <p className="settings-tip">
-        No torrent indexers in Prowlarr yet — the defaults above apply to
+        No torrent indexers in Prowlarr yet, the defaults above apply to
         everything.
       </p>
     );
@@ -1756,7 +1754,7 @@ function SeedingOverridesEditor({
               {(info?.privacy === "private" || info?.privacy === "semiPrivate") && (
                 <span
                   className="seed-private"
-                  title="Account-gated tracker — ratio economy applies"
+                  title="Account-gated tracker, ratio economy applies"
                 >
                   {info.privacy === "private" ? "PRIVATE" : "SEMI-PRIVATE"}
                 </span>

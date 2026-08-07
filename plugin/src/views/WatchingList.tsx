@@ -156,7 +156,7 @@ export default function WatchingList({
       <div className="empty">
         Not watching any scenes. Hit <b>Watch</b> on a scene card to be told when
         a release shows up, or <b>Watch all missing</b> on a performer to collect
-        them as a batch — the server checks in the background and you grab the
+        them as a batch, the server checks in the background and you grab the
         best release here. Nothing is grabbed automatically.
       </div>
     );
@@ -315,7 +315,7 @@ function WatchGroup({
     onToast(
       failed === 0
         ? `Queued ${ids.length} grab${ids.length === 1 ? "" : "s"}`
-        : `Queued ${ids.length - failed}, ${failed} failed — they stay listed for a retry`,
+        : `Queued ${ids.length - failed}, ${failed} failed, they stay listed for a retry`,
     );
     onChanged();
   };
@@ -672,7 +672,7 @@ function WatchCard({
                   className="watch-dismiss"
                   disabled={busy}
                   onClick={redo}
-                  title="This grab was bad — remove it and search for a different release"
+                  title="This grab was bad, remove it and search for a different release"
                 >
                   {pending === "redo" ? "Searching…" : "Find another"}
                 </button>
@@ -851,7 +851,7 @@ function WatchCard({
               <button
                 className="watch-rel-more"
                 onClick={() => setExpanded((e) => !e)}
-                title="Show every release this watch found — pick a different one"
+                title="Show every release this watch found, pick a different one"
               >
                 <span
                   className={"fchev" + (expanded ? " open" : "")}

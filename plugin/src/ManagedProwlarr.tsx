@@ -78,7 +78,7 @@ export default function ManagedProwlarrCard({
         <>
           <div className="managed-line">
             <strong>No Prowlarr yet?</strong> forage can install and run it
-            for you — official build, kept alongside forage&rsquo;s own data,
+            for you, official build, kept alongside forage&rsquo;s own data,
             managed automatically.
           </div>
           {status.state === "error" && (
@@ -124,8 +124,7 @@ export default function ManagedProwlarrCard({
       )}
       {status.state === "stopped" && status.installed && (
         <div className="managed-line">
-          Managed Prowlarr {status.version} is installed but not running —
-          it starts with the daemon.
+          Managed Prowlarr {status.version} is installed but not running, it starts with the daemon.
         </div>
       )}
     </div>

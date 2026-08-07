@@ -57,7 +57,7 @@ export function ResBadge({ title }: { title: string }) {
       {cod && (
         <span
           className="res-badge res-codec"
-          title="Old SD-era codec (XviD/DivX) — low quality"
+          title="Old SD-era codec (XviD/DivX), low quality"
         >
           {cod}
         </span>

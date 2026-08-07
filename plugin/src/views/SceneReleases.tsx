@@ -360,7 +360,7 @@ export default function SceneReleases({
           <button
             className={"deep-search-btn" + (aliasOpen || alias ? " on" : "")}
             onClick={() => setAliasOpen((v) => !v)}
-            title="Trackers sometimes list a release under a different name spelling — retry under another name"
+            title="Trackers sometimes list a release under a different name spelling, retry under another name"
           >
             {alias ? `Name: ${alias}` : "Different name"}
           </button>
@@ -368,7 +368,7 @@ export default function SceneReleases({
             <button
               className="deep-search-btn"
               onClick={() => setDeep(true)}
-              title="Run the full multi-tracker fan-out — slower, but catches releases the quick search misses"
+              title="Run the full multi-tracker fan-out, slower, but catches releases the quick search misses"
             >
               Deep search <RefreshIcon size={11} />
             </button>
@@ -403,7 +403,7 @@ export default function SceneReleases({
           ) : (
             !alias && (
               <div className="empty-hint">
-                Trackers sometimes list a different name spelling — try the
+                Trackers sometimes list a different name spelling, try the
                 “Different name” button above.
               </div>
             )
@@ -433,7 +433,7 @@ export default function SceneReleases({
                   className={"fchev" + (showUnverified ? " open" : "")}
                   aria-hidden="true"
                 />{" "}
-                Unverified ({unverified.length}) — different scenes that share a
+                Unverified ({unverified.length}), different scenes that share a
                 title token
               </h3>
               {showUnverified && (
@@ -611,9 +611,7 @@ function ReleaseList({
                   <span className="rm-label">match</span>
                 </>
               ) : (
-                <span className="rm-na" title="Not scored against this scene">
-                  —
-                </span>
+                <span className="rm-na" title="Not scored against this scene">, </span>
               )}
             </div>
 
@@ -660,8 +658,8 @@ function ReleaseList({
                   <WarnIcon size={11} /> Looks like <strong>{r.best_match_title}</strong>
                   {r.best_match_conf
                     ? ` (${(r.best_match_conf * 100).toFixed(0)}%)`
-                    : ""}{" "}
-                  — not the scene you're viewing.
+                    : ""}
+                  , not the scene you&rsquo;re viewing.
                   {r.best_match_id && !queued && (
                     <button
                       className="grab-as-btn"
@@ -1041,7 +1039,7 @@ function GrabButton({
           onClick={() => onGrab(lowSpace)}
           title={state.message}
         >
-          {lowSpace ? "Grab anyway" : "Failed — retry"}
+          {lowSpace ? "Grab anyway" : "Failed, retry"}
         </button>
       );
     }

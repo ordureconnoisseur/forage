@@ -250,7 +250,7 @@ export default function Setup({
       if (!token.trim()) {
         setConnTest({
           kind: "err",
-          detail: "This daemon requires an admin token — paste it below",
+          detail: "This daemon requires an admin token, paste it below",
         });
         return;
       }
@@ -261,7 +261,7 @@ export default function Setup({
       } catch {
         setConnTest({
           kind: "err",
-          detail: "Token rejected — double-check it and test again",
+          detail: "Token rejected, double-check it and test again",
         });
         return;
       }
@@ -312,7 +312,7 @@ export default function Setup({
             setStashdbAutoFilled(true);
             setStashdbTest({
               kind: "ok",
-              detail: "Pulled from your Stash — confirm or replace",
+              detail: "Pulled from your Stash, confirm or replace",
             });
           }
         } catch {
@@ -565,7 +565,7 @@ export default function Setup({
               }
             : {
                 ok: false,
-                text: `${name} category: ${status} — create a category named "forage" pointing at ${downloadRoot.trim()} in its UI`,
+                text: `${name} category: ${status}, create a category named "forage" pointing at ${downloadRoot.trim()} in its UI`,
               },
         );
       }
@@ -631,8 +631,7 @@ export default function Setup({
           <div className="setup-step">
             <h2>Connect to your daemon</h2>
             <p className="setup-sub">
-              The URL where the forage daemon is reachable from this browser —
-              your Tailscale Serve address or reverse-proxy URL.
+              The URL where the forage daemon is reachable from this browser, your Tailscale Serve address or reverse-proxy URL.
             </p>
             <label className="setup-field">
               <span>Daemon URL</span>
@@ -1039,7 +1038,7 @@ export default function Setup({
           <div className="setup-step">
             <h2>Choose your library</h2>
             <p className="setup-sub">
-              Where forage places finished downloads — a path inside the forage
+              Where forage places finished downloads, a path inside the forage
               container, on the same filesystem as your download client's
               complete dir so it can hardlink.
             </p>

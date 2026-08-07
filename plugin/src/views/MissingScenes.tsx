@@ -384,7 +384,7 @@ export default function MissingScenes({
             {data.unidentified_local > 0 && (
               <span
                 className="ms-unidentified"
-                title="Local scenes tagged with this name that carry no StashDB id, so they aren't matched against StashDB's catalogue. Some of what shows as 'missing' may already be here, just un-identified — run Stash's identify/scrape to fold them in."
+                title="Local scenes tagged with this name that carry no StashDB id, so they aren't matched against StashDB's catalogue. Some of what shows as 'missing' may already be here, just un-identified, run Stash's identify/scrape to fold them in."
               >
                 {" · "}+{data.unidentified_local.toLocaleString()} un-identified
               </span>
@@ -450,7 +450,7 @@ export default function MissingScenes({
       {view === "dupes" ? (
         data.duplicates.length === 0 ? (
           <div className="empty">
-            No duplicates — you hold a single copy of every owned scene.
+            No duplicates, you hold a single copy of every owned scene.
           </div>
         ) : (
           <div className="dup-list">
@@ -558,7 +558,7 @@ function SceneCard({
         if (e.key === "Enter" || e.key === " ") onPick();
       }}
       aria-pressed={selecting ? selected : undefined}
-      title={owned ? `In your library at ${resolution || "unknown quality"} — click to find a better release` : undefined}
+      title={owned ? `In your library at ${resolution || "unknown quality"}, click to find a better release` : undefined}
     >
       {selecting && (
         <span className="scene-check" aria-hidden="true">
@@ -607,7 +607,7 @@ function SceneCard({
         {s.grab_status && (
           <span
             className={"scene-grab-badge gs-" + s.grab_status}
-            title={`Grab in progress — ${s.grab_status}`}
+            title={`Grab in progress, ${s.grab_status}`}
           >
             {grabStatusLabel(s.grab_status)}
           </span>

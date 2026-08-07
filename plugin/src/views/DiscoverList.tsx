@@ -1165,7 +1165,7 @@ function MissingPerfChip({
         state === "err"
           ? msg
           : done
-            ? p.name + " — " + msg
+            ? p.name + ", " + msg
             : "Add " + p.name + " to your library"
       }
       aria-label={"Add " + p.name + " to your library"}

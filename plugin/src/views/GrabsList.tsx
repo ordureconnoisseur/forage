@@ -292,7 +292,7 @@ export default function GrabsList({
       const res = await retryFailedGrabs();
       setNotice(
         `Retrying ${res.retried} failed grab${res.retried === 1 ? "" : "s"}` +
-          (res.skipped ? ` (${res.skipped} skipped — no URL)` : ""),
+          (res.skipped ? ` (${res.skipped} skipped, no URL)` : ""),
       );
       await refresh();
     } catch (e) {
@@ -775,7 +775,7 @@ export default function GrabsList({
                       )}
                       <input
                         type="text"
-                        placeholder="folder — default (manual)"
+                        placeholder="folder, default (manual)"
                         value={it.name}
                         onChange={(e) => setItemName(it.key, e.target.value)}
                       />
@@ -814,8 +814,7 @@ export default function GrabsList({
           {addErr && <span className="grab-add-err">{addErr}</span>}
           <span className="grab-add-hint">
             Drop .torrent files anywhere. forage downloads each, places into{" "}
-            <code>/Media/&lt;folder&gt;</code>, scans and identifies —
-            auto-detecting pack vs single.
+            <code>/Media/&lt;folder&gt;</code>, scans and identifies, auto-detecting pack vs single.
           </span>
         </div>
       )}
@@ -908,7 +907,7 @@ export default function GrabsList({
           <a
             className="grab-adopt-btn"
             href="#/deletions"
-            title="The deletion journal — everything forage removed or refused, with restore for trashed items"
+            title="The deletion journal, everything forage removed or refused, with restore for trashed items"
           >
             Deletions <ExternalIcon size={10} />
           </a>
@@ -996,7 +995,7 @@ export default function GrabsList({
           >
             {loadingMore
               ? "Loading…"
-              : `Load more — showing ${grabs.length} of ${matchTotal}`}
+              : `Load more, showing ${grabs.length} of ${matchTotal}`}
           </button>
         </div>
       )}
@@ -1309,7 +1308,7 @@ function MatchCandidatesModal({
           {empty && (
             <div className="match-state">
               No candidates from this name. The filename has nothing the
-              matcher can lock onto — close this and paste a StashDB scene
+              matcher can lock onto, close this and paste a StashDB scene
               URL instead.
             </div>
           )}
@@ -1691,8 +1690,8 @@ function MatchBlock({ g }: { g: Grab }) {
             >
               {predicted}
             </a>
-            {conf && <span className="grab-match-badge dim">{conf}</span>} — use
-            Find matches below to apply it or pick another.
+            {conf && <span className="grab-match-badge dim">{conf}</span>}. Use
+            Find matches below to apply it, or pick another.
           </div>
         </div>
       </div>
@@ -2254,7 +2253,7 @@ function PackPerformerReviewer({
               {": tag with "}
               <strong>{performerName}</strong>
               {!data.performer_resolvable &&
-                " (not in your Stash library — can't apply)"}
+                " (not in your Stash library, can't apply)"}
             </span>
           </>
         )}
@@ -2396,7 +2395,7 @@ function dupWords(isPack: boolean) {
         armNew: "Delete pack copy?",
         sub: "scenes this pack delivered that you already have",
         badgeHint:
-          "This pack delivered scenes you already have — open to choose which copy to keep",
+          "This pack delivered scenes you already have, open to choose which copy to keep",
         keptNew: "Kept the pack copy, removed the original",
         keptExisting: "Kept your copy, removed the pack's",
       }
@@ -2408,7 +2407,7 @@ function dupWords(isPack: boolean) {
         armNew: "Delete the new file?",
         sub: "this download is a scene your library already had",
         badgeHint:
-          "This download is a scene you already have — open to choose which copy to keep",
+          "This download is a scene you already have, open to choose which copy to keep",
         keptNew: "Kept the new copy, removed the original",
         keptExisting: "Kept the existing copy, removed the new one",
       };
@@ -2806,7 +2805,7 @@ function GrabRow({
           {unmatched && (
             <span
               className="grab-nomatch-badge"
-              title="In your library, but no StashDB scene was ever linked to it — open the row and use Find matches to link it"
+              title="In your library, but no StashDB scene was ever linked to it, open the row and use Find matches to link it"
             >
               NO MATCH
             </span>
@@ -2814,7 +2813,7 @@ function GrabRow({
           {g.stalled && (
             <span
               className="grab-stalled-badge"
-              title="No download progress for a while — try abandoning it and picking another release"
+              title="No download progress for a while, try abandoning it and picking another release"
             >
               STALLED
             </span>
@@ -2822,7 +2821,7 @@ function GrabRow({
           {g.place_failing && (
             <span
               className="grab-placefail-badge"
-              title="Downloaded, but can't place it into the library (check the place error below — permission / mount / path). Still retrying."
+              title="Downloaded, but can't place it into the library (check the place error below, permission / mount / path). Still retrying."
             >
               PLACE FAILING
             </span>
@@ -2844,7 +2843,7 @@ function GrabRow({
           {g.adopted && (
             <span
               className="grab-adopt-badge"
-              title="Adopted — you added this to qBit directly (forager category); forage picked it up"
+              title="Adopted, you added this to qBit directly (forager category); forage picked it up"
             >
               ADOPTED
             </span>

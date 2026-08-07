@@ -93,7 +93,7 @@ export default function WatchControl({
       {watch === "available" ? (
         <span
           className="watch-chip is-available"
-          title="A release was found — open the Watching tab to grab it"
+          title="A release was found, open the Watching tab to grab it"
         >
           <BookmarkGlyph filled />
           Ready
@@ -103,7 +103,7 @@ export default function WatchControl({
           className="watch-chip is-watching"
           disabled={busy}
           onClick={untrack}
-          title="Watching for releases — click to stop"
+          title="Watching for releases, click to stop"
         >
           <BookmarkGlyph filled />
           Watching
@@ -113,7 +113,7 @@ export default function WatchControl({
           className="watch-chip"
           disabled={busy}
           onClick={track}
-          title="Watch for releases — surfaces the best by your preferences"
+          title="Watch for releases, surfaces the best by your preferences"
         >
           <BookmarkGlyph />
           Watch

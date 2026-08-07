@@ -44,7 +44,7 @@ export default function DeletionsList() {
     try {
       await restoreDestruction(e.id);
       setNotice(
-        `Restored ${e.files.length} file${e.files.length === 1 ? "" : "s"} — Stash will re-index shortly`,
+        `Restored ${e.files.length} file${e.files.length === 1 ? "" : "s"}. Stash will re-index shortly`,
       );
       load();
     } catch (er) {
@@ -85,7 +85,7 @@ export default function DeletionsList() {
 
       {entries.length === 0 ? (
         <div className="empty">
-          Nothing yet — forage hasn&rsquo;t deleted anything since the journal
+          Nothing yet, forage hasn&rsquo;t deleted anything since the journal
           began.
         </div>
       ) : (

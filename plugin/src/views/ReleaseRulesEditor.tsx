@@ -68,8 +68,8 @@ export default function ReleaseRulesEditor({
         break by seeders/grabs. A <b>reject</b> rule hard-excludes any release
         it matches. Match against the release <b>title</b> (where resolution
         lives), the <b>indexer</b>/source name, or the <b>protocol</b>
-        (<code>torrent</code> / <code>usenet</code> — e.g. prefer nzb).
-        Scoring is additive, not tiered — order is cosmetic.
+        (<code>torrent</code> / <code>usenet</code>, e.g. prefer nzb).
+        Scoring is additive, not tiered, order is cosmetic.
       </p>
       <div className="rules-list">
         <div className="rule-row rule-head">

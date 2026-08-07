@@ -177,7 +177,7 @@ export default function ReleasePrefsEditor({
   return (
     <div className="prefs-editor">
       <p className="settings-tip">
-        No scores, no regex — just rank what you prefer and forage figures out
+        No scores, no regex, just rank what you prefer and forage figures out
         the points. Resolution always wins; indexer and protocol break ties
         within the same resolution. Need the raw rules? Flip to{" "}
         <b>Advanced</b>.
@@ -185,7 +185,7 @@ export default function ReleasePrefsEditor({
 
       {/* ── Resolution ─────────────────────────────────────────────── */}
       <h4 className="prefs-head">Resolution</h4>
-      <p className="prefs-sub">Drag to rank — your top choice grabbed first.</p>
+      <p className="prefs-sub">Drag to rank, your top choice grabbed first.</p>
       <ReorderList
         items={prefs.resolutionOrder}
         getKey={(r) => r}
@@ -271,7 +271,7 @@ export default function ReleasePrefsEditor({
       {/* ── Protocol ───────────────────────────────────────────────── */}
       <h4 className="prefs-head">Protocol</h4>
       <p className="prefs-sub">
-        Tie-breaker only — never overrides a better resolution.
+        Tie-breaker only, never overrides a better resolution.
       </p>
       <div className="prefs-seg" role="group" aria-label="Protocol preference">
         {(

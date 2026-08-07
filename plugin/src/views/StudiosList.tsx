@@ -119,7 +119,7 @@ export default function StudiosList({
           className="grab-adopt-btn"
           onClick={refreshNow}
           disabled={refreshing}
-          title="Re-sync the studio list from Stash now — picks up newly added studios"
+          title="Re-sync the studio list from Stash now, picks up newly added studios"
         >
           {refreshing ? (
           "Refreshing…"
