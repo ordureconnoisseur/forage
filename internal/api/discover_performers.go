@@ -71,6 +71,9 @@ type discoverPerformer2 struct {
 	ImageURL  string `json:"image_url,omitempty"`
 	// SceneCount is how many scenes StashDB has for them in total.
 	SceneCount int `json:"scene_count"`
+	// Age is 0 when StashDB holds no birthdate, which is common; the card
+	// shows nothing rather than a zero.
+	Age int `json:"age,omitempty"`
 	// TrendingScenes is how many of the CURRENT trending scenes they are on.
 	// Only set for the trending lens, where it is the whole ranking signal.
 	TrendingScenes int `json:"trending_scenes,omitempty"`
@@ -246,6 +249,7 @@ func (s *Server) sortedPerformers(ctx context.Context, sdb *stashdb.Client,
 			Gender:     strings.ToUpper(p.Gender),
 			ImageURL:   p.ImageURL,
 			SceneCount: p.SceneCount,
+			Age:        p.Age,
 		})
 	}
 	return out, nil
@@ -355,6 +359,7 @@ func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 		if pr, ok := profiles[t.P.ID]; ok {
 			d.ImageURL = pr.ImageURL
 			d.SceneCount = pr.SceneCount
+			d.Age = pr.Age
 			if pr.Name != "" {
 				d.Name = performerLabel(pr)
 			}

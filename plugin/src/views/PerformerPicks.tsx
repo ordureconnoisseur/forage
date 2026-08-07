@@ -179,7 +179,7 @@ function PickCard({
       disabled={state === "adding" || state === "added"}
       title={
         state === "idle"
-          ? `${p.name}, ${stat}. Add to your library`
+          ? `${p.name}${p.age ? `, ${p.age}` : ""}, ${stat}. Add to your library`
           : `${p.name}: ${msg || "adding…"}`
       }
       aria-label={`Add ${p.name} to your library`}
@@ -200,6 +200,15 @@ function PickCard({
 
       <div className="perf-scrim">
         <div className="perf-name">{p.name}</div>
+        {/* Just the number. It sits at the end of the name's line and stays
+            there when the name wraps, so it reads as an attribute of the
+            person rather than a second line of text. Absent entirely when
+            StashDB has no birthdate, which beats printing a placeholder. */}
+        {p.age ? (
+          <span className="pick-age" title={`${p.age} years old`}>
+            {p.age}
+          </span>
+        ) : null}
       </div>
 
       {/* The whole card adds. This says so without covering the face: a

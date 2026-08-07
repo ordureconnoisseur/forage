@@ -639,6 +639,9 @@ type PerformerProfile struct {
 	Disambiguation string
 	Gender         string
 	SceneCount     int
+	// Age is StashDB's own computation from birth_date, 0 when it holds no
+	// birthdate for them (which is common enough that a card has to cope).
+	Age int
 	// ImageURL is the tallest portrait StashDB holds, or "" when it holds
 	// none. Portraits and square avatars are mixed together in `images` with
 	// no flag distinguishing them, so the choice is made by shape.
@@ -676,6 +679,7 @@ query ForagerQueryPerformers($input: PerformerQueryInput!) {
       name
       disambiguation
       gender
+      age
       scene_count
       images { url width height }
     }
@@ -687,6 +691,7 @@ type performerWire struct {
 	Name           string `json:"name"`
 	Disambiguation string `json:"disambiguation"`
 	Gender         string `json:"gender"`
+	Age            int    `json:"age"`
 	SceneCount     int    `json:"scene_count"`
 	Images         []struct {
 		URL    string `json:"url"`
@@ -701,6 +706,7 @@ func (w performerWire) toProfile() PerformerProfile {
 		Name:           w.Name,
 		Disambiguation: w.Disambiguation,
 		Gender:         w.Gender,
+		Age:            w.Age,
 		SceneCount:     w.SceneCount,
 	}
 	// Prefer the tallest portrait. A performer's images are a mixed bag:

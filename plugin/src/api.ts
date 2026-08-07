@@ -391,6 +391,9 @@ export interface DiscoverPerformerPick {
   image_url?: string;
   // Scenes StashDB holds for them in total.
   scene_count: number;
+  // Absent when StashDB holds no birthdate for them, which is common enough
+  // that the card has to cope rather than print a zero.
+  age?: number;
   // How many of the CURRENT trending scenes they are on. Only set on the
   // trending lens, where it is the entire ranking signal.
   trending_scenes?: number;
