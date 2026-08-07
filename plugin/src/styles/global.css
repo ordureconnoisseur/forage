@@ -6415,22 +6415,11 @@ code.grab-fact-v,
 .notif-bell.has-items {
   color: var(--accent-bright, #22c55e);
 }
-.notif-badge {
-  position: absolute;
-  top: -5px;
-  right: -5px;
-  min-width: 17px;
-  height: 17px;
-  padding: 0 4px;
-  border-radius: 9px;
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 17px;
-  text-align: center;
-  box-shadow: 0 0 0 2px rgba(10, 10, 10, 0.85);
-}
+/* The bell's count. Drawn by .nav-badge below, not by a second set of
+   numbers: this was 17px where the nav's was 18, radius 9 against 9, offset
+   -5/-5 against -5/-7, and its ring was a literal rgba black rather than the
+   page background. Two badges, one visual object, and nobody had decided any
+   of the differences. */
 .notif-scrim {
   position: fixed;
   inset: 0;
@@ -6503,27 +6492,14 @@ code.grab-fact-v,
   font-size: 13px;
 }
 
-/* Watching-tab count badge — "ready to grab". */
-.nav-badge {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 16px;
-  height: 16px;
-  margin-left: 1px;
-  padding: 0 4px;
-  border-radius: 8px;
-  background: var(--accent-bright, #22c55e);
-  color: #0a0a0a;
-  font-size: 10px;
-  font-weight: 800;
-  line-height: 1;
-}
-@media (max-width: 720px) {
-  .nav-badge {
-    font-size: 10px;
-  }
-}
+/* The in-flow .nav-badge that stood here is gone. It described the same
+   element as the rule further down, which positions it absolutely, and a
+   later rule of equal specificity only wins the properties it NAMES: the
+   two disagreed about whether a badge sits in the layout or floats over a
+   corner, and the loser still left margin-left: 1px stranded on an
+   absolutely-positioned element where it did nothing and could not be
+   traced. Its mobile override set font-size to the value it already had.
+   See "one badge idiom" below. */
 
 /* Adopted badge — grab forage picked up from a torrent added to qBit
    directly (forager category). Cool slate tone to read as "external
@@ -8577,12 +8553,18 @@ code.grab-fact-v,
    for one rule.) */
 .top-nav a, .notif { position: relative; flex: none; }
 
-.nav-badge {
+/* Both count bubbles, one description. */
+
+.nav-badge,
+.notif-badge {
   position: absolute; top: -5px; right: -7px;
   display: inline-flex; align-items: center; justify-content: center;
   min-width: 18px; height: 18px; padding: 0 5px; box-sizing: border-box;
   border-radius: 9px;
-  background: var(--accent-bright); color: #0a0a0a;
+  /* The knockout was #0a0a0a, the OLD --bg-0, left behind when the palette
+     warmed. A badge whose text is a stale copy of the page colour stops
+     matching the page the moment the page changes. */
+  background: var(--accent-bright); color: var(--bg-0);
   font-size: 10px; font-weight: 800; line-height: 1;
   font-variant-numeric: tabular-nums;
   box-shadow: 0 0 0 2px var(--bg-0);   /* clears whatever it overlaps */
