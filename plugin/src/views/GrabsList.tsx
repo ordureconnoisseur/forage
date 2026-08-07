@@ -1,3 +1,4 @@
+import { ArrowRightIcon, CheckIcon, ChevronIcon, CloseIcon, ExternalIcon, RefreshIcon, StarIcon } from "../icons";
 import {
   Fragment,
   type ReactNode,
@@ -736,7 +737,9 @@ export default function GrabsList({
                     {it.reading && <span className="ti-meta">reading…</span>}
                     {it.adding && <span className="ti-meta">adding…</span>}
                     {it.done !== undefined && (
-                      <span className="ti-meta">→ grab #{it.done}</span>
+                      <span className="ti-meta">
+                        <ArrowRightIcon size={10} /> grab #{it.done}
+                      </span>
                     )}
                     {it.done === undefined && !it.adding && (
                       <button
@@ -745,7 +748,7 @@ export default function GrabsList({
                         onClick={() => dropItem(it.key)}
                         title="Remove from the queue"
                       >
-                        ✕
+                        <CloseIcon size={11} />
                       </button>
                     )}
                   </div>
@@ -764,7 +767,7 @@ export default function GrabsList({
                               onClick={() => setItemName(it.key, pf.name)}
                               title={`${pf.scene_count} scenes in library`}
                             >
-                              {pf.favorite ? "★ " : ""}
+                              {pf.favorite ? <StarIcon size={10} filled /> : null}
                               {pf.name}
                             </button>
                           ))}
@@ -805,7 +808,7 @@ export default function GrabsList({
               disabled={addBusy}
               title="Clear the queue"
             >
-              ✕ Clear
+              <CloseIcon size={11} /> Clear
             </button>
           )}
           {addErr && <span className="grab-add-err">{addErr}</span>}
@@ -843,7 +846,7 @@ export default function GrabsList({
               <Fragment key={s}>
                 {i > 0 && (
                   <span className="grab-flow-arrow" aria-hidden="true">
-                    ›
+                    <ChevronIcon size={13} />
                   </span>
                 )}
                 <FilterChip
@@ -881,7 +884,13 @@ export default function GrabsList({
               disabled={retryingAll}
               title="Re-queue every failed grab that still has a download URL"
             >
-              {retryingAll ? "Retrying…" : `↻ Retry ${totals.failed} failed`}
+              {retryingAll ? (
+              "Retrying…"
+            ) : (
+              <>
+                <RefreshIcon size={11} /> Retry {totals.failed} failed
+              </>
+            )}
             </button>
           )}
           {/* Unfiled lives next to Deletions rather than in the main nav: it
@@ -894,14 +903,14 @@ export default function GrabsList({
             href="#/unfiled"
             title="Library scenes that are not under a performer folder, and the ones Stash can name a performer for"
           >
-            Unfiled ↗
+            Unfiled <ExternalIcon size={10} />
           </a>
           <a
             className="grab-adopt-btn"
             href="#/deletions"
             title="The deletion journal — everything forage removed or refused, with restore for trashed items"
           >
-            Deletions ↗
+            Deletions <ExternalIcon size={10} />
           </a>
           {/* Force-adopt torrents added to the client manually, right now. */}
           <button
@@ -910,7 +919,13 @@ export default function GrabsList({
             disabled={adopting}
             title="Pick up downloads you added to qBittorrent or SABnzbd yourself (forage category). qBit torrents adopt right away; SAB jobs once they finish downloading."
           >
-            {adopting ? "Adopting…" : "↻ Adopt downloads"}
+            {adopting ? (
+              "Adopting…"
+            ) : (
+              <>
+                <RefreshIcon size={11} /> Adopt downloads
+              </>
+            )}
           </button>
         </span>
       </div>
@@ -2007,26 +2022,10 @@ function SceneGroup({
 }
 
 
-// RefreshIcon — circular-arrows glyph as an svg (flat, matches the app's
-// icon language), used by the performer-search re-sync button.
-function RefreshIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width="1em"
-      height="1em"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-      <path d="M21 3v5h-5" />
-    </svg>
-  );
-}
+// The local RefreshIcon that stood here was a third copy of the same
+// circular-arrow glyph, drawn slightly differently from the shared one and
+// taking no size, which is why it shadowed the import and broke the two
+// buttons above. One icon, one file.
 
 // PerformerChip — a reassignment option. Hovering shows the performer's
 // portrait (via the daemon's image proxy) so you can visually confirm it's
@@ -2080,7 +2079,11 @@ function PerformerChip({
         }}
         title={`File under ${name}`}
       >
-        {favorite && <span className="grab-setperf-fav">★</span>}
+        {favorite && (
+        <span className="grab-setperf-fav">
+          <StarIcon size={10} filled />
+        </span>
+      )}
         {name}
       </button>
       {anchor &&
@@ -2284,7 +2287,7 @@ function PackPerformerReviewer({
                   }}
                 >
                   <span className="scene-check" aria-hidden="true">
-                    {sel ? "✓" : ""}
+                    {sel ? <CheckIcon size={11} /> : null}
                   </span>
                   <div className="scene-thumb">
                     {img ? (
@@ -3210,7 +3213,7 @@ function GrabRow({
                     title="Re-sync performers from Stash (for one you just created)"
                     aria-label="Refresh performers from Stash"
                   >
-                    <RefreshIcon />
+                    <RefreshIcon size={11} />
                   </button>
                 </span>
               </div>
@@ -3276,8 +3279,9 @@ function GrabRow({
                 {retrying
                   ? "Retrying…"
                   : g.status === "deferred"
-                    ? "Retry now ↻"
-                    : "Retry ↻"}
+                    ? "Retry now"
+                    : "Retry"}{" "}
+                  <RefreshIcon size={10} />
               </button>
             )}
             {retryErr && <span className="grab-delete-err">{retryErr}</span>}
@@ -3305,7 +3309,7 @@ function GrabRow({
                     onPickScene(g.predicted_stashdb_id!, g.performer_name)
                   }
                 >
-                  Pick another release →
+                  Pick another release <ArrowRightIcon size={11} />
                 </button>
               )}
             {detail?.stash_scene_url && (
@@ -3315,7 +3319,7 @@ function GrabRow({
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                Open in Stash ↗
+                Open in Stash <ExternalIcon size={11} />
               </a>
             )}
             <div className="grab-actions-right">

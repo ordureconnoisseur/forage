@@ -16,7 +16,7 @@ import {
 import { peek, store } from "../swr";
 import WatchControl from "../WatchControl";
 import { filterGlyph } from "../format";
-import { CheckIcon, ChevronIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
+import { CheckIcon, ChevronIcon, ExternalIcon, GenderIcon, HeartIcon, PlusIcon } from "../icons";
 import PerformerPicks from "./PerformerPicks";
 
 // DiscoverList shows recent StashDB scenes (default last 30 days)
@@ -669,7 +669,7 @@ function TrendingCarousel({
         disabled={!canLeft}
         aria-label="Previous"
       >
-        ‹
+        <ChevronIcon size={15} />
       </button>
       <div className="carousel-row">
         {pageScenes.map((s) => (
@@ -688,7 +688,7 @@ function TrendingCarousel({
         disabled={!canRight}
         aria-label="Next"
       >
-        ›
+        <ChevronIcon size={15} />
       </button>
     </div>
   );
@@ -759,7 +759,7 @@ function TrendingCard({
             title="Open on StashDB"
             onClick={(e) => e.stopPropagation()}
           >
-            ↗
+            <ExternalIcon size={11} />
           </a>
         </button>
         <WatchControl
@@ -859,7 +859,7 @@ export function DiscoverCard({
     >
       {selecting && (
         <span className="scene-check" aria-hidden="true">
-          {selected ? "✓" : ""}
+          {selected ? <CheckIcon size={11} /> : null}
         </span>
       )}
       <div className="scene-thumb-wrap">
@@ -898,7 +898,7 @@ export function DiscoverCard({
             title="Open on StashDB"
             onClick={(e) => e.stopPropagation()}
           >
-            ↗
+            <ExternalIcon size={11} />
           </a>
         </button>
         <WatchControl

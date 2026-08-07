@@ -1,3 +1,4 @@
+import { ArrowRightIcon } from "./icons";
 import { useState } from "react";
 import type { NotificationCounts } from "./api";
 
@@ -94,7 +95,9 @@ export default function NotificationsBell({
                 >
                   <span className="notif-dot" />
                   <span className="notif-label">{it.label}</span>
-                  <span className="notif-arrow">→</span>
+                  <span className="notif-arrow">
+                  <ArrowRightIcon size={11} />
+                </span>
                 </button>
               ))
             )}

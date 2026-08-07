@@ -15,7 +15,7 @@ import {
   createUpgradeWatches,
 } from "../api";
 import { humanSize } from "../format";
-import { BoltIcon } from "../icons";
+import { ArrowDownIcon, ArrowUpIcon, BoltIcon, CheckIcon, ClockIcon, ExternalIcon, RefreshIcon, StarIcon } from "../icons";
 import WatchControl from "../WatchControl";
 import PerformerPacks from "./PerformerPacks";
 
@@ -34,20 +34,46 @@ function resTierFromLabel(label?: string): string {
   return "sd";
 }
 
-// grabStatusLabel maps a raw grab status to a short card badge label.
-function grabStatusLabel(status: string): string {
+// grabStatusLabel maps a raw grab status to a short card badge.
+//
+// Returns a node rather than a string because the leading glyph was an
+// hourglass and three arrows typed as characters, which render in whatever
+// fallback face the platform picks and are emoji on some of them. A string
+// return type is what forced that; the badge is one JSX slot, so it can hold
+// an icon just as easily.
+function grabStatusLabel(status: string) {
   switch (status) {
     case "queued":
-      return "⏳ Queued";
+      return (
+        <>
+          <ClockIcon size={10} /> Queued
+        </>
+      );
     case "downloading":
-      return "↓ Downloading";
+      return (
+        <>
+          <ArrowDownIcon size={10} /> Downloading
+        </>
+      );
     case "completed":
     case "placed":
-      return "↓ Downloaded";
+      return (
+        <>
+          <ArrowDownIcon size={10} /> Downloaded
+        </>
+      );
     case "scanned":
-      return "⟳ Scanning";
+      return (
+        <>
+          <RefreshIcon size={10} /> Scanning
+        </>
+      );
     default:
-      return "↓ In progress";
+      return (
+        <>
+          <ArrowDownIcon size={10} /> In progress
+        </>
+      );
   }
 }
 
@@ -287,7 +313,15 @@ export default function MissingScenes({
                   .finally(() => setSubBusy(false));
               }}
             >
-              {subscribed ? "★ Subscribed" : "☆ Subscribe"}
+              {subscribed ? (
+            <>
+              <StarIcon size={11} filled /> Subscribed
+            </>
+          ) : (
+            <>
+              <StarIcon size={11} /> Subscribe
+            </>
+          )}
             </button>
             {subscribed && (
               <button
@@ -334,7 +368,13 @@ export default function MissingScenes({
                   .finally(() => setUpgBusy(false));
               }}
             >
-              {upgBusy ? "…" : "⬆ Upgrades <1080p"}
+              {upgBusy ? (
+            "…"
+          ) : (
+            <>
+              <ArrowUpIcon size={11} /> Upgrades &lt;1080p
+            </>
+          )}
             </button>
             {upgMsg && <span className="upg-msg">{upgMsg}</span>}
           </h2>
@@ -522,7 +562,7 @@ function SceneCard({
     >
       {selecting && (
         <span className="scene-check" aria-hidden="true">
-          {selected ? "✓" : ""}
+          {selected ? <CheckIcon size={11} /> : null}
         </span>
       )}
       <div className="scene-thumb">
@@ -554,7 +594,7 @@ function SceneCard({
           title="Open on StashDB"
           onClick={(e) => e.stopPropagation()}
         >
-          ↗
+          <ExternalIcon size={11} />
         </a>
         {owned && resolution && (
           <span

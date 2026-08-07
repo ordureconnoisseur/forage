@@ -1,3 +1,4 @@
+import { ArrowDownIcon, CheckIcon, CloseIcon, ExternalIcon, RefreshIcon } from "../icons";
 import { useEffect, useRef, useState } from "react";
 import {
   clearWatchBatch,
@@ -189,7 +190,12 @@ export default function WatchingList({
               ? `Searching ${totalSearching}…`
               : searchBusy
                 ? "Searching…"
-                : `Search all ${totalWatching} ↻`}
+                : null}
+            {!searchBusy && totalSearching === 0 && (
+              <>
+                Search all {totalWatching} <RefreshIcon size={11} />
+              </>
+            )}
           </button>
         )}
       </div>
@@ -374,7 +380,7 @@ function WatchGroup({
                 : "Open Grabs, where these downloads' real state lives"
             }
           >
-            in Grabs ↗
+            in Grabs <ExternalIcon size={10} />
           </button>
         )}
       </div>
@@ -659,7 +665,9 @@ function WatchCard({
           <div className="watch-actions">
             {isGrabbed ? (
               <>
-                <span className="watch-grabbed-label">grabbed ✓</span>
+                <span className="watch-grabbed-label">
+                  grabbed <CheckIcon size={10} />
+                </span>
                 <button
                   className="watch-dismiss"
                   disabled={busy}
@@ -680,7 +688,13 @@ function WatchCard({
                     ? "Queued ✓"
                     : pending === "grab"
                       ? "Grabbing…"
-                      : `Grab${pickedRes ? " " + pickedRes.label : ""} ↓`}
+                      : null}
+                  {pending !== "grab" && (
+                    <>
+                      Grab{pickedRes ? " " + pickedRes.label : ""}{" "}
+                      <ArrowDownIcon size={11} />
+                    </>
+                  )}
                 </button>
                 {!queued && (
                   <button
@@ -723,7 +737,7 @@ function WatchCard({
               {pending === "remove" ? (
                 <span className="coll-spinner" aria-hidden="true" />
               ) : (
-                "✕"
+                <CloseIcon size={11} />
               )}
             </button>
           </div>

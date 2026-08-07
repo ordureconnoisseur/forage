@@ -1,3 +1,4 @@
+import { ArrowDownIcon } from "../icons";
 import { ReactNode, useState } from "react";
 import {
   compileRules,
@@ -103,7 +104,7 @@ function ReorderList<T>({
               title="Move down"
               aria-label="Move down"
             >
-              ↓
+              <ArrowDownIcon size={11} />
             </button>
           </span>
         </div>

@@ -1,3 +1,4 @@
+import { CheckIcon, ExternalIcon } from "./icons";
 import { useEffect, useMemo, useState } from "react";
 import {
   addCatalogIndexer,
@@ -124,7 +125,9 @@ export default function IndexerCatalog({
                   )}
                 </span>
                 {done ? (
-                  <span className="idx-catalog-added">✓ added</span>
+                  <span className="idx-catalog-added">
+            <CheckIcon size={10} /> added
+          </span>
                 ) : entry.complex ? (
                   <a
                     className="idx-catalog-ext"
@@ -132,7 +135,7 @@ export default function IndexerCatalog({
                     target="_blank"
                     rel="noreferrer"
                   >
-                    set up in Prowlarr ↗
+                    set up in Prowlarr <ExternalIcon size={10} />
                   </a>
                 ) : entry.fields.length === 0 ? (
                   <button

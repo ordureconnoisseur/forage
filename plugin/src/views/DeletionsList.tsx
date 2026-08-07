@@ -1,3 +1,4 @@
+import { CloseIcon, RefreshIcon } from "../icons";
 import { useCallback, useEffect, useState } from "react";
 import {
   DestructionEntry,
@@ -68,7 +69,7 @@ export default function DeletionsList() {
         </div>
         <div className="grab-toolbar-search">
           <button className="grab-adopt-btn" onClick={load}>
-            ↻ Refresh
+            <RefreshIcon size={11} /> Refresh
           </button>
         </div>
       </div>
@@ -76,7 +77,9 @@ export default function DeletionsList() {
       {notice && (
         <div className="grab-notice" onClick={() => setNotice(null)}>
           {notice}
-          <span className="grab-notice-x">×</span>
+          <span className="grab-notice-x">
+            <CloseIcon size={11} />
+          </span>
         </div>
       )}
 

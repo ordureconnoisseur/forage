@@ -1,3 +1,4 @@
+import { ExternalIcon } from "./icons";
 import { useEffect, useRef, useState } from "react";
 import {
   fetchManagedProwlarr,
@@ -116,7 +117,7 @@ export default function ManagedProwlarrCard({
             target="_blank"
             rel="noreferrer"
           >
-            Open Prowlarr ↗
+            Open Prowlarr <ExternalIcon size={10} />
           </a>{" "}
           to add your indexers.
         </div>

@@ -1,7 +1,7 @@
 import SubscriptionsRow from "../SubscriptionsRow";
 import { useEffect, useMemo, useState } from "react";
 import { filterGlyph } from "../format";
-import { GenderIcon } from "../icons";
+import { GenderIcon, RefreshIcon } from "../icons";
 import { invalidate, useCached } from "../swr";
 import {
   fetchPerformers,
@@ -175,7 +175,13 @@ export default function PerformersList({
           disabled={refreshing}
           title="Re-sync the performer list from Stash now — picks up newly added performers"
         >
-          {refreshing ? "Refreshing…" : "↻ Refresh"}
+          {refreshing ? (
+          "Refreshing…"
+        ) : (
+          <>
+            <RefreshIcon size={11} /> Refresh
+          </>
+        )}
         </button>
       </div>
       {error && (

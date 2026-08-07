@@ -1,3 +1,4 @@
+import { CheckIcon, CloseIcon, WarnIcon } from "../icons";
 import { useEffect, useState } from "react";
 import {
   adminToken,
@@ -431,7 +432,7 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
 
         {blocked && (
           <div className="settings-warn">
-            ⚠ You're on HTTPS and the forage URL is HTTP. Browser will block all
+            <WarnIcon size={12} /> You're on HTTPS and the forage URL is HTTP. Browser will block all
             requests until you set an HTTPS URL or open Stash via HTTP.
           </div>
         )}
@@ -1531,7 +1532,7 @@ function ProbeChip({ result }: { result: ProbeResult }) {
       className={"probe-chip " + (result.ok ? "ok" : "err")}
       title={[result.message, result.detail].filter(Boolean).join(" — ")}
     >
-      {result.ok ? "✓" : "✗"}
+      {result.ok ? <CheckIcon size={11} /> : <CloseIcon size={11} />}
     </span>
   );
 }

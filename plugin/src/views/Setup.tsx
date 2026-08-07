@@ -1,3 +1,4 @@
+import { CheckIcon, CloseIcon } from "../icons";
 import { type ReactNode, useEffect, useState } from "react";
 import {
   adminToken,
@@ -1232,7 +1233,14 @@ function CheckRow({
   return (
     <As className={"setup-dlcheck-row " + status}>
       <span className="setup-dlcheck-icon">
-        {icon ?? (status === "ok" ? "✓" : status === "warn" ? "!" : "✗")}
+        {icon ??
+        (status === "ok" ? (
+          <CheckIcon size={11} />
+        ) : status === "warn" ? (
+          "!"
+        ) : (
+          <CloseIcon size={11} />
+        ))}
       </span>
       <span className="setup-dlcheck-body">{children}</span>
     </As>
@@ -1374,5 +1382,9 @@ function TestLabel({ test }: { test: Test }) {
     );
   if (test.kind === "ok")
     return <div className="setup-test ok">✓ {test.detail}</div>;
-  return <div className="setup-test err">✗ {test.detail}</div>;
+  return (
+      <div className="setup-test err">
+        <CloseIcon size={11} /> {test.detail}
+      </div>
+    );
 }

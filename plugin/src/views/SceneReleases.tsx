@@ -1,3 +1,4 @@
+import { ArrowDownIcon, BlockedIcon, CheckIcon, CloseIcon, DeadIcon, ExternalIcon, RefreshIcon, StarIcon, WarnIcon } from "../icons";
 import { useEffect, useState } from "react";
 import {
   fetchSceneReleases,
@@ -319,7 +320,7 @@ export default function SceneReleases({
               target="_blank"
               rel="noopener noreferrer"
             >
-              View on StashDB ↗
+              View on StashDB <ExternalIcon size={11} />
             </a>
           </div>
           {/* Nothing here good enough? Watch the scene for a future
@@ -369,7 +370,7 @@ export default function SceneReleases({
               onClick={() => setDeep(true)}
               title="Run the full multi-tracker fan-out — slower, but catches releases the quick search misses"
             >
-              Deep search ↻
+              Deep search <RefreshIcon size={11} />
             </button>
           )}
         </div>
@@ -395,7 +396,7 @@ export default function SceneReleases({
             <div className="empty-hint">
               That was a quick search.{" "}
               <button className="deep-search-btn" onClick={() => setDeep(true)}>
-                Deep search all trackers ↻
+                Deep search all trackers <RefreshIcon size={11} />
               </button>{" "}
               to cast a wider net, or try a different name above.
             </div>
@@ -534,7 +535,7 @@ function AliasRetry({
               onSearch("");
             }}
           >
-            ✕ auto
+            <CloseIcon size={10} /> auto
           </button>
         )}
       </div>
@@ -630,7 +631,7 @@ function ReleaseList({
                       (r.failed_reason ?? "")
                     }
                   >
-                    ☠ died {r.failed_count}x
+                    <DeadIcon size={10} /> died {r.failed_count}x
                   </span>
                 )}
                 {isBest && (
@@ -638,7 +639,7 @@ function ReleaseList({
                     className="release-best"
                     title="Recommended: best quality you can actually download"
                   >
-                    ★ Best
+                    <StarIcon size={10} filled /> Best
                   </span>
                 )}
                 <ResBadge title={r.title} />
@@ -656,7 +657,7 @@ function ReleaseList({
               </div>
               {!r.verified && r.best_match_title && (
                 <div className="release-warn">
-                  ⚠ Looks like <strong>{r.best_match_title}</strong>
+                  <WarnIcon size={11} /> Looks like <strong>{r.best_match_title}</strong>
                   {r.best_match_conf
                     ? ` (${(r.best_match_conf * 100).toFixed(0)}%)`
                     : ""}{" "}
@@ -669,7 +670,7 @@ function ReleaseList({
                       }
                       title={`Grab this release as "${r.best_match_title}"`}
                     >
-                      Grab as this ↓
+                      Grab as this <ArrowDownIcon size={11} />
                     </button>
                   )}
                 </div>
@@ -695,7 +696,11 @@ function ReleaseList({
             {r.rejected || score !== 0 ? (
               <div className={"release-score-stat " + scoreClass} title={scoreTitle}>
                 <span className="rs-val">
-                  {r.rejected ? "⛔" : `${score > 0 ? "+" : ""}${score}`}
+                  {r.rejected ? (
+                        <BlockedIcon size={11} />
+                      ) : (
+                        `${score > 0 ? "+" : ""}${score}`
+                      )}
                 </span>
                 <span className="rs-label">{r.rejected ? "reject" : "score"}</span>
               </div>
@@ -895,7 +900,7 @@ function MatchVerdict({
                 >
                   <span className="mv-gate-head">
                     <span className="mv-mark" aria-hidden="true">
-                      {g.passed ? "✓" : "✗"}
+                      {g.passed ? <CheckIcon size={10} /> : <CloseIcon size={10} />}
                     </span>
                     <span className="mv-gate-label">{label(g.name)}</span>
                   </span>
@@ -1011,7 +1016,7 @@ function GrabButton({
     case "idle":
       return (
         <button className="grab-btn" onClick={() => onGrab()}>
-          Grab ↓
+          Grab <ArrowDownIcon size={11} />
         </button>
       );
     case "grabbing":

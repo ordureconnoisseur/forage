@@ -170,3 +170,116 @@ export function CloseIcon({ size = 12 }: { size?: number }) {
     </svg>
   );
 }
+
+// ── the glyphs that were text ──────────────────────────────────────
+//
+// The file opens with a rule ("No emoji: glyph rendering varies across
+// platforms") and the app then shipped 100 raw characters doing icon work:
+// arrows, ticks, crosses, stars, a hourglass, a skull. They render at
+// whatever weight and baseline each platform's fallback font decides, in a
+// different face from every real icon beside them, and several are emoji on
+// some systems and line art on others. These are the replacements, in the
+// same 24-box stroke language as the rest.
+
+export function ArrowRightIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M4 12h15M13 6l6 6-6 6" />
+    </svg>
+  );
+}
+
+export function ArrowDownIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M12 4v15M6 13l6 6 6-6" />
+    </svg>
+  );
+}
+
+export function ArrowUpIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M12 20V5M6 11l6-6 6 6" />
+    </svg>
+  );
+}
+
+// Out of forage and into someone else's site: the box you leave, the arrow
+// leaving it.
+export function ExternalIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M14 4h6v6M20 4l-8.5 8.5" />
+      <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
+    </svg>
+  );
+}
+
+export function RefreshIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M20 11a8 8 0 1 0-.6 4" />
+      <path d="M20 4v7h-7" />
+    </svg>
+  );
+}
+
+// Filled when it is a favourite, outline when it is not. Same path either
+// way, so the two states cannot drift apart in shape.
+export function StarIcon({
+  size = 12,
+  filled = false,
+}: {
+  size?: number;
+  filled?: boolean;
+}) {
+  return (
+    <svg {...iconProps(size)} fill={filled ? "currentColor" : "none"}>
+      <path d="M12 3.5l2.6 5.3 5.9.85-4.25 4.15 1 5.85L12 16.9l-5.25 2.75 1-5.85L3.5 9.65l5.9-.85z" />
+    </svg>
+  );
+}
+
+export function WarnIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <path d="M12 4.5 21 20H3z" />
+      <path d="M12 10v4.5" />
+      <path d="M12 17.4v.1" />
+    </svg>
+  );
+}
+
+// Refused, not merely failed: a circle with a bar through it. Used where the
+// app was reaching for a "no entry" emoji.
+export function BlockedIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M6 18 18 6" />
+    </svg>
+  );
+}
+
+// Dead: the app used a skull. A circle with a cross in it says the same
+// thing in the same language as everything around it, and does not become a
+// colour emoji on a Mac.
+export function DeadIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M9 9l6 6M15 9l-6 6" />
+    </svg>
+  );
+}
+
+// Waiting on something out of our hands.
+export function ClockIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg {...iconProps(size)}>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7v5.2l3.2 2" />
+    </svg>
+  );
+}

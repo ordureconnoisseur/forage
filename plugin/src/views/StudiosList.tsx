@@ -1,3 +1,4 @@
+import { RefreshIcon } from "../icons";
 import SubscriptionsRow from "../SubscriptionsRow";
 import { useEffect, useMemo, useState } from "react";
 import { invalidate, useCached } from "../swr";
@@ -120,7 +121,13 @@ export default function StudiosList({
           disabled={refreshing}
           title="Re-sync the studio list from Stash now — picks up newly added studios"
         >
-          {refreshing ? "Refreshing…" : "↻ Refresh"}
+          {refreshing ? (
+          "Refreshing…"
+        ) : (
+          <>
+            <RefreshIcon size={11} /> Refresh
+          </>
+        )}
         </button>
       </div>
       {error && <div className="perf-list-err">Refresh failed: {error}</div>}

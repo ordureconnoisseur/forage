@@ -1,3 +1,4 @@
+import { ArrowDownIcon, CloseIcon } from "../icons";
 import { useMemo } from "react";
 import type { ReleaseRule } from "../api";
 
@@ -130,14 +131,14 @@ export default function ReleaseRulesEditor({
                 title="Move down"
                 disabled={i === rules.length - 1}
               >
-                ↓
+                <ArrowDownIcon size={11} />
               </button>
               <button
                 className="rule-del"
                 onClick={() => remove(i)}
                 title="Remove rule"
               >
-                ✕
+                <CloseIcon size={11} />
               </button>
             </span>
           </div>

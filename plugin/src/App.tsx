@@ -1,3 +1,4 @@
+import { WarnIcon } from "./icons";
 import { useEffect, useRef, useState } from "react";
 import PerformersList from "./views/PerformersList";
 import StudiosList from "./views/StudiosList";
@@ -442,14 +443,14 @@ export default function App() {
       </header>
       {blocked && (
         <div className="banner banner-warn">
-          ⚠ Mixed content: this page is HTTPS but the forage URL is HTTP. The
+          <WarnIcon size={12} /> Mixed content: this page is HTTPS but the forage URL is HTTP. The
           browser will block all API requests. Click the gear to set an HTTPS
           URL, or open Stash via a non-HTTPS URL.
         </div>
       )}
       {health?.clientErrors && health.clientErrors.length > 0 && (
         <div className="banner banner-error" role="alert">
-          ⚠ Download client unavailable: grabs will fail until it is
+          <WarnIcon size={12} /> Download client unavailable: grabs will fail until it is
           reachable again.
           {health.clientErrors.map((e) => (
             <span key={e}>
@@ -463,7 +464,8 @@ export default function App() {
         health.lastPanic.at > dismissedPanicAt &&
         Date.now() / 1000 - health.lastPanic.at < PANIC_BANNER_WINDOW_SEC && (
           <div className="banner banner-warn" role="alert">
-            ⚠ A background task crashed and recovered {panicAge(health.lastPanic.at)}{" "}
+            <WarnIcon size={12} /> A background task crashed and recovered{" "}
+            {panicAge(health.lastPanic.at)}{" "}
             (in <code>{health.lastPanic.in}</code>). The daemon is fine, but
             please report it — <code>/diag</code> has the details.{" "}
             <button
