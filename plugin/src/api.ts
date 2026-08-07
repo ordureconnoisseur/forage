@@ -1060,6 +1060,10 @@ export interface Grab {
   predicted_stashdb_id?: string;
   predicted_confidence?: number;
   actual_stashdb_id?: string;
+  // What Stash's fingerprint said, as opposed to what the scene is tagged as
+  // now. Only set when the two disagreed. A manual match rewrites
+  // actual_stashdb_id; this stays, so the choice can be revisited.
+  phash_stashdb_id?: string;
   // The StashDB scene's real title — present only for grabs the daemon
   // grouped (2+ attempts at one scene), so the group header can show it
   // instead of a bare id. Empty/absent otherwise.

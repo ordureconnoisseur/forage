@@ -52,7 +52,12 @@ type Grab struct {
 	Category            string
 	Status              string
 	ActualStashDBID     string
-	Reason              string
+	// PhashStashDBID is what Stash's fingerprint identified the file as, set
+	// once when it first disagreed with the prediction. ActualStashDBID moves
+	// with a manual match; this does not, so the disagreement survives being
+	// answered and can be answered differently later.
+	PhashStashDBID string
+	Reason         string
 	// PerformerName is the directory under <library_root> the file is
 	// placed into. Captured at /grab time so placement is predictable
 	// regardless of how StashDB orders the scene's performer list.
@@ -134,17 +139,17 @@ func (r *Repo) Insert(ctx context.Context, g Grab) (int64, error) {
 		  predicted_stashdb_id, predicted_confidence, release_title,
 		  release_size, release_indexer, download_url,
 		  client, client_id, client_name, category, status,
-		  actual_stashdb_id, reason,
+		  actual_stashdb_id, phash_stashdb_id, reason,
 		  performer_name, placed_path, place_error,
 		  grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		  kind, pack_files, pack_identified, pack_deduped,
 		  progress, progress_at, source
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		nullString(g.PredictedStashDBID), nullFloat(g.PredictedConfidence), g.ReleaseTitle,
 		nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer), nullString(g.DownloadURL),
 		g.Client, nullString(g.ClientID), nullString(g.ClientName),
 		nullString(g.Category), g.Status,
-		nullString(g.ActualStashDBID), nullString(g.Reason),
+		nullString(g.ActualStashDBID), nullString(g.PhashStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
 		g.GrabbedAt, now,
 		nullInt(g.CompletedAt), nullInt(g.PlacedAt), nullInt(g.ConfirmedAt),
@@ -186,7 +191,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		  release_title = ?, release_size = ?, release_indexer = ?,
 		  download_url = ?, predicted_confidence = ?,
 		  client_id = ?, client_name = ?, status = ?,
-		  actual_stashdb_id = ?, reason = ?,
+		  actual_stashdb_id = ?, phash_stashdb_id = ?, reason = ?,
 		  performer_name = ?, placed_path = ?, place_error = ?,
 		  grabbed_at = ?,
 		  updated_at = ?,
@@ -201,7 +206,7 @@ func (r *Repo) Update(ctx context.Context, g Grab) error {
 		g.ReleaseTitle, nullInt(g.ReleaseSize), nullString(g.ReleaseIndexer),
 		nullString(g.DownloadURL), nullFloat(g.PredictedConfidence),
 		nullString(g.ClientID), nullString(g.ClientName), g.Status,
-		nullString(g.ActualStashDBID), nullString(g.Reason),
+		nullString(g.ActualStashDBID), nullString(g.PhashStashDBID), nullString(g.Reason),
 		nullString(g.PerformerName), nullString(g.PlacedPath), nullString(g.PlaceError),
 		g.GrabbedAt,
 		now,
@@ -820,7 +825,7 @@ func (r *Repo) query(ctx context.Context, sql string, args ...any) ([]Grab, erro
 		id, predicted_stashdb_id, predicted_confidence, release_title,
 		release_size, release_indexer, download_url,
 		client, client_id, client_name, category, status, actual_stashdb_id,
-		reason, performer_name, placed_path, place_error,
+		phash_stashdb_id, reason, performer_name, placed_path, place_error,
 		grabbed_at, updated_at, completed_at, placed_at, confirmed_at,
 		kind, pack_files, pack_identified, pack_deduped,
 		progress, progress_at, attempts, next_retry_at, fail_kind, rev,
@@ -847,6 +852,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 	var g Grab
 	var (
 		predictedID, releaseIndexer, downloadURL, clientID, clientName, category, actualID, reason sql.NullString
+		phashID                                                                                    sql.NullString
 		performerName, placedPath, placeError                                                      sql.NullString
 		predictedConfidence                                                                        sql.NullFloat64
 		releaseSize, completedAt, placedAt, confirmedAt, nextRetryAt                               sql.NullInt64
@@ -856,7 +862,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 		&predictedID, &predictedConfidence, &g.ReleaseTitle,
 		&releaseSize, &releaseIndexer, &downloadURL,
 		&g.Client, &clientID, &clientName, &category, &g.Status, &actualID,
-		&reason, &performerName, &placedPath, &placeError,
+		&phashID, &reason, &performerName, &placedPath, &placeError,
 		&g.GrabbedAt, &g.UpdatedAt, &completedAt, &placedAt, &confirmedAt,
 		&kind, &g.PackFiles, &g.PackIdentified, &g.PackDeduped,
 		&g.Progress, &g.ProgressAt, &g.Attempts, &nextRetryAt, &failKind, &g.Rev,
@@ -879,6 +885,7 @@ func scanRow(rows *sql.Rows) (Grab, error) {
 	g.ClientName = clientName.String
 	g.Category = category.String
 	g.ActualStashDBID = actualID.String
+	g.PhashStashDBID = phashID.String
 	g.Reason = reason.String
 	g.PerformerName = performerName.String
 	g.PlacedPath = placedPath.String

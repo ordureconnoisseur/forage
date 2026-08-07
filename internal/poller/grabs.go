@@ -925,6 +925,11 @@ func (p *Poller) advance(ctx context.Context, g *grabs.Grab, qbitTorrents []qbit
 				default:
 					g.Status = "mismatched"
 					g.Reason = "stash phash → different scene than predicted"
+					// Record what the fingerprint said, apart from what the
+					// scene is tagged as. A manual match rewrites the latter;
+					// this is the disagreement itself, so answering it one way
+					// leaves it answerable the other way later.
+					g.PhashStashDBID = scene.StashDBID
 				}
 				dirty = true
 				// Stash has now matched this file, by hash, to a scene and

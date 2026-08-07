@@ -172,6 +172,12 @@ CREATE TABLE IF NOT EXISTS grabs (
   category              TEXT,
   status                TEXT NOT NULL DEFAULT 'queued',
   actual_stashdb_id     TEXT,
+  -- What Stash's fingerprint said the file is, recorded the first time it
+  -- disagreed with the prediction and never overwritten afterwards.
+  -- actual_stashdb_id is what the scene is tagged as NOW, which a manual
+  -- match rewrites; this is what the disagreement WAS, so resolving one way
+  -- can still be resolved the other.
+  phash_stashdb_id      TEXT,
   reason                TEXT,
   performer_name        TEXT,
   placed_path           TEXT,

@@ -45,6 +45,10 @@ type grabOut struct {
 	PredictedStashDBID  string  `json:"predicted_stashdb_id,omitempty"`
 	PredictedConfidence float64 `json:"predicted_confidence,omitempty"`
 	ActualStashDBID     string  `json:"actual_stashdb_id,omitempty"`
+	// PhashStashDBID is what Stash's fingerprint said, kept apart from what
+	// the scene is tagged as now so the UI can still offer both sides of a
+	// mismatch after one of them has been chosen.
+	PhashStashDBID string `json:"phash_stashdb_id,omitempty"`
 	// SceneTitle is the StashDB scene's real title (resolved server-side and
 	// cached), populated only for grabs whose scene is grouped (2+ attempts)
 	// so the group header shows the title instead of a bare id. Empty when
@@ -196,6 +200,7 @@ func (s *Server) getGrabs(w http.ResponseWriter, r *http.Request) {
 			PredictedStashDBID:  g.PredictedStashDBID,
 			PredictedConfidence: g.PredictedConfidence,
 			ActualStashDBID:     g.ActualStashDBID,
+			PhashStashDBID:      g.PhashStashDBID,
 			ReleaseTitle:        g.ReleaseTitle,
 			ReleaseSize:         g.ReleaseSize,
 			ReleaseIndexer:      g.ReleaseIndexer,

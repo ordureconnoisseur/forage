@@ -243,6 +243,7 @@ func (p *Poller) applyLateLink(ctx context.Context, g grabs.Grab, stashDBID stri
 		// pick-another-release escape hatch appears.
 		g.Status = "mismatched"
 		g.Reason = "stash identified a different scene than predicted"
+		g.PhashStashDBID = g.ActualStashDBID
 	}
 	if err := p.repo.Update(ctx, g); err != nil {
 		if errors.Is(err, grabs.ErrStaleUpdate) {

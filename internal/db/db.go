@@ -129,6 +129,10 @@ func migrateGrabsColumns(db *sql.DB) error {
 		// '' = StashDB. Carried from the watch so the grab's enrichment
 		// lookups query the box the id actually came from.
 		{"source", `ALTER TABLE grabs ADD COLUMN source TEXT NOT NULL DEFAULT ''`},
+		// 2026-08-07: what Stash's phash said, kept apart from what the scene
+		// is tagged as now. Resolving a mismatch used to erase the
+		// disagreement, so the choice could not be revisited after a reload.
+		{"phash_stashdb_id", `ALTER TABLE grabs ADD COLUMN phash_stashdb_id TEXT`},
 	}
 	for _, c := range placementCols {
 		exists, err := has(c.col)

@@ -137,6 +137,15 @@ func (s *Server) postGrabMatch(w http.ResponseWriter, r *http.Request) {
 	// CAS-retry so a poller tick mid-request can't revert the manual match
 	// (or be reverted by it).
 	if err := s.applyGrabUpdate(r.Context(), gid, func(fresh *grabs.Grab) {
+		// Backfill for rows written before the column existed: whatever the
+		// scene was tagged as on the way in IS what the fingerprint said,
+		// because nothing else writes actual_stashdb_id. Recorded before it
+		// is overwritten, so a mismatch resolved once can still be resolved
+		// the other way.
+		if fresh.PhashStashDBID == "" && fresh.ActualStashDBID != "" &&
+			fresh.ActualStashDBID != fresh.PredictedStashDBID {
+			fresh.PhashStashDBID = fresh.ActualStashDBID
+		}
 		fresh.ActualStashDBID = target
 		fresh.Status = "confirmed"
 		fresh.Reason = "manually matched to StashDB"

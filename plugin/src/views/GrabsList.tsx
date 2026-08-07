@@ -1342,8 +1342,10 @@ function MismatchPanel({
   actual: string;
   conf: string | null;
 }) {
+  // Seeded from what the grab is tagged as, so reopening the card shows the
+  // answer rather than asking again.
   const [chosen, setChosen] = useState<string | null>(
-    g.status === "confirmed" ? actual : null,
+    g.actual_stashdb_id || null,
   );
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
@@ -1607,6 +1609,17 @@ function MatchBlock({ g }: { g: Grab }) {
       ? g.predicted_confidence.toFixed(2)
       : null;
 
+  // A disagreement, whether or not it has been answered. actual_stashdb_id
+  // moves when you answer; phash_stashdb_id is what Stash said, and it does
+  // not, so the panel survives its own resolution and the other thumbnail
+  // stays available as the undo.
+  const phash = g.phash_stashdb_id;
+  if (phash && phash !== predicted) {
+    return (
+      <MismatchPanel g={g} predicted={predicted} actual={phash} conf={conf} />
+    );
+  }
+
   if (actual && actual === predicted) {
     return (
       <div className="grab-match-hero confirmed">
@@ -1632,7 +1645,7 @@ function MatchBlock({ g }: { g: Grab }) {
     );
   }
 
-  if (actual) {
+  if (actual && actual !== predicted) {
     return <MismatchPanel g={g} predicted={predicted} actual={actual} conf={conf} />;
   }
 
@@ -2705,7 +2718,8 @@ function GrabRow({
     !!g.placed_path &&
     (g.status === "mismatched" ||
       !g.actual_stashdb_id ||
-      (!!g.predicted_stashdb_id && g.actual_stashdb_id !== g.predicted_stashdb_id));
+      (!!g.phash_stashdb_id &&
+        g.phash_stashdb_id !== g.predicted_stashdb_id));
 
   // Confirmed, but nothing on StashDB was ever linked to it — toned apart
   // from a real match everywhere the row shows its status.
