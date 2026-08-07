@@ -132,6 +132,53 @@
     monospace;
 }
 
+/* One rotation, for every spinner in the app. There were four keyframes with
+   four names (matchSpin, match-spin, collSpin, pick-spin) and they all said
+   the same thing; one of them also declared from { rotate(0deg) }, which is
+   where it starts anyway. */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Checkboxes and radios in forage's green, not the operating system's blue.
+   One radio had accent-color and the eight checkboxes across five views did
+   not, so every one of them rendered in #0075FF on Windows and the system
+   tint on a Mac: the one control in the app whose colour was decided by
+   somebody else's settings. */
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+/* One focus treatment, for everything focusable.
+   
+   Nine rules each turned the outline off and reinvented it. Five did the same
+   thing (accent border plus a 3px tint ring), two gave a border and no ring,
+   one used a different accent alpha, and .tags-input turned the outline off
+   and replaced it with NOTHING, so focus on that field was invisible. Buttons
+   and links had no treatment at all and fell back to the browser's.
+   
+   The dominant version wins because it was already the most common and it
+   suits both a bordered input and a flat button. Stated once. */
+.controls input:focus,
+.sort-select:focus,
+.discover-days:focus,
+.alias-input:focus,
+.settings-row input:focus,
+.grab-toolbar-search input:focus,
+.grab-setperf-search:focus,
+.grab-match-input:focus,
+.setup-field input:focus,
+.tags-input:focus,
+:where(input, textarea, select):focus-visible,
+:where(button, a, [tabindex]):focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-tint);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -354,11 +401,6 @@ button {
   -webkit-backdrop-filter: var(--glass-blur);
   font: inherit;
 }
-.controls input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
-}
 .controls .check {
   display: inline-flex;
   align-items: center;
@@ -379,12 +421,6 @@ button {
   cursor: pointer;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
-}
-.sort-select:focus,
-.discover-days:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 .controls .count {
   color: var(--text-muted);
@@ -1369,10 +1405,6 @@ button {
   font: inherit;
   font-size: 13px;
 }
-.alias-input:focus {
-  outline: none;
-  box-shadow: 0 0 0 3px var(--accent-tint);
-}
 .empty-hint {
   margin-top: 8px;
   font-size: 13px;
@@ -1914,11 +1946,6 @@ button {
   border-radius: var(--radius-sm);
   font: inherit;
 }
-.settings-row input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
-}
 .settings-actions {
   display: flex;
   gap: 10px;
@@ -2275,11 +2302,6 @@ button {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   font: inherit;
-}
-.grab-toolbar-search input:focus {
-  outline: none;
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-tint);
 }
 .grab-toolbar-count {
   font-size: 12px;
@@ -3166,15 +3188,7 @@ button {
   opacity: 0.55;
   stroke-dasharray: 70 40;
   transform-origin: center;
-  animation: matchSpin 0.9s linear infinite;
-}
-@keyframes matchSpin {
-  from {
-    transform: rotate(0deg);
-  }
-  to {
-    transform: rotate(360deg);
-  }
+  animation: spin 0.9s linear infinite;
 }
 /* One-time light sweep across the card on reveal. */
 .grab-match-hero::after {
@@ -3475,14 +3489,10 @@ code.grab-fact-v,
   color: var(--accent-bright);
 }
 .grab-setperf-refresh.spinning svg {
-  animation: collSpin 0.7s linear infinite;
+  animation: spin 0.7s linear infinite;
 }
 .grab-setperf-refresh:disabled {
   cursor: default;
-}
-.grab-setperf-search:focus {
-  outline: none;
-  border-color: var(--accent);
 }
 /* Search results sit below the suggestion chips, separated by a hairline +
    a small label so it's clear these are looked-up (not forage's guesses). */
@@ -3646,10 +3656,6 @@ code.grab-fact-v,
   font: inherit;
   font-size: 13px;
 }
-.grab-match-input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
 
 /* The primary "Find matches" action reads as the lead choice in the row:
    a filled-tint pill that lifts to solid accent on hover, distinct from
@@ -3761,19 +3767,21 @@ code.grab-fact-v,
 .match-state.err {
   color: #fca5a5;
 }
+/* One ring in three sizes. The three classes differed only in how big they
+   were and which of two near-identical greys they left unlit, and they are
+   kept as separate names only because three views already ask for them. */
+.match-spinner,
+.coll-spinner,
+.pick-spinner {
+  flex: none;
+  border-radius: 50%;
+  border: var(--spinner-weight, 2px) solid var(--glass-border-bright);
+  border-top-color: var(--accent-bright);
+  animation: spin 0.7s linear infinite;
+}
 .match-spinner {
   width: 16px;
   height: 16px;
-  flex: none;
-  border: 2px solid var(--glass-border-bright);
-  border-top-color: var(--accent-bright);
-  border-radius: 50%;
-  animation: match-spin 0.7s linear infinite;
-}
-@keyframes match-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 .match-foot-err {
   padding: 12px 22px;
@@ -4477,15 +4485,6 @@ code.grab-fact-v,
 .coll-spinner {
   width: 12px;
   height: 12px;
-  border-radius: 50%;
-  border: 2px solid var(--glass-border);
-  border-top-color: var(--accent);
-  animation: collSpin 0.7s linear infinite;
-}
-@keyframes collSpin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 /* Expand affordance + candidate panel *
@@ -5811,10 +5810,6 @@ code.grab-fact-v,
   color: var(--text);
   font: inherit;
 }
-.setup-field input:focus {
-  outline: none;
-  border-color: rgba(var(--accent-rgb), 0.6);
-}
 /* Inline test row (credentials step) */
 .setup-inline-test {
   display: flex;
@@ -5946,9 +5941,6 @@ code.grab-fact-v,
   color: var(--text);
   font: inherit;
   padding: 4px 2px;
-}
-.tags-input:focus {
-  outline: none;
 }
 .tags-suggest {
   display: flex;
@@ -8438,12 +8430,8 @@ code.grab-fact-v,
 .pick-spinner {
   width: 10px;
   height: 10px;
-  border: 1.5px solid rgba(var(--accent-rgb), 0.3);
-  border-top-color: var(--accent-bright);
-  border-radius: 50%;
-  animation: pick-spin 0.7s linear infinite;
+  --spinner-weight: 1.5px;
 }
-@keyframes pick-spin { to { transform: rotate(360deg); } }
 
 /* ── the dismiss ──
    Tertiary, and on the image rather than in the scrim, so it is never
