@@ -136,7 +136,15 @@ func (s *Server) getDiscoverPerformers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out, err := s.computePerformerPicks(r.Context())
+	// Detached, like the background refresh. This used to run on the
+	// request's context, so whoever triggered the cold compute took it with
+	// them when they navigated away: the walk aborted partway, and the
+	// partial result was cached for an hour because it was not EMPTY. That
+	// is exactly what a strip of twenty-four names with no portraits and no
+	// other lenses is.
+	cctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 3*time.Minute)
+	defer cancel()
+	out, err := s.computePerformerPicks(cctx)
 	if err != nil {
 		writeErr(w, http.StatusServiceUnavailable, err.Error())
 		return
@@ -171,18 +179,28 @@ func (s *Server) computePerformerPicks(ctx context.Context) (*discoverPerformers
 	local := s.localPerformerStashDBIDs(ctx)
 	hideMale := s.pool.Settings().HideMalePerformers
 
+	trending, terr := s.trendingPerformers(ctx, sdb, local, hideMale)
+	debut, derr := s.sortedPerformers(ctx, sdb, "DEBUT", local, hideMale)
+	active, aerr := s.sortedPerformers(ctx, sdb, "LAST_SCENE", local, hideMale)
 	out := &discoverPerformersResponse{
-		Trending:    s.trendingPerformers(ctx, sdb, local, hideMale),
-		Debut:       s.sortedPerformers(ctx, sdb, "DEBUT", local, hideMale),
-		Active:      s.sortedPerformers(ctx, sdb, "LAST_SCENE", local, hideMale),
+		Trending:    trending,
+		Debut:       debut,
+		Active:      active,
 		RefreshedAt: nowUnix(),
 	}
-	// Only store a result worth reusing. An empty strip means StashDB was
-	// unreachable, and caching that would hold the failure for an hour.
-	if len(out.Trending)+len(out.Debut)+len(out.Active) > 0 {
+	// Cache only a COMPLETE result. "Not empty" was too weak a test: a walk
+	// that died partway still had two dozen names in it, so a degraded strip
+	// with no portraits and two missing lenses was stored and served for an
+	// hour. Partial answers are still returned to this caller, because a
+	// half-strip beats none; they are just not remembered.
+	if terr == nil && derr == nil && aerr == nil &&
+		len(out.Trending)+len(out.Debut)+len(out.Active) > 0 {
 		s.perfPicks.mu.Lock()
 		s.perfPicks.at, s.perfPicks.resp = time.Now(), out
 		s.perfPicks.mu.Unlock()
+	} else if terr != nil || derr != nil || aerr != nil {
+		s.log.Warn("discover performers: incomplete, not cached",
+			"trending", terr, "debut", derr, "active", aerr)
 	}
 	return out, nil
 }
@@ -206,13 +224,13 @@ func (s *Server) localPerformerStashDBIDs(ctx context.Context) map[string]bool {
 
 // sortedPerformers runs one of StashDB's own performer sorts and filters it.
 func (s *Server) sortedPerformers(ctx context.Context, sdb *stashdb.Client,
-	sortKey string, local map[string]bool, hideMale bool) []discoverPerformer2 {
+	sortKey string, local map[string]bool, hideMale bool) ([]discoverPerformer2, error) {
 	res, err := sdb.QueryPerformers(ctx, stashdb.PerformerQuery{
 		Page: 1, PerPage: performerFetchCount, Sort: sortKey,
 	})
 	if err != nil {
 		s.log.Warn("discover performers: query", "sort", sortKey, "err", err)
-		return []discoverPerformer2{}
+		return []discoverPerformer2{}, err
 	}
 	out := make([]discoverPerformer2, 0, performerPickStore)
 	for _, p := range res.Performers {
@@ -230,7 +248,7 @@ func (s *Server) sortedPerformers(ctx context.Context, sdb *stashdb.Client,
 			SceneCount: p.SceneCount,
 		})
 	}
-	return out
+	return out, nil
 }
 
 // performerTally is one performer's standing in the derived ranking.
@@ -287,7 +305,8 @@ func rankTrendingPerformers(scenes []stashdb.Scene,
 
 // trendingPerformers walks the trending ranking and ranks who recurs in it.
 func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
-	local map[string]bool, hideMale bool) []discoverPerformer2 {
+	local map[string]bool, hideMale bool) ([]discoverPerformer2, error) {
+	var failed error
 	all := make([]stashdb.Scene, 0, trendingScanPages*trendingScanPer)
 	for page := 1; page <= trendingScanPages; page++ {
 		res, err := sdb.QueryScenes(ctx, stashdb.SceneQuery{
@@ -297,6 +316,7 @@ func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 			// Partial depth still ranks; a shallower scan is a weaker signal,
 			// not a wrong one.
 			s.log.Warn("discover performers: trending scan", "page", page, "err", err)
+			failed = err
 			break
 		}
 		all = append(all, res.Scenes...)
@@ -317,7 +337,12 @@ func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 	for _, t := range list {
 		ids = append(ids, t.P.ID)
 	}
-	profiles := s.performerProfiles(ctx, sdb, ids)
+	profiles, perr := s.performerProfiles(ctx, sdb, ids)
+	if perr != nil {
+		// A strip of names with no faces is the degraded shape this whole
+		// guard exists to stop being cached.
+		failed = perr
+	}
 
 	out := make([]discoverPerformer2, 0, len(list))
 	for _, t := range list {
@@ -336,21 +361,22 @@ func (s *Server) trendingPerformers(ctx context.Context, sdb *stashdb.Client,
 		}
 		out = append(out, d)
 	}
-	return out
+	return out, failed
 }
 
 // performerProfiles fetches portraits for a set of ids.
 func (s *Server) performerProfiles(ctx context.Context, sdb *stashdb.Client,
-	ids []string) map[string]stashdb.PerformerProfile {
+	ids []string) (map[string]stashdb.PerformerProfile, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	got, err := sdb.FindPerformerProfilesByID(ctx, ids)
 	if err != nil {
-		// A card without a portrait still names someone worth adding.
+		// A card without a portrait still names someone worth adding, so the
+		// partial map is returned; the error only stops it being cached.
 		s.log.Warn("discover performers: profiles", "err", err)
 	}
-	return got
+	return got, err
 }
 
 // keepPerformer applies the two filters every lens shares.

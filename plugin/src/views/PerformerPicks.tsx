@@ -90,14 +90,21 @@ export default function PerformerPicks() {
         </div>
       </div>
 
-      {/* A scroll strip rather than a paged carousel. The scene carousel pages
-          because its cards are wide and few; these are narrow and there are
-          twenty-four of them, so swiping beats clicking through five pages,
-          and it costs no chevrons at any width. */}
-      <div className="picks-row">
+      {/* The same shell the scene carousel uses on a phone: .carousel-row with
+          snap scrolling, the same gap, the same card chrome. It does not page
+          with chevrons the way the scene strip does at desktop width, because
+          twenty-four narrow cards would be eight pages of clicking where one
+          swipe does; everything else is deliberately identical, so the two
+          strips on this page read as the same component. */}
+      <div className="trending-carousel scroll picks-carousel">
+        <div className="carousel-row">
         {loading
           ? Array.from({ length: 8 }, (_, i) => (
-              <div className="pick-card is-skeleton" key={i} aria-hidden="true" />
+              <div
+                className="trending-card pick-card is-skeleton"
+                key={i}
+                aria-hidden="true"
+              />
             ))
           : picks.map((p) => (
               <PickCard
@@ -109,6 +116,7 @@ export default function PerformerPicks() {
                 }
               />
             ))}
+        </div>
       </div>
     </section>
   );
@@ -154,84 +162,72 @@ function PickCard({
         : `${p.scene_count} scenes`;
 
   return (
-    <button
-      type="button"
+    <div
       className={
-        "pick-card" +
+        "trending-card pick-card" +
         (state === "added" ? " is-added" : "") +
         (state === "err" ? " is-err" : "")
       }
-      onClick={add}
-      disabled={state === "adding" || state === "added"}
-      title={
-        state === "idle"
-          ? `Add ${p.name} to your library`
-          : `${p.name}: ${msg || "adding…"}`
-      }
-      aria-label={`Add ${p.name} to your library`}
     >
-      {img && !noImage ? (
-        <img
-          className="pick-img"
-          src={img}
-          alt=""
-          loading="lazy"
-          onError={() => setNoImage(true)}
-        />
-      ) : (
-        <div className="pick-img pick-img-empty" aria-hidden="true">
-          {p.name.slice(0, 1)}
-        </div>
-      )}
-
-      <div className="pick-scrim">
-        <div className="pick-name">{p.name}</div>
-        <div className="pick-stat">{stat}</div>
-      </div>
-
-      {/* Not interested. A second target on a card that is otherwise one
-          button, which is justified here because it is a genuinely different
-          action, not a smaller way to do the same one. It is deliberately the
-          smaller and quieter of the two, and it only appears on hover or
-          focus so it cannot be hit by accident while scrolling a strip. */}
-      <span
-        className="pick-dismiss"
-        role="button"
-        tabIndex={0}
-        aria-label={`Stop suggesting ${p.name}`}
-        title={`Stop suggesting ${p.name}`}
-        onClick={(e) => {
-          // The card underneath is the add button. Without this, dismissing
-          // someone would add them.
-          e.preventDefault();
-          e.stopPropagation();
-          void dismissPerformerPick(p.stashdb_id).catch(() => {});
-          onDismiss();
-        }}
-        onKeyDown={(e) => {
-          if (e.key !== "Enter" && e.key !== " ") return;
-          e.preventDefault();
-          e.stopPropagation();
-          void dismissPerformerPick(p.stashdb_id).catch(() => {});
-          onDismiss();
-        }}
-      >
-        <CloseIcon size={11} />
-      </span>
-
-      {/* The affordance sits over the portrait rather than beside the name:
-          the card is one control, and this says which control it is. */}
-      <span className="pick-action" aria-hidden="true">
-        {state === "adding" ? (
-          "…"
-        ) : state === "added" ? (
-          <CheckIcon size={13} />
-        ) : state === "err" ? (
-          "!"
+      <div className="scene-thumb pick-thumb">
+        {img && !noImage ? (
+          <img src={img} alt="" loading="lazy" onError={() => setNoImage(true)} />
         ) : (
-          <PlusIcon size={13} />
+          <div className="pick-thumb-empty" aria-hidden="true">
+            {p.name.slice(0, 1)}
+          </div>
         )}
-      </span>
-    </button>
+        {/* The same overlay pill the scene cards carry for Watch, in the same
+            corner at the same size. It replaces a bare "+" in a circle, which
+            said nothing about what it did and competed with the dismiss for
+            attention in the opposite corner. */}
+        <button
+          type="button"
+          className={"watch-chip pick-add" + (state === "added" ? " is-added" : "")}
+          onClick={add}
+          disabled={state === "adding" || state === "added"}
+          title={
+            state === "idle"
+              ? `Add ${p.name} to your library`
+              : `${p.name}: ${msg || "adding…"}`
+          }
+          aria-label={`Add ${p.name} to your library`}
+        >
+          {state === "adding" ? (
+            "…"
+          ) : state === "added" ? (
+            <>
+              <CheckIcon size={11} /> Added
+            </>
+          ) : state === "err" ? (
+            "!"
+          ) : (
+            <>
+              <PlusIcon size={11} /> Add
+            </>
+          )}
+        </button>
+        {/* Not interested. Deliberately the quieter of the two: it is the
+            rarer action, and a strip that gets swiped past should not carry
+            two equally loud targets. Revealed on hover where there is a
+            pointer, always present on touch, which has none. */}
+        <button
+          type="button"
+          className="pick-dismiss"
+          aria-label={`Stop suggesting ${p.name}`}
+          title={`Stop suggesting ${p.name}`}
+          onClick={() => {
+            void dismissPerformerPick(p.stashdb_id).catch(() => {});
+            onDismiss();
+          }}
+        >
+          <CloseIcon size={10} />
+        </button>
+      </div>
+      <div className="trending-card-body">
+        <div className="trending-card-title pick-name">{p.name}</div>
+        <div className="trending-card-meta">{stat}</div>
+      </div>
+    </div>
   );
 }
