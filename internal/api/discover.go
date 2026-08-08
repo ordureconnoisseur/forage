@@ -186,13 +186,15 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	watchStatus := s.watchStatusByScene(r.Context())
-	// Before the favourite and content filters, so the UI can say "39 of 380"
-	// rather than "39". The header sentence describes the whole window ("Last
-	// 30 days from your performers") while the number in it is the filtered
-	// count, and nothing on that line admitted a filter was narrowing it: a
-	// ticked Favourites box read as forage having lost 341 scenes.
-	sceneTotal := len(materializeScenes(recentRaw, perfMap, watchStatus, false))
-	scenes := materializeScenes(recentRaw, perfMap, watchStatus, favoriteOnly)
+	// Materialised unfiltered. The user's two filters (favourites, content)
+	// are applied further down, AFTER the drops that are not the user's
+	// choice, so sceneTotal can mean "what this window would show with your
+	// filters off" rather than "what the query returned".
+	//
+	// Measuring it here instead was wrong by exactly the already-grabbed
+	// scenes: an unfiltered page read "380 of 389", inventing nine hidden
+	// scenes out of a step the user has no control over.
+	scenes := materializeScenes(recentRaw, perfMap, watchStatus, false)
 	// Trending isn't favourite-filtered — the whole point is "what's
 	// hot globally", regardless of which performers we have.
 	trending := materializeScenes(trendingRaw, perfMap, watchStatus, false)
@@ -202,9 +204,11 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	// whose gender is in the named set. Trending scenes whose performers
 	// aren't local can't be judged and are dropped under a filter.
 	filters := parseDiscoverFilters(s.pool.Settings().DiscoverFilters)
-	if name := r.URL.Query().Get("flt"); name != "" {
-		if genders, ok := filters[name]; ok {
-			scenes = filterScenesByGender(scenes, genders)
+	fltName := r.URL.Query().Get("flt")
+	if fltName != "" {
+		if genders, ok := filters[fltName]; ok {
+			// Trending is filtered here because it is not subject to the
+			// grabbed drop below in the same way; the feed waits.
 			trending = filterScenesByGender(trending, genders)
 		}
 	}
@@ -218,6 +222,19 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	if _, covered, err := s.grabbedSceneSet(r.Context()); err == nil && len(covered) > 0 {
 		scenes = dropGrabbed(scenes, covered)
 		trending = dropGrabbed(trending, covered)
+	}
+
+	// Everything above happened regardless of what the user asked for, so
+	// this is the honest denominator: the size of the window with their
+	// filters off.
+	sceneTotal := len(scenes)
+	if favoriteOnly {
+		scenes = keepFavourites(scenes)
+	}
+	if fltName != "" {
+		if genders, ok := filters[fltName]; ok {
+			scenes = filterScenesByGender(scenes, genders)
+		}
 	}
 
 	// Fill in the performers the user does NOT have, on BOTH lists.
@@ -441,6 +458,26 @@ func dropGrabbed(scenes []discoverScene, grabbed map[string]bool) []discoverScen
 		}
 	}
 	return kept
+}
+
+// keepFavourites drops scenes with no favourited performer.
+//
+// Split out of materializeScenes so the feed can be built once, put through
+// the drops the user did not ask for, MEASURED, and only then narrowed by
+// what they did ask for. Folded into the build step it could only be counted
+// before those drops, and the header claimed nine hidden scenes that were
+// simply already grabbed.
+func keepFavourites(in []discoverScene) []discoverScene {
+	out := make([]discoverScene, 0, len(in))
+	for _, sc := range in {
+		for _, p := range sc.Performers {
+			if p.Favorite {
+				out = append(out, sc)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func materializeScenes(raw []discoverRawRow, perfMap map[string]discoverPerformer, watchStatus map[string]string, favoriteOnly bool) []discoverScene {
