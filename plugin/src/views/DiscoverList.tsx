@@ -324,8 +324,23 @@ export default function DiscoverList({
             </>
           ) : (
             <>
-              Last {data.days} days · {data.scenes.length} new scene
-              {data.scenes.length === 1 ? "" : "s"} from your performers
+              {/* "39 of 380" whenever a filter is narrowing the window. The
+                  sentence describes the whole window while the number is the
+                  filtered count, so with Favourites ticked it read as forage
+                  having lost 341 scenes rather than as a filter doing its
+                  job. Same grammar as the render cap's "300/380". */}
+              Last {data.days} days ·{" "}
+              {data.scene_total > data.scenes.length ? (
+                <>
+                  <strong>{data.scenes.length}</strong> of {data.scene_total}{" "}
+                  scenes from your performers
+                </>
+              ) : (
+                <>
+                  {data.scenes.length} new scene
+                  {data.scenes.length === 1 ? "" : "s"} from your performers
+                </>
+              )}
               {data.refreshed_at > 0 && (
                 <> · cache refreshed {relativeTime(data.refreshed_at)}</>
               )}

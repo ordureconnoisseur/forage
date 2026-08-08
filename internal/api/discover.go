@@ -57,11 +57,14 @@ type discoverPerformer struct {
 }
 
 type discoverResponse struct {
-	Scenes              []discoverScene `json:"scenes"`
-	Trending            []discoverScene `json:"trending"`
-	Days                int             `json:"days"`
-	RefreshedAt         int64           `json:"refreshed_at"`
-	TrendingRefreshedAt int64           `json:"trending_refreshed_at"`
+	Scenes   []discoverScene `json:"scenes"`
+	Trending []discoverScene `json:"trending"`
+	Days     int             `json:"days"`
+	// SceneTotal is how many scenes the window holds BEFORE the favourite and
+	// content filters run, so the UI can show what it is hiding.
+	SceneTotal          int   `json:"scene_total"`
+	RefreshedAt         int64 `json:"refreshed_at"`
+	TrendingRefreshedAt int64 `json:"trending_refreshed_at"`
 	// Filters is the deployment's configured content filters as a full
 	// name-to-genders mapping (same shape as /performers): the UI
 	// renders selection chips only when non-empty, and derives each
@@ -183,6 +186,12 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 	}
 
 	watchStatus := s.watchStatusByScene(r.Context())
+	// Before the favourite and content filters, so the UI can say "39 of 380"
+	// rather than "39". The header sentence describes the whole window ("Last
+	// 30 days from your performers") while the number in it is the filtered
+	// count, and nothing on that line admitted a filter was narrowing it: a
+	// ticked Favourites box read as forage having lost 341 scenes.
+	sceneTotal := len(materializeScenes(recentRaw, perfMap, watchStatus, false))
 	scenes := materializeScenes(recentRaw, perfMap, watchStatus, favoriteOnly)
 	// Trending isn't favourite-filtered — the whole point is "what's
 	// hot globally", regardless of which performers we have.
@@ -282,6 +291,7 @@ func (s *Server) getDiscover(w http.ResponseWriter, r *http.Request) {
 		Scenes:              scenes,
 		Trending:            trending,
 		Days:                days,
+		SceneTotal:          sceneTotal,
 		RefreshedAt:         refreshedAt,
 		TrendingRefreshedAt: trendingRefreshedAt,
 		Filters:             outFilters,

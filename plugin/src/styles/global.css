@@ -224,7 +224,13 @@ button {
   display: flex;
   align-items: center;
   gap: 18px;
-  background: rgba(var(--bg-0-rgb), 0.65);
+  /* 0.65 was too transparent to hide what passes under it. A blur spreads
+     bright pixels rather than removing them, so a pale thumbnail scrolling
+     beneath the bar came through as a smear behind the wordmark, and page
+     titles ghosted through at 390pt where the bar sits directly over the
+     content. Opaque enough to be a surface; the blur stays for the edge it
+     gives against a photo. */
+  background: rgba(var(--bg-0-rgb), 0.92);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--glass-border);
@@ -1857,24 +1863,6 @@ button {
   height: 100%;
   background: var(--accent);
   transition: width 0.4s ease;
-}
-.banner-setup {
-  background: rgba(var(--accent-rgb), 0.10);
-  color: var(--accent-bright);
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  border-bottom: 1px solid rgba(var(--accent-rgb), 0.25);
-}
-.banner-action {
-  background: var(--accent);
-  color: var(--bg-0);
-  border: 0;
-  border-radius: var(--radius-pill);
-  padding: 5px 14px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
 }
 
 /* ── Settings modal ───────────────────────────────────────────── */
@@ -7552,11 +7540,41 @@ code.grab-fact-v,
   border: 1px solid var(--glass-border);
   color: var(--text-muted);
 }
-.del-badge.outcome-trashed  { border-color: rgba(212, 161, 74, 0.5);  color: #e0b84e; }
-.del-badge.outcome-destroyed{ border-color: rgba(239, 68, 68, 0.5);   color: #f3a3a3; }
-.del-badge.outcome-failed   { border-color: rgba(239, 68, 68, 0.35);  color: var(--text-muted); }
-.del-badge.outcome-restored { border-color: rgba(34, 197, 94, 0.5);   color: #6ee7a0; }
-.del-badge.outcome-refused  { border-color: rgba(59, 130, 246, 0.45); color: #93c5fd; }
+/* One outcome, one colour, stated once and used by both the badge and the
+   row. DeletionsList emits `del-row outcome-<x>` on every row and nothing
+   styled it, so the outcome was legible one badge at a time and a list of
+   forty could not be scanned. The stripe is the same idiom a Grabs row uses
+   for its status.
+   
+   The five colours were literal hexes and longhand rgba of tokens this file
+   already owns. */
+.del-row.outcome-trashed,
+.del-badge.outcome-trashed {
+  --outcome: var(--amber);
+}
+.del-row.outcome-destroyed,
+.del-badge.outcome-destroyed {
+  --outcome: var(--red);
+}
+.del-row.outcome-failed,
+.del-badge.outcome-failed {
+  --outcome: var(--text-muted);
+}
+.del-row.outcome-restored,
+.del-badge.outcome-restored {
+  --outcome: var(--accent-bright);
+}
+.del-row.outcome-refused,
+.del-badge.outcome-refused {
+  --outcome: #93c5fd;
+}
+.del-badge[class*="outcome-"] {
+  border-color: color-mix(in srgb, var(--outcome) 50%, transparent);
+  color: var(--outcome);
+}
+.del-row[class*="outcome-"] {
+  box-shadow: inset 2px 0 0 var(--outcome);
+}
 .del-body { min-width: 0; flex: 1; }
 .del-title {
   font-size: 13.5px;

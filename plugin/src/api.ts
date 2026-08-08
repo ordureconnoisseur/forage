@@ -334,6 +334,9 @@ export interface DiscoverResponse {
   // will just be empty for those.
   trending: DiscoverScene[];
   days: number;
+  // How many scenes the window holds BEFORE favourite/content filtering, so
+  // the header can say "39 of 380" rather than just "39".
+  scene_total: number;
   refreshed_at: number;
   trending_refreshed_at: number;
   // Deployment-configured content filters as a full name-to-genders
