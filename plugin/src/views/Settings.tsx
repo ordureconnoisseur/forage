@@ -460,7 +460,12 @@ export default function Settings({ onClose, onLoggedOut, health }: Props) {
               type="button"
               className={"settings-index-item" + (open[sec.key] ? " is-open" : "")}
               onClick={() => {
-                setOpen((o) => ({ ...o, [sec.key]: true }));
+                // Toggle, not open-only. The item shows whether its section
+                // is open, so pressing an open one and having nothing happen
+                // reads as a broken control.
+                const wasOpen = open[sec.key];
+                setOpen((o) => ({ ...o, [sec.key]: !wasOpen }));
+                if (wasOpen) return;
                 // After the open, so the section has its height when we
                 // measure where to scroll.
                 requestAnimationFrame(() => {

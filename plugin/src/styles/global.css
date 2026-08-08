@@ -4051,6 +4051,17 @@ code.grab-fact-v,
   border-color: var(--accent);
   background: rgba(var(--accent-rgb), 0.12);
 }
+/* The favourite marker sat directly against the last letter of the name and
+   on its baseline, because an inline <svg> aligns like a letter rather than
+   like an icon. It replaced a " ♥" glyph that had a leading space and a
+   font's own vertical centring, and neither came with it. */
+.perf-chip-heart {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 5px;
+  vertical-align: -1px;
+}
+
 .perf-chip.fav {
   /* Inherit the pink heart treatment from the performer-card.fav
      pattern, scaled down to chip size. The "♥" in the label is the
@@ -4470,7 +4481,11 @@ code.grab-fact-v,
   letter-spacing: 0.11em;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  border: 1px solid currentColor;
+  /* Both derived from the text colour, at the alphas the three rules used
+     before: a badge cannot end up with an edge that disagrees with its own
+     label. Full-strength currentColor here read far louder than the 0.4 the
+     originals had. */
+  border: 1px solid color-mix(in srgb, currentColor 40%, transparent);
   background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
@@ -8772,25 +8787,29 @@ code.grab-fact-v,
   .scene-face { transition: none; }
 }
 
-/* ── settings index ──────────────────────────────────────────────
-   A map of the panel, sticky to its top so it stays reachable however far
-   down you are. Eleven sections that each collapse to a title bar are not a
-   long scroll, but they are an invisible one: nothing tells you what exists
-   until you open it.
+/* ── settings index ─────────────────────────────────────────────
+   A map of the panel: press a section and it opens and scrolls to it.
    
-   It wraps rather than scrolls sideways. A horizontal strip would hide half
-   the sections behind a swipe, which is the problem it is here to solve, and
-   these are short words that tile well. */
+   It was styled as a row of tabs, and it was not one. Every item lit accent
+   green whenever its section was open, and sections open independently, so
+   you could light all eleven at once. A control that looks like a
+   single-choice tab strip and behaves like eleven independent checkboxes is
+   worse than either.
+   
+   So it stops claiming to be a selection. Open sections get a small muted dot
+   and nothing else; the label only colours on hover, where colour means "you
+   are about to press this" rather than "this is chosen".
+   
+   Not sticky any more either. It sat at top: 0 of the panel's padding box,
+   which left a 28px strip above it where the content scrolled past in a
+   different colour from the index's own background. A short modal does not
+   need a sticky index badly enough to be worth that. */
 .settings-index {
-  position: sticky;
-  top: 0;
-  z-index: 4;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding: 10px 0 12px;
+  gap: 2px 4px;
+  padding: 0 0 12px;
   margin-bottom: 4px;
-  background: var(--bg-1);
   border-bottom: 1px solid var(--glass-border);
 }
 .settings-index-item {
@@ -8804,20 +8823,24 @@ code.grab-fact-v,
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
-  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+  transition: color 0.12s ease, background 0.12s ease;
 }
 .settings-index-item:hover {
-  color: var(--text);
-  background: var(--glass-bg);
-}
-/* Open, not "selected": the index reports the panel's state rather than
-   holding a selection of its own, so it cannot disagree with what is on
-   screen. */
-.settings-index-item.is-open {
   color: var(--accent-bright);
-  border-color: rgba(var(--accent-rgb), 0.35);
-  background: rgba(var(--accent-rgb), 0.10);
+  background: rgba(var(--accent-rgb), 0.1);
 }
+/* Open, marked by a dot rather than by becoming a lit tab. */
+.settings-index-item.is-open::before {
+  content: "";
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  margin-right: 5px;
+  vertical-align: 1px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+.settings-index-item.is-open { color: var(--text); }
 .settings-index-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;

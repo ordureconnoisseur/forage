@@ -1256,7 +1256,11 @@ function PerfChip({
         title={`Open ${p.name}'s missing scenes`}
       >
         {p.name}
-        {p.favorite ? <HeartIcon size={9} filled /> : null}
+        {p.favorite ? (
+          <span className="perf-chip-heart">
+            <HeartIcon size={9} filled />
+          </span>
+        ) : null}
         {extraLabel || ""}
       </button>
       {anchor && <PerformerHovercard p={p} anchor={anchor} />}
