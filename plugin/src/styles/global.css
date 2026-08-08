@@ -4105,11 +4105,19 @@ code.grab-fact-v,
    wide overflow. Each chevron click translates the track by one
    viewport, snapping the final (partial) page. */
 
+/* The chevrons sit ON the row, not beside it.
+   
+   As grid columns they pushed the cards 52px right of everything else on the
+   page: measured at 1440, every section header and the main feed grid start
+   at 97 and the trending row started at 149, under a comment insisting the
+   two strips are one component. A carousel that indents its own content is
+   the only thing on the page not lining up with the left margin.
+   
+   Overlaid, the row spans the full width and the first card starts where the
+   heading above it does. The buttons keep their own background and blur, so
+   they read against a card rather than getting lost in one. */
 .trending-carousel {
-  display: grid;
-  grid-template-columns: 40px 1fr 40px;
-  align-items: stretch;
-  gap: 12px;
+  position: relative;
 }
 .carousel-row {
   display: flex;
@@ -4119,6 +4127,11 @@ code.grab-fact-v,
   justify-content: center;
 }
 .carousel-chev {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  z-index: 2;
+  width: 40px;
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
   color: var(--text-muted);
@@ -4142,6 +4155,9 @@ code.grab-fact-v,
   opacity: 0.3;
   cursor: not-allowed;
 }
+/* First and last child, because the markup is chevron, row, chevron. */
+.trending-carousel > .carousel-chev:first-child { left: 0; }
+.trending-carousel > .carousel-chev:last-child { right: 0; }
 
 /* Compact card variant — image + title + meta + a single primary
    library-performer chip. Width = (row - 4 gaps) / 5 so exactly 5
