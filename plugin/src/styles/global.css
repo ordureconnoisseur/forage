@@ -4007,23 +4007,6 @@ code.grab-fact-v,
   gap: 4px;
   margin-top: 8px;
 }
-/* A performer on a trending StashDB scene who is NOT in your library. Dashed
-   to read as "not yours yet" rather than as a broken local pill, and it does
-   not take the pointer cursor because the pill itself is not clickable —
-   only the "+" inside it does anything. */
-.perf-chip-missing {
-  cursor: default;
-  border-style: dashed;
-  opacity: 0.85;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.perf-chip-missing.is-added {
-  border-style: solid;
-  border-color: var(--accent);
-  opacity: 1;
-}
 .perf-chip-more {
   cursor: pointer;
   opacity: 0.6;
@@ -8170,6 +8153,30 @@ code.grab-fact-v,
 .perf-chips.is-open { flex-wrap: wrap; row-gap: 5px; }
 .perf-chips > * { flex: none; max-width: 100%; }
 .perf-chip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* A performer on a trending scene who is NOT in your library. Dashed to read
+   as "not yours yet" rather than as a broken local pill.
+   
+   This lived ABOVE .perf-chip, and both are one class, so the base rule's
+   `border: 1px solid` shorthand won and the dashed edge never rendered: the
+   one visual difference between a performer you have and one you do not was
+   declared and then silently overwritten. It also carried cursor: default,
+   from when the pill was not clickable and only the "+" inside it did
+   anything, which stopped being true when the whole pill became the button.
+   
+   Restated here, after the rule it modifies. */
+.perf-chip-missing {
+  border-style: dashed;
+  opacity: 0.85;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.perf-chip-missing.is-added {
+  border-style: solid;
+  border-color: var(--accent);
+  opacity: 1;
+}
 
 /* The count of what did not fit.
    It keeps the .perf-chip chrome instead of stripping it. As borderless dim
