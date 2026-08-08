@@ -147,7 +147,7 @@ export default function PerformersList({
                     className={
                       "grab-chip" +
                       (glyph ? " chip-icon" : "") +
-                      (contentFilter === f ? " active chip-any" : "")
+                      (contentFilter === f ? " active" : "")
                     }
                     title={`Only show ${f} performers (deployment filter)`}
                     onClick={() =>

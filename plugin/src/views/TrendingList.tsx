@@ -181,6 +181,7 @@ export default function TrendingList({
           <p className="muted">{err}</p>
           <button
             type="button"
+            className="grab-action match"
             onClick={() => {
               setErr("");
               setHasMore(true);

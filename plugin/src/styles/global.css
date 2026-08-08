@@ -437,6 +437,15 @@ button {
   color: var(--red);
 }
 
+/* The wrapper around the content-filter chips. It had no rules at all, so
+   the chips were spaced by the whitespace between JSX tags, which is not a
+   gap anyone chose and disappears the moment the markup is reformatted. */
+.discover-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .performer-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
@@ -1265,7 +1274,7 @@ button {
 }
 
 .release.conf-4 {
-  border-color: rgba(212, 161, 74, 0.32);
+  border-color: rgba(var(--amber-rgb), 0.32);
 }
 .release.conf-4::before {
   background: var(--amber);
@@ -1563,7 +1572,7 @@ button {
   line-height: 1.45;
 }
 .mv-override.is-no {
-  border-color: rgba(212, 161, 74, 0.4);
+  border-color: rgba(var(--amber-rgb), 0.4);
   color: var(--amber);
 }
 .mv-override.is-yes {
@@ -1792,7 +1801,7 @@ button {
   border-bottom: 1px solid var(--glass-border);
 }
 .banner-warn {
-  background: rgba(212, 161, 74, 0.12);
+  background: rgba(var(--amber-rgb), 0.12);
   color: var(--amber);
 }
 .banner-error {
@@ -1899,9 +1908,9 @@ button {
   line-height: 1.55;
 }
 .settings-warn {
-  background: rgba(212, 161, 74, 0.12);
+  background: rgba(var(--amber-rgb), 0.12);
   color: var(--amber);
-  border: 1px solid rgba(212, 161, 74, 0.3);
+  border: 1px solid rgba(var(--amber-rgb), 0.3);
   border-radius: var(--radius-sm);
   padding: 10px 14px;
   font-size: 12px;
@@ -2106,9 +2115,9 @@ button {
   text-transform: uppercase;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
-  background: rgba(212, 161, 74, 0.18);
+  background: rgba(var(--amber-rgb), 0.18);
   color: var(--amber);
-  border: 1px solid rgba(212, 161, 74, 0.3);
+  border: 1px solid rgba(var(--amber-rgb), 0.3);
   white-space: nowrap;
 }
 
@@ -2193,9 +2202,9 @@ button {
   color: #fca5a5;
 }
 .settings-save.force {
-  background: rgba(212, 161, 74, 0.85);
+  background: rgba(var(--amber-rgb), 0.85);
   color: var(--bg-0);
-  box-shadow: 0 4px 14px rgba(212, 161, 74, 0.32);
+  box-shadow: 0 4px 14px rgba(var(--amber-rgb), 0.32);
 }
 
 /* ── GrabsList ─────────────────────────────────────────────────── */
@@ -2208,7 +2217,7 @@ button {
   --status-queued: rgba(255, 255, 255, 0.5);
   --status-queued-bg: rgba(255, 255, 255, 0.08);
   --status-downloading: #d4a14a;
-  --status-downloading-bg: rgba(212, 161, 74, 0.18);
+  --status-downloading-bg: rgba(var(--amber-rgb), 0.18);
   --status-completed: #84cc16;
   --status-completed-bg: rgba(132, 204, 22, 0.18);
   --status-placed: var(--accent-bright);
@@ -2244,7 +2253,7 @@ button {
      adopted grab produces (adopted singles are the ones that settle
      "in library (scanned)", so that pairing is the common case). */
   --status-unmatched: var(--amber);
-  --status-unmatched-bg: rgba(212, 161, 74, 0.16);
+  --status-unmatched-bg: rgba(var(--amber-rgb), 0.16);
 }
 
 /* Filter strip laid out as the state machine: a leading "all" toggle,
@@ -3067,7 +3076,7 @@ button {
 .grab-pipe-step.tone-unmatched.done .grab-pipe-node {
   background: var(--status-unmatched);
   border-color: var(--status-unmatched);
-  box-shadow: 0 0 0 4px rgba(212, 161, 74, 0.15);
+  box-shadow: 0 0 0 4px rgba(var(--amber-rgb), 0.15);
 }
 .grab-pipe-step.tone-unmatched.linked::before {
   background: var(--status-unmatched);
@@ -5663,11 +5672,14 @@ code.grab-fact-v,
 }
 /* Neon-glowing acorn on the welcome screen — the brand mark turned up
    to "fancy" with layered drop-shadows + a slow pulse. */
+/* The mark is one colour. This was --accent-bright while .brand-icon in the
+   header was --accent, so the same acorn was a different green depending on
+   which screen you met it on. */
 .setup-acorn {
   width: 92px;
   height: 92px;
   display: inline-block;
-  color: var(--accent-bright);
+  color: var(--accent);
   animation: acornGlow 3.2s ease-in-out infinite;
 }
 .setup-acorn svg {
@@ -6178,11 +6190,11 @@ code.grab-fact-v,
   letter-spacing: 0.11em;
   padding: 2px 8px;
   border-radius: var(--radius-pill);
-  background: rgba(212, 161, 74, 0.12);
+  background: rgba(var(--amber-rgb), 0.12);
   /* Dashed, unlike every other pill in the family — "incomplete", and it
      keeps the badge legible beside the solid slate ADOPTED pill even for
      someone reading the row by shape rather than colour. */
-  border: 1px dashed rgba(212, 161, 74, 0.55);
+  border: 1px dashed rgba(var(--amber-rgb), 0.55);
   color: #e0b84e;
 }
 
@@ -7429,7 +7441,7 @@ code.grab-fact-v,
 .gdp-kept {
   margin-top: 9px;
   padding-top: 8px;
-  border-top: 1px dashed rgba(212, 161, 74, 0.4);
+  border-top: 1px dashed rgba(var(--amber-rgb), 0.4);
   color: #e0b84e;
   display: flex;
   flex-direction: column;
@@ -7489,7 +7501,7 @@ code.grab-fact-v,
   letter-spacing: 0.1em;
   padding: 1px 6px;
   border-radius: var(--radius-pill);
-  border: 1px solid rgba(212, 161, 74, 0.5);
+  border: 1px solid rgba(var(--amber-rgb), 0.5);
   color: #e0b84e;
 }
 .seed-gone {
@@ -7528,7 +7540,7 @@ code.grab-fact-v,
 .seed-chip {
   font-size: 11.5px;
   color: var(--text);
-  border: 1px solid rgba(212, 161, 74, 0.4);
+  border: 1px solid rgba(var(--amber-rgb), 0.4);
   border-radius: var(--radius-pill);
   padding: 2px 9px;
 }
@@ -7674,7 +7686,7 @@ code.grab-fact-v,
   opacity: 0.7;
 }
 .setup-dlcheck-row.warn {
-  border-color: rgba(212, 161, 74, 0.4);
+  border-color: rgba(var(--amber-rgb), 0.4);
 }
 
 /* Indexer catalog (wizard + Settings) */
@@ -7723,7 +7735,7 @@ code.grab-fact-v,
   opacity: 0.85;
 }
 .idx-badge.private {
-  background: rgba(212, 161, 74, 0.18);
+  background: rgba(var(--amber-rgb), 0.18);
   color: var(--amber);
 }
 .idx-badge.semiPrivate {

@@ -223,7 +223,7 @@ export default function UnfiledList() {
           <button
             key={b.key}
             type="button"
-            className={"grab-chip" + (b.key === bucket ? " active chip-any" : "")}
+            className={"grab-chip" + (b.key === bucket ? " active" : "")}
             onClick={() => setBucket(b.key)}
           >
             <span className="chip-label">{b.label}</span>
@@ -293,7 +293,7 @@ export default function UnfiledList() {
                       key={p.stash_id || p.name}
                       type="button"
                       className={
-                        "grab-chip" + (performer === p.name ? " active chip-any" : "")
+                        "grab-chip" + (performer === p.name ? " active" : "")
                       }
                       onClick={() => setPerformer(p.name)}
                       title={`${p.scene_count} scenes in your library`}

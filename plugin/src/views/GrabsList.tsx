@@ -830,7 +830,7 @@ export default function GrabsList({
         <div className="grab-filter-chips">
           <button
             className={
-              "grab-chip chip-any" + (filter === "any" ? " active" : "")
+              "grab-chip" + (filter === "any" ? " active" : "")
             }
             onClick={() => setFilter("any")}
           >
