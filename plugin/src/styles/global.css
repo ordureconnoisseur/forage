@@ -4163,11 +4163,18 @@ code.grab-fact-v,
    library-performer chip. Width = (row - 4 gaps) / 5 so exactly 5
    cards fill the strip regardless of viewport width. The partial
    final page is centred via .carousel-row justify-content. */
+/* The same scene should not look like a different card because you reached it
+   by a different route. Measured against .discover-card, the two agreed on
+   border, background, title size, line clamp and thumb ratio, and disagreed
+   on four values that had simply drifted: radius 12 against 16, title weight
+   500 against 600, meta 11px against 11.5, body padding 8px against 9. A
+   carousel card is narrower than a grid card, and that is the only thing
+   about it that should be smaller. */
 .trending-card {
   flex: 0 0 calc((100% - 48px) / 5);
   background: var(--glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   overflow: hidden;
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -4195,7 +4202,7 @@ code.grab-fact-v,
   display: block;
 }
 .trending-card-body {
-  padding: 8px 10px 10px 10px;
+  padding: 9px 10px 10px 10px;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -4203,7 +4210,7 @@ code.grab-fact-v,
 }
 .trending-card-title {
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.3;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -4212,7 +4219,7 @@ code.grab-fact-v,
 }
 .trending-card-meta {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 11.5px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

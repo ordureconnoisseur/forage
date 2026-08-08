@@ -395,7 +395,14 @@ export default function App() {
               e.preventDefault();
               goDiscover();
             }}
-            className={route.kind === "discover" ? "active" : ""}
+            // Trending is reached from Discover's "See all", so it belongs
+            // to that tab. Three routes lit nothing at all, which left you on
+            // a page with no way to tell from the nav where you were.
+            className={
+              route.kind === "discover" || route.kind === "trending"
+                ? "active"
+                : ""
+            }
           >
             <NavIcon name="discover" />
             Discover
@@ -422,7 +429,15 @@ export default function App() {
               e.preventDefault();
               goGrabs();
             }}
-            className={route.kind === "grabs" ? "active" : ""}
+            // Unfiled and Deletions are both reached from links on the Grabs
+            // page and have no tab of their own.
+            className={
+              route.kind === "grabs" ||
+              route.kind === "unfiled" ||
+              route.kind === "deletions"
+                ? "active"
+                : ""
+            }
           >
             <NavIcon name="grabs" />
             Grabs
