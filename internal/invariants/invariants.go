@@ -83,6 +83,11 @@ type Result struct {
 	// Scanned is how many rows the check examined; set only by the bounded
 	// checks, where it is the difference between "clean" and "barely looked".
 	Scanned int `json:"scanned,omitempty"`
+	// Superseded is rows a check found technically failing but explained by
+	// something routine, and therefore deliberately not counted. Reported so
+	// the number is visible rather than silently swallowed: a check that
+	// quietly excuses rows is a check nobody can audit.
+	Superseded int `json:"superseded,omitempty"`
 	// Samples is up to SampleLimit violations. Truncated rather than
 	// complete: a report is for triage, and the count carries the scale.
 	Samples []Violation `json:"samples,omitempty"`
@@ -673,8 +678,9 @@ func sqlChecks(now int64) []sqlCheck {
 // Bounded: one os.Stat per row over a rotating batch.
 func (c *Checker) checkPlacedPaths(ctx context.Context) Result {
 	res := Result{
-		Name:      "grab.placed_path_missing",
-		Statement: "a grab recording a placed file has that file on disk",
+		Name: "grab.placed_path_missing",
+		Statement: "a grab recording a placed file has that file on disk, " +
+			"unless another confirmed grab holds the same scene",
 	}
 	// With the mount gone every path stats missing and this would report the
 	// entire table as broken, which is the same confident wrongness the
@@ -700,36 +706,100 @@ func (c *Checker) checkPlacedPaths(ctx context.Context) Result {
 	c.placedCursor += placedPathBatch
 
 	rows, err := c.db.QueryContext(ctx,
-		`SELECT id, placed_path FROM grabs WHERE `+where+` ORDER BY id LIMIT ? OFFSET ?`,
+		`SELECT id, placed_path,
+		        COALESCE(NULLIF(actual_stashdb_id, ''), COALESCE(predicted_stashdb_id, ''))
+		   FROM grabs WHERE `+where+` ORDER BY id LIMIT ? OFFSET ?`,
 		placedPathBatch, offset)
 	if err != nil {
 		res.Error = err.Error()
 		return res
 	}
-	defer rows.Close()
+	// No defer: this cursor is closed explicitly below, before any sibling
+	// query runs, which is the whole point.
+	// Collect first, close the cursor, THEN look for siblings.
+	//
+	// otherCopy runs its own query, and doing that while this cursor is still
+	// open deadlocks: SQLite serialises on the connection, so the inner query
+	// waits for a cursor that is waiting for it. The test hung for ten minutes
+	// before this was split.
+	type suspect struct {
+		id    int64
+		path  string
+		scene string
+	}
+	var suspects []suspect
 	for rows.Next() {
 		var id int64
-		var path string
-		if err := rows.Scan(&id, &path); err != nil {
+		var path, scene string
+		if err := rows.Scan(&id, &path, &scene); err != nil {
 			res.Error = err.Error()
+			rows.Close()
 			return res
 		}
 		res.Scanned++
 		if c.stat(path) == nil {
 			continue
 		}
-		res.Count++
-		if len(res.Samples) < sampleLimit {
-			res.Samples = append(res.Samples, Violation{
-				Kind: "grab", ID: fmt.Sprint(id),
-				Detail: "placed_path " + path + " is not on disk",
-			})
-		}
+		suspects = append(suspects, suspect{id, path, scene})
 	}
 	if err := rows.Err(); err != nil {
 		res.Error = err.Error()
 	}
+	rows.Close()
+
+	for _, sp := range suspects {
+		// Superseded, not lost: another confirmed grab holds this same scene
+		// and its file is there, which is what an upgrade looks like. Routine,
+		// and counting it here buried the rows that meant a file had genuinely
+		// gone inside the ones that meant it had been replaced.
+		if sp.scene != "" && c.otherCopy(ctx, sp.scene, sp.id) {
+			res.Superseded++
+			continue
+		}
+		res.Count++
+		if len(res.Samples) < sampleLimit {
+			res.Samples = append(res.Samples, Violation{
+				Kind: "grab", ID: fmt.Sprint(sp.id),
+				Detail: "placed_path " + sp.path +
+					" is not on disk, and no other confirmed grab holds this scene",
+			})
+		}
+	}
 	return res
+}
+
+// otherCopy reports whether some OTHER confirmed grab holds this same scene
+// with a file that is actually on disk.
+//
+// This is what separates "the file is gone" from "a different release of this
+// scene replaced it". The second is routine: forage grabs an upgrade, the
+// dedup removes the superseded file, and the old row keeps pointing at a path
+// nobody deleted maliciously. Reporting both as one number hid the four rows
+// that meant the first inside a count that was mostly the second.
+//
+// Only ever called for a row whose own file already stat-ed missing, so the
+// extra query and stats are paid on the rare case, not the sweep.
+func (c *Checker) otherCopy(ctx context.Context, scene string, exclude int64) bool {
+	rows, err := c.db.QueryContext(ctx, `
+		SELECT placed_path FROM grabs
+		 WHERE status = 'confirmed' AND COALESCE(placed_path, '') != ''
+		   AND id != ?
+		   AND COALESCE(NULLIF(actual_stashdb_id, ''), COALESCE(predicted_stashdb_id, '')) = ?
+		 LIMIT 8`, exclude, scene)
+	if err != nil {
+		return false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		if rows.Scan(&p) != nil || p == "" {
+			continue
+		}
+		if c.stat(p) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // checkStashScenes asserts that a grab confirmed against a scene still has

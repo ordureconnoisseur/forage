@@ -736,3 +736,31 @@ func (s stubScenes) CountScenes(_ context.Context, _, stashDBID string) (int, er
 	}
 	return s.counts[stashDBID], nil
 }
+
+// A file missing because a better release replaced it is routine; a file
+// missing with nothing else holding the scene is the alarming case. Counting
+// them together hid the rows that meant the second inside a number that was
+// mostly the first, and the report read as "seven files are gone" when none
+// were.
+func TestPlacedPathMissingSeparatesSupersededFromLost(t *testing.T) {
+	dbh := openDB(t)
+	const scene = "sc-upgraded"
+	// Superseded: this file is GONE, but a sibling grab for the same scene
+	// has one that is not.
+	insertGrab(t, dbh, 1, cols{"actual_stashdb_id": scene, "placed_path": "/lib/GONE-old.mp4"})
+	insertGrab(t, dbh, 2, cols{"actual_stashdb_id": scene, "placed_path": "/lib/upgrade.mp4"})
+	// Genuinely lost: nothing else holds this scene.
+	insertGrab(t, dbh, 3, cols{"actual_stashdb_id": "sc-lonely", "placed_path": "/lib/GONE-lost.mp4"})
+
+	res := newTestChecker(dbh).checkPlacedPaths(t.Context())
+
+	if res.Count != 1 {
+		t.Errorf("Count = %d, want 1 (only the row with no surviving copy)", res.Count)
+	}
+	if res.Superseded != 1 {
+		t.Errorf("Superseded = %d, want 1 (the row an upgrade replaced)", res.Superseded)
+	}
+	if len(res.Samples) != 1 || res.Samples[0].ID != "3" {
+		t.Errorf("samples = %+v, want only grab 3", res.Samples)
+	}
+}
