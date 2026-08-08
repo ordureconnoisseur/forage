@@ -4451,19 +4451,32 @@ code.grab-fact-v,
 }
 
 /* PACK badge + progress in the grabs list row */
-.grab-pack-badge {
+/* The row badges: pack, stalled, adopted.
+   
+   Three rules of thirteen declarations each, scattered across 1,700 lines,
+   and twelve of the thirteen were identical. Only the colours ever differed,
+   so only the colours are stated per badge now. .res-badge deliberately stays
+   out: it is 9px/800 on a 4px radius, a resolution annotation rather than a
+   status pill, and the two look different because they are different. */
+.grab-pack-badge,
+.grab-stalled-badge,
+.grab-adopt-badge {
   flex: none;
   align-self: center;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.11em;
-  padding: 2px 8px 2px 6px;
+  padding: 2px 8px;
   border-radius: var(--radius-pill);
-  background: rgba(var(--accent-rgb), 0.1);
-  border: 1px solid rgba(var(--accent-rgb), 0.35);
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.grab-pack-badge {
+  gap: 4px;
+  padding: 2px 8px 2px 6px;
   color: var(--accent-bright);
 }
 .grab-pack-glyph {
@@ -5988,18 +6001,7 @@ code.grab-fact-v,
    downloading grab (not a pipeline state), so it's a sibling pill to the
    ADOPTED badge — same shape, amber-toned for "needs attention". */
 .grab-stalled-badge {
-  flex: none;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: rgba(212, 161, 23, 0.13);
-  border: 1px solid rgba(212, 161, 23, 0.4);
-  color: #e0b84e;
+  color: var(--amber);
 }
 /* "Pick another release" — primary action on a stalled/failed/mismatched
    /orphaned grab, leading the action bar. */
@@ -6145,18 +6147,9 @@ code.grab-fact-v,
 /* Adopted badge — grab forage picked up from a torrent added to qBit
    directly (forager category). Cool slate tone to read as "external
    origin", distinct from the accent PACK badge. */
+/* Cool slate, to read as "came from outside forage" rather than as a
+   status the pipeline assigned. */
 .grab-adopt-badge {
-  flex: none;
-  align-self: center;
-  display: inline-flex;
-  align-items: center;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.11em;
-  padding: 2px 8px;
-  border-radius: var(--radius-pill);
-  background: rgba(120, 145, 175, 0.13);
-  border: 1px solid rgba(120, 145, 175, 0.4);
   color: #aebfd4;
 }
 
